@@ -50,6 +50,28 @@ func hireInstructions(floor string) string {
 	return placementLine + "\n\n" + floorLine(floor) + "\n\n" + agentLine
 }
 
+// profileToken is the token an agent started on a Codex profile is tagged
+// with (#167): the profile's key, which tells the bridge the Codex home its
+// sessions are in (codexHomeOf).
+const profileToken = "h3d_codex_profile"
+
+// profileLine tells the orchestrator how to start an agent on the Codex
+// profile its team line names (#167), after the hiring lines when a role
+// has one other than the bridge's own.
+const profileLine = "Start an agent whose team line names a Codex profile with CODEX_HOME set to that folder for its Codex: " +
+	"create its workspace with herdr workspace create --env CODEX_HOME=<folder> (or run export CODEX_HOME=<folder> in its pane before herdr agent start), " +
+	"and also tag that workspace with the token " + profileToken + "=<key> its team line gives, in the same herdr workspace report-metadata call as its other h3d_ tokens: " +
+	"the floor then reads that agent's transcript in that profile's folder."
+
+// TeamProfile is a Codex role's profile for a run (#167), resolved at
+// run start: a listed profile other than the bridge's own, never Auto.
+type TeamProfile struct{ Key, Name, Home string }
+
+// TeamProfiles are a run's Codex roles on another profile than the
+// bridge's own, by role (coder, reviewer, ux, researcher); a role on the
+// default is not in it.
+type TeamProfiles map[string]TeamProfile
+
 // writeCodeSkill is the skill an orchestrator's first prompt runs.
 const writeCodeSkill = "write-code"
 
@@ -65,7 +87,7 @@ func RunPrompt(call, ticket string, isIssue bool, roles proto.PresetRoles, floor
 	if isIssue {
 		status = issueStatusLine
 	}
-	return runPrompt(call, ticket, status, roles, floor, extra)
+	return runPrompt(call, ticket, status, roles, nil, floor, extra)
 }
 
 // itemRef is how a prompt names an item of a provider that numbers no
@@ -85,10 +107,20 @@ func itemRef(t *proto.RunTicket) string {
 // with no status line (a provider's board need not have the issue line's
 // QA and Done columns).
 func TicketPrompt(call string, t *proto.RunTicket, roles proto.PresetRoles, floor, extra string) string {
-	if t.Kind == proto.TicketItem && t.Item != nil {
-		return runPrompt(call, itemRef(t), "", roles, floor, extra)
+	return TeamPrompt(call, t, roles, nil, floor, extra)
+}
+
+// TeamPrompt is TicketPrompt with the team's Codex profiles (#167): each
+// role in profiles has its profile on its team line, and profileLine
+// follows the hiring lines; with none it is TicketPrompt's to the byte.
+func TeamPrompt(call string, t *proto.RunTicket, roles proto.PresetRoles, profiles TeamProfiles, floor, extra string) string {
+	switch {
+	case t.Kind == proto.TicketItem && t.Item != nil:
+		return runPrompt(call, itemRef(t), "", roles, profiles, floor, extra)
+	case t.Kind == proto.TicketIssue:
+		return runPrompt(call, ticketRef(t), issueStatusLine, roles, profiles, floor, extra)
 	}
-	return RunPrompt(call, ticketRef(t), t.Kind == proto.TicketIssue, roles, floor, extra)
+	return runPrompt(call, ticketRef(t), "", roles, profiles, floor, extra)
 }
 
 // writeCodeCall is how an orchestrator of harness runs write-code: the
@@ -100,25 +132,43 @@ func (h *Hub) writeCodeCall(harness string) string {
 	return h.opts.Prompts.SkillCall(harness, writeCodeSkill)
 }
 
-func runPrompt(call, ticket, status string, roles proto.PresetRoles, floor, extra string) string {
+// teamRole is a role of the team the orchestrator hires: its key in
+// TeamProfiles, its words on its team line, and its hire.
+type teamRole struct {
+	role, what string
+	hire       proto.Hire
+}
+
+// teamRoles are the roles of the team lines, in their order (the
+// orchestrator is none of them).
+func teamRoles(roles proto.PresetRoles) []teamRole {
+	return []teamRole{
+		{"coder", "coders", roles.Coder},
+		{"reviewer", "reviewers", roles.Reviewer},
+		{"ux", "ux reviewers", roles.UX},
+		{"researcher", "researchers", roles.Researcher},
+	}
+}
+
+func runPrompt(call, ticket, status string, roles proto.PresetRoles, profiles TeamProfiles, floor, extra string) string {
 	var b strings.Builder
 	b.WriteString(call + " " + strings.TrimSpace(ticket) + "\n\nTeam:")
-	for _, r := range []struct {
-		what string
-		hire proto.Hire
-	}{
-		{"coders", roles.Coder},
-		{"reviewers", roles.Reviewer},
-		{"ux reviewers", roles.UX},
-		{"researchers", roles.Researcher},
-	} {
+	onProfile := false
+	for _, r := range teamRoles(roles) {
 		knob := "effort"
 		if r.hire.Harness == "codex" {
 			knob = "reasoning"
 		}
 		fmt.Fprintf(&b, "\n- %s: %s %s, %s %s", r.what, r.hire.Harness, r.hire.Model, knob, r.hire.Effort)
+		if p, ok := profiles[r.role]; ok && r.hire.Harness == "codex" {
+			fmt.Fprintf(&b, ", Codex profile %s (CODEX_HOME=%s, token %s=%s)", p.Name, p.Home, profileToken, p.Key)
+			onProfile = true
+		}
 	}
 	b.WriteString("\n\n" + hireInstructions(floor))
+	if onProfile {
+		b.WriteString("\n\n" + profileLine)
+	}
 	if status != "" {
 		b.WriteString("\n\n" + status)
 	}

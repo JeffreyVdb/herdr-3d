@@ -6,10 +6,11 @@
  * args `run.prepare`, `run.start` and `preset.*` send.
  */
 
-import type { CommandArgs, Hire, HireOptions, Preset, PresetRoles, RunPrepare } from '../net/protocol';
+import type { CodexProfilesState, CommandArgs, Hire, HireOptions, Preset, PresetRoles, RunPrepare } from '../net/protocol';
 import { modelsFor } from './hire';
 import { labelsOf, modelLabel } from './modelLabel';
 import { PRESET_ROLES, ROLE_LABEL, type PresetBook } from './presets';
+import { roleProfileLabel } from './runProfiles';
 import { effortsFor } from './settings';
 
 const bytes = (s: string) => new TextEncoder().encode(s).length;
@@ -226,8 +227,11 @@ export function startArgs(floor: string, f: RunForm, t: TicketInput, p: Preview,
 export const hireLine = (h: Hire, options: HireOptions = {}) => `${h.harness} · ${modelLabel(h.harness, h.model, labelsOf(options, h.harness))} · ${h.effort}`;
 
 /** One line per role for a preset's row in the list. */
-export function presetLines(p: Preset, options: HireOptions = {}): Array<{ role: string; line: string }> {
-  return PRESET_ROLES.map((r) => ({ role: ROLE_LABEL[r], line: hireLine(p.roles[r], options) }));
+export function presetLines(p: Preset, options: HireOptions = {}, profiles: CodexProfilesState | null = null): Array<{ role: string; line: string }> {
+  return PRESET_ROLES.map((r) => {
+    const profile = roleProfileLabel(profiles, p.roles[r]); // #167
+    return { role: ROLE_LABEL[r], line: hireLine(p.roles[r], options) + (profile ? ` · ${profile}` : '') };
+  });
 }
 
 export interface PresetDraft {
@@ -235,7 +239,7 @@ export interface PresetDraft {
   roles: PresetRoles;
 }
 
-const sameHire = (a: Hire, b: Hire) => a.harness === b.harness && a.model === b.model && a.effort === b.effort;
+const sameHire = (a: Hire, b: Hire) => a.harness === b.harness && a.model === b.model && a.effort === b.effort && (a.codex_profile ?? '') === (b.codex_profile ?? '');
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
 /** Why a draft cannot be saved (null: it can); `except` is the preset being edited. */

@@ -1557,6 +1557,56 @@ dialog.settings {
   }
 }
 
+/* #167: a profile's shared setup, under its folder: the switch (as quiet as "May be used for anything"), then what
+ * the bridge needs confirmed, did, or found: plain sentences in the hint voice, file and backup names in the code face,
+ * the actions at the end. No new colour: drift is the warn badge on the row's line. */
+.settings-cp-share-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+.settings-cp-share-panel .settings-field-hint {
+  margin: 0;
+}
+.settings-cp-share-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+.settings-cp-share-list li {
+  overflow-wrap: anywhere;
+}
+.settings-cp-share-list .settings-cp-path {
+  white-space: normal;
+}
+.settings-cp-drift li {
+  display: list-item;
+}
+.settings-cp-drift li .btn {
+  margin-left: 8px;
+  vertical-align: baseline;
+}
+.settings-cp-share-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.settings-cp-share-panel .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+@media (max-width: 600px) {
+  .settings-cp-drift li .btn {
+    display: flex;
+    margin: 4px 0 0;
+  }
+}
+
 /* #11: Telegram. Three steps in their order (the token, the account, the test), each a block with its state, then
  * the switch and its options. The pairing code is the one thing to read off the screen and type on a phone: large,
  * spaced, in the code face (no 0/O or 1/I in its alphabet), in a well of its own with when it expires under it. */

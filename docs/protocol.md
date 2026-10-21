@@ -889,7 +889,7 @@ and remember the last `seq` applied.
 | `codex_server.update` | `enabled`, `available`, `allow_unverified` | #155: the shared Codex server switch changed (flat in the event, see [Shared Codex server](#shared-codex-server)) |
 | `repo_refs.update` | `all_buildings` | #247: the "Repositories from other buildings" switch changed (flat in the event, see [Repositories on other floors](#repositories-on-other-floors)) |
 | `prompt_secrets.update` | `enabled`, `available`, `dir`? | #108: the "Review prompt secrets before sending" switch changed (flat in the event: decode it by its `t`, see [Prompt secrets](#prompt-secrets)) |
-| `codex_profiles.update` | `profiles` | #138: the Codex profiles changed: a setting, a folder found or gone (listed again while a client is connected), or a profile's plan; flat in the event (see [Codex profiles](#codex-profiles)). A profile no longer in it, or `hidden`, has no reading any more: a client drops its row |
+| `codex_profiles.update` | `profiles` | #138: the Codex profiles changed: a setting, a folder found or gone (listed again while a client is connected), or a profile's plan; #167: or a shared profile's drift; flat in the event (see [Codex profiles](#codex-profiles)). A profile no longer in it, or `hidden`, has no reading any more: a client drops its row |
 | `repo_discovery.update` | `roots`, `interval_minutes`, `status` | #54: repository discovery's settings or a scan's status changed (a scan started, progressed, ended); flat in the event. `status.revision` moves only when the discovered repositories did (see [Repository discovery](#repository-discovery)) |
 | `handoff.added` | `floor_id`, `session`, `handoff`, `handoff_count` | #223: a handoff was filed: its file is complete and indexed (#58: `floor_id` is its floor, `session` that floor's session; before #58 `session` was the floor, which it still is for a real floor; `handoff_count` the floor's count now; see [Handoffs](#handoffs)) |
 | `handoff.removed` | `floor_id`, `session`, `handoff_id`, `handoff_count` | #223: a handoff was deleted (its file is in the trash) |
@@ -996,11 +996,11 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `transcript.unwatch` | `{"id": string, "child"?: TranscriptChild}` | — | — |
 | `transcript.page` | `{"id": string, "before"?: cursor, "limit"?: 1–500, "agent"?: string, "child"?: TranscriptChild}` | `{"items", "cursor", "has_more"}` | — |
 | `transcript.item` | `{"id": string, "item": string, "agent"?: string, "child"?: TranscriptChild}` | `{"item"}` | — |
-| `preset.create` | `{"name": string, "roles": {…}}` | `{"id": string}` | `preset.upsert` (see [Team presets and starting a run](#team-presets-and-starting-a-run)) |
+| `preset.create` | `{"name": string, "roles": {…}}` (#167: a role may carry `codex_profile`, see [Run profiles](#run-profiles-the-orchestrator-and-the-teams-codex-roles)) | `{"id": string}` | `preset.upsert` (see [Team presets and starting a run](#team-presets-and-starting-a-run)) |
 | `preset.update` | `{"id": string, "name"?: string, "roles"?: {…}}` (`roles` replaces all five) | — | `preset.upsert`; none when nothing changed |
 | `preset.delete` | `{"id": string}` | — | `preset.removed`, then `floor.upsert` for the floors whose `last_preset` it was |
 | `run.prepare` | `{"floor"|"session", "issue"? \| "text"? \| "work_item"?, "preset"?, "orch"?, "extra"?, "preview"?: bool}` (#134 `preview` as `hire.prepare`'s) | what the start-run dialog shows: `{"prompt", "label", "ticket", "preset", "orch", "cwd", "git", "capacity"}` | — |
-| `run.start` | `{"floor"|"session", "desk_index", "issue" \| "text" \| "work_item", "orch", "preset", "extra"?, "worktree"?, "label"?, "prompt"?, "secrets"?: {"text"?, "extra"?, "prompt"?: SecretsReview}}` | `worker.hire`'s ack plus `{"launch_id", "prompt"}` | `worker.hire`'s, then the orchestrator's `worker.upsert` with `issue` and `work_item`, and `floor.upsert` with `last_preset` |
+| `run.start` | `{"floor"|"session", "desk_index", "issue" \| "text" \| "work_item", "orch", "preset", "extra"?, "worktree"?, "label"?, "prompt"?, "secrets"?: {"text"?, "extra"?, "prompt"?: SecretsReview}}` (#167: `orch` and the preset's roles may carry `codex_profile`: see [Run profiles](#run-profiles-the-orchestrator-and-the-teams-codex-roles)) | `worker.hire`'s ack plus `{"launch_id", "prompt", "codex_team_reason"?, "codex_team_note"?}` | `worker.hire`'s, then the orchestrator's `worker.upsert` with `issue` and `work_item`, and `floor.upsert` with `last_preset` |
 | `limits.refresh` | `{}` | `{"queued": bool}`: `false` when the last refresh was less than 20 s ago | `limits.update` for both providers (Codex: each visible profile, listed again first) when queued (see [Plan limits](#plan-limits)) |
 | `ai.get` | `{}` | the AI state (see [AI integration](#ai-integration)) | — |
 | `ai.models` | `{"role", "key"?, "base_url"?}` | `{"models": [{"id", "description"?}], "base_url"?}` | — |
@@ -1048,6 +1048,8 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `prompt_secrets.revoke` | `{"worker": string}` (round 5) | `{"removed": int}`: every protected file the worker held (its own and those it held by a lease) is gone, for every holder; the worker keeps running; with the switch on or off; `not_found` (a worker the bridge does not show and that holds no file: one it does not show that holds files is revoked the same way), `secrets_unavailable` (no private runtime directory) | the worker's `worker.upsert` without `secret_files` (before the ack), and of every other holder that lost a file |
 | `codex_profiles.get` | `{}` | `{"profiles"}` (see [Codex profiles](#codex-profiles)), listed afresh | `codex_profiles.update` when the list changed |
 | `codex_profiles.set` | one change: `{"add": path}`, or `{"key", "name": string}`, `{"key", "hidden": bool}`, `{"key", "remove": true}`; #140 `{"key", "anything": bool}`, `{"rules": [{"match", "profile"}]}` | the list | `codex_profiles.update` (and `limits.update` for a renamed profile's reading) before the ack |
+| `codex_profiles.share` | #167 `{"key", "share": bool, "dry_run"?: bool, "replace"?: [name…]}` (see [Sharing a profile's setup](#sharing-a-profiles-setup)) | the list (flat) with `steps`, and `report` (none for a dry run), `failed` when it stopped on an error | `codex_profiles.update` before the ack when it wrote |
+| `codex_profiles.move_skill` | #167 `{"key", "skill"}` | the list (flat) with `steps` and `report` | `codex_profiles.update` before the ack |
 | `repo_discovery.get` | `{}` | `{"roots", "interval_minutes", "status"}` (see [Repository discovery](#repository-discovery)) | — |
 | `repo_discovery.set` | `{"roots"?: [absolute path…], "interval_minutes"?: 1–1440}` (at least one) | the state; a change of roots scans at once | `repo_discovery.update` (before the ack) when it changes |
 | `repo_discovery.refresh` | `{}` | the state; a scan starts (after the one in flight) | `repo_discovery.update` (before the ack) |
@@ -2487,7 +2489,9 @@ an account, never reads a token and never runs codex-auth: it only looks at fold
   `rules` is always there (`[]` when none) and a profile flagged "may be used for anything" has `"anything": true`
   (absent: off). A bridge from before #140 leaves all three out and refuses `"auto"` as an unknown profile
   (`not_found`), so a client offers Auto only where `auto` is set. No folder is keyed `auto` (`~/.codex-auto` is
-  `auto-<hash>`).
+  `auto-<hash>`). #167: `"runs": true` says team preset roles and `run.prepare` / `run.start`'s `orch` take
+  `codex_profile` too (see [Run profiles](#run-profiles-the-orchestrator-and-the-teams-codex-roles)); a bridge from
+  before #167 leaves it out and refuses the field there.
 
 #### Hiring on a Codex profile
 
@@ -2550,6 +2554,57 @@ every Codex process it starts. Nothing is switched: two workers on two profiles 
 {"t":"ack","req_id":"h7","data":{"id":"…","workspace_id":"w12","trust":"none","codex":{"mode":"shared","server":"running","profile":"work","account":"confirmed","plan":"team"}}}
 ```
 
+#### Sharing a profile's setup
+
+#167 (`docs/decisions.md` "#167"). A new Codex home starts bare. "Share setup with <default>" makes a profile follow
+the default profile's setup: its `config.toml`, `AGENTS.md`, `AGENTS.override.md` and `rules/` become links to the
+default home's (only those the default home has), and it gets its own `hooks.json` with the default's commands. The
+profile list says `"share": true` when the bridge has this; then each profile has `"share": true` while it is on
+(absent: off; never on the default) and a visible shared profile that differs has `drift`:
+
+```json
+{"key":"work","name":"work","path":"/home/me/.codex-work","display":"~/.codex-work","plan":"team","signed_in":true,
+ "default":false,"hidden":false,"added":false,"share":true,"drift":[
+  {"kind":"link_replaced","name":"config.toml","text":"config.toml is no longer a link: a file replaced it (MCP servers only on personal: alterlab, kaneo)"},
+  {"kind":"skill_only_default","name":"infra","text":"skill infra is only on personal"}]}
+```
+
+- **`drift`**, checked read only each time the profiles are listed (the limits poll, every 2 minutes while a client
+  is connected, and after every change), and published in `codex_profiles.update` when it changes. `kind` is one of
+  `link_missing`, `link_elsewhere`, `link_replaced` (a file or folder where the link was, e.g. after `sed -i`),
+  `target_missing` (the default's file is gone), `hooks_missing`, `hooks_differ` (the parsed commands differ),
+  `skill_only_profile`, `skill_only_default` (a real skill folder in that home's `skills/`; `.system` is ignored).
+  `name` is the entry (`config.toml`, `AGENTS.md`, `AGENTS.override.md`, `rules/`, `hooks.json`) or the skill; `text`
+  the plain words. Items name files, MCP servers and skills, **never a value** of a `config.toml`. A hidden profile, or
+  one with sharing off, has none.
+- **`codex_profiles.share {"key", "share": true, "dry_run": true}`** writes nothing and acks the plan in `steps`, one
+  per entry in the order above plus `hooks.json`: `{"name", "action"}` with `action` `link` (nothing there), `keep`
+  (already the right link, or a `hooks.json` with the same commands), `replace` (something else is there: `was` is
+  `file`, `folder` or `link`, and `backup` the name it is renamed to, `<name>.before-share-<yyyymmdd-hhmmss>`, `-2`,
+  `-3`… when taken), `write` (`hooks.json`) or `skip` (not in the default home).
+- **`{"key", "share": true, "replace": [name…]}`** applies it (also the **Fix** of a drifted profile). `replace`
+  names the `replace` steps the person confirmed; the bridge plans again and, when anything else would be replaced,
+  refuses (`bad_request`, nothing written): "`<folder>` changed since you looked; look again." Without anything to
+  replace the dialog sends `replace: []` at once. A replaced entry is renamed, never deleted. Then the bridge trusts
+  the profile's hooks that the default home trusts with the same definition (Codex's own `config/batchWrite`, checked
+  with `hooks/list`). The ack's `report` says what was done: "Linked config.toml and rules/, wrote hooks.json, backed
+  up the old config.toml to config.toml.before-share-20261021-151002. work's hooks are trusted as on personal, so
+  Codex will not ask to review them." (or "Codex will ask once to review the hooks of work." when the trust could not
+  be seeded). `failed: true` when it stopped half way; sharing is then on, and what is left shows as drift.
+- **`{"key", "share": false}`** replaces each link to the default's entries with a copy of its target and keeps
+  `hooks.json`; the profile keeps working and no longer follows the default. `dry_run` and `replace` are refused here.
+- **`codex_profiles.move_skill {"key", "skill"}`** moves the real skill folder `skill` of profile `key`'s `skills/`
+  (the default's too) to `~/.agents/skills/<skill>`, where every Codex home reads it, and leaves a link in its place;
+  a name already in `~/.agents/skills` is refused (`bad_request`), as are `.system` and anything that is not such a
+  folder. This is the only write to the default home.
+- Refusals: the default profile (`bad_request`), an unknown key or a profile whose folder is gone (`not_found`), a
+  missing `key` or `share` (`bad_request`). Only a profile the bridge lists is written to, never a path from the
+  client. `auth.json`, `sessions/`, the SQLite stores and logs are never touched. A bridge from before #167 has no
+  `share` in the list and refuses the commands; a client shows the switch and the badges only where `share` is set.
+- **Hire**: a Codex hire on a profile that does not share ("work does not share setup with personal: no MCP servers,
+  no herdr hooks.") or whose shared setup drifted ("work's shared setup has drifted from personal's: config.toml is
+  no longer a link: …") says so in `profile_note`, before the bare home's note.
+
 #### Auto: the bridge picks the Codex profile
 
 #140 (`docs/decisions.md` "#140"). `worker.hire`'s (and a hire preset's) `codex_profile: "auto"`, Codex only and only
@@ -2594,6 +2649,45 @@ A hire without `codex_profile` (an older client, `run.start`, a schedule, write-
 before #140: the default profile. In the game, Auto is the hire dialog's and the preset editor's first "Codex profile"
 chip and a new Codex hire's default; a preset keeps the profile it has (one with none keeps meaning the default, one
 saved with Auto stores `"auto"`); with fewer than two usable profiles there is no picker and nothing is sent.
+
+#### Run profiles: the orchestrator and the team's Codex roles
+
+#167 (`docs/decisions.md` "#167 run profiles"). On a bridge whose `codex_profiles` says `runs`, a team preset role
+(`preset.create` / `preset.update`'s `roles.<role>`, and the snapshot's presets) and `run.prepare` / `run.start`'s
+`orch` take an optional `codex_profile`: a key or `"auto"`, Codex only (another harness: `bad_request`). Absent: the
+default profile, as before; an older bridge refuses the field (`bad_request`, unknown field), so a client sends it only
+to a bridge with `runs`. A preset role keeps a stored profile that is gone on `preset.update`; a new one must be listed
+(else `bad_request` naming the role: never `not_found`, which says the preset itself is gone).
+
+- **The orchestrator** is hired on `orch.codex_profile` exactly as a Codex worker on its `codex_profile` (see
+  [Hiring on a Codex profile](#hiring-on-a-codex-profile) and Auto above): the ack's `codex` and
+  `codex_profile_reason` are a hire's. A key that cannot be used refuses the run in its name (`bad_request`: "the
+  orchestrator's Codex profile cannot be used: …").
+- **Each Codex role** with a profile is resolved **once** by `run.start` (and the same way, for its preview, by
+  `run.prepare`): Auto by the picker with the floor's folder; a key checked as a hire's and signed in. One that cannot be
+  used refuses the run before anything reaches herdr, naming the role (`bad_request`: "the reviewers' Codex profile
+  cannot be used: work is not signed in. Run `CODEX_HOME=/home/u/.codex-work codex login` in a terminal."); in
+  `run.prepare`'s preview it is on the default. A `run.start` with its own `prompt` does not read the team.
+- **The prompt**: a role on another profile than the default has `, Codex profile <name> (CODEX_HOME=<home>, token
+  h3d_codex_profile=<key>)` on its team line, and one line after the herdr hiring lines tells the orchestrator to start
+  it with `CODEX_HOME` set (`herdr workspace create --env CODEX_HOME=<folder>`, or `export` in its pane) and to tag its
+  workspace `h3d_codex_profile=<key>`. With every role on the default the prompt is byte for byte the one before #167.
+  It never says `auto`.
+- **The ack** of `run.start` adds `codex_team_reason` (Auto's pick per role, `"reviewers: Account: work (rule
+  acme/*)"`, `"; "` between them) and `codex_team_note`: for each such profile, what a hire on it says of its setup
+  ([Sharing a profile's setup](#sharing-a-profiles-setup): "work does not share setup with personal: …", or how its
+  shared setup drifted), and for a home that runs no herdr hook "`<name>` has no hooks.json with herdr's hook: herdr is
+  not told the Codex session of an agent the orchestrator starts on it, so the bridge finds its sessions by the agent's
+  folder in `<name>`'s sessions (its usage and transcript)." (no promise of a wake: the bridge does not resume such an
+  agent on another home); both absent when there is nothing to say.
+- **A workspace tagged** `h3d_codex_profile=<key>` (an agent the bridge did not start) is read in that profile's
+  `sessions`: its usage, transcript and images, and the sleep backfill. A key that is not listed is read nowhere.
+
+```json
+{"t":"preset.update","req_id":"p2","args":{"id":"p_1a2b3c4d5e6f","roles":{"orch":{"harness":"codex","model":"gpt-6-sol","effort":"high","codex_profile":"work"},"coder":{"harness":"claude","model":"claude-opus-5-5","effort":"medium"},"reviewer":{"harness":"codex","model":"gpt-6-sol","effort":"high","codex_profile":"auto"},"ux":{"harness":"codex","model":"gpt-6-sol","effort":"high"},"researcher":{"harness":"codex","model":"gpt-6-sol","effort":"low"}}}}
+{"t":"run.start","req_id":"r5","args":{"floor":"herdr-3d","desk_index":3,"text":"Tidy the lobby","orch":{"harness":"codex","model":"gpt-6-sol","effort":"high","codex_profile":"work"},"preset":"p_1a2b3c4d5e6f"}}
+{"t":"ack","req_id":"r5","data":{"id":"…","codex":{"mode":"shared","server":"running","profile":"work","account":"confirmed","plan":"team"},"launch_id":"l_…","prompt":"/write-code …","codex_team_reason":"reviewers: Account: work (rule acme/*)","codex_team_note":"work has no hooks.json with herdr's hook: …"}}
+```
 
 ### AI integration
 

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Limits } from '../net/protocol';
+import { CodexProfilesBook } from '../world/codexProfiles';
 import { LimitBook } from '../world/limits';
 import { LimitsWidget, planLimits } from './limits';
 import { LimitsPrefs } from './limitsPrefs';
@@ -97,5 +98,58 @@ describe('the plan-limits meter with Codex profiles (#138)', () => {
     expect(lines[0]!.querySelector('.lm-acct')).toBeNull();
     expect(lines[0]!.textContent).toContain('19%');
     expect(inline.dataset.hot).toBe('false');
+  });
+});
+
+describe('the meter’s drift mark (#167)', () => {
+  const profiles = (share: boolean, drift: boolean) => {
+    const b = new CodexProfilesBook();
+    b.reset({
+      profiles: [
+        { key: 'codex', name: 'codex', path: '/u/.codex', display: '~/.codex', plan: '', signed_in: true, default: true, hidden: false, added: false },
+        {
+          key: 'work',
+          name: 'work',
+          path: '/u/.codex-work',
+          display: '~/.codex-work',
+          plan: '',
+          signed_in: true,
+          default: false,
+          hidden: false,
+          added: false,
+          share: true,
+          ...(drift ? { drift: [{ kind: 'hooks_missing', name: 'hooks.json', text: 'hooks.json is missing' }] } : {}),
+        },
+      ],
+      ...(share ? { share: true } : {}),
+    });
+    return b;
+  };
+  const meter = (b: CodexProfilesBook) => {
+    const book = new LimitBook();
+    book.reset([codex({ account: own }), codex({ account: work, plan: 'team' })]);
+    const parent = document.createElement('div');
+    document.body.append(parent);
+    const prefs = new LimitsPrefs();
+    prefs.open = true;
+    return new LimitsWidget(parent, book, { now: () => NOW, refresh: async () => ({ ok: true }) as never, toast: () => undefined }, prefs, b).root;
+  };
+
+  it('marks a drifted profile’s row and says what and where to fix it; follows the list as it changes', () => {
+    const b = profiles(true, true);
+    const root = meter(b);
+    const line = root.querySelector<HTMLElement>('.lm-lines .lm-line[data-account="work"]')!;
+    const tag = line.querySelector('[data-hook="drift-badge"]')!;
+    expect(tag.textContent).toBe('drifted');
+    expect(tag.getAttribute('title')).toBe('work’s shared setup differs from codex’s: hooks.json is missing. Fix it in Settings → Codex profiles.');
+    expect(root.querySelector('.lm-lines .lm-line[data-account="codex"] [data-hook="drift-badge"]')).toBeNull();
+    expect(root.querySelector('.lm-sec[data-account="work"] [data-hook="drift"]')?.textContent).toBe(tag.getAttribute('title'));
+    b.upsert({ ...b.state!, profiles: b.state!.profiles.map((p) => ({ ...p, drift: undefined })) });
+    expect(root.querySelector('[data-hook="drift-badge"]')).toBeNull();
+  });
+
+  it('shows nothing from a bridge without sharing, or without drift', () => {
+    expect(meter(profiles(false, true)).querySelector('[data-hook="drift-badge"]')).toBeNull();
+    expect(meter(profiles(true, false)).querySelector('[data-hook="drift-badge"]')).toBeNull();
   });
 });
