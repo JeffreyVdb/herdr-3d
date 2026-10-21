@@ -107,7 +107,7 @@ const (
 )
 
 // migrationCodexProfileHire adds #139's profile and sign-in check to
-// codex_launch and a profile to hire_preset ('' for every row before it:
+// codex_launch and a profile to hire_preset (” for every row before it:
 // the default profile).
 const migrationCodexProfileHire = `ALTER TABLE codex_launch ADD COLUMN profile TEXT NOT NULL DEFAULT '';
 	ALTER TABLE codex_launch ADD COLUMN profile_name TEXT NOT NULL DEFAULT '';

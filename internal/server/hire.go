@@ -122,7 +122,7 @@ type hireOp struct {
 	cwd, prompt, branch, repo  string
 	worktree                   bool
 	codexPolicy                codexapp.VersionPolicy
-	shared                     bool // #155: a Codex hire with its own app-server
+	shared                     bool   // #155: a Codex hire with its own app-server
 	profile                    string // #139: the Codex profile's key ("": none asked for, the default)
 	hiredAt                    int64
 	client                     *Client
@@ -760,8 +760,8 @@ type hireReport struct {
 	Start       string   `json:"start,omitempty"`
 	Trust       string   `json:"trust,omitempty"`
 	Prompt      string   `json:"prompt,omitempty"`
-	Launch      string   `json:"launch,omitempty"` // run.start's launch id
-	Codex       string   `json:"codex,omitempty"`  // #155: shared, or legacy and why
+	Launch      string   `json:"launch,omitempty"`        // run.start's launch id
+	Codex       string   `json:"codex,omitempty"`         // #155: shared, or legacy and why
 	Profile     string   `json:"codex_profile,omitempty"` // #139: the Codex profile's name
 	Rollback    []string `json:"rollback,omitempty"`
 	Steps       []string `json:"steps"`

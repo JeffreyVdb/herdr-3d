@@ -41,7 +41,7 @@ type HirePreset struct {
 	// hire from it runs on (worker.hire's codex_profile).
 	CodexProfile string `json:"codex_profile,omitempty"`
 	CreatedAt    int64  `json:"created_at"`
-	UpdatedAt         int64  `json:"updated_at"`
+	UpdatedAt    int64  `json:"updated_at"`
 }
 
 // HirePresetSpec is what a preset holds: hire_preset.create's args (and
