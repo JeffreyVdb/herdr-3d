@@ -19,6 +19,7 @@
 // or watching without `fullscreen` restores it) and `headless` (the same, but the zoom does not widen the pane:
 // `headless: true` in the zoom state). `sim.unzoom {id}` plays the human unzooming the tab: a `terminal.state`.
 // The sim's screens keep their recorded size in every state; only the zoom state changes.
+// #175: `simscreen=narrow` gives every worker the `narrow` recording instead: a split pane's 60×40 shell.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import { readFileSync } from 'node:fs';
@@ -74,6 +75,8 @@ const ECHO: Record<string, Record<string, string>> = {
   shell: { enter: '\r\n$ ', backspace: '\b \b', left: '\x1b[D', right: '\x1b[C', space: ' ', 'ctrl+c': '^C\r\n$ ', 'ctrl+l': '\x1b[2J\x1b[H$ ', tab: '    ' },
   // The agent screen's input box is row 25 from column 5 (tools/record-screens.ts): Enter empties it.
   agent: { enter: '\x1b[25;5H\x1b[66X', backspace: '\b \b', left: '\x1b[D', right: '\x1b[C', space: ' ' },
+  // #175: the narrow screen is a bare bash too.
+  narrow: { enter: '\r\n$ ', backspace: '\b \b', left: '\x1b[D', right: '\x1b[C', space: ' ', 'ctrl+c': '^C\r\n$ ', 'ctrl+l': '\x1b[2J\x1b[H$ ', tab: '    ' },
 };
 
 /** Steps before the recording starts over. */
@@ -91,6 +94,8 @@ export interface ScreenHost {
   failNext(code: string): boolean;
   /** #74: `simzoom` (undefined: a bridge before pane zoom). */
   zoomMode?(): ZoomMode | undefined;
+  /** #175: `simscreen`, the recording every worker shows (undefined: `agent` or `shell` by the worker). */
+  recording?(): string | undefined;
 }
 
 export type ZoomMode = 'old' | 'single' | 'split' | 'headless';
@@ -300,7 +305,7 @@ export class SimScreens {
   private screen(w: Worker): Screen {
     let s = this.screens.get(w.id);
     if (!s) {
-      const rec = loadRecording(w.agent_kind ? 'agent' : 'shell');
+      const rec = loadRecording(this.host.recording?.() ?? (w.agent_kind ? 'agent' : 'shell'));
       // Each worker at its own point of the recording (the fixture floor would look copy-pasted otherwise).
       const upto = hash(w.id) % rec.frames.length;
       s = { rec, pos: 0, tape: [], typed: false, timer: null };

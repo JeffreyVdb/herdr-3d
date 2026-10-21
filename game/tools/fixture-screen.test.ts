@@ -8,7 +8,7 @@ import { SimWorld } from './fixture-sim';
 type Msg = Record<string, unknown>;
 
 /** A sim on demo-m4 with a fake clock: `advance(ms)` runs what is due, in order. */
-function rig(fail?: string, zoom?: 'old' | 'single' | 'split' | 'headless') {
+function rig(fail?: string, zoom?: 'old' | 'single' | 'split' | 'headless', screen?: 'narrow') {
   let now = 0;
   let id = 0;
   const timers = new Map<number, { at: number; fn: () => void }>();
@@ -16,6 +16,7 @@ function rig(fail?: string, zoom?: 'old' | 'single' | 'split' | 'headless') {
   const sim = new SimWorld(snapshot as never, {
     fail,
     ...(zoom ? { zoom } : {}),
+    ...(screen ? { screen } : {}),
     stepMs: 100,
     now: () => now,
     setTimeout: (fn, ms) => {
@@ -56,17 +57,17 @@ const shell = NIBBLE(world, 'Sprout'); // herdr-3d, no agent
 const asleep = NIBBLE(world, 'Muffin'); // depot-manager, asleep
 
 /** What the screen shows after applying frames in order (full resets), via a real xterm. */
-async function screen(frames: Array<{ full: boolean; data: string }>): Promise<string[]> {
-  let t = new Terminal({ cols: 120, rows: 36, scrollback: 0 });
+async function screen(frames: Array<{ full: boolean; data: string }>, cols = 120, rows = 36): Promise<string[]> {
+  let t = new Terminal({ cols, rows, scrollback: 0 });
   for (const f of frames) {
     if (f.full) {
       t.dispose();
-      t = new Terminal({ cols: 120, rows: 36, scrollback: 0 });
+      t = new Terminal({ cols, rows, scrollback: 0 });
     }
     await new Promise<void>((r) => t.write(Buffer.from(f.data, 'base64'), r));
   }
   const b = t.buffer.active;
-  const lines = Array.from({ length: 36 }, (_, y) => (b.getLine(y)?.translateToString(true) ?? '').trimEnd());
+  const lines = Array.from({ length: rows }, (_, y) => (b.getLine(y)?.translateToString(true) ?? '').trimEnd());
   t.dispose();
   return lines;
 }
@@ -81,6 +82,15 @@ describe('recorded screens', () => {
       expect(r.frames.slice(1).every((f) => !f.full)).toBe(true);
       expect(r.frames.length).toBeGreaterThan(5);
     }
+  });
+
+  it('#175: the narrow one is a split pane, 60×40, with text from its first row to its last', async () => {
+    const r = loadRecording('narrow');
+    expect([r.cols, r.rows]).toEqual([60, 40]);
+    expect(r.frames[0]?.full).toBe(true);
+    const lines = await screen(r.frames.map((f) => ({ full: f.full, data: f.data.toString('base64') })), 60, 40);
+    expect(lines[0]).toMatch(/^row {2}1 /);
+    expect(lines[39]).toMatch(/^row 40 last row/);
   });
 });
 
@@ -203,6 +213,20 @@ describe('SimScreens', () => {
     expect(r.timers.size).toBeGreaterThan(0);
     r.sim.dispose();
     expect(r.timers.size).toBe(0);
+  });
+});
+
+// #175: simscreen=narrow shows the narrow recording on every laptop.
+describe('SimScreens: a narrow screen (#175)', () => {
+  it('watches of an agent and a shell both get the 60×40 recording', async () => {
+    const r = rig(undefined, undefined, 'narrow');
+    for (const id of [agent, shell]) {
+      const c = r.cmd('terminal.watch', { id, fps: 10 });
+      expect(c.got()[0]).toMatchObject({ t: 'ack', data: { cols: 60, rows: 40 } });
+      expect(c.got()[1]).toMatchObject({ t: 'terminal.frame', full: true, cols: 60, rows: 40 });
+    }
+    r.advance(5000);
+    expect((await screen(r.frames(shell), 60, 40))[39]).toMatch(/^row 40/);
   });
 });
 

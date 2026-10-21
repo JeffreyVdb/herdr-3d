@@ -171,7 +171,7 @@ export class LaptopTerminal {
     paintBuffer(
       this.g,
       this.term.buffer.active,
-      { cols: this.term.cols, rows: this.term.rows, width: this.canvas.width, height: this.canvas.height, cursor: !this.cursorHidden, glance: this.glance, font: this.font, theme: this.theme, zoom: this.zoom, fitWidth: true },
+      { cols: this.term.cols, rows: this.term.rows, width: this.canvas.width, height: this.canvas.height, cursor: !this.cursorHidden, glance: this.glance, font: this.font, theme: this.theme, zoom: this.zoom },
       this.cell,
     );
     this.texture.needsUpdate = true;

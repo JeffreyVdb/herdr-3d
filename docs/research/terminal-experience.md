@@ -12,6 +12,8 @@ Fix the automatic enlargement immediately, then give the seated workspace the fu
 
 ### Split panes are enlarged, even at 100%
 
+*(Fixed by #175: the automatic width fit is gone, so a split pane at 100% shows its whole grid and the sizing probe below now exits 0.)*
+
 [LaptopTerminal](../../game/src/laptop/terminal.ts) always passes `fitWidth: true` to [the painter](../../game/src/laptop/paint.ts). `widthFit` multiplies the ordinary fit by up to **2.5**, on top of the user's 70–200% zoom. The viewport then crops rows, following the cursor. This was intentional in [decision #74](../decisions.md#2026-10-01--a-laptop-of-a-split-pane-is-fullscreen-74); it explains why the size depends on the pane shape and why resetting to 100% does not restore the entire screen.
 
 The [sizing probe](terminal-experience-spike/sizing-probe.mjs) imports the real production `viewport` function through Vite. With a 1200×600 canvas, 40 source rows and 100% zoom:

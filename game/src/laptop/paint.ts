@@ -80,8 +80,6 @@ export interface PaintOptions {
   font?: string;
   /** #59: the seated zoom, percent (100: the pane fits the screen). Not for the glance view. */
   zoom?: number;
-  /** #74: a pane much narrower than the screen (a split pane) is shown at the width of the screen, at 100% (`viewport`). */
-  fitWidth?: boolean;
 }
 
 /** M6b: the glance view's grid: this many columns and lines, whatever the pane's size. */
@@ -366,23 +364,6 @@ export interface Viewport {
   rows: number;
 }
 
-/**
- * #74: a pane narrower than this share of the screen's width (a split herdr pane: 60 columns on a screen that fits
- * 110) is shown at the screen's width at 100%, not at the height-only fit that leaves black bars at both sides.
- * The cells grow together up to `FIT_WIDTH_MAX` times (the A+ steps then go on from there), so the screen shows the
- * bottom of the pane, the way a zoom does.
- */
-export const FIT_WIDTH_BELOW = 0.7;
-export const FIT_WIDTH_MAX = 2.5;
-
-/** How much more than the height fit the cells grow to fill the width (1: not a narrow pane). */
-export function widthFit(o: Pick<PaintOptions, 'cols' | 'rows' | 'width' | 'height'>): number {
-  const fit = cellGrid(o);
-  const w = o.width - Math.round(o.width * PAD) * 2;
-  const used = fit.cw * o.cols;
-  return used < w * FIT_WIDTH_BELOW ? Math.min(FIT_WIDTH_MAX, w / used) : 1;
-}
-
 /** Columns kept between the cursor and the viewport's right edge when it scrolls sideways to follow it. */
 const FOLLOW_MARGIN = 4;
 
@@ -390,11 +371,12 @@ const FOLLOW_MARGIN = 4;
  * #59: the seated screen at a zoom (percent). At 100% and below, the whole pane, its cells scaled and centred in the
  * letterbox. Above, the cells grow past the fit and the screen shows the bottom-left of the pane, moved just enough
  * to keep the cursor in view (with a margin on its right): an agent's prompt is at the bottom, a shell's cursor may be
- * anywhere. Pure: the same screen and cursor give the same viewport.
+ * anywhere. #175: only the user's zoom grows the cells: a narrow (split) pane at 100% is the whole grid, letterboxed.
+ * Pure: the same screen and cursor give the same viewport.
  */
-export function viewport(o: Pick<PaintOptions, 'cols' | 'rows' | 'width' | 'height'> & { zoom?: number; fitWidth?: boolean; cursor?: { x: number; y: number } | null }): Viewport {
+export function viewport(o: Pick<PaintOptions, 'cols' | 'rows' | 'width' | 'height'> & { zoom?: number; cursor?: { x: number; y: number } | null }): Viewport {
   const fit = cellGrid(o);
-  const z = Math.min(2, Math.max(0.7, (o.zoom ?? 100) / 100)) * (o.fitWidth ? widthFit(o) : 1);
+  const z = Math.min(2, Math.max(0.7, (o.zoom ?? 100) / 100));
   if (z === 1) return { ...fit, col0: 0, row0: 0, cols: o.cols, rows: o.rows };
   const cw = fit.cw * z;
   const ch = fit.ch * z;
@@ -447,7 +429,7 @@ export function paintBuffer(g: Paint2D, buf: IBuffer, o: PaintOptions, cell: IBu
     lines = glanceView(r.rows);
     view = cellGrid({ ...GLANCE, width: o.width, height: o.height });
   } else {
-    const v = viewport({ cols: o.cols, rows: o.rows, width: o.width, height: o.height, zoom: o.zoom ?? 100, fitWidth: o.fitWidth ?? false, cursor: showCursor ? { x: buf.cursorX, y: buf.cursorY } : null });
+    const v = viewport({ cols: o.cols, rows: o.rows, width: o.width, height: o.height, zoom: o.zoom ?? 100, cursor: showCursor ? { x: buf.cursorX, y: buf.cursorY } : null });
     lines = Array.from({ length: v.rows }, (_, i) => ({ row: v.row0 + i, c0: v.col0, c1: v.col0 + v.cols }));
     view = v;
   }
