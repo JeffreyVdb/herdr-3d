@@ -216,12 +216,19 @@ func (h *Hub) checkHomeProfile(ctx context.Context, p *codexProfileRun, rec *sto
 	return nil
 }
 
-// noHookNote is what a worker loses on a home that runs no herdr hook:
-// herdr's session hook (herdr-agent-state.sh) is how herdr, and so the
-// bridge, learns the worker's Codex session.
-func noHookNote(name string) string {
-	return name + " has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, so the bridge cannot " +
-		"join its thread (its async questions cannot be answered from the transcript) and a wake starts a new Codex session."
+// noHookNote is what a home that runs no herdr hook changes for a worker
+// (mode: its launch's): herdr's session hook (herdr-agent-state.sh) is how
+// herdr learns the worker's Codex session. The bridge learns it another
+// way (#139 S1e, S1b): a shared worker's from its own Codex server, which
+// does not follow a new session the terminal starts (/new); a legacy one's
+// by its folder in the profile's sessions.
+func noHookNote(name, mode string) string {
+	if mode == store.CodexShared {
+		return name + " has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, so the bridge takes " +
+			"its thread from the worker's own Codex server and does not follow a new session started in its terminal (/new)."
+	}
+	return name + " has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, so the bridge finds it " +
+		"by the worker's folder in " + name + "'s sessions (for its usage, and at sleep, so a wake resumes it)."
 }
 
 // profileChecked writes a check's outcome into rec, with the bare home's
@@ -233,7 +240,7 @@ func profileChecked(p *codexProfileRun, rec *store.CodexLaunch, account, plan, n
 		notes = append(notes, note)
 	}
 	if p.noHook {
-		notes = append(notes, noHookNote(p.name))
+		notes = append(notes, noHookNote(p.name, rec.Mode))
 	}
 	rec.ProfileNote = strings.Join(notes, " ")
 }
@@ -246,7 +253,7 @@ func profileOnRecord(p *codexProfileRun, rec *store.CodexLaunch) {
 	}
 	rec.Profile, rec.ProfileName, rec.Account, rec.Plan, rec.ProfileNote = p.key, p.name, "", "", ""
 	if !p.def && p.noHook {
-		rec.ProfileNote = noHookNote(p.name)
+		rec.ProfileNote = noHookNote(p.name, rec.Mode)
 	}
 }
 

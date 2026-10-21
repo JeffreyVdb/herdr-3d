@@ -55,6 +55,9 @@ type CodexHost interface {
 	// the same of Codex run with env (a profile's CODEX_HOME) on its own.
 	ReadProfile(ctx context.Context, sock string) (codexapp.Account, codexapp.Requirements, error)
 	HomeProfile(ctx context.Context, env []string) (codexapp.Account, codexapp.Requirements, error)
+	// #139 S1e: RootThread asks a launch's server (its socket) for the one
+	// root thread it has loaded ("": none, or more than one).
+	RootThread(ctx context.Context, sock string) (string, error)
 }
 
 // CodexChildren is #27's observer of a shared worker's child threads
@@ -136,6 +139,12 @@ func (c codexHost) HomeProfile(ctx context.Context, env []string) (codexapp.Acco
 	return codexapp.ReadHomeProfile(ctx, c.pre.Codex, append(base, env...))
 }
 
+func (codexHost) RootThread(ctx context.Context, sock string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, codexProfileTimeout)
+	defer cancel()
+	return codexapp.RootThread(ctx, sock)
+}
+
 // codexProfileTimeout bounds one of #139's checks of a profile.
 const codexProfileTimeout = 15 * time.Second
 
@@ -148,6 +157,7 @@ type codexState struct {
 	server   map[string]string               // worker id → proto.CodexServer* of a shared worker
 	watches  map[string]*codexWatch          // worker id → the bridge's join of its thread
 	busy     map[string]bool                 // worker id → a launch, resume or stop is under way
+	asking   map[string]bool                 // #139 S1e: worker id → its server is asked for its thread
 	events   map[string]func(codexapp.Event) // test hook: a worker's adapter events
 	// #156: worker id → its thread's async questions. Not the join's: they
 	// outlive it (a reconnect, a sleep) and go with the thread.
@@ -184,7 +194,7 @@ type codexWatch struct {
 // initCodex loads the switch and the launches (NewHub).
 func (h *Hub) initCodex(ctx context.Context) error {
 	h.cx = codexState{launches: map[string]store.CodexLaunch{}, server: map[string]string{},
-		watches: map[string]*codexWatch{}, busy: map[string]bool{}, questions: map[string]*codexapp.Questions{},
+		watches: map[string]*codexWatch{}, busy: map[string]bool{}, asking: map[string]bool{}, questions: map[string]*codexapp.Questions{},
 		sends: map[string]map[sendKey]store.CodexAsyncSend{}}
 	en, _, err := h.st.LoadCodexServerSettings(ctx)
 	if err != nil {
@@ -397,8 +407,42 @@ func (h *Hub) codexTick(ctx context.Context) {
 			h.log.Warn("codex server died", "worker", id, "pid", l.ServerPID)
 		}
 		h.setCodexServer(id, state)
+		if state == proto.CodexServerRunning {
+			h.askCodexThread(ctx, id, l)
+		}
 	}
 	h.syncCodexWatches(ctx)
+}
+
+// askCodexThread asks a running shared worker's server for its thread
+// (#139 S1e; hub goroutine), when herdr has reported none and it runs on
+// another Codex profile than the bridge's own: a home without herdr's
+// hook never reports one. The answer goes through noteCodexThread's rules,
+// and only while the worker still has none on the same server.
+func (h *Hub) askCodexThread(ctx context.Context, id string, l store.CodexLaunch) {
+	if l.Thread != "" || h.cx.asking[id] {
+		return
+	}
+	if _, other := h.codexHomeOf(id); !other {
+		return
+	}
+	h.cx.asking[id] = true
+	sock := launchOf(l).Socket()
+	go func() {
+		thread, err := h.opts.CodexHost.RootThread(ctx, sock)
+		_ = h.do(ctx, func(ctx context.Context) {
+			delete(h.cx.asking, id)
+			cur, ok := h.cx.launches[id]
+			switch {
+			case err != nil:
+				h.log.Debug("asking the codex server for its thread failed", "worker", id, "err", err)
+			case thread == "" || !ok || cur.Thread != "" || cur.Token != l.Token || h.cx.busy[id]:
+			default:
+				h.log.Info("codex thread learned from its own server", "worker", id, "thread", thread)
+				h.noteCodexThread(ctx, id, thread)
+			}
+		})
+	}()
 }
 
 // syncCodexWatches joins each shared worker's thread while its server runs,

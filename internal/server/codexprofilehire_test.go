@@ -190,7 +190,8 @@ func TestProfileHireShared(t *testing.T) {
 				t.Fatalf("host calls = %q", hc)
 			}
 			if l.Profile != "work" || l.ProfileName != "work" || l.Account != store.AccountConfirmed || l.Plan != "team" ||
-				!strings.Contains(l.ProfileNote, "work has no hooks.json with herdr's hook") {
+				!strings.Contains(l.ProfileNote, "work has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, "+
+					"so the bridge takes its thread from the worker's own Codex server") {
 				t.Fatalf("launch = %+v", l)
 			}
 			if c := res.Codex; c == nil || c.Profile != "work" || c.Account != proto.CodexAccountConfirmed || c.Plan != "team" || c.ProfileNote != l.ProfileNote {
@@ -397,7 +398,8 @@ func TestProfileHireLegacy(t *testing.T) {
 	}
 	l := pb.launches(t)[res.ID]
 	if l.Mode != store.CodexLegacy || l.Profile != "team" || l.Account != store.AccountUnconfirmed ||
-		!strings.Contains(l.ProfileNote, "it has no Codex server of its own") || res.Codex == nil || res.Codex.Profile != "team" {
+		!strings.Contains(l.ProfileNote, "it has no Codex server of its own") || res.Codex == nil || res.Codex.Profile != "team" ||
+		!strings.Contains(l.ProfileNote, "the bridge finds it by the worker's folder in team's sessions") {
 		t.Fatalf("launch = %+v, result %s", l, m.raw)
 	}
 
@@ -558,6 +560,96 @@ func TestProfileWakeGone(t *testing.T) {
 	}
 	pb.balanced(t)
 }
+
+// waitUntil polls ok for up to 2 s.
+func waitUntil(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	for end := time.Now().Add(2 * time.Second); !ok(); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatalf("timed out: %s", what)
+		}
+	}
+}
+
+// S1e: a shared worker on a bare profile home (herdr's hook does not run
+// there, so herdr reports no thread) gets its thread from its own server:
+// the bridge joins it, and a wake resumes it rather than starting a new
+// Codex session.
+func TestProfileThreadFromServer(t *testing.T) {
+	t.Parallel()
+	const th = "01a11172-ac09-7aa0-ab6b-84485199ad01"
+	pb := startProfileBridge(t, true, "")
+	pb.host.mu.Lock()
+	pb.host.root = func(string) (string, error) { return th, nil }
+	pb.host.mu.Unlock()
+	_, m := pb.c.command(proto.CmdWorkerHire, "a", profileHire(1, "work"))
+	a := ackData[proto.HireResult](t, m)
+	waitUntil(t, "the thread from its server", func() bool { return pb.launches(t)[a.ID].Thread == th })
+	waitUntil(t, "the join", func() bool {
+		pb.host.mu.Lock()
+		defer pb.host.mu.Unlock()
+		return slices.ContainsFunc(pb.host.watches, func(w *fakeCodexWatch) bool { return w.o.Thread == th })
+	})
+	pb.sleepShared(t, a.ID)
+	if l := pb.launches(t)[a.ID]; l.Thread != th {
+		t.Fatalf("launch after sleep = %+v", l)
+	}
+	calls, resumes := pb.wakeResumes(t)
+	if resumes[a.ID] != proto.ResumeFallback || !slices.ContainsFunc(calls, func(c string) bool {
+		return strings.HasPrefix(c, "codex-resume w1:p1 ") && strings.Contains(c, th)
+	}) || slices.ContainsFunc(calls, func(c string) bool { return strings.HasPrefix(c, "codex-remote ") }) {
+		t.Fatalf("wake calls = %q, resumes %+v", calls, resumes)
+	}
+	pb.balanced(t)
+}
+
+// S1e: the server's answer follows noteCodexThread's rules: a thread
+// another worker has is never taken, no answer changes nothing, and a
+// worker on the default profile (herdr's hook reports its thread) is
+// never asked.
+func TestProfileThreadFromServerRules(t *testing.T) {
+	t.Parallel()
+	const th = "01a11172-ac09-7aa0-ab6b-84485199ad02"
+	pb := startProfileBridge(t, true, "")
+	hire := func(desk int, key string) proto.HireResult {
+		_, m := pb.c.command(proto.CmdWorkerHire, "h", profileHire(desk, key))
+		return ackData[proto.HireResult](t, m)
+	}
+	sockOf := func(id string) string { return launchSocket(pb.launches(t)[id]) }
+	def := hire(3, "codex")
+	quiet := hire(4, "team") // its server has no root thread yet
+	waitUntil(t, "a second ask", func() bool { return countOf(pb.host.Asked(), sockOf(quiet.ID)) >= 2 })
+	if l := pb.launches(t)[quiet.ID]; l.Thread != "" {
+		t.Fatalf("no answer, launch = %+v", l)
+	}
+	a := hire(1, "work")
+	pb.fl.update(a.WorkspaceID, func(w *world.WorkerObs) { w.AgentSession = th }) // herdr's report: a's
+	waitUntil(t, "a's thread", func() bool { return pb.launches(t)[a.ID].Thread == th })
+	pb.host.mu.Lock()
+	pb.host.root = func(string) (string, error) { return th, nil } // every server now names a's
+	pb.host.mu.Unlock()
+	b := hire(2, "work")
+	waitUntil(t, "b asked twice", func() bool { return countOf(pb.host.Asked(), sockOf(b.ID)) >= 2 })
+	if l := pb.launches(t)[b.ID]; l.Thread != "" {
+		t.Fatalf("another worker's thread taken: %+v", l)
+	}
+	if slices.Contains(pb.host.Asked(), sockOf(def.ID)) {
+		t.Fatalf("a worker on the default was asked: %q", pb.host.Asked())
+	}
+}
+
+func countOf(list []string, s string) int {
+	n := 0
+	for _, x := range list {
+		if x == s {
+			n++
+		}
+	}
+	return n
+}
+
+// launchSocket is a launch's server socket (codexapp.Launch.Socket).
+func launchSocket(l store.CodexLaunch) string { return codexRun + "/" + l.Name + ".sock" }
 
 // AC5: release runs on every error path of a hire and a wake.
 func TestProfileReleaseOnErrors(t *testing.T) {

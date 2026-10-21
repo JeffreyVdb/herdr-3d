@@ -93,7 +93,7 @@ export class CodexProfilesSim {
       profile: key,
       account: 'confirmed',
       plan: p.plan,
-      profile_note: `${p.name} has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, so the bridge cannot join its thread (its async questions cannot be answered from the transcript) and a wake starts a new Codex session.`,
+      profile_note: `${p.name} has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, so the bridge takes its thread from the worker's own Codex server and does not follow a new session started in its terminal (/new).`,
     };
   }
 

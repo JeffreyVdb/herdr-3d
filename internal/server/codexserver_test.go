@@ -58,6 +58,10 @@ type fakeCodexHost struct {
 	server   func(sock string) (codexapp.Account, codexapp.Requirements, error)
 	home     func(env []string) (codexapp.Account, codexapp.Requirements, error)
 	checks   []string
+	// #139 S1e: what a server says its root thread is (nil: none yet), and
+	// the sockets asked, in order.
+	root  func(sock string) (string, error)
+	asked []string
 }
 
 // fakeSend is one Steer or StartTurn of a fake watch.
@@ -191,6 +195,23 @@ func (f *fakeCodexHost) HomeProfile(_ context.Context, env []string) (codexapp.A
 		return fn(env)
 	}
 	return codexapp.Account{SignedIn: true, Plan: "team", ID: "acct-1"}, codexapp.Requirements{}, nil
+}
+
+func (f *fakeCodexHost) RootThread(_ context.Context, sock string) (string, error) {
+	f.mu.Lock()
+	f.asked = append(f.asked, sock)
+	fn := f.root
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(sock)
+	}
+	return "", nil
+}
+
+func (f *fakeCodexHost) Asked() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.asked)
 }
 
 func (f *fakeCodexHost) Checks() []string {
@@ -795,6 +816,14 @@ func (sb *sharedBridge) hireArgsAndSleep(t *testing.T, args proto.WorkerHireArgs
 			}
 		}
 	}
+	sb.sleepShared(t, a.ID)
+	return a
+}
+
+// sleepShared puts floor s to sleep, its shared worker id's TUI quitting
+// as Codex's does, and readies its wake (the pane w1:p1 at its shell).
+func (sb *sharedBridge) sleepShared(t *testing.T, id string) {
+	t.Helper()
 	fh := sb.fl.fakeHerdr
 	var awake []world.WorkerObs
 	fh.onQuit = func(pane string) {
@@ -807,7 +836,7 @@ func (sb *sharedBridge) hireArgsAndSleep(t *testing.T, args proto.WorkerHireArgs
 		sb.floorAt("s", false, withStatus(awake, "unknown"))
 	}
 	sb.c.mustAck(proto.CmdFloorSleep, proto.FloorArgs{Session: "s"})
-	if l := sb.launches(t)[a.ID]; l.ServerPID != 0 {
+	if l := sb.launches(t)[id]; l.ServerPID != 0 {
 		t.Fatalf("launch after sleep = %+v", l)
 	}
 	fh.onStart = func() {
@@ -815,7 +844,6 @@ func (sb *sharedBridge) hireArgsAndSleep(t *testing.T, args proto.WorkerHireArgs
 		fh.setProcs("w1:p1", atShell())
 		sb.floorAt("s", true, withStatus(awake, "idle"))
 	}
-	return a
 }
 
 // wakeResumes wakes the floor and returns the herdr calls the wake made and
