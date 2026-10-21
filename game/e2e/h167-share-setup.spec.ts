@@ -66,7 +66,7 @@ for (const theme of THEMES)
     }
 
     // Spare: its own config.toml is in the way, so the plan is confirmed first; nothing is written before.
-    await key('share:spare').check();
+    await key('share:spare').click(); // not check(): the box stays as it is until the bridge has done it
     const confirm = row('spare').locator('[data-hook="share-confirm"]');
     await expect(confirm.locator('li')).toHaveText([/^config\.toml \(a file\) is kept as config\.toml\.before-share-\d{8}-\d{6}$/]);
     await expect(key('share-confirm:spare')).toBeFocused();
@@ -113,7 +113,7 @@ for (const theme of THEMES)
     expect((await shares(page)).at(-1)).toMatchObject({ t: 'codex_profiles.move_skill', args: { key: 'codex', skill: 'infra' } });
 
     // Off: the links become copies, at once.
-    await key('share:work').uncheck();
+    await key('share:work').click();
     await expect(row('work').locator('[data-hook="share-report"]')).toHaveText('Copied config.toml and AGENTS.md from codex: work keeps them as its own and no longer follows codex. Its hooks.json stays.');
     await expect(key('share:work')).not.toBeChecked();
     clean();
