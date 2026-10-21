@@ -2761,7 +2761,8 @@ key names, **never the text**.
   again); that is also how to ask for a full frame. `terminal.unwatch` stops it (a no-op for a worker not watched), and
   closing the connection stops them all. After a reconnect, watch again: frames are never replayed.
 - Caps: `--max-watches` per connection (default 6), `--max-observers` for the whole bridge (default 16); above either
-  `terminal.watch` is `capacity`. Each watch has its own observer. An observer that is stopping keeps its place under
+  `terminal.watch` is `capacity`. Each watch has its own observer (#176: or its controller, see [The seated
+  terminal](#the-seated-terminal-176)). An observer that is stopping keeps its place under
   both caps until it has exited and been reaped: a re-watch, or a watch right after an unwatch, starts its observer (and
   is acked) once the old one is gone, waiting up to 3 s (then `capacity`).
 - **Never block, never leak.** Each observer's output is read continuously, also while a frame is being sent. What
@@ -2774,11 +2775,17 @@ key names, **never the text**.
   SIGTERM to its process group, SIGKILL after 1 s, and it is always reaped (the kernel also kills it should the bridge
   die). Nothing survives an unwatch, a closed connection or a bridge shutdown.
 
+#176: the watch of the laptop you sit at owns its pane instead (`control`): see [The seated terminal](#the-seated-terminal-176).
+
 `terminal.closed` ends a watch the client did not stop itself: `reason` is `worker_removed` (the worker is gone or was
 sent home), `asleep` (its floor went to sleep), `pane_changed` (its primary pane changed: watch again) or
 `observer_failed`. It is not sent for a `terminal.unwatch`, a re-watch or a closed connection.
 
 ##### Fullscreen (#74)
+
+#176: a control watch (the seated laptop) never zooms: its PTY has the window's size. It sends `fullscreen: false` so that,
+when it falls back to read only, the game's "Zoom herdr tab" chip has the tab's facts (`terminal.zoom` works then as
+below).
 
 A pane in a split shows at its own size: the agent really renders at that width, and the observer cannot reflow it. herdr
 has **pane zoom**, a per-tab flag that makes the tab show its focused pane alone, so a `terminal.watch` with
@@ -2849,6 +2856,86 @@ only shows (the ambient laptops).
   (`why` is `watch`, `command`, `stand-up`), apart from the row of the `terminal.watch` / `terminal.zoom` command.
   The bridge runs exactly two zoom commands, `herdr --session <s> pane zoom <pane> --on` and `--off`: never `--toggle`,
   never without a mode.
+
+##### The seated terminal (#176)
+
+The laptop you sit at owns its pane: `"control": true` on its `terminal.watch` runs herdr's **terminal controller**
+for it instead of an observer, `herdr --session <s> terminal session control <pane> --cols C --rows R` (never
+`--takeover`), so the pane's real PTY has the size of the game's window and herdr's own history can be scrolled.
+
+```json
+{"t":"terminal.watch","req_id":"60","args":{"id":"6db1905e-…","fps":15,"cols":150,"rows":41,"fullscreen":false,"control":true}}
+{"t":"ack","req_id":"60","data":{"pane":"w1:p1","cols":150,"rows":41,"zoom":{"state":"single","applied":false},"control":true}}
+{"t":"terminal.control","id":"6db1905e-…","pane":"w1:p1","mode":"control","cols":150,"rows":41}
+{"t":"terminal.frame","id":"6db1905e-…","pane":"w1:p1","n":1,"full":true,"cols":150,"rows":41,"data":"G1s/MjAyNmgb…"}
+{"t":"terminal.resize","req_id":"61","args":{"id":"6db1905e-…","cols":132,"rows":38,"cell_width_px":8,"cell_height_px":17}}
+{"t":"ack","req_id":"61","data":{"cols":132,"rows":38}}
+{"t":"terminal.frame","id":"6db1905e-…","pane":"w1:p1","n":7,"full":true,"cols":132,"rows":38,"data":"G1s/MjAyNmgb…"}
+{"t":"terminal.scroll","req_id":"62","args":{"id":"6db1905e-…","direction":"up","lines":6,"column":40,"row":12}}
+{"t":"ack","req_id":"62"}
+{"t":"terminal.history","id":"6db1905e-…","pane":"w1:p1","offset":6,"max":279,"rows":38}
+{"t":"terminal.scroll","req_id":"63","args":{"id":"6db1905e-…","bottom":true}}
+{"t":"terminal.history","id":"6db1905e-…","pane":"w1:p1","offset":0,"max":279,"rows":38}
+```
+
+- **The watch.** `cols` × `rows` (40–300 × 10–100; absent: the pane's size) is the PTY's size from the attach on.
+  Everything else is the watch's as for an observer: the same frames, `fps`, the per-connection and bridge-wide caps
+  (the controller holds an observer's slot), the pending-frame bound, the restarts with backoff when the controller
+  exits without `terminal.closed`, and every end (`terminal.unwatch`, a watch again without `control`, a closed
+  connection, `terminal.closed`, the bridge shutting down) releases the pane. **At most one control watch per
+  connection** (another worker's is `capacity`; watch the first without `control` first). The ack has `"control":
+  true` when the bridge can own panes; without it (a bridge whose herdr cannot) the watch observes, as before.
+  A bridge before #176 refuses the argument (`bad_request`): watch without it. A control watch should send
+  `fullscreen: false`: it never zooms the tab (its size is the window's), but follows it for the read-only case below.
+- **One process for the whole seat.** Watching again restarts the controller, which releases the pane and attaches
+  again (a moment another client could take it, and a PTY resize for each). So a control watch is not watched again
+  for a new `fps`: it keeps its own. A resync (the connection's queue over half full, the pending frame over 512 KiB)
+  does not restart it either: what is pending is dropped and the bridge asks herdr for a full frame with a resize to
+  the same size; a client that misses a frame does the same with `terminal.resize` (a same size is a full frame).
+  A new controller of a worker waits (up to 3 s) for the bridge's controller of it that is being released.
+- **`terminal.control`** (connection-scoped like the frames, sent before the frame it applies to) says who owns the
+  pane: `mode: "control"` once the controller's first frame came; `mode: "observe"` when the watch became a read-only
+  observer, for good: `reason` `busy` (herdr refused the controller: another client owns the pane, its
+  `terminal.closed` says "… already has an attached client; retry with --takeover"), `taken_over` (another client
+  took it with `--takeover`) or `failed` (the controller kept failing: 4 failures in 30 s). Read only, the observer
+  has the **pane's own size** (an observer does not reflow) and follows it like a watch without `cols` (#74's
+  `terminal.state`); the bridge never retries control (sit again for that). `cols` × `rows` is the size of the
+  frames from then on. Two game connections at one worker: the second is `busy`.
+- **`terminal.resize`** `{id, cols, rows, cell_width_px?, cell_height_px?}` (40–300 × 10–100, a cell 0–256 px; a
+  smaller area is the client's to clip): the PTY's new size, for the connection's control watch of the worker. The
+  ack is `{cols, rows}`; herdr answers with a full frame at that size. While the controller is between processes
+  the next one starts at it. `bad_request` without a control watch, `invalid_state` read only. A client debounces
+  a window drag (the game: 120 ms).
+- **`terminal.scroll`** `{id, direction: "up"|"down", lines: 1–1000, column?, row?, modifiers?}` is a wheel over
+  cell `column` × `row` (0-based, inside 300 × 100) with herdr's modifier bits (Shift 1, Ctrl 2, Alt 4, 0–7); herdr
+  decides what it does: it moves its own history, or (an application with mouse reporting, an alternate screen
+  with alternate scroll) it goes to the application as wheel or arrow input. `{id, bottom: true}` brings the view
+  back to the live bottom (an empty `terminal.input` to the controller: herdr resets the view before any input).
+  Exactly one of the two, else `bad_request`; `invalid_state` read only or while the controller is starting.
+- **`terminal.history`** `{id, pane, offset, max, rows}`: where the view is in herdr's history, `offset` lines above
+  the live bottom (0: live), at most `max`, `rows` shown (herdr's `pane.get` `scroll`). Sent when it changes: the
+  bridge reads it a few times after a scroll and about once a second while the view is above the live bottom (new
+  output does not move the view, herdr keeps it where it was, so the offset grows and no frame comes for it).
+  Lossy like `terminal.state` (dropped when the connection has no room; the next reading sends it again).
+- **Typing returns to the live bottom.** Every input to the worker (`worker.keys`, `worker.prompt`, `worker.answer`,
+  every command on its input lane) first brings each controlled view of the worker back to the live bottom (herdr's
+  `pane send-keys` / `send-text` alone would leave it where it is), in lane order, and says so (`terminal.history`
+  at 0).
+- **Release.** Every end of the watch writes `terminal.release` (after a resize back to the pane's size before the
+  attach, from the session's snapshot: with no herdr TUI attached herdr would leave the PTY at the controller's
+  last size; with one, herdr gives the TUI its size back itself), gives the controller 1 s to exit, then SIGTERM,
+  SIGKILL after 1 s, always reaped. Nothing survives an unwatch, a closed connection or a bridge shutdown; a killed
+  bridge's controller is killed with it by the kernel, and herdr drops its ownership.
+- **The human's herdr TUI.** While the game owns a pane, herdr locks its size against its own TUI's layout: a herdr
+  screen attached to the session shows the pane at the game's size (wrapped or padded in its split) until you stand
+  up. Typing in the TUI still works.
+- **Limits.** Herdr's controller closes a client that sends more than 1 MiB of input at once (silently): the bridge
+  writes at most 64 KiB per command (the commands of #176 are a few dozen bytes). Mouse clicks to applications
+  (`terminal.mouse`, herdr 0.9.2+), pasting through the controller's bracketed paste and a history scrollbar are not
+  part of this: paste goes through `worker.prompt` / `worker.keys` as before.
+- **Audit.** `terminal.watch` (with `control`), `terminal.resize` and `terminal.scroll` are audited like the other
+  laptop commands, with their arguments (sizes, directions, line counts: no content). A client batches wheel events
+  (the game: at most one `terminal.scroll` per 60 ms) and debounces resizes, so the rows stay few.
 
 #### Input
 
