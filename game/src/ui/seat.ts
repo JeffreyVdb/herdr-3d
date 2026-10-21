@@ -214,7 +214,9 @@ export class SeatBar implements SeatView {
     this.notes.append(this.askLine, this.codexBox, this.roLine);
     this.termHost.id = 'seat-term';
     this.historyBar = new HistoryBar(this.termHost, { scroll: (n) => handlers.historyScroll?.(n), bottom: () => handlers.live?.() });
-    this.content.append(this.termHost, this.historyBar.el, this.historyBtn);
+    // #176 part 2: the scrollbar before the terminal, so Tab reaches it after the header, before the terminal's keyboard
+    // (from which Tab is the application's); it lies over the terminal all the same (absolute, z-index).
+    this.content.append(this.historyBar.el, this.termHost, this.historyBtn);
     this.head.append(line, this.modeBtn, this.standBtn);
     this.el.append(this.head, this.notes, this.content, this.keys, this.input);
     // #176: a copy while the seat has the keyboard (⌘C on a Mac, the browser's menu) takes the terminal's selection.
@@ -385,10 +387,16 @@ export class SeatBar implements SeatView {
 
   /**
    * #59: a control of the bar has the keyboard (its Tab, Enter, Space and arrows are its own, not the pane's). #176: so
-   * has the read-only terminal once tabbed to: its arrows scroll it (the rest still types).
+   * has the read-only terminal once tabbed to: its arrows scroll it (the rest still types). Part 2: so has the history
+   * scrollbar (Tab and Shift+Tab move the focus on; its own keys it handles itself).
    */
   owns(t: EventTarget | null): boolean {
-    return t instanceof Element && t !== this.input && this.el.contains(t) && (!!t.closest('button') || (t === this.termHost && t.hasAttribute('data-readonly')));
+    return (
+      t instanceof Element &&
+      t !== this.input &&
+      this.el.contains(t) &&
+      (!!t.closest('button') || this.historyBar.el.contains(t) || (t === this.termHost && t.hasAttribute('data-readonly')))
+    );
   }
 
   /**

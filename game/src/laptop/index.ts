@@ -27,6 +27,7 @@ import { InputLanes, InputQueue, MAX_PROMPT, seatedKey, textItems, type InputKin
 import type { PromptSecretsFlow } from '../ui/secretsFlow';
 import { fullscreenChip, type FullscreenChip } from './fullscreen';
 import { pasteImages } from './pasteImages';
+import { pasteStrip } from './pasteStrip';
 import { awayNote, whyAway } from './seatAway';
 import { screenTheme } from './paint';
 import type { ThemeLoader } from '../ui/themeLoader';
@@ -1273,7 +1274,9 @@ export class Laptops {
     // #176 part 2: the seat owns the pane: the paste is inserted (`worker.paste`), never submitted (#38).
     const insert = this.pastesInPlace(id);
     if (!flow?.on || !this.host.store.workers.get(id)?.agent_kind) return insert ? lane.insert(text) : lane.paste(text);
-    const t = text.replace(/\u0000/g, '');
+    // Reviewed as the bridge scans it: an inserted paste without NUL and paste markers (herdr.PasteStrip), else the
+    // review would be of another text (stale every time).
+    const t = insert ? pasteStrip(text) : text.replace(/\u0000/g, '');
     if (!t) return true;
     if (new TextEncoder().encode(t).length > MAX_PROMPT) return false;
     const req = { key: id, text: t, target: name };

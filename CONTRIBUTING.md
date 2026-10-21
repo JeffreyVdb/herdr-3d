@@ -1054,10 +1054,13 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   owns the pane there is no chip and no zoom. The simulator plays the controller (`simcontrol=old|none|busy`,
   `sim.write` raw text on a screen, `sim.terminal` what a watch has). #176 part 2: on a pane the seat owns a paste
   (from anywhere in the workspace's terminal view, `SeatBar.pasteIsTerminals`; text fields keep theirs) is
-  `worker.paste`, on the worker's lane (`InputQueue.insert`) after the secrets review and image markers; a left click
+  `worker.paste`, on the worker's lane (`InputQueue.insert`) after the secrets review (of the text as the bridge scans
+  it: `laptop/pasteStrip.ts`, `herdr.PasteStrip`'s rule, both held to `internal/herdr/testdata/paste-strip.json`) and
+  image markers; a left click
   on a cell that selected nothing and opened no link is `terminal.mouse` (`seatTerm.ts`, `cellAt` / `isClick`) when
   `terminal.control` says `mouse`, and the keys footer says "Mouse clicks need herdr 0.9.2 or newer" when it does not;
-  `ui/seatScrollbar.ts` is the history's scrollbar (its math pure and tested). The simulator plays them
+  `ui/seatScrollbar.ts` is the history's scrollbar (its math pure and tested; it is in the Tab route after the header,
+  before the terminal, and `SeatBar.owns` it, so its Tab moves the focus on). The simulator plays them
   (`worker.paste`, `terminal.mouse`, `simcontrol=nomouse|part1`). The simulator plays the zoom with `simzoom=old|single|split|headless`
   (`tools/fixture-screen.ts`; `sim.unzoom` is the human unzooming), and `simscreen=narrow` puts a split pane's 60×40
   screen (`fixtures/screens/narrow.jsonl`) on every laptop. #57: `askCard.ts` is the question card of the transcript view (the one pinned above the

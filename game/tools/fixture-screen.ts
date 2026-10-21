@@ -39,6 +39,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pasteStrip } from '../src/laptop/pasteStrip.ts';
 import type { Floor, Worker } from '../src/net/protocol.ts';
 
 type Msg = Record<string, unknown>;
@@ -367,7 +368,7 @@ export class SimScreens {
     this.only(a, ['id', 'text', 'secrets']);
     const id = this.str(a, 'id');
     if (typeof a.text !== 'string') throw new ScreenError('bad_request', 'bad args: text must be a string');
-    const text = a.text.replace(/\u0000/g, '').replace(/\x1b\[20[01]~/g, '');
+    const text = pasteStrip(a.text); // as herdr.PasteStrip
     if (Buffer.byteLength(text) > 16384) throw new ScreenError('bad_request', `bad args: text must be at most 16384 bytes, got ${Buffer.byteLength(text)}`);
     const c = this.owned(id, 'worker.paste');
     if (this.host.failNext('input_failed')) throw new ScreenError('input_failed', 'input_failed: herdr terminal controller: broken pipe (simulated)');

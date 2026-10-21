@@ -3035,10 +3035,16 @@ for it instead of an observer, `herdr --session <s> terminal session control <pa
   full frame for it came (herdr acknowledges no input, but answers each resize with a full frame after what came
   before it; at most 2 s, then it goes on). The game's screen gets that full frame too. A full controller queue makes room as the reset to live
   does (queued wheels are moot once input lands); a paste that still finds no room, or that is dropped when the pane
-  is released, fails with `input_failed`, never silently. #108: an agent's paste goes through the same gate as its
-  prompt (with prompt secrets reviewed, a possible secret without `secrets` is `secrets_review_required`; with a
-  review, the protected ranges go as file references, checked again right before the paste is written); the ack's
-  `sent` is then the text pasted and `protected` the ranges that went to files. A shell's paste is not scanned (as its
+  is released, fails with `input_failed`, never silently. A paste still queued when its 5 s run out (or the bridge
+  stops) is taken out of the queue and fails: it is never written later, behind what was typed after it; once herdr's
+  stdin is taking it, the job waits for that write, so the lane's next input cannot overtake it. #108: an agent's
+  paste goes through the same gate as its prompt (with prompt secrets reviewed, a possible secret without `secrets` is
+  `secrets_review_required`; with a review, the protected ranges go as file references, checked again right before
+  the paste is written; a paste that failed before any of it was written removes its files, one whose write failed
+  leaves them the worker's, as some of it may be with the pane); the review is of the text the bridge scans, the text
+  with NUL and paste markers removed (a client strips them first, `herdr.PasteStrip`'s rule: the game's `pasteStrip`
+  passes its test vectors, `internal/herdr/testdata/paste-strip.json`; a review of the unstripped text is
+  `secrets_review_stale`); the ack's `sent` is then the text pasted and `protected` the ranges that went to files. A shell's paste is not scanned (as its
   keys), unless a review comes with it. The game sends it only when `terminal.control` says `paste`; otherwise (read
   only, an older bridge) a paste goes as before (`worker.prompt` for an agent, `worker.keys` for a shell).
 - **`terminal.mouse`** `{id, button?, column, row, modifiers?}` (#176 part 2) is a click: `button` `left` (the default),

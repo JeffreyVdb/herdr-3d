@@ -65,6 +65,7 @@
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { pasteStrip } from '../src/laptop/pasteStrip.ts';
 
 type Obj = Record<string, unknown>;
 type Send = (m: Obj) => void;
@@ -631,6 +632,7 @@ export class SecretsSim {
           return this.gatePrompt(a, review, pending, one, undo);
         case 'worker.paste':
           if (pending !== undefined) throw this.h.error('bad_request', 'bad args: json: unknown field "secrets_pending"');
+          if (typeof a.text === 'string') a.text = pasteStrip(a.text); // the bridge scans the text stripped (herdr.PasteStrip)
           if (review === undefined && w.agentWorker && !w.agentWorker(a.id)) return null;
           return this.gatePrompt(a, review, undefined, one, undo);
         case 'worker.hire': {

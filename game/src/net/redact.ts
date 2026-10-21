@@ -28,6 +28,7 @@ function maskReviewed(text: string, secrets: unknown): string {
 /** #108 round 4: the field a single review is of, per command (`secrets` is a `SecretsReview` there). */
 const REVIEWED: Partial<Record<CommandName, string>> = {
   'worker.prompt': 'text',
+  'worker.paste': 'text', // #176 part 2
   'packup.detect': 'text',
   'hire.interpret': 'text',
   'worker.hire': 'prompt',

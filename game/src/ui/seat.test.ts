@@ -293,6 +293,23 @@ describe('the seated workspace (#176)', () => {
     expect(bar.el.querySelector('.seat-keys')?.textContent).not.toContain('mouse');
   });
 
+  it('#176 part 2: the history scrollbar owns its Tab and Shift+Tab, and is in the Tab route after the header, before the terminal', () => {
+    const { bar } = setup();
+    bar.show('Tofu', false);
+    bar.history({ offset: 5, max: 80, rows: 30 });
+    const rail = bar.el.querySelector<HTMLElement>('.seat-scroll')!;
+    expect(rail.hidden).toBe(false);
+    expect(rail.tabIndex).toBe(0);
+    expect(bar.owns(rail)).toBe(true); // Laptops.key: its Tab, Shift+Tab, Enter and Space take the browser's path
+    expect(bar.owns(rail.firstElementChild)).toBe(true); // its thumb
+    // Document order is the Tab order: Stand up, the rail, then the terminal (whose focus goes to the seat's keyboard).
+    const stand = [...bar.el.querySelectorAll('button')].find((b) => b.textContent?.includes('Stand up'))!;
+    const tabbable = [...bar.el.querySelectorAll<HTMLElement>('button, [tabindex], textarea')];
+    expect(tabbable.indexOf(stand)).toBeLessThan(tabbable.indexOf(rail));
+    expect(rail.compareDocumentPosition(bar.termHost) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(bar.owns(bar.input)).toBe(false); // Tab in the terminal's keyboard stays the application's
+  });
+
   it('the worker’s status, the read-only line and the history indicator; Back to live goes to the host', () => {
     const { bar, hud, calls } = setup();
     bar.show('Tofu', false);

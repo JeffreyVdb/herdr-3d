@@ -3,6 +3,7 @@ package herdr
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -316,6 +317,29 @@ func TestPasteClean(t *testing.T) {
 		}
 		if got := PasteText(in); got != PasteStart+want+PasteEnd {
 			t.Errorf("PasteText(%q) = %q", in, got)
+		}
+	}
+}
+
+// testdata/paste-strip.json is PasteStrip's vectors: the game strips a
+// paste with its own port of it before the paste's secrets are reviewed
+// (game/src/laptop/pasteStrip.test.ts reads them too), so the text reviewed is the
+// text the bridge scans.
+func TestPasteStripVectors(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "paste-strip.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors [][2]string
+	if err := json.Unmarshal(b, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	if len(vectors) < 10 {
+		t.Fatalf("%d vectors", len(vectors))
+	}
+	for _, v := range vectors {
+		if got := PasteStrip(v[0]); got != v[1] {
+			t.Errorf("PasteStrip(%q) = %q, want %q", v[0], got, v[1])
 		}
 	}
 }

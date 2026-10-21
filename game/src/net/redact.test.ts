@@ -87,6 +87,7 @@ describe('#108 round 4: every reviewed field of every route is masked in the com
     const one: Array<[Parameters<typeof loggedArgs>[0], string, Record<string, unknown>]> = [
       ['worker.hire', 'prompt', { floor: 'f1', desk_index: 0, harness: 'claude', model: 'm', effort: 'high' }],
       ['worker.wrapup', 'prompt', { id: 'w1' }],
+      ['worker.paste', 'text', { id: 'w1' }], // #176 part 2
       ['packup.detect', 'text', { id: 'w1' }],
       ['hire.interpret', 'text', {}],
       ['worker.handoff', 'instruction', { worker: 'w1', mode: 'agent', op: 'o1' }],

@@ -159,6 +159,83 @@ test('herdr before 0.9.2: a click sends nothing, and the footer says why', async
   clean();
 });
 
+test('herdr before 0.9.2 on a narrow window (560, 390): the footer still says why clicks do nothing, inside it', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 560, height: 800 });
+  await sitAt(page, 'Tofu', '&simcontrol=nomouse');
+  await expect.poll(() => mode(page)).toBe('control');
+  const note = page.locator('.seat-clicks');
+  for (const width of [560, 390]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect(note).toBeVisible();
+    await expect(note).toHaveText('Mouse clicks need herdr 0.9.2 or newer');
+    await expect(page.locator('.seat-keys .seat-aside:not(.seat-clicks)')).toBeHidden(); // the long hint gives way
+    const fit = await page.evaluate(() => {
+      const keys = document.querySelector('.seat-keys') as HTMLElement;
+      const n = document.querySelector('.seat-clicks') as HTMLElement;
+      const k = keys.getBoundingClientRect();
+      const r = n.getBoundingClientRect();
+      const others = [...keys.children].filter((c) => c !== n && (c as HTMLElement).offsetParent !== null).map((c) => c.getBoundingClientRect());
+      return {
+        inside: r.left >= k.left && r.right <= k.right + 0.5 && r.top >= k.top && r.bottom <= k.bottom + 0.5,
+        cut: n.scrollWidth > n.clientWidth + 1,
+        overlaps: others.some((o) => o.left < r.right && r.left < o.right && o.top < r.bottom && r.top < o.bottom),
+        pageScrolls: document.documentElement.scrollWidth > window.innerWidth,
+      };
+    });
+    expect(fit, `at ${width} px`).toEqual({ inside: true, cut: false, overlaps: false, pageScrolls: false });
+    await shot(page, `h176-no-clicks-${width}`);
+  }
+  clean();
+});
+
+test('the history scrollbar is in the Tab route after the header, before the terminal; Tab and Shift+Tab on it move the focus', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await sitAt(page);
+  await expect.poll(() => mode(page)).toBe('control');
+  const bar = page.locator('.seat-scroll');
+  const mid = await cellAt(page, 20, 10);
+  await page.mouse.move(mid.x, mid.y);
+  await page.mouse.wheel(0, -120);
+  await expect(bar).toBeVisible();
+  const focused = () =>
+    page.evaluate(() => {
+      const a = document.activeElement as HTMLElement | null;
+      if (!a) return '';
+      if (a.matches('.seat-scroll')) return 'scrollbar';
+      if (a.matches('.seat-input')) return 'input';
+      return `${a.tagName.toLowerCase()}:${(a.getAttribute('aria-label') ?? a.textContent ?? '').trim().slice(0, 24)}`;
+    });
+  // Ctrl+, goes to the terminal's controls in the header; Tab on from there, as a keyboard user would.
+  await page.keyboard.press('Control+Comma');
+  await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('.seat-look'))).toBe(true);
+  const route: string[] = [await focused()];
+  for (let i = 0; i < 20 && route.at(-1) !== 'scrollbar' && route.at(-1) !== 'input'; i++) {
+    await page.keyboard.press('Tab');
+    route.push(await focused());
+  }
+  expect(route.at(-1), route.join(' → ')).toBe('scrollbar');
+  const before = route.at(-2)!;
+  expect(before).toMatch(/Stand up/);
+  // Shift+Tab goes back to the header, Tab comes back, and Tab on goes to the terminal's keyboard.
+  await page.keyboard.press('Shift+Tab');
+  expect(await focused()).toBe(before);
+  await page.keyboard.press('Tab');
+  expect(await focused()).toBe('scrollbar');
+  await page.keyboard.press('Tab');
+  await expect.poll(focused).toBe('input');
+  // None of those Tabs reached the pane.
+  expect(JSON.stringify(await sentOf(page, 'worker.keys'))).not.toMatch(/tab/i);
+  // From the terminal's keyboard Tab is the application's.
+  await page.keyboard.press('Tab');
+  await expect.poll(async () => JSON.stringify(await sentOf(page, 'worker.keys'))).toMatch(/"tab"/);
+  expect(await focused()).toBe('input');
+  clean();
+});
+
 test('the history scrollbar: shows herdr’s place, drags, pages, keys, follows new output and goes back to live', async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);

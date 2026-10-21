@@ -281,6 +281,39 @@ test('a paste into an agent’s terminal is reviewed first: exact UTF-16 ranges 
   clean();
 });
 
+// #176 part 2 (P1, P2): a paste with bracketed paste markers in it is reviewed as the bridge scans it (NUL and markers
+// out), so one Confirm inserts it; the command log (App.sent) masks what was protected, as for worker.prompt.
+test('a paste with paste markers in it is reviewed once, as the bridge scans it, and its secret is masked in the command log', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m5', '', `${SIM}&simsecretson=1`);
+  const id = await sitAt(page, 'Pebble', 'terminal');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seatTerminal()?.control?.mode)).toBe('control');
+  const secret = 'Rq-Sentinel-93xQ!';
+  const stripped = `deploy PASSWORD=${secret}\nthen check`;
+  await page.evaluate((text) => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', text);
+    document.querySelector('.seat-input')?.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, `\x1b[200~deploy PASSWORD=${secret}\nthen \x1b[20\x1b[201~0~check\x1b[201~\u0000`);
+  const dlg = page.locator('dialog.desk-dlg--secrets');
+  await secretReviewReady(page);
+  expect(await reviewText(page)).toBe(stripped);
+  await dlg.getByRole('button', { name: 'Confirm and send' }).click();
+  await expect.poll(() => page.evaluate(() => window.__h3d.seat().note)).toMatch(/Pasted into Pebble/);
+  await expect(dlg).toBeHidden();
+  const pastes = await sent(page, 'worker.paste');
+  expect(pastes.map((c) => c.result?.ok)).toEqual([true]);
+  expect(await sent(page, 'prompt_secrets.scan')).toHaveLength(1); // reviewed once: never stale
+  const args = pastes[0]!.args as { id: string; text: string };
+  expect(args.text).toBe(`deploy PASSWORD=${'•'.repeat(secret.length)}\nthen check`);
+  expect(JSON.stringify(await page.evaluate(() => window.__h3d.sent()))).not.toContain(secret);
+  const ack = pastes[0]!.result as { data?: { sent?: string } };
+  const files = (await page.evaluate(() => window.__h3d.simSecretFiles())).filter((f) => refsOf(ack.data?.sent).has(f.path));
+  expect(files.map((f) => [f.owner, f.text])).toEqual([[id, secret]]);
+  clean();
+});
+
 test('stale: reviewed again with a note, sent only on the new Confirm; the switch going off mid-review closes it, nothing sent', async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
