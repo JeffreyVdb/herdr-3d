@@ -196,6 +196,16 @@ describe('the seated workspace (#176)', () => {
     return { bar, hud, canvas, overlay, topbar, toast, plate, dialog, calls };
   };
 
+  it('the read-only terminal has its own arrows (they scroll it); the owned one gives every key to the pane', () => {
+    const { bar } = setup();
+    expect(bar.owns(bar.termHost)).toBe(false);
+    bar.termHost.setAttribute('data-readonly', '');
+    expect(bar.owns(bar.termHost)).toBe(true);
+    const cell = document.createElement('div');
+    bar.termHost.append(cell);
+    expect(bar.owns(cell)).toBe(false); // xterm's own parts: a press there gives the keyboard back to the seat
+  });
+
   it('covers the game: what is behind it is inert (never the toasts, a popover or a dialog), and the focus goes back after', () => {
     const { bar, canvas, overlay, topbar, toast, plate, dialog } = setup();
     topbar.focus();

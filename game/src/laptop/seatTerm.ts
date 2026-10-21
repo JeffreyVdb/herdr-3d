@@ -78,6 +78,8 @@ export class SeatTerminal {
   private mounting: Promise<void> | null = null;
   /** Fits its area (the seat owns the pane) or shows the pane at its own size (read only). */
   private fitting = true;
+  /** The host's scroll at a press, kept through xterm focusing its textarea (read only, the pane scrolls in the host). */
+  private scrollAt: [number, number] | null = null;
   /** Frames written (tests). */
   frames = 0;
 
@@ -156,8 +158,15 @@ export class SeatTerminal {
     this.term = term;
     this.fit = fit;
     term.open(this.host);
-    // The widget's own textarea never keeps the keyboard: the seat's does (one owner of focus and IME).
-    term.textarea?.addEventListener('focus', () => this.deps.keyboard());
+    // The widget's own textarea never keeps the keyboard: the seat's does (one owner of focus and IME). xterm focuses it
+    // on every mousedown, and it sits far to the left: a read-only pane scrolled sideways would jump back to its start
+    // under the click, so the host keeps the scroll it had.
+    term.textarea?.addEventListener('focus', () => {
+      if (this.scrollAt) [this.host.scrollLeft, this.host.scrollTop] = this.scrollAt;
+      this.scrollAt = null;
+      this.deps.keyboard();
+    });
+    this.host.addEventListener('mousedown', this.onPress, { capture: true });
     this.host.addEventListener('paste', this.onPaste, { capture: true });
     // xterm knows its cell size only once it has rendered: a fit that found none is tried again then.
     this.offs.push(term.onRender(() => {
@@ -174,6 +183,10 @@ export class SeatTerminal {
     if (linkOpens(e, this.deps.mac, uri)) this.deps.open(uri);
   }
 
+  private readonly onPress = () => {
+    this.scrollAt = [this.host.scrollLeft, this.host.scrollTop];
+  };
+
   private readonly onPaste = (e: ClipboardEvent) => {
     // Before xterm's own listener (bubble phase), which would turn it into input.
     e.preventDefault();
@@ -183,8 +196,9 @@ export class SeatTerminal {
   };
 
   private onWheel(e: WheelEvent): boolean {
-    // Ctrl+wheel zooms the text (the seat's window listener); the rest is herdr's history.
-    if (e.ctrlKey || e.metaKey) return false;
+    // Ctrl+wheel zooms the text (the seat's window listener); the rest is herdr's history. Read only there is no history
+    // to move: the wheel pans the pane inside the content area (the host's own scrolling; xterm is told nothing).
+    if (e.ctrlKey || e.metaKey || !this.fitting) return false;
     if (e.cancelable) e.preventDefault();
     const cell = this.cell();
     const lines = this.wheelLines.add(e.deltaY, e.deltaMode, cell.height, this.rows);
@@ -246,11 +260,23 @@ export class SeatTerminal {
     } else this.debounce.call(() => this.deps.grid(grid));
   }
 
-  /** The seat owns the pane (fit its area) or shows it read only (the pane at its own size, never resized from here). */
+  /**
+   * The seat owns the pane (fit its area) or shows it read only (the pane at its own size, never resized from here):
+   * a pane bigger than the area scrolls inside it, by wheel or, once tabbed to, by the arrow keys.
+   */
   setFitting(on: boolean): void {
     if (on === this.fitting) return;
     this.fitting = on;
     this.host.toggleAttribute('data-readonly', !on);
+    if (on) {
+      this.host.removeAttribute('tabindex');
+      this.host.removeAttribute('role');
+      this.host.removeAttribute('aria-label');
+    } else {
+      this.host.tabIndex = 0;
+      this.host.setAttribute('role', 'region');
+      this.host.setAttribute('aria-label', 'Terminal, read only: the arrow keys scroll it');
+    }
     if (on) {
       this.proposed = null;
       this.refit(true);
@@ -324,6 +350,7 @@ export class SeatTerminal {
     this.observer?.disconnect();
     this.dpr?.removeEventListener('change', this.onDpr);
     this.host.removeEventListener('paste', this.onPaste, { capture: true });
+    this.host.removeEventListener('mousedown', this.onPress, { capture: true });
     for (const d of this.offs.splice(0)) d.dispose();
     this.term?.dispose();
     this.term = null;

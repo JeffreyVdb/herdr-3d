@@ -354,9 +354,12 @@ export class SeatBar implements SeatView {
     return t instanceof Element && this.look.contains(t);
   }
 
-  /** #59: a control of the bar has the keyboard (its Tab, Enter, Space and arrows are its own, not the pane's). */
+  /**
+   * #59: a control of the bar has the keyboard (its Tab, Enter, Space and arrows are its own, not the pane's). #176: so
+   * has the read-only terminal once tabbed to or clicked beside its cells: its arrows scroll it (the rest still types).
+   */
   owns(t: EventTarget | null): boolean {
-    return t instanceof Element && t !== this.input && this.el.contains(t) && !!t.closest('button');
+    return t instanceof Element && t !== this.input && this.el.contains(t) && (!!t.closest('button') || (t === this.termHost && t.hasAttribute('data-readonly')));
   }
 
   /**

@@ -42,8 +42,13 @@
 .seat-status[hidden] {
   display: none;
 }
+/* Whose laptop it is gives way last: the note goes first, then the name ends in an ellipsis, so the line never runs
+   under the controls beside it. */
 .seat-tape {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 3px 9px 2px;
   font-size: 12px;
   font-weight: 800;
@@ -78,6 +83,7 @@
   display: none;
 }
 .seat-note {
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -297,10 +303,18 @@
   background-color: transparent !important;
   scrollbar-width: none;
 }
-/* Read only (another client owns the pane): the pane at its own size, never stretched, centred at the top. */
+/* Read only (another client owns the pane): the pane at its own size, never stretched, centred at the top; a pane bigger
+   than the area scrolls inside it (wheel, scrollbars, the arrow keys once tabbed to). */
 .seat-term[data-readonly] {
   display: flex;
   justify-content: safe center;
+  align-items: safe flex-start;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+.seat-term[data-readonly]:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
 }
 .seat-term[data-readonly] .xterm {
   height: auto;
@@ -624,12 +638,18 @@
   }
 }
 
-/* A phone's width: whose laptop it is and Stand up share the first row, the switch and the terminal's controls the
-   next; the keys row drops the switch's key it would repeat and the hint. */
+/* A phone's width: whose laptop it is and Stand up share the first row (the name gives way, never Stand up), the switch
+   and the terminal's controls the next (an empty full-width item breaks the row; the rows' gap is their margin, so it
+   adds none); the keys row drops the switch's key it would repeat and the hint. */
 @media (max-width: 560px) {
   .seat-head {
     padding: 6px 8px;
-    gap: 6px 10px;
+    gap: 0 10px;
+  }
+  .seat-head::after {
+    content: '';
+    order: 1;
+    flex: 0 0 100%;
   }
   .seat-line {
     flex: 1 1 0;
@@ -641,6 +661,7 @@
   .seat-mode,
   .seat-look {
     order: 2;
+    margin-top: 6px;
   }
   .seat-look {
     margin-left: auto;

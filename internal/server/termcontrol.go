@@ -166,7 +166,9 @@ func (h *Hub) stopController(w *watch, cs herdr.ControlStream) {
 		w.ctl.stream = nil
 	}
 	h.term.mu.Unlock()
-	cs.Close()
+	if err := cs.Close(); err != nil {
+		h.log.Warn("seated terminal not released", "client", w.c.name, "worker", w.id, "pane", w.pane, "err", err)
+	}
 	h.term.mu.Lock()
 	defer h.term.mu.Unlock()
 	for p := range h.term.ctlProcs[w.id] {
@@ -387,7 +389,10 @@ func (t *termWatches) pokeHistory(w *watch) {
 // toLive brings every controlled view of worker id back to the live bottom
 // before input reaches it (an empty terminal.input: herdr resets the
 // scroll), as typing into a terminal does. A view known to be above it says
-// so at once (terminal.history at 0), and its offset is read again.
+// so at once (terminal.history at 0), and its offset is read again. A full
+// queue makes room for the reset (it supersedes the wheels), so only a
+// controller that is closing refuses it: the input still goes, and that view
+// keeps the offset it had until it is read again.
 func (h *Hub) toLive(id string) {
 	h.term.mu.Lock()
 	var up []*watch
@@ -396,7 +401,10 @@ func (h *Hub) toLive(id string) {
 		if w == nil || !w.control || w.stopped || w.ctl.stream == nil || w.ctl.mode != proto.ControlOwned {
 			continue
 		}
-		_ = w.ctl.stream.Live()
+		if err := w.ctl.stream.Live(); err != nil {
+			h.term.pokeHistory(w)
+			continue
+		}
 		if w.ctl.hist.Offset > 0 {
 			w.ctl.hist.Offset = 0
 			w.ctl.histSent = false

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -145,7 +146,7 @@ func TestControlTerminalCommands(t *testing.T) {
 		"row":        func() error { return ct.Scroll(true, 1, 0, -1, 0) },
 		"modifiers":  func() error { return ct.Scroll(true, 1, 0, 0, 8) },
 		"huge command": func() error {
-			return ct.(*controller).send(map[string]string{"text": strings.Repeat("x", maxControlLine)})
+			return ct.(*controller).send(kindLive, map[string]string{"text": strings.Repeat("x", maxControlLine)})
 		},
 	} {
 		if err := call(); !errors.Is(err, ErrNotAllowed) {
@@ -271,4 +272,186 @@ func TestControlTerminalExec(t *testing.T) {
 	if want := `{"type":"terminal.resize","cols":100,"rows":30,"cell_width_px":0,"cell_height_px":0}` + "\n" + `{"type":"terminal.release"}` + "\n"; string(b) != want {
 		t.Fatalf("stdin = %q, want %q", b, want)
 	}
+}
+
+// stalledController is a controller whose stdin stops reading at the first
+// command until it is let go (or stopped): the commands after it wait in the
+// queue, as with a herdr that is busy.
+type stalledController struct {
+	entered, unblock, done chan struct{}
+	once, letGo, exited    sync.Once
+
+	mu    sync.Mutex
+	lines []string
+	stops int
+}
+
+func newStalledController() *stalledController {
+	return &stalledController{entered: make(chan struct{}), unblock: make(chan struct{}), done: make(chan struct{})}
+}
+
+func (p *stalledController) Write(b []byte) (int, error) {
+	p.once.Do(func() { close(p.entered); <-p.unblock })
+	select {
+	case <-p.done:
+		return 0, io.ErrClosedPipe
+	default:
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.lines = append(p.lines, strings.TrimSuffix(string(b), "\n"))
+	return len(b), nil
+}
+func (p *stalledController) Close() error          { return nil }
+func (p *stalledController) Stdout() io.Reader     { return strings.NewReader("") }
+func (p *stalledController) Stdin() io.WriteCloser { return p }
+func (p *stalledController) Done() <-chan struct{} { return p.done }
+func (p *stalledController) release()              { p.letGo.Do(func() { close(p.unblock) }) }
+func (p *stalledController) Stop() error {
+	p.mu.Lock()
+	p.stops++
+	p.mu.Unlock()
+	p.exited.Do(func() { close(p.done) })
+	p.release()
+	return nil
+}
+func (p *stalledController) written() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.Clone(p.lines)
+}
+
+// stalled starts a controller on a stalled stdin with its first command (a
+// scroll) taken and n more scrolls queued.
+func stalled(t *testing.T, n int) (*stalledController, ControlStream) {
+	t.Helper()
+	p := newStalledController()
+	c := &Control{Duplex: func([]string) (DuplexProc, error) { return p, nil }}
+	ct, err := c.ControlTerminal(context.Background(), "h3d-it-1", "w1:p1", 120, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ct.Scroll(true, 1, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	<-p.entered
+	for i := range n {
+		if err := ct.Scroll(true, 1, i, 0, 0); err != nil {
+			t.Fatalf("scroll %d: %v", i, err)
+		}
+	}
+	return p, ct
+}
+
+const (
+	scrollLine  = `{"type":"terminal.scroll","direction":"up","lines":1,"source":"wheel","column":%d,"row":0,"modifiers":0}`
+	restoreLine = `{"type":"terminal.resize","cols":80,"rows":24,"cell_width_px":0,"cell_height_px":0}`
+	releaseLine = `{"type":"terminal.release"}`
+	liveLine    = `{"type":"terminal.input"}`
+)
+
+// Close delivers the restore size and then the release even when the queue
+// is full (herdr stalled for a moment): what was queued before them is moot
+// once the pane is released, and nothing is written after the release.
+func TestControlTerminalCloseThroughAFullQueue(t *testing.T) {
+	p, ct := stalled(t, controlQueue)
+	if err := ct.Scroll(true, 1, 0, 0, 0); err == nil {
+		t.Fatal("a full queue took another scroll")
+	}
+	ct.RestoreOnRelease(80, 24)
+	time.AfterFunc(20*time.Millisecond, p.release)
+	if err := ct.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	got := p.written()
+	if len(got) < 3 || !slices.Equal(got[len(got)-2:], []string{restoreLine, releaseLine}) {
+		t.Fatalf("stdin ends %q, want the restore then the release", got[max(0, len(got)-3):])
+	}
+	for _, l := range got[:len(got)-2] {
+		if !strings.Contains(l, `"terminal.scroll"`) {
+			t.Fatalf("before the restore: %s", l)
+		}
+	}
+}
+
+// A controller whose stdin never reads again is stopped after ReleaseGrace,
+// and Close says the release did not reach it.
+func TestControlTerminalCloseOfAWedgedController(t *testing.T) {
+	p, ct := stalled(t, controlQueue)
+	ct.RestoreOnRelease(80, 24)
+	start := time.Now()
+	err := ct.Close()
+	if took := time.Since(start); took < ReleaseGrace || took > ReleaseGrace+time.Second {
+		t.Fatalf("Close took %s, want about %s", took, ReleaseGrace)
+	}
+	if err == nil {
+		t.Fatal("Close of a controller that never read its release: no error")
+	}
+	if p.stops != 1 {
+		t.Fatalf("stopped %d times", p.stops)
+	}
+	if got := p.written(); len(got) != 0 {
+		t.Fatalf("written after the stop: %q", got)
+	}
+}
+
+// A full queue makes room for what supersedes queued commands: the reset to
+// the live bottom drops the wheels before it (and all but the last size), a
+// size drops the sizes before it. A wheel never drops anything.
+func TestControlTerminalSupersedesInAFullQueue(t *testing.T) {
+	t.Run("live", func(t *testing.T) {
+		p, ct := stalled(t, controlQueue-2)
+		for _, call := range []func() error{
+			func() error { return ct.Resize(100, 30, 0, 0) },
+			func() error { return ct.Resize(110, 35, 0, 0) },
+		} {
+			if err := call(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := ct.Live(); err != nil {
+			t.Fatalf("Live in a full queue: %v", err)
+		}
+		if err := ct.Scroll(true, 1, 7, 0, 0); err != nil {
+			t.Fatalf("a scroll after the room made: %v", err)
+		}
+		p.release()
+		ct.Close()
+		want := []string{fmt.Sprintf(scrollLine, 0), `{"type":"terminal.resize","cols":110,"rows":35,"cell_width_px":0,"cell_height_px":0}`,
+			liveLine, fmt.Sprintf(scrollLine, 7), releaseLine}
+		if got := p.written(); !slices.Equal(got, want) {
+			t.Fatalf("stdin = %q\nwant %q", got, want)
+		}
+	})
+	t.Run("resize", func(t *testing.T) {
+		p, ct := stalled(t, controlQueue-2)
+		if err := ct.Resize(100, 30, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+		if err := ct.Live(); err != nil {
+			t.Fatal(err)
+		}
+		if err := ct.Resize(110, 35, 0, 0); err != nil {
+			t.Fatalf("Resize in a full queue: %v", err)
+		}
+		p.release()
+		ct.Close()
+		got := p.written()
+		if n := len(got); n != controlQueue+1 || got[n-3] != liveLine || !strings.Contains(got[n-2], `"cols":110`) || got[n-1] != releaseLine {
+			t.Fatalf("stdin (%d lines) ends %q", n, got[max(0, n-4):])
+		}
+		for _, l := range got {
+			if strings.Contains(l, `"cols":100`) {
+				t.Fatalf("a superseded size reached herdr: %s", l)
+			}
+		}
+	})
+	t.Run("scrolls only", func(t *testing.T) {
+		p, ct := stalled(t, controlQueue)
+		if err := ct.Resize(110, 35, 0, 0); err == nil {
+			t.Fatal("a size took the place of a wheel")
+		}
+		p.release()
+		ct.Close()
+	})
 }

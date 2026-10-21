@@ -242,3 +242,121 @@ test('a bridge before #176: the seat watches as before', async ({ page }) => {
   expect((await term(page))?.control).toBeNull();
   clean();
 });
+
+test('narrow windows: whose laptop it is gives way, never Stand up; its whole button takes the click (Quiet and Ubuntu)', async ({ page }) => {
+  test.setTimeout(180_000);
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 560, height: 800 });
+  await sitAt(page);
+  await page.locator('.seat-mode').getByRole('button', { name: 'Terminal' }).click();
+  await expect(page.locator('.seat-status')).toBeVisible();
+  // Stand up's centre is Stand up, it shares no pixel with the line's tapes, the line's parts stay inside the line and
+  // the header inside the window.
+  const layout = () =>
+    page.evaluate(() => {
+      const stand = document.querySelector('.seat-stand') as HTMLElement;
+      const s = stand.getBoundingClientRect();
+      const hit = document.elementFromPoint(s.left + s.width / 2, s.top + s.height / 2);
+      const line = (document.querySelector('.seat-line') as HTMLElement).getBoundingClientRect();
+      const parts = [...document.querySelectorAll<HTMLElement>('.seat-line > *')].filter((e) => e.getClientRects().length > 0);
+      const overlaps = parts.filter((e) => {
+        const r = e.getBoundingClientRect();
+        return r.right > s.left + 0.5 && r.left < s.right - 0.5 && r.bottom > s.top + 0.5 && r.top < s.bottom - 0.5;
+      });
+      const head = document.querySelector('.seat-head') as HTMLElement;
+      return {
+        hit: !!hit?.closest('.seat-stand'),
+        overlaps: overlaps.map((e) => e.className),
+        outside: parts.filter((e) => e.getBoundingClientRect().right > line.right + 1).map((e) => e.className),
+        headFits: head.scrollWidth <= head.clientWidth + 1 && s.right <= window.innerWidth,
+        // A phone's width keeps Stand up on the first row, beside the name; a wider one may wrap it.
+        standRow1: window.innerWidth > 560 || (s.top < line.bottom && s.bottom > line.top),
+      };
+    });
+  const ok = { hit: true, overlaps: [], outside: [], headFits: true, standRow1: true };
+  for (const theme of ['quiet', 'ubuntu'] as const) {
+    await page.evaluate((t) => window.__h3d.setUiTheme(t), theme);
+    for (const width of [560, 390, 360, 700]) {
+      await page.setViewportSize({ width, height: 800 });
+      await frames(page, 3);
+      expect({ theme, width, ...(await layout()) }).toEqual({ theme, width, ...ok });
+      // A long name too.
+      await page.evaluate(() => {
+        const tape = document.querySelector('.seat-tape') as HTMLElement;
+        tape.dataset.was = tape.textContent ?? '';
+        tape.textContent = 'At Bartholomew-the-very-long-named-worker’s laptop';
+      });
+      await frames(page, 2);
+      expect({ theme, width, long: true, ...(await layout()) }).toEqual({ theme, width, long: true, ...ok });
+      await page.evaluate(() => {
+        const tape = document.querySelector('.seat-tape') as HTMLElement;
+        tape.textContent = tape.dataset.was ?? '';
+      });
+    }
+  }
+  await page.setViewportSize({ width: 560, height: 800 });
+  await frames(page, 3);
+  await shot(page, 'h176-narrow-560');
+  // A real click on it stands you up.
+  await page.locator('.seat-stand').click();
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
+  clean();
+});
+
+test('read only in a narrow window: the pane keeps its size and scrolls inside the content area (wheel, keys); its far links still open', async ({ page }) => {
+  test.setTimeout(180_000);
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 560, height: 800 });
+  const id = await sitAt(page, 'Tofu', '&simcontrol=busy&simzoom=split');
+  await expect.poll(async () => (await term(page))?.control?.mode).toBe('observe');
+  await expect.poll(async () => (await term(page))?.cols).toBe(120);
+  const px = (await term(page))!.font!.px;
+  await page.evaluate((i) => window.__h3d.simTerm('sim.write', { id: i, data: `\x1b[2J\x1b[1;1H${'x'.repeat(96)}https://example.com/far\r\n` }), id);
+  await expect.poll(async () => (await term(page))?.lines[0]).toContain('https://example.com/far');
+  const host = page.locator('.seat-term');
+  const scroll = () => host.evaluate((e) => ({ left: e.scrollLeft, width: e.scrollWidth, client: e.clientWidth }));
+  const s0 = await scroll();
+  expect(s0.width).toBeGreaterThan(s0.client + 100);
+  expect(s0.left).toBe(0);
+  // A sideways wheel pans it (nothing goes to the bridge: the pane is not ours to scroll).
+  const box = (await host.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + 60);
+  await page.mouse.wheel(200, 0);
+  await expect.poll(async () => (await scroll()).left).toBeGreaterThan(0);
+  expect(await sent(page, 'terminal.scroll')).toEqual([]);
+  await host.evaluate((e) => (e.scrollLeft = 0));
+  // The keyboard: tabbed to (a focusable region), the arrows scroll it; letters still go to the pane.
+  await host.focus();
+  await expect(host).toHaveAttribute('aria-label', /read only/);
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(async () => (await scroll()).left).toBeGreaterThan(0);
+  await page.keyboard.press('End');
+  await expect.poll(() => host.evaluate((e) => e.scrollTop)).toBeGreaterThan(0);
+  const keysBefore = await page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.keys').length);
+  await page.keyboard.type('l');
+  await expect.poll(() => page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.keys').length)).toBeGreaterThan(keysBefore);
+  // Scrolled to the right end (and back to the top: End took it to the bottom), the last column is in the content area,
+  // and the far link opens on Ctrl+click.
+  await host.evaluate((e) => e.scrollTo(e.scrollWidth, 0));
+  const last = await cellAt(page, 119, 0);
+  const content = (await page.locator('.seat-content').boundingBox())!;
+  expect(last.x).toBeLessThan(content.x + content.width);
+  expect(last.x).toBeGreaterThan(content.x);
+  const link = await cellAt(page, 100, 0);
+  await page.mouse.move(link.x, link.y);
+  await frames(page, 2);
+  const at = (await scroll()).left;
+  await page.keyboard.down('Control');
+  await page.mouse.click(link.x, link.y);
+  await page.keyboard.up('Control');
+  await expect.poll(() => page.evaluate(() => window.__h3d.opened().map((o) => o.url))).toEqual(['https://example.com/far']);
+  // The press kept the pane where it was scrolled, and the keyboard is the seat's again.
+  expect((await scroll()).left).toBe(at);
+  await expect(page.locator('.seat-input')).toBeFocused();
+  // The font never changed for it, and nothing was resized.
+  expect((await term(page))!.font!.px).toBe(px);
+  expect(await sent(page, 'terminal.resize')).toEqual([]);
+  await shot(page, 'h176-readonly-560');
+  clean();
+});

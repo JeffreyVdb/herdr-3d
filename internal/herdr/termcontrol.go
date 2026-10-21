@@ -42,8 +42,8 @@ const (
 	// and #176 part 2's bracketed paste stays under this too).
 	maxControlLine = 64 << 10
 	// controlQueue is how many commands may wait for the controller's
-	// stdin; a full queue refuses the next one (the caller never blocks on
-	// a wedged herdr).
+	// stdin; a full queue drops what the next one supersedes, or refuses it
+	// (the caller never blocks on a wedged herdr).
 	controlQueue = 64
 	// MaxScrollLines bounds one terminal.scroll (herdr takes a u16).
 	MaxScrollLines = 1000
@@ -117,7 +117,7 @@ func (c *Control) ControlTerminal(ctx context.Context, session, pane string, col
 		return nil, fmt.Errorf("herdr control %s: %w", opControl, err)
 	}
 	ct := &controller{observer: observer{p: p, r: bufio.NewReaderSize(p.Stdout(), 64<<10)}, p: p,
-		queue: make(chan []byte, controlQueue), wrote: make(chan struct{})}
+		queue: make(chan ctlCmd, controlQueue), wrote: make(chan struct{})}
 	go ct.write()
 	return ct, nil
 }
@@ -126,12 +126,28 @@ type controller struct {
 	observer
 	p DuplexProc
 
-	mu      sync.Mutex
-	closed  bool
-	queue   chan []byte   // the commands for stdin, in order (closed by Close)
-	wrote   chan struct{} // closed when the writer has stopped
-	restore [2]int
-	once    sync.Once
+	mu       sync.Mutex
+	closed   bool
+	queue    chan ctlCmd   // the commands for stdin, in order (closed by Close)
+	wrote    chan struct{} // closed when the writer has stopped
+	released bool          // the writer wrote terminal.release
+	restore  [2]int
+	once     sync.Once
+}
+
+// A controller command's kind says which queued commands it supersedes.
+type ctlKind int
+
+const (
+	kindResize ctlKind = iota
+	kindScroll
+	kindLive
+	kindRelease
+)
+
+type ctlCmd struct {
+	kind ctlKind
+	line []byte
 }
 
 // write writes the queued commands to the controller's stdin, in order,
@@ -140,34 +156,92 @@ func (ct *controller) write() {
 	defer close(ct.wrote)
 	stdin := ct.p.Stdin()
 	defer stdin.Close()
-	for line := range ct.queue {
-		if _, err := stdin.Write(line); err != nil {
+	for c := range ct.queue {
+		if _, err := stdin.Write(c.line); err != nil {
 			for range ct.queue { // drain: nothing more reaches herdr
 			}
 			return
 		}
+		if c.kind == kindRelease {
+			ct.mu.Lock()
+			ct.released = true
+			ct.mu.Unlock()
+		}
 	}
 }
 
-// send queues one command, without waiting for herdr.
-func (ct *controller) send(cmd any) error {
+// command is one JSONL command for the controller's stdin.
+func command(kind ctlKind, cmd any) (ctlCmd, error) {
 	line, err := json.Marshal(cmd)
 	if err != nil {
-		return err
+		return ctlCmd{}, err
 	}
 	if len(line)+1 > maxControlLine {
-		return fmt.Errorf("%w: a controller command of %d bytes (at most %d)", ErrNotAllowed, len(line)+1, maxControlLine)
+		return ctlCmd{}, fmt.Errorf("%w: a controller command of %d bytes (at most %d)", ErrNotAllowed, len(line)+1, maxControlLine)
+	}
+	return ctlCmd{kind, append(line, '\n')}, nil
+}
+
+// send queues one command, without waiting for herdr. A full queue first
+// drops the queued commands this one makes moot (supersede).
+func (ct *controller) send(kind ctlKind, cmd any) error {
+	c, err := command(kind, cmd)
+	if err != nil {
+		return err
 	}
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
 	if ct.closed {
 		return ErrControlClosed
 	}
+	if len(ct.queue) == cap(ct.queue) {
+		ct.supersede(kind)
+	}
 	select {
-	case ct.queue <- append(line, '\n'):
+	case ct.queue <- c:
 		return nil
 	default:
 		return errors.New("herdr: the terminal controller is not reading its commands")
+	}
+}
+
+// unqueue takes the oldest queued command (under mu), unless the writer took
+// them all.
+func (ct *controller) unqueue() (ctlCmd, bool) {
+	select {
+	case c := <-ct.queue:
+		return c, true
+	default:
+		return ctlCmd{}, false
+	}
+}
+
+// supersede drops the queued commands a new one of kind makes moot (under
+// mu; the writer may take commands meanwhile, never after the ones kept): a
+// size makes the sizes before it moot, the reset to the live bottom the
+// wheels and resets before it and all sizes but the last. A wheel drops
+// nothing.
+func (ct *controller) supersede(kind ctlKind) {
+	if kind != kindResize && kind != kindLive {
+		return
+	}
+	var queued []ctlCmd
+	for c, ok := ct.unqueue(); ok; c, ok = ct.unqueue() {
+		queued = append(queued, c)
+	}
+	last := -1
+	for i, c := range queued {
+		if c.kind == kindResize {
+			last = i
+		}
+	}
+	for i, c := range queued {
+		switch {
+		case c.kind == kindResize && (kind == kindResize || i != last):
+		case kind == kindLive && (c.kind == kindScroll || c.kind == kindLive):
+		default:
+			ct.queue <- c
+		}
 	}
 }
 
@@ -178,13 +252,15 @@ func (ct *controller) Resize(cols, rows, cellW, cellH int) error {
 	case cellW < 0 || cellW > MaxCellPx || cellH < 0 || cellH > MaxCellPx:
 		return fmt.Errorf("%w: cell size %d×%d px", ErrNotAllowed, cellW, cellH)
 	}
-	return ct.send(struct {
-		Type  string `json:"type"`
-		Cols  int    `json:"cols"`
-		Rows  int    `json:"rows"`
-		CellW int    `json:"cell_width_px"`
-		CellH int    `json:"cell_height_px"`
-	}{"terminal.resize", cols, rows, cellW, cellH})
+	return ct.send(kindResize, resizeCmd{"terminal.resize", cols, rows, cellW, cellH})
+}
+
+type resizeCmd struct {
+	Type  string `json:"type"`
+	Cols  int    `json:"cols"`
+	Rows  int    `json:"rows"`
+	CellW int    `json:"cell_width_px"`
+	CellH int    `json:"cell_height_px"`
 }
 
 func (ct *controller) Scroll(up bool, lines, col, row, mods int) error {
@@ -200,7 +276,7 @@ func (ct *controller) Scroll(up bool, lines, col, row, mods int) error {
 	if up {
 		dir = "up"
 	}
-	return ct.send(struct {
+	return ct.send(kindScroll, struct {
 		Type      string `json:"type"`
 		Direction string `json:"direction"`
 		Lines     int    `json:"lines"`
@@ -212,7 +288,7 @@ func (ct *controller) Scroll(up bool, lines, col, row, mods int) error {
 }
 
 func (ct *controller) Live() error {
-	return ct.send(struct {
+	return ct.send(kindLive, struct {
 		Type string `json:"type"`
 	}{"terminal.input"})
 }
@@ -224,34 +300,51 @@ func (ct *controller) RestoreOnRelease(cols, rows int) {
 }
 
 // Close releases the pane: the restore size first (when set), then
-// terminal.release and EOF; the controller has ReleaseGrace to exit by
-// itself, then it is stopped (SIGTERM, SIGKILL) and reaped. Safe to call
-// twice.
+// terminal.release and EOF, even when the queue is full (the oldest queued
+// commands, moot once the pane is released, make room); the controller has
+// ReleaseGrace to exit by itself, then it is stopped (SIGTERM, SIGKILL) and
+// reaped. The error says a controller that had to be stopped never read its
+// release. Safe to call twice.
 func (ct *controller) Close() error {
+	var err error
 	ct.once.Do(func() {
-		ct.mu.Lock()
-		restore := ct.restore
-		ct.mu.Unlock()
-		if restore[0] > 0 && restore[1] > 0 {
-			_ = ct.Resize(restore[0], restore[1], 0, 0)
-		}
-		_ = ct.send(struct {
+		release, _ := command(kindRelease, struct {
 			Type string `json:"type"`
 		}{"terminal.release"})
+		final := []ctlCmd{release}
 		ct.mu.Lock()
+		if r := ct.restore; r[0] > 0 && r[1] > 0 {
+			restore, _ := command(kindResize, resizeCmd{"terminal.resize", r[0], r[1], 0, 0})
+			final = []ctlCmd{restore, release}
+		}
 		ct.closed = true
+		for cap(ct.queue)-len(ct.queue) < len(final) {
+			if _, ok := ct.unqueue(); !ok {
+				break
+			}
+		}
+		for _, c := range final {
+			ct.queue <- c
+		}
 		close(ct.queue)
 		ct.mu.Unlock()
 		timer := time.NewTimer(ReleaseGrace)
 		defer timer.Stop()
+		exited := true
 		select {
 		case <-ct.p.Done():
 		case <-timer.C:
+			exited = false
 		}
 		_ = ct.p.Stop()
 		<-ct.wrote
+		ct.mu.Lock()
+		defer ct.mu.Unlock()
+		if !ct.released && !exited {
+			err = errors.New("herdr: the terminal controller was stopped before it read its release")
+		}
 	})
-	return nil
+	return err
 }
 
 // execDuplex is execStream with a stdin pipe.
