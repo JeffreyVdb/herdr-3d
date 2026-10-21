@@ -153,6 +153,8 @@ func fakeStdioCodex() {
 				fmt.Println(string(b))
 				continue
 			}
+		case "hooks/list", "config/batchWrite": // #167
+			res = fakeHooks(m)
 		}
 		fmt.Println(`{"method":"configWarning","params":{}}`) // a notification first: skipped
 		b, _ := json.Marshal(map[string]any{"id": m["id"], "result": res})

@@ -17,7 +17,7 @@
 // sleep are their session's (every floor of it), and a virtual floor stays in its base floor's building.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
-import type { Building, Cap, Floor, FloorSettings, Hire, HireOptions, TranscriptItem, Worker, WorkerCodex } from '../src/net/protocol.ts';
+import type { Building, Cap, CodexProfile, Floor, FloorSettings, Hire, HireOptions, TranscriptItem, Worker, WorkerCodex } from '../src/net/protocol.ts';
 import { screensOf, type SimScreens } from './fixture-screen.ts';
 import { hashOf, type StoredLogo } from './fixture-logo.ts';
 import { logoPng, MAGENTA, type Palette } from './logo-art.ts';
@@ -345,6 +345,19 @@ export class SimWorld {
         hireWorker: (a, send, ack, fail) => this.hireWorker(a, send, ack, fail),
         error: (code, message) => new CmdError(code, message),
         workItem: (session, wi) => this.kaneo.resolveWorkItem(session, wi) ?? this.boards.resolveWorkItem(session, wi),
+        // #167: the Codex profiles sim (made below), read when a run or a preset asks.
+        ...(o.codexProfiles
+          ? {
+              runProfiles: {
+                list: () => {
+                  const w: Record<string, unknown> = {};
+                  this.codexProfiles?.decorate(w);
+                  return (w.codex_profiles as { profiles: CodexProfile[] } | undefined)?.profiles ?? [];
+                },
+                pick: (cwd: string) => (this.codexProfiles as CodexProfilesSim).pick(cwd, this.limits.codexBase()),
+              },
+            }
+          : {}),
       },
       o.fail !== 'no_m6',
       (snapshot.world as { presets?: unknown }).presets,

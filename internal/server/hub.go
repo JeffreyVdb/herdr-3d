@@ -1074,6 +1074,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startRepoDiscovery
 		case proto.CmdCodexProfilesGet, proto.CmdCodexProfilesSet: // #138
 			start = h.startCodexProfiles
+		case proto.CmdCodexProfilesShare, proto.CmdCodexProfilesMoveSkill: // #167: the file work off the hub goroutine
+			start = h.startCodexShare
 		// M5 term
 		case proto.CmdTerminalWatch:
 			start = h.startWatch

@@ -254,7 +254,7 @@ func (p *Poller) listAccounts(ctx context.Context, now time.Time) ([]codexaccoun
 		p.cfg.Log.Warn("limits: cannot list the Codex profiles", "error", err)
 		return nil, false
 	}
-	changed := !p.listed || !slices.Equal(list, p.accounts)
+	changed := !p.listed || !slices.EqualFunc(list, p.accounts, codexaccount.Account.Equal) // #167: drift by value
 	p.accounts, p.listed = list, true
 	keep := map[string]bool{}
 	for _, t := range p.targets() {

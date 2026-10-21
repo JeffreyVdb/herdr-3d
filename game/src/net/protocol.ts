@@ -72,6 +72,11 @@ export interface Hire {
   harness: string;
   model: string;
   effort: string;
+  /**
+   * #167: a team preset role's, and `run.prepare` / `run.start`'s orchestrator's, Codex profile (a key or "auto"), Codex
+   * only; absent: the default profile. Sent only to a bridge with `codex_profiles.runs` (an older one refuses the field).
+   */
+  codex_profile?: string;
 }
 
 export interface FloorSettings {
@@ -474,6 +479,35 @@ export interface CodexProfile {
   missing?: boolean;
   /** #140: "May be used for anything": an Auto hire no rule decides may land on it (absent: off). */
   anything?: boolean;
+  /** #167: "Share setup with <default>" is on (never on the default; absent: off). */
+  share?: boolean;
+  /** #167: how its shared setup differs from the default's now (a visible shared profile only; absent: nothing). */
+  drift?: CodexDrift[];
+}
+
+/** #167: one way a shared profile's setup differs from the default's: the entry or skill, in plain words (never a config value). */
+export interface CodexDrift {
+  kind: 'link_missing' | 'link_elsewhere' | 'link_replaced' | 'target_missing' | 'hooks_missing' | 'hooks_differ' | 'skill_only_profile' | 'skill_only_default' | string;
+  /** config.toml, AGENTS.md, AGENTS.override.md, rules/, hooks.json, or the skill's name. */
+  name: string;
+  text: string;
+}
+
+/** #167: one entry of a share plan or of what a share did: `replace` backs up what is there (`was`) as `backup` first. */
+export interface CodexShareStep {
+  name: string;
+  action: 'link' | 'keep' | 'replace' | 'write' | 'skip' | 'copy' | 'left' | 'move' | string;
+  was?: string;
+  backup?: string;
+}
+
+/** #167: `codex_profiles.share`'s and `.move_skill`'s ack: the list (flat), the plan or what was done, the report. */
+export interface CodexShareAck extends CodexProfilesState {
+  steps: CodexShareStep[];
+  /** What was done, in plain words (none for a dry run). */
+  report?: string;
+  /** It stopped on an error; the report says where. */
+  failed?: boolean;
 }
 
 /** #140: one of the Auto hire's rules: `github.com/<owner>/*`, `github.com/<owner>/<repo>`, or a folder (`/…`, `~/…`), and the profile key it hires on. */
@@ -492,6 +526,10 @@ export interface CodexProfilesState {
   auto?: boolean;
   /** #140: the Auto hire's rules, in order (the first that matches wins). */
   rules?: CodexRule[];
+  /** #167: `codex_profiles.share` and `.move_skill` are there, and profiles carry `share` and `drift` (absent: an older bridge). */
+  share?: boolean;
+  /** #167: team preset roles and a run's orchestrator take `codex_profile` too, Auto included (absent: an older bridge). */
+  runs?: boolean;
 }
 
 /** #138: `codex_profiles.update`: the list, flat. */
@@ -1150,6 +1188,10 @@ export interface CommandArgs {
     | { key: string; remove: true }
     | { add: string }
     | { rules: CodexRule[] };
+  /** #167: share profile `key`'s setup with the default (`dry_run`: the plan only; `replace`: the plan's replaced names, confirmed) or stop. Acks `CodexShareAck`. */
+  'codex_profiles.share': { key: string; share: boolean; dry_run?: boolean; replace?: string[] };
+  /** #167: moves the real skill folder `skill` of profile `key`'s skills/ to ~/.agents/skills, a link left behind. Acks `CodexShareAck`. */
+  'codex_profiles.move_skill': { key: string; skill: string };
   // #156 Codex async questions. `worker.answer_async` acks `AsyncAnswerAck`.
   'worker.answer_async': { id: string; thread: string; batch: string; answers: { index: number; answer: string }[]; /** #108 round 2: `answers[N].answer`. */ secrets?: SecretsReviews };
   'worker.dismiss_async': { id: string; thread: string; batch: string; indexes?: number[] };
@@ -2135,6 +2177,10 @@ export interface RunPrepare {
 export interface RunStartAck extends HireAck {
   launch_id: string;
   prompt: string;
+  /** #167: what Auto picked for the team's Codex roles and why ("reviewers: Account: work (rule acme/*)"; "; " between). */
+  codex_team_reason?: string;
+  /** #167: the notes of the team's Codex profiles whose home runs no herdr hook. */
+  codex_team_note?: string;
 }
 
 // M6 crew: write-code runs and freelancers (docs/protocol.md "Runs and freelancers"). All optional; an older bridge
