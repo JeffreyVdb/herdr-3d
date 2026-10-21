@@ -319,6 +319,22 @@ test('pinned presets sit in the desk tabs, hire in one click, move by drag or Sh
   await expect(hireDlg(page).locator(`[data-key="tab:pin:${audit}"]`)).toBeFocused();
   await hireDlg(page).locator(`[data-key="tab:pin:${triage}"]`).dragTo(hireDlg(page).locator(`[data-key="tab:pin:${audit}"]`), { targetPosition: { x: 2, y: 10 } });
   await expect.poll(() => pinKeys(hireDlg(page))).toEqual([`tab:pin:${triage}`, `tab:pin:${audit}`, `tab:pin:${deploy}`]);
+
+  // Hire worker: back to the desk's own form, no preset. A task typed there is asked about before a pin replaces it.
+  await hireDlg(page).locator('[data-key="tab:worker"]').click();
+  await expect.poll(async () => {
+    const d = (await dialog(page)) as Hire | null;
+    return d?.kind === 'hire' && d.state === 'ready' ? [d.preset ?? null, d.form.prompt] : null;
+  }, { timeout: 15_000 }).toEqual([null, '']);
+  await expect(hireDlg(page).locator('[data-key="tab:worker"]')).toHaveAttribute('aria-selected', 'true');
+  await expect(hireDlg(page).locator('[data-key="tab:worker"]')).toBeFocused();
+  await hireDlg(page).locator('.cmp-editor').first().click();
+  await page.keyboard.type('My own task.');
+  await hireDlg(page).locator(`[data-key="tab:pin:${deploy}"]`).click();
+  await expect(presetsDlg(page)).toBeVisible();
+  await expect.poll(async () => ((await dialog(page)) as Presets | null)?.replacing).toBe(deploy);
+  await expect(presetsDlg(page).locator(`[data-key="keep-task:${deploy}"]`)).toBeFocused();
+  await presetsDlg(page).locator(`[data-key="keep-task:${deploy}"]`).click();
   await page.keyboard.press('Escape');
 
   // After a reload, in the same order; on another floor only the global ones.
