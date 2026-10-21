@@ -15,6 +15,10 @@ const (
 	// history.
 	CmdTerminalResize = "terminal.resize"
 	CmdTerminalScroll = "terminal.scroll"
+	// #176 part 2: a paste (bracketed, never submitted) and a mouse click
+	// through the seated laptop's controller.
+	CmdWorkerPaste   = "worker.paste"
+	CmdTerminalMouse = "terminal.mouse"
 
 	// TTerminalFrame and TTerminalClosed go only to the watching
 	// connection: no seq, not in the replay ring.
@@ -31,7 +35,7 @@ const (
 
 func init() {
 	Commands = append(Commands, CmdTerminalWatch, CmdTerminalUnwatch, CmdWorkerKeys, CmdWorkerPrompt, CmdWorkerAnswer, CmdTerminalZoom,
-		CmdTerminalResize, CmdTerminalScroll)
+		CmdTerminalResize, CmdTerminalScroll, CmdWorkerPaste, CmdTerminalMouse)
 }
 
 // Error codes.
@@ -104,6 +108,12 @@ type TerminalControl struct {
 	Reason string `json:"reason,omitempty"`
 	Cols   int    `json:"cols"`
 	Rows   int    `json:"rows"`
+	// Paste (#176 part 2): the pane is owned and worker.paste takes a paste
+	// for it (absent: a bridge before it, or read only).
+	Paste bool `json:"paste,omitempty"`
+	// Mouse (#176 part 2): the pane is owned and terminal.mouse takes clicks
+	// (herdr 0.9.2 or later; absent otherwise).
+	Mouse bool `json:"mouse,omitempty"`
 }
 
 // TerminalHistory (#176) is where a controlled pane's view is in herdr's
@@ -147,6 +157,38 @@ type TerminalScrollArgs struct {
 	Row       int    `json:"row,omitempty"`
 	Modifiers int    `json:"modifiers,omitempty"`
 	Bottom    bool   `json:"bottom,omitempty"`
+}
+
+// TerminalMouseArgs are the args of terminal.mouse (#176 part 2): a click of
+// Button ("left", the default, "right" or "middle") on cell Column × Row
+// (0-based, inside the controlled grid) with Modifiers (Shift 1, Ctrl 2,
+// Alt 4).
+type TerminalMouseArgs struct {
+	ID        string `json:"id"`
+	Button    string `json:"button,omitempty"`
+	Column    int    `json:"column"`
+	Row       int    `json:"row"`
+	Modifiers int    `json:"modifiers,omitempty"`
+}
+
+// WorkerPasteArgs are the args of worker.paste (#176 part 2): Text as one
+// bracketed paste into the pane the connection's control watch owns,
+// inserted, never submitted.
+type WorkerPasteArgs struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+	// Secrets (#108, optional): the review of Text's possible secrets, as
+	// worker.prompt's.
+	Secrets *SecretsReview `json:"secrets,omitempty"`
+}
+
+// PasteResult is the ack data of worker.paste.
+type PasteResult struct {
+	// Sent (#108) is the text pasted when it is not the one given (file
+	// references in place of the protected secrets); absent otherwise.
+	Sent string `json:"sent,omitempty"`
+	// Protected (#108): how many ranges went to private files (absent: none).
+	Protected int `json:"protected,omitempty"`
 }
 
 // Zoom states of a watched pane (ZoomInfo.State).
