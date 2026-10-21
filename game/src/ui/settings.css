@@ -1381,7 +1381,7 @@ dialog.settings {
   font-variant-ligatures: none;
 }
 .settings-cp-cmd {
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .settings-cp-list {
   margin: 0;

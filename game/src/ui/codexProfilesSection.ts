@@ -39,7 +39,7 @@ export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTM
   return (body, section) => {
     const id = `settings-cp-${++serial}`;
     const lede = el('p', 'settings-lede', 'A profile is a Codex home folder with its own sign-in. Add one with ');
-    lede.append(el('code', 'settings-cp-cmd', 'CODEX_HOME=~/.codex-<name> codex login'), '.');
+    lede.append(el('code', 'settings-cp-cmd', 'mkdir ~/.codex-<name> && CODEX_HOME=~/.codex-<name> codex login'), '.');
 
     const block = el('div', 'settings-role settings-cp');
     block.setAttribute('role', 'group');

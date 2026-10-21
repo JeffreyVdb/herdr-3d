@@ -69,7 +69,7 @@ describe('the “Codex profiles” section (#138)', () => {
     m.book.upsert(START);
     expect(m.root.hidden).toBe(false);
     expect(m.text('.settings-store')).toBe('Bridge');
-    expect(m.text('.settings-lede')).toBe('A profile is a Codex home folder with its own sign-in. Add one with CODEX_HOME=~/.codex-<name> codex login.');
+    expect(m.text('.settings-lede')).toBe('A profile is a Codex home folder with its own sign-in. Add one with mkdir ~/.codex-<name> && CODEX_HOME=~/.codex-<name> codex login.');
     expect(m.text('.settings-used')).toBe('Codex profiles: 3');
     const own = m.row('codex');
     expect(own.querySelector('.settings-cp-name')?.textContent).toBe('codex');
