@@ -1,9 +1,11 @@
 import type { ZoomInfo } from '../net/protocol';
 
 /**
- * #74: what the seat bar's fullscreen chip says about the pane you sit at. A split herdr pane shows at its own size
- * (60 columns next to another pane, say), so the laptop's screen is a narrow strip; herdr's zoom gives the pane the
- * whole tab. The chip states the fact ("Split pane 60×40", short, so the bar keeps its two rows) and is the switch. Pure: the logic is tested without a DOM.
+ * #74: what the seat's zoom chip says about the pane you sit at. A split herdr pane shows at its own size (60 columns
+ * next to another pane, say); herdr's zoom gives the pane the whole tab. The chip states the fact and is the switch.
+ * #176: it shows only while the terminal is watched read only (another client owns the pane): while the seat owns it,
+ * the PTY is the window's size. It is called "Zoom herdr tab", never fullscreen: the workspace already fills the
+ * window, and the chip changes what herdr's own screen shows. Pure: the logic is tested without a DOM.
  */
 export interface FullscreenChip {
   /** The chip's text. */
@@ -28,30 +30,30 @@ export function fullscreenChip(zoom: ZoomInfo | null | undefined, size: { cols: 
   if (!zoom || zoom.state === 'single') return null;
   if (zoom.state === 'zoomed' && zoom.headless) {
     return {
-      label: 'Fullscreen unavailable',
+      label: 'Zoom unavailable',
       pressed: false,
       disabled: true,
-      aria: 'Fullscreen unavailable',
+      aria: 'Zoom herdr tab, unavailable',
       title: 'herdr zoomed this pane, but no herdr screen is attached to the session, so the terminal keeps its own size. Open herdr on this session to get a wider screen.',
       action: null,
     };
   }
   if (zoom.state === 'zoomed') {
     return {
-      label: 'Fullscreen',
+      label: 'herdr tab zoomed',
       pressed: true,
       disabled: false,
-      aria: 'Fullscreen',
+      aria: 'Zoom herdr tab, on',
       title: 'This pane fills its herdr tab. Click to go back to the split layout.',
       action: 'unzoom',
     };
   }
   const fact = size ? `Split pane ${size.cols}×${size.rows}` : 'Split pane';
   return {
-    label: fact,
+    label: size ? `Zoom herdr tab (split ${size.cols}×${size.rows})` : 'Zoom herdr tab (split)',
     pressed: false,
     disabled: false,
-    aria: `Fullscreen, off. ${fact.replace('×', ' by ')}`,
+    aria: `Zoom herdr tab, off. ${fact.replace('×', ' by ')}`,
     title: 'This pane shares its herdr tab with others, so it shows at its own size. Click to zoom it to the whole tab (it goes back when you stand up).',
     action: 'zoom',
   };

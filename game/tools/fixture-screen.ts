@@ -20,6 +20,14 @@
 // `headless: true` in the zoom state). `sim.unzoom {id}` plays the human unzooming the tab: a `terminal.state`.
 // The sim's screens keep their recorded size in every state; only the zoom state changes.
 // #175: `simscreen=narrow` gives every worker the `narrow` recording instead: a split pane's 60×40 shell.
+// #176: a watch with `control` owns its pane: the ack says `control: true`, a `terminal.control` (mode `control`)
+// comes before its first frame, frames come at the grid it asked for (the recording drawn into it) and
+// `terminal.resize` changes that grid with a full frame; `terminal.scroll` moves a pretend history (200 lines) and
+// answers with `terminal.history`, and typing brings it back to 0. `simcontrol=old` refuses the argument (a bridge
+// before #176: `bad_request`), `none` acks without `control` (a bridge whose herdr cannot own panes), `busy` falls
+// back to read only (`terminal.control` mode `observe`, reason `busy`, at the recording's size). `sim.terminal {id}`
+// answers what the watch has: its grid, control mode, history offset and the resizes and scrolls it got;
+// `sim.write {id, data}` prints raw text (escapes too) on a worker's screen.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import { readFileSync } from 'node:fs';
@@ -96,7 +104,14 @@ export interface ScreenHost {
   zoomMode?(): ZoomMode | undefined;
   /** #175: `simscreen`, the recording every worker shows (undefined: `agent` or `shell` by the worker). */
   recording?(): string | undefined;
+  /** #176: `simcontrol` (undefined: a bridge that owns the seated pane). */
+  controlMode?(): ControlMode | undefined;
 }
+
+export type ControlMode = 'old' | 'none' | 'busy';
+
+/** #176: the pretend history a controlled pane has. */
+const SIM_HISTORY = 200;
 
 export type ZoomMode = 'old' | 'single' | 'split' | 'headless';
 
@@ -125,6 +140,8 @@ interface Watch {
   lastSent: number;
   send: Send;
   failAfterFirst: boolean;
+  /** #176: the watch owns its pane at this grid (null: an observer at the recording's size). */
+  control: { mode: 'control' | 'observe'; cols: number; rows: number; offset: number; resizes: Array<[number, number]>; scrolls: string[] } | null;
 }
 
 /** One worker's screen: where it is in its recording, and the bytes since the last full frame. */
@@ -198,6 +215,33 @@ export class SimScreens {
         case 'sim.watches':
           ack({ watches: this.watches.size, ids: [...this.watches.keys()] });
           return true;
+        case 'terminal.resize':
+          if (this.host.controlMode?.() === 'old') return false;
+          this.resize(a, ack);
+          return true;
+        case 'terminal.scroll':
+          if (this.host.controlMode?.() === 'old') return false;
+          this.scroll(a, ack);
+          return true;
+        case 'sim.write': {
+          // #176 (tests): raw bytes onto a worker's screen, as its program would print them (links, OSC 8, long lines).
+          const id = this.str(a, 'id');
+          const w = this.target(id);
+          const sc = this.screen(w);
+          if (sc.timer) this.host.cancel(sc.timer);
+          sc.timer = null;
+          sc.typed = true;
+          const data = Buffer.from(String(a.data ?? ''), 'utf8');
+          sc.tape.push(data);
+          for (const x of this.watchersOf(id)) this.push(x, data, false);
+          ack();
+          return true;
+        }
+        case 'sim.terminal': {
+          const w = this.watches.get(this.str(a, 'id'));
+          ack(w ? { watched: true, fps: w.fps, control: w.control, n: w.n } : { watched: false });
+          return true;
+        }
       }
     } catch (e) {
       if (e instanceof ScreenError) fail(e.code, e.message);
@@ -228,7 +272,9 @@ export class SimScreens {
 
   private watch(a: Obj, send: Send, ack: (d?: unknown) => void): void {
     const mode = this.host.zoomMode?.();
-    this.only(a, mode === 'old' ? ['id', 'fps', 'cols', 'rows'] : ['id', 'fps', 'cols', 'rows', 'fullscreen']);
+    const ctl = this.host.controlMode?.();
+    this.only(a, [...(mode === 'old' ? ['id', 'fps', 'cols', 'rows'] : ['id', 'fps', 'cols', 'rows', 'fullscreen']), ...(ctl === 'old' ? [] : ['control'])]);
+    if (a.control !== undefined && typeof a.control !== 'boolean') throw new ScreenError('bad_request', 'bad args: control must be a boolean');
     const id = this.str(a, 'id');
     if (a.fullscreen !== undefined && typeof a.fullscreen !== 'boolean') throw new ScreenError('bad_request', 'bad args: fullscreen must be a boolean');
     const int = (k: string, lo: number, hi: number) => {
@@ -238,14 +284,21 @@ export class SimScreens {
       return v;
     };
     const fps = int('fps', 1, 30) ?? 4;
-    int('cols', 40, 300);
-    int('rows', 10, 100);
+    const cols = int('cols', 40, 300);
+    const rows = int('rows', 10, 100);
     const w = this.target(id);
+    const owning = a.control === true && ctl !== 'none';
+    if (owning && [...this.watches.values()].some((x) => x.id !== id && x.control)) throw new ScreenError('capacity', 'capacity: this connection already controls a terminal (one per connection)');
     // Watching again restarts the watch: a fresh full frame.
     this.stop(id);
     if (this.watches.size >= SIM_MAX_WATCHES) throw new ScreenError('capacity', `capacity: ${this.watches.size} watches on this connection (max ${SIM_MAX_WATCHES})`);
     const s = this.screen(w);
-    const watch: Watch = { id, pane: w.pane_id as string, fps, n: 0, pending: [Buffer.concat(s.tape)], full: true, timer: null, lastSent: -Infinity, send, failAfterFirst: this.host.failNext('observer_failed') };
+    const control: Watch['control'] = owning
+      ? ctl === 'busy'
+        ? { mode: 'observe', cols: s.rec.cols, rows: s.rec.rows, offset: 0, resizes: [], scrolls: [] }
+        : { mode: 'control', cols: cols ?? s.rec.cols, rows: rows ?? s.rec.rows, offset: 0, resizes: [], scrolls: [] }
+      : null;
+    const watch: Watch = { id, pane: w.pane_id as string, fps, n: 0, pending: [Buffer.concat(s.tape)], full: true, timer: null, lastSent: -Infinity, send, failAfterFirst: this.host.failNext('observer_failed'), control };
     this.watches.set(id, watch);
     // #74: fullscreen true zooms, unless the watch it replaces held the tab already (a re-watch never zooms again);
     // false and absent restore, as the bridge's stand-up does.
@@ -254,7 +307,9 @@ export class SimScreens {
       this.held.add(id);
     } else this.release(id);
     const zoom = this.zoomState(id);
-    ack({ pane: watch.pane, cols: s.rec.cols, rows: s.rec.rows, ...(zoom ? { zoom } : {}) });
+    const size = control?.mode === 'control' ? control : s.rec;
+    ack({ pane: watch.pane, cols: size.cols, rows: size.rows, ...(zoom ? { zoom } : {}), ...(control ? { control: true } : {}) });
+    if (control) send({ t: 'terminal.control', id, pane: watch.pane, mode: control.mode, ...(control.mode === 'observe' ? { reason: 'busy' } : {}), cols: control.cols, rows: control.rows });
     const slow = this.slow.get(id);
     this.slow.delete(id);
     if (slow) {
@@ -264,6 +319,60 @@ export class SimScreens {
       }, slow);
     } else this.flush(watch);
     if (!s.timer && !s.typed) this.advance(id, s);
+  }
+
+  /** #176: the controlled pane's PTY to a new grid: a full frame at it. */
+  private resize(a: Obj, ack: (d?: unknown) => void): void {
+    this.only(a, ['id', 'cols', 'rows', 'cell_width_px', 'cell_height_px']);
+    const id = this.str(a, 'id');
+    const int = (k: string, lo: number, hi: number, need: boolean) => {
+      const v = a[k];
+      if (v === undefined && !need) return 0;
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < lo || v > hi) throw new ScreenError('bad_request', `bad args: ${k} must be ${lo}-${hi}`);
+      return v;
+    };
+    const cols = int('cols', 40, 300, true);
+    const rows = int('rows', 10, 100, true);
+    int('cell_width_px', 0, 256, false);
+    int('cell_height_px', 0, 256, false);
+    this.target(id);
+    const w = this.watches.get(id);
+    if (!w?.control) throw new ScreenError('bad_request', 'bad args: terminal.resize needs a terminal.watch of the worker with control');
+    if (w.control.mode === 'observe') throw new ScreenError('invalid_state', 'invalid state: another client controls this terminal: it is shown read only');
+    w.control.cols = cols;
+    w.control.rows = rows;
+    w.control.resizes.push([cols, rows]);
+    ack({ cols, rows });
+    const s = this.screens.get(id);
+    this.push(w, Buffer.concat(s?.tape ?? []), true);
+  }
+
+  /** #176: a wheel over the controlled pane, or back to the live bottom: the pretend history's offset. */
+  private scroll(a: Obj, ack: (d?: unknown) => void): void {
+    this.only(a, ['id', 'direction', 'lines', 'column', 'row', 'modifiers', 'bottom']);
+    const id = this.str(a, 'id');
+    this.target(id);
+    const w = this.watches.get(id);
+    if (!w?.control) throw new ScreenError('bad_request', 'bad args: terminal.scroll needs a terminal.watch of the worker with control');
+    if (w.control.mode === 'observe') throw new ScreenError('invalid_state', 'invalid state: another client controls this terminal: it is shown read only');
+    const c = w.control;
+    if (a.bottom === true) {
+      if (a.direction !== undefined || a.lines !== undefined) throw new ScreenError('bad_request', 'bad args: give either direction and lines, or bottom');
+      c.offset = 0;
+      c.scrolls.push('bottom');
+    } else {
+      const lines = a.lines;
+      if ((a.direction !== 'up' && a.direction !== 'down') || typeof lines !== 'number' || !Number.isInteger(lines) || lines < 1 || lines > 1000) throw new ScreenError('bad_request', 'bad args: direction up or down and lines 1-1000');
+      c.offset = Math.max(0, Math.min(SIM_HISTORY, c.offset + (a.direction === 'up' ? lines : -lines)));
+      c.scrolls.push(`${a.direction} ${lines}`);
+    }
+    ack();
+    this.pushHistory(w);
+  }
+
+  private pushHistory(w: Watch): void {
+    const c = w.control;
+    if (c?.mode === 'control') w.send({ t: 'terminal.history', id: w.id, pane: w.pane, offset: c.offset, max: SIM_HISTORY, rows: c.rows });
   }
 
   /** #52 (`sim.swap`): the next watch of `id` holds its first frame `ms`. */
@@ -374,7 +483,8 @@ export class SimScreens {
     const data = Buffer.concat(w.pending);
     w.pending = [];
     const s = this.screens.get(w.id);
-    w.send({ t: 'terminal.frame', id: w.id, pane: w.pane, n: ++w.n, full: w.full, cols: s?.rec.cols ?? 120, rows: s?.rec.rows ?? 36, data: data.toString('base64') });
+    const size = w.control?.mode === 'control' ? w.control : { cols: s?.rec.cols ?? 120, rows: s?.rec.rows ?? 36 };
+    w.send({ t: 'terminal.frame', id: w.id, pane: w.pane, n: ++w.n, full: w.full, cols: size.cols, rows: size.rows, data: data.toString('base64') });
     w.full = false;
     w.lastSent = this.host.now();
     if (w.failAfterFirst) this.close(w.id, 'observer_failed');
@@ -426,6 +536,12 @@ export class SimScreens {
     if (text > 8192) throw new ScreenError('bad_request', 'bad args: more than 8 KiB of text');
     const w = this.target(id);
     if (this.host.failNext('input_failed')) throw new ScreenError('input_failed', 'input_failed: herdr pane send-keys: exit status 1 (simulated)');
+    // #176: input brings a controlled view back to the live bottom (the bridge does it before the keys).
+    const own = this.watches.get(id);
+    if (own?.control?.mode === 'control' && own.control.offset > 0) {
+      own.control.offset = 0;
+      this.pushHistory(own);
+    }
     const s = this.screen(w);
     if (!s.typed) {
       // Someone is typing: the screen stops replaying and settles where its recording ends.

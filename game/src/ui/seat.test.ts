@@ -94,14 +94,14 @@ describe('seat bar: the fullscreen chip (#74)', () => {
 
     bar.setFullscreen(fullscreenChip({ state: 'split', applied: false }, { cols: 60, rows: 40 }));
     expect(chip.hidden).toBe(false);
-    expect(bar.summary().fullscreen).toEqual({ label: 'Split pane 60×40', pressed: false, unavailable: false });
+    expect(bar.summary().fullscreen).toEqual({ label: 'Zoom herdr tab (split 60×40)', pressed: false, unavailable: false });
     expect(chip.getAttribute('aria-pressed')).toBe('false');
-    expect(chip.getAttribute('aria-label')).toBe('Fullscreen, off. Split pane 60 by 40');
+    expect(chip.getAttribute('aria-label')).toBe('Zoom herdr tab, off. Split pane 60 by 40');
     chip.click();
 
     bar.setFullscreen(fullscreenChip({ state: 'zoomed', applied: true }, { cols: 131, rows: 47 }));
     expect(chip.getAttribute('aria-pressed')).toBe('true');
-    expect(bar.summary().fullscreen?.label).toBe('Fullscreen');
+    expect(bar.summary().fullscreen?.label).toBe('herdr tab zoomed');
     chip.click();
     expect(asked).toEqual(['zoom', 'unzoom']);
 
@@ -109,7 +109,7 @@ describe('seat bar: the fullscreen chip (#74)', () => {
     bar.setFullscreen(fullscreenChip({ state: 'zoomed', applied: true, headless: true }, { cols: 120, rows: 40 }));
     expect(chip.getAttribute('aria-disabled')).toBe('true');
     expect(chip.disabled).toBe(false);
-    expect(bar.summary().fullscreen).toEqual({ label: 'Fullscreen unavailable', pressed: false, unavailable: true });
+    expect(bar.summary().fullscreen).toEqual({ label: 'Zoom unavailable', pressed: false, unavailable: true });
     chip.click();
     expect(asked).toHaveLength(2);
 

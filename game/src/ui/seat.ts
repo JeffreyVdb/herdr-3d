@@ -1,4 +1,5 @@
 import type { CodexNotice } from '../world/codexServer';
+import type { Display } from '../world/derive';
 import './seat.css';
 import './secretChips.css';
 import { secretFilesText } from '../world/revokeSecrets';
@@ -26,17 +27,18 @@ function key(k: string[], label: string): HTMLSpanElement {
 }
 
 /**
- * M5: the bar at the bottom while you sit at a worker's laptop: whose
- * terminal your keys go to (on label-maker tape, like the status chips),
- * how to get up and how to send Esc, and what went wrong when typing
- * failed. A visually hidden textarea keeps the keyboard focus, so IME
- * composition and the browser's paste land here. M16: a switch between the
- * terminal and the worker's conversation (Ctrl+Esc), showing which is up.
- * #59: the terminal's own preset and zoom (the transcript has its own, in its
- * strip): three swatches and A− / level / A+, always in view. In terminal mode
- * every key is the pane's, so the mouse and Ctrl + = / − / 0 reach them there;
- * by keyboard Ctrl+, reaches them from any view (Esc goes back). #74: a split herdr pane shows at its own size, so
- * beside them a chip states that fact ("Split pane 60×40") and switches herdr's zoom for the pane.
+ * M5: what you see while you sit at a worker's laptop. #176: the **seated workspace**, an in-app surface over the whole
+ * window (`position: fixed; inset: 0`, never the browser's Fullscreen API) like the floor overview: a compact header
+ * (whose terminal it is on sun-yellow label-maker tape, the worker's status, the Terminal / Conversation / Images
+ * switch, the terminal's preset and text size, Stand up), a line of notices under it when there is something to say (a
+ * question, the Codex launch, a read-only terminal), the content area that fills the rest (the seated xterm, the
+ * conversation, the images) and a footer with the keys. The game behind it is inert while it is up (the toasts and
+ * the dialogs over it are not). A visually hidden textarea keeps the keyboard focus, so IME composition, the browser's
+ * paste and copy land here; it is the one owner of the keyboard, the terminal widget never keeps it.
+ * #59: the terminal's own preset and zoom (the transcript has its own, in its strip): swatches and A− / level / A+,
+ * always in view; by keyboard Ctrl+, reaches them from any view (Esc goes back). #74: in the read-only fallback (#176:
+ * another client owns the pane) a chip states a split pane's size and zooms herdr's tab; while you own the pane its
+ * size is the window's and there is no chip.
  */
 export class SeatBar implements SeatView {
   readonly el: HTMLDivElement;
@@ -45,7 +47,27 @@ export class SeatBar implements SeatView {
   private readonly note = el('span', 'seat-note');
   private readonly keys = el('div', 'seat-keys');
   private readonly standBtn = el('button', 'seat-stand');
-  private readonly modeBtn = el('button', 'seat-mode');
+  /** #176: the view switch: one button per view (the one up is pressed); Ctrl+Esc still swaps. */
+  private readonly modeBtn = el('div', 'seat-mode');
+  private readonly modeBtns: Record<SeatMode, HTMLButtonElement> = { terminal: el('button', 'seat-mode-opt'), transcript: el('button', 'seat-mode-opt'), images: el('button', 'seat-mode-opt') };
+  /** #176: the header, the notices under it, the content area (the terminal's host and the conversation's layer). */
+  readonly head = el('div', 'seat-head');
+  private readonly notes = el('div', 'seat-notes');
+  readonly content = el('div', 'seat-content');
+  /** #176: where the seated xterm opens. */
+  readonly termHost = el('div', 'seat-term');
+  /** #176: the worker's status, on its tape. */
+  private readonly statusTape = el('span', 'tape seat-status');
+  /** #176: the terminal is read only (another client owns the pane). */
+  private readonly roLine = el('div', 'seat-readonly');
+  /** #176: the view is up herdr's history: how far, and the way back to the live bottom. */
+  private readonly historyBtn = el('button', 'seat-history');
+  private readonly historyText = el('span', 'seat-history-text');
+  private inerted: HTMLElement[] = [];
+  private returnFocus: HTMLElement | null = null;
+  private anim: Animation | null = null;
+  private covered = false;
+  private leaving = false;
   /** #57: the line that says the agent asks a question (terminal mode). */
   private readonly askLine = el('div', 'seat-ask');
   /** #155: the line about the worker's own Codex server (in the ask line's place while no question shows). */
@@ -53,7 +75,6 @@ export class SeatBar implements SeatView {
   /** #139: the seated Codex worker's profile, under its server's line (both in the question's place). */
   private readonly profileLine = el('div', 'seat-profile');
   private readonly codexBox = el('div', 'seat-codex-box');
-  private readonly modeOpts: Record<SeatMode, HTMLSpanElement> = { terminal: el('span', 'seat-mode-opt', 'Terminal'), transcript: el('span', 'seat-mode-opt', 'Transcript'), images: el('span', 'seat-mode-opt', 'Images') };
   /** #59: the terminal's preset and zoom. */
   private readonly look = el('div', 'seat-look');
   private readonly swatches: HTMLButtonElement[] = [];
@@ -75,7 +96,20 @@ export class SeatBar implements SeatView {
 
   constructor(
     private readonly hud: HTMLElement,
-    handlers: { text(t: string): void; paste(t: string, files?: File[]): void; stand(): void; toggle(): void; fullscreen?(action: 'zoom' | 'unzoom'): void; revoke?(from: HTMLElement): void },
+    private readonly handlers: {
+      text(t: string): void;
+      paste(t: string, files?: File[]): void;
+      stand(): void;
+      toggle(): void;
+      fullscreen?(action: 'zoom' | 'unzoom'): void;
+      revoke?(from: HTMLElement): void;
+      /** #176: a view picked on the switch. */
+      mode?(m: SeatMode): void;
+      /** #176: "Back to live": the terminal's view to the live bottom of herdr's history. */
+      live?(): void;
+      /** #176: the terminal's selected text, for a copy ('' or none: the browser's own copy). */
+      selection?(): string;
+    },
     private readonly prefs: ViewPrefs | null = null,
   ) {
     this.el = el('div', 'seat');
@@ -103,12 +137,26 @@ export class SeatBar implements SeatView {
     this.standBtn.type = 'button';
     this.standBtn.append(el('kbd', '', 'Esc'), document.createTextNode('Stand up'));
     this.standBtn.addEventListener('click', () => handlers.stand());
-    this.modeBtn.type = 'button';
-    this.modeBtn.title = 'Switch between the terminal and what you read last, the conversation or the images (Ctrl+Esc)';
-    const opts = el('span', 'seat-mode-opts');
-    opts.append(this.modeOpts.terminal, this.modeOpts.transcript, this.modeOpts.images);
-    this.modeBtn.append(el('kbd', '', 'Ctrl'), el('kbd', '', 'Esc'), opts);
-    this.modeBtn.addEventListener('click', () => handlers.toggle());
+    this.modeBtn.setAttribute('role', 'group');
+    this.modeBtn.setAttribute('aria-label', 'View');
+    this.modeBtn.title = 'Ctrl+Esc switches between the terminal and what you read last, the conversation or the images';
+    const words: Record<SeatMode, string> = { terminal: 'Terminal', transcript: 'Conversation', images: 'Images' };
+    for (const m of ['terminal', 'transcript', 'images'] as const) {
+      const b = this.modeBtns[m];
+      b.type = 'button';
+      b.dataset.mode = m;
+      b.textContent = words[m];
+      b.addEventListener('click', () => {
+        if (m === this.current) return this.backToPane();
+        if (handlers.mode) handlers.mode(m);
+        else handlers.toggle();
+      });
+      this.modeBtn.append(b);
+    }
+    const swap = el('span', 'key seat-mode-key');
+    swap.append(el('kbd', '', 'Ctrl'), el('kbd', '', 'Esc'));
+    swap.setAttribute('aria-hidden', 'true');
+    this.modeBtn.prepend(swap);
     this.input = el('textarea', 'seat-input');
     this.input.setAttribute('aria-label', 'Keyboard for the terminal');
     this.input.autocapitalize = 'off';
@@ -138,11 +186,32 @@ export class SeatBar implements SeatView {
     this.profileLine.hidden = true;
     this.profileLine.setAttribute('role', 'status');
     this.codexBox.append(this.codexLine, this.profileLine);
-    this.el.append(this.askLine, this.codexBox, line, this.keys, this.modeBtn, this.standBtn, this.input);
+    this.statusTape.hidden = true;
+    line.insertBefore(this.statusTape, this.note);
+    this.roLine.hidden = true;
+    this.roLine.setAttribute('role', 'status');
+    this.historyBtn.type = 'button';
+    this.historyBtn.hidden = true;
+    this.historyBtn.append(icon(ICON.down), this.historyText, el('span', 'seat-history-act', 'Back to live'));
+    this.historyBtn.addEventListener('click', () => {
+      handlers.live?.();
+      this.backToPane();
+    });
+    this.notes.append(this.askLine, this.codexBox, this.roLine);
+    this.content.append(this.termHost, this.historyBtn);
+    this.head.append(line, this.modeBtn, this.standBtn);
+    this.el.append(this.head, this.notes, this.content, this.keys, this.input);
+    // #176: a copy while the seat has the keyboard (⌘C on a Mac, the browser's menu) takes the terminal's selection.
+    this.el.addEventListener('copy', (e) => {
+      const text = handlers.selection?.() ?? '';
+      if (!text || this.current !== 'terminal' || !e.clipboardData) return;
+      e.preventDefault();
+      e.clipboardData.setData('text/plain', text);
+    });
     if (prefs) {
       this.zoomBtns = this.buildLook(prefs, handlers.fullscreen);
-      // At the end of the keys row (renderMode puts it back after the keys): the bar keeps its two rows.
-      this.keys.append(this.look);
+      // #176: in the header, between the view switch and Stand up.
+      this.head.insertBefore(this.look, this.standBtn);
       prefs.onChange((what) => {
         if (what === 'terminalTheme' || what === 'terminalZoom') this.renderLook();
       });
@@ -223,7 +292,7 @@ export class SeatBar implements SeatView {
 
   /** In terminal mode a click on the controls hands the keyboard straight back to the pane. */
   private backToPane(): void {
-    if (this.current === 'terminal' && !this.el.hidden) this.focus();
+    if (this.current === 'terminal' && this.shown) this.focus();
   }
 
   private renderLook(): void {
@@ -290,16 +359,119 @@ export class SeatBar implements SeatView {
     return t instanceof Element && t !== this.input && this.el.contains(t) && !!t.closest('button');
   }
 
-  show(name: string, mac: boolean): void {
+  /**
+   * Sits you down: the workspace grows out of `from` (the monitor's glass on your view; the middle when unknown), the
+   * game behind it goes inert, the focus it had is kept for `hide`. With reduced motion it fades in.
+   */
+  show(name: string, mac: boolean, from: { left: number; top: number; width: number; height: number } | null = null): void {
+    if (this.leaving) {
+      // Up again while it shrank: it opens anew.
+      this.leaving = false;
+      this.anim?.cancel();
+      this.anim = null;
+      this.el.inert = false;
+      this.el.hidden = true;
+    }
+    const was = !this.el.hidden;
     this.name = name;
     this.mac = mac;
     this.tape.textContent = `At ${name}’s laptop`;
+    this.el.setAttribute('aria-label', `At ${name}’s laptop`);
     this.current = 'terminal';
     this.child = null;
     this.renderMode();
     this.status('ok', null);
+    this.readOnly(null);
+    this.history(null);
     this.el.hidden = false;
     this.hud.dataset.seated = '1';
+    if (was) return;
+    const active = document.activeElement;
+    this.returnFocus = active instanceof HTMLElement && !this.el.contains(active) ? active : null;
+    this.inertBackground(true);
+    this.covered = false;
+    void this.grow(true, from).then((done) => {
+      if (done && !this.el.hidden) this.covered = true;
+    });
+  }
+
+  /** #176: the workspace hides the whole scene (from the end of its grow until it goes): the game draws a few frames a second. */
+  get covering(): boolean {
+    return this.covered && !this.el.hidden && !this.leaving;
+  }
+
+  /** It is up (shown and not on its way out). */
+  get shown(): boolean {
+    return !this.el.hidden && !this.leaving;
+  }
+
+  /** While it is up, the game around it is inert: the canvas and the HUD's other parts, never the toasts or a dialog. */
+  private inertBackground(on: boolean): void {
+    for (const e of this.inerted) e.inert = false;
+    this.inerted = [];
+    if (!on) return;
+    const skip = (e: Element) => e === this.el || e.contains(this.el) || e.matches('dialog, script, .toast, [data-over-seat]') || (e as HTMLElement).inert;
+    for (const e of [...this.hud.children, ...(this.hud.parentElement?.children ?? [])]) {
+      if (!(e instanceof HTMLElement) || skip(e)) continue;
+      // Of the page around the HUD only the scene's canvas: the overlays there open over the seat (the overview from
+      // the conversation, the whiteboard) and are hidden while closed.
+      if (e.parentElement !== this.hud && !(e instanceof HTMLCanvasElement)) continue;
+      e.inert = true;
+      this.inerted.push(e);
+    }
+  }
+
+  /** The grow out of the monitor (a clip path: nothing inside is scaled, so the terminal measures true) and its reverse. */
+  private grow(opening: boolean, from: { left: number; top: number; width: number; height: number } | null): Promise<boolean> {
+    this.anim?.cancel();
+    this.anim = null;
+    if (typeof this.el.animate !== 'function') return Promise.resolve(true);
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const r = from ? { l: from.left, t: from.top, r: w - (from.left + from.width), b: h - (from.top + from.height) } : { l: w * 0.3, t: h * 0.3, r: w * 0.3, b: h * 0.3 };
+    const small = `inset(${Math.max(0, r.t).toFixed(1)}px ${Math.max(0, r.r).toFixed(1)}px ${Math.max(0, r.b).toFixed(1)}px ${Math.max(0, r.l).toFixed(1)}px round 6px)`;
+    const quiet = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    const frames: Keyframe[] = quiet ? [{ opacity: 0 }, { opacity: 1 }] : [{ clipPath: small, opacity: 0.5 }, { clipPath: 'inset(0px 0px 0px 0px round 0px)', opacity: 1 }];
+    const anim = this.el.animate(opening ? frames : [...frames].reverse(), { duration: quiet ? 120 : opening ? 300 : 220, easing: opening ? 'cubic-bezier(0.16, 1, 0.3, 1)' : 'cubic-bezier(0.7, 0, 0.84, 0)', fill: opening ? 'none' : 'forwards' });
+    this.anim = anim;
+    return anim.finished.then(
+      () => this.anim === anim,
+      () => false,
+    );
+  }
+
+  /** #176: the worker's status on its tape (null: none to show). */
+  workerStatus(display: Display | null): void {
+    this.statusTape.hidden = !display;
+    if (!display) return;
+    const words: Record<Display, string> = { working: 'Working', done: 'Done', needs_you: 'Needs you', idle: 'Idle', asleep: 'Asleep', waiting: 'Waiting' };
+    if (this.statusTape.dataset.display === display) return;
+    this.statusTape.dataset.display = display;
+    this.statusTape.className = `tape seat-status tape--${display}`;
+    this.statusTape.textContent = words[display];
+  }
+
+  /** #176: the terminal is read only (another client owns the pane): what the line says, or null when the seat owns it. */
+  readOnly(note: { text: string; title?: string } | null): void {
+    this.roLine.hidden = !note;
+    this.el.toggleAttribute('data-readonly', !!note);
+    if (!note) {
+      this.roLine.replaceChildren();
+      return;
+    }
+    this.roLine.replaceChildren(el('span', 'seat-codex-tag', 'Read only'), el('span', 'seat-readonly-text', note.text));
+    this.roLine.title = note.title ?? note.text;
+  }
+
+  /** #176: how far up herdr's history the terminal's view is (null or 0: at the live bottom, nothing shown). */
+  history(h: { offset: number; max: number } | null): void {
+    const up = h && h.offset > 0 ? h.offset : 0;
+    this.historyBtn.hidden = !up;
+    if (!up) return;
+    const what = `${up} ${up === 1 ? 'line' : 'lines'} up`;
+    this.historyText.textContent = what;
+    this.historyBtn.setAttribute('aria-label', `${what} in the history. Back to live`);
+    this.historyBtn.title = `The terminal shows its history, ${what}${h && h.max ? ` of ${h.max}` : ''}. Typing or this button goes back to the live screen.`;
   }
 
   /** #26: a child's conversation is open over the worker's (its name) or not (null): the note and the keys say so. */
@@ -323,9 +495,11 @@ export class SeatBar implements SeatView {
     this.el.dataset.mode = m;
     // #26: Esc goes back to the worker's conversation first: the stand button stops naming it.
     this.el.toggleAttribute('data-child', this.child !== null && m === 'transcript');
-    const aria = { terminal: 'Showing the terminal: switch to the conversation or the images', transcript: 'Showing the conversation: switch to the terminal', images: 'Showing the images: switch to the terminal' };
-    this.modeBtn.setAttribute('aria-label', aria[m]);
-    for (const k of ['terminal', 'transcript', 'images'] as const) this.modeOpts[k].toggleAttribute('data-on', k === m);
+    for (const k of ['terminal', 'transcript', 'images'] as const) {
+      this.modeBtns[k].setAttribute('aria-pressed', String(k === m));
+      this.modeBtns[k].toggleAttribute('data-on', k === m);
+    }
+    this.content.dataset.mode = m;
     const flip = key(['I'], m === 'images' ? 'Conversation' : 'Images');
     // The switch's own key, repeated here (a narrow bar drops it: the switch shows it).
     const swap = (label: string) => {
@@ -346,8 +520,13 @@ export class SeatBar implements SeatView {
         ? [key(['Enter'], 'Write a prompt'), flip, swap('Terminal'), aside(`PgUp, PgDn, j and k scroll; ${nothing}`)]
         : m === 'images'
           ? [key(['Enter'], 'Open'), flip, swap('Terminal'), aside(`Arrows move between images; ${nothing}`)]
-          : [key(['Shift', 'Esc'], 'Send Esc'), key([this.mac ? '⌘' : 'Ctrl', 'V'], 'Paste'), swap('Conversation'), aside('Tab, arrows and Ctrl keys go to the terminal')]),
-      ...(this.prefs ? [this.look] : []),
+          : [
+              key(['Shift', 'Esc'], 'Send Esc'),
+              key([this.mac ? '⌘' : 'Ctrl', 'V'], 'Paste'),
+              key(this.mac ? ['⌘', 'C'] : ['Ctrl', 'Shift', 'C'], 'Copy'),
+              swap('Conversation'),
+              aside(`Tab, arrows and Ctrl keys go to the terminal; the wheel scrolls its history; ${this.mac ? '⌘' : 'Ctrl'}+click opens a link`),
+            ]),
     );
   }
 
@@ -386,10 +565,29 @@ export class SeatBar implements SeatView {
     line.replaceChildren(el('span', 'seat-codex-tag', tag), el('span', 'seat-codex-text', n.text));
   }
 
-  hide(): void {
-    this.el.hidden = true;
+  /** Gets you up: the workspace shrinks back into `to` (the monitor on your view, when known), the game is live again and the focus goes back where it was. */
+  hide(to: { left: number; top: number; width: number; height: number } | null = null): void {
+    if (this.el.hidden) return;
+    this.covered = false;
     delete this.hud.dataset.seated;
-    if (document.activeElement === this.input) this.input.blur();
+    this.inertBackground(false);
+    const back = this.returnFocus;
+    this.returnFocus = null;
+    if (this.el.contains(document.activeElement)) (document.activeElement as HTMLElement | null)?.blur?.();
+    if (back?.isConnected) back.focus({ preventScroll: true });
+    // Nothing of it takes the pointer or the keyboard while it shrinks.
+    this.leaving = true;
+    this.el.inert = true;
+    const done = () => {
+      if (!this.leaving) return; // sat down again meanwhile
+      this.leaving = false;
+      this.el.inert = false;
+      this.el.hidden = true;
+      this.anim?.cancel();
+      this.anim = null;
+    };
+    if (typeof this.el.animate !== 'function') return done();
+    void this.grow(false, to).then(done);
   }
 
   status(kind: 'ok' | 'busy' | 'error' | 'offline', text: string | null): void {
@@ -405,12 +603,31 @@ export class SeatBar implements SeatView {
   }
 
   /** What the bar says (test hook). */
-  summary(): { shown: boolean; tape: string; note: string; state: string; mode: SeatMode; ask: string | null; terminalZoom: string | null; fullscreen: { label: string; pressed: boolean; unavailable: boolean } | null; secretFiles: string | null } {
+  summary(): {
+    shown: boolean;
+    tape: string;
+    note: string;
+    state: string;
+    mode: SeatMode;
+    ask: string | null;
+    terminalZoom: string | null;
+    fullscreen: { label: string; pressed: boolean; unavailable: boolean } | null;
+    secretFiles: string | null;
+    /** #176: the worker's status tape, the read-only line, the history indicator (null: not shown). */
+    status: string | null;
+    readOnly: string | null;
+    history: string | null;
+    covering: boolean;
+  } {
     return {
+      status: this.statusTape.hidden ? null : (this.statusTape.textContent ?? ''),
+      readOnly: this.roLine.hidden ? null : (this.roLine.textContent ?? ''),
+      history: this.historyBtn.hidden ? null : (this.historyBtn.textContent ?? ''),
+      covering: this.covering,
       fullscreen: this.fsBtn.hidden ? null : { label: this.fsText.textContent ?? '', pressed: this.fsBtn.getAttribute('aria-pressed') === 'true', unavailable: this.fsBtn.hasAttribute('data-unavailable') },
       secretFiles: this.secretsBtn.hidden ? null : `${this.secretsCount.textContent ?? ''}${this.secretsText.textContent ?? ''}`,
       terminalZoom: this.zoomBtns?.level.textContent ?? null,
-      shown: !this.el.hidden,
+      shown: this.shown,
       tape: this.tape.textContent ?? '',
       note: this.note.textContent ?? '',
       state: this.el.dataset.state ?? '',

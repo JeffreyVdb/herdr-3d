@@ -34,6 +34,9 @@ import { stepZoom, ZOOM, type ThemePreset } from '../ui/themes';
 import { ImageFeeds, type ImageFeed } from './imageFeed';
 import { decodeBitmap, Prints, printsParam, PRINT_WATCH_LIMIT } from './prints';
 import { LaptopTerminal, LIVE_SIZE } from './terminal';
+import { SeatTerminal, type SeatGrid } from './seatTerm';
+import { terminalPx } from './seatTermLogic';
+import type { Display } from '../world/derive';
 import { createSeatTabs, FLIP_KEY } from './seatTabs';
 import { childEndText, hasTranscript, loadImagesTab, loadRenderer, TranscriptMode, type ChildInfo, type OverlayRect, type SeatMode } from './transcriptMode';
 import { TranscriptWatches, WATCH_LIMIT } from './transcriptWatches';
@@ -62,7 +65,7 @@ export interface ScreenMeshInfo {
 export type ScreenState = 'live' | 'pending' | 'frozen' | 'glow' | 'dark';
 
 /** The watches the game makes by itself. */
-export type WatchCommand = 'terminal.watch' | 'terminal.unwatch' | 'terminal.zoom' | 'transcript.watch' | 'transcript.unwatch' | 'transcript.image' | 'transcript.images';
+export type WatchCommand = 'terminal.watch' | 'terminal.unwatch' | 'terminal.zoom' | 'terminal.resize' | 'terminal.scroll' | 'transcript.watch' | 'transcript.unwatch' | 'transcript.image' | 'transcript.images';
 
 export interface LaptopHost {
   store: WorldStore;
@@ -95,12 +98,26 @@ export interface LaptopHost {
   handoff?(id: string): void;
   /** #64 schedules: "Schedule follow-up…" beside it: the schedule form over the seat (none: no button); #66: or its suggestion chip. */
   scheduleFollowup?(id: string, c: HandoffCandidate, s?: ScheduleSuggestion): void;
+  /** #176: a link the seated terminal opens (Ctrl/⌘+click): the app's validated opener (https only). */
+  external?(url: string): void;
 }
 
 /** The HUD while you sit at a laptop. */
 export interface SeatView {
-  show(name: string, mac: boolean): void;
-  hide(): void;
+  /** #176: the workspace grows out of `from` (the monitor on your view) and back into `to`. */
+  show(name: string, mac: boolean, from?: OverlayRect | null): void;
+  hide(to?: OverlayRect | null): void;
+  /** #176: the workspace's content area (the conversation's layer) and the seated terminal's host; none: an older host. */
+  readonly content?: HTMLElement;
+  readonly termHost?: HTMLElement;
+  /** #176: the workspace hides the whole scene. */
+  readonly covering?: boolean;
+  /** #176: the worker's status (null: none). */
+  workerStatus?(display: Display | null): void;
+  /** #176: the terminal is watched read only, and why (null: the seat owns it). */
+  readOnly?(note: { text: string; title?: string } | null): void;
+  /** #176: how far up herdr's history the terminal shows (null or 0: live). */
+  history?(h: { offset: number; max: number } | null): void;
   status(kind: 'ok' | 'busy' | 'error' | 'offline', text: string | null): void;
   focus(): void;
   /** M16: the terminal or the conversation is up. */
@@ -288,6 +305,13 @@ export class Laptops {
   paints = 0;
   /** The camera of the last frame (#98's test hook projects a monitor with it). */
   private lastCam: THREE.PerspectiveCamera | null = null;
+  /** #176: the seated terminal (an opened xterm in the workspace), made on the first sit; null on a host without one. */
+  private seatTerm: SeatTerminal | null = null;
+  /** #176: what the workspace says of the seated pane, as last shown. */
+  private controlShown = '';
+  /** #176: the seat waits for its terminal's first grid before it watches (a controller starts at the PTY's size). */
+  private seatGridWait = false;
+  private contentObserver: ResizeObserver | null = null;
 
   constructor(
     private readonly host: LaptopHost,
@@ -301,6 +325,7 @@ export class Laptops {
       failed: (id, code, message) => this.onFailed(id, code, message),
       closed: (id, reason) => this.onClosed(id, reason),
       zoomChanged: (id) => this.syncChip(id),
+      controlChanged: (id) => this.syncControl(id), // #176
       now: () => performance.now(),
     });
     this.feeds = new ImageFeeds({ send: (t, args) => this.host.watch(t, args) });
@@ -335,7 +360,8 @@ export class Laptops {
         box.hidden = true;
         box.setAttribute('role', 'region');
         box.setAttribute('aria-label', 'Conversation');
-        this.host.layer.append(box);
+        // #176: inside the seated workspace's content area (an older host: over the monitor, in the HUD).
+        (this.host.seat.content ?? this.host.layer).append(box);
         return box;
       },
       storage: storage(),
@@ -382,6 +408,7 @@ export class Laptops {
     host.themes?.onReady((t) => this.setLook(t));
     host.themes?.prefs.onChange((what) => {
       if (what === 'terminalZoom') for (const t of this.terms.values()) t.setZoom(this.zoom);
+      if (what === 'terminalZoom' || what === 'terminalTheme') this.lookSeatTerm(); // #176: a new cell, a new grid
     });
   }
 
@@ -393,6 +420,14 @@ export class Laptops {
   /** #59: every screen (live and pooled) in the preset's font and colours. */
   private setLook(t: ThemePreset): void {
     for (const term of [...this.terms.values(), ...this.pool]) term.setLook(t.mono.stack, screenTheme(t.screen));
+    this.lookSeatTerm();
+  }
+
+  /** #176: the seated terminal in the preset's font and colours, at the size its zoom gives (fixed: only these change it). */
+  private lookSeatTerm(): void {
+    const t = this.host.themes?.ready;
+    if (!t || !this.seatTerm) return;
+    this.seatTerm.setLook(t.mono.stack, screenTheme(t.screen), terminalPx(t, this.zoom));
   }
 
   /**
@@ -429,6 +464,8 @@ export class Laptops {
     if (m.t === 'terminal.frame') this.watches.frame(m);
     else if (m.t === 'terminal.closed') this.watches.closed(m);
     else if (m.t === 'terminal.state') this.watches.state(m);
+    else if (m.t === 'terminal.control') this.watches.control(m); // #176
+    else if (m.t === 'terminal.history') this.watches.history(m);
     else if (m.t === 'transcript.items') this.transcripts.items(m);
     else this.transcripts.closed(m);
   }
@@ -466,6 +503,7 @@ export class Laptops {
     }
     t.frame(f);
     const s = this.seat;
+    if (s?.id === id) this.seatTerm?.frame(f); // #176: the workspace's terminal
     if (s?.id === id && s.retryAt) {
       // The refused watch of the seat came back (a retry): the bar stops saying it did not.
       s.retryAt = 0;
@@ -529,7 +567,122 @@ export class Laptops {
     const s = this.seat;
     if (!s || (id !== undefined && id !== s.id)) return;
     const z = this.watches.zoomOf(s.id);
-    this.host.seat.setFullscreen?.(z ? fullscreenChip(z.zoom, z.size) : null);
+    // #176: while the seat owns the pane its size is the window's: no zoom chip (only a read-only terminal has one).
+    const c = this.watches.controlOf(s.id);
+    const owned = c && (c.mode === 'control' || c.mode === 'pending');
+    this.host.seat.setFullscreen?.(z && !owned ? fullscreenChip(z.zoom, z.size) : null);
+  }
+
+  // ---- #176: the seated terminal ----------------------------------------------------
+
+  /** The seated workspace hides the whole scene (the game draws it at a few frames a second). */
+  get covering(): boolean {
+    return !!this.seat && !!this.host.seat.covering;
+  }
+
+  /** The seat's terminal widget, made once (none on a host whose seat view has no terminal host: an older one, tests). */
+  private seatTerminal(): SeatTerminal | null {
+    if (this.seatTerm) return this.seatTerm;
+    const el = this.host.seat.termHost;
+    if (!el) return null;
+    this.seatTerm = new SeatTerminal(el, {
+      mac: this.mac,
+      grid: (g) => this.onGrid(g),
+      wheel: (lines, column, row, modifiers) => {
+        const s = this.seat;
+        if (s) void this.watches.scroll(s.id, { lines, column, row, modifiers });
+      },
+      open: (url) => this.host.external?.(url),
+      paste: (text, files) => this.paste(text, files),
+      keyboard: () => this.host.seat.focus(),
+    });
+    this.lookSeatTerm();
+    return this.seatTerm;
+  }
+
+  /** The grid the seat's terminal fits: the PTY of a pane the seat owns follows it; a first one starts the watch. */
+  private onGrid(g: SeatGrid): void {
+    const s = this.seat;
+    if (!s) return;
+    if (!this.watches.controlOf(s.id)) return this.syncWatches();
+    void this.watches.resize(s.id, g);
+  }
+
+  /** What the workspace says of the seated pane: read only and why, how far up its history it shows; the chip. */
+  private syncControl(id?: string): void {
+    const s = this.seat;
+    if (!s || (id !== undefined && id !== s.id)) return;
+    const c = this.watches.controlOf(s.id);
+    const mode = c?.mode ?? 'none';
+    this.seatTerm?.setFitting(mode !== 'observe' && mode !== 'none');
+    const note = mode === 'observe' ? readOnlyNote(c?.reason ?? 'busy') : null;
+    const h = mode === 'control' ? c?.history ?? null : null;
+    const key = `${mode}\u0000${note?.text ?? ''}\u0000${h ? `${h.offset}/${h.max}` : ''}`;
+    if (key !== this.controlShown) {
+      this.controlShown = key;
+      this.host.seat.readOnly?.(note);
+      this.host.seat.history?.(h);
+    }
+    this.syncChip(s.id);
+  }
+
+  /** #176: "Back to live": the seated terminal's view to the live bottom of herdr's history. */
+  toLive(): void {
+    const s = this.seat;
+    if (s) void this.watches.scroll(s.id, { bottom: true });
+  }
+
+  /** #176: the seated terminal's selected text ('' for none). */
+  selection(): string {
+    return this.seat && this.transcript.mode === 'terminal' ? (this.seatTerm?.selection() ?? '') : '';
+  }
+
+  /** #176: Ctrl+Shift+C: the terminal's selection to the clipboard (nothing selected: nothing happens). */
+  private copySelection(): void {
+    const text = this.selection();
+    if (!text) return;
+    const clip = globalThis.navigator?.clipboard;
+    if (!clip) return this.host.seat.status('error', 'This browser does not let the page copy: use the menu’s Copy.');
+    void clip.writeText(text).then(
+      () => this.host.seat.status('ok', `Copied ${text.length} ${text.length === 1 ? 'character' : 'characters'}`),
+      () => this.host.seat.status('error', 'Copying was refused: the page has no clipboard access.'),
+    );
+  }
+
+  /** #176: a view picked on the workspace's switch. */
+  pickMode(m: SeatMode): void {
+    if (!this.seat || m === this.transcript.mode) return;
+    if (m !== 'terminal') {
+      const why = this.whyNoTranscript();
+      if (why) return this.host.seat.status('error', why);
+    }
+    this.transcript.setMode(m);
+  }
+
+  /** The seat's terminal opened (or could not): its grid is known, so its watch can start. */
+  private gridReady(id: string): void {
+    if (this.seat?.id !== id || !this.seatGridWait) return;
+    this.seatGridWait = false;
+    this.syncWatches();
+  }
+
+  /** The conversation follows the content area's size (a window resize, the notices' line). */
+  private watchContent(): void {
+    const el = this.host.seat.content;
+    if (!el || this.contentObserver || typeof ResizeObserver === 'undefined') return;
+    this.contentObserver = new ResizeObserver(() => {
+      if (this.seat && this.transcript.shown) this.transcript.place(this.contentRect());
+    });
+    this.contentObserver.observe(el);
+  }
+
+  /** #176: where the conversation goes: the whole content area (its own px, relative to it). */
+  private contentRect(): OverlayRect | null {
+    const el = this.host.seat.content;
+    if (!el || !this.seat) return null;
+    const w = el.clientWidth;
+    const h = el.clientHeight;
+    return w > 0 && h > 0 ? { left: 0, top: 0, width: w, height: h } : null;
   }
 
   /** The chip's click: zoom the seated pane's herdr tab, or go back to the split layout. It is the player's choice, so it is remembered. */
@@ -775,8 +928,21 @@ export class Laptops {
     // #59: Ctrl+wheel zooms the text while seated only (a non-passive listener, so it can keep the browser's zoom off).
     this.wheelAcc = 0;
     window.addEventListener('wheel', this.onWheel, { passive: false });
-    this.host.seat.show(v.name, this.mac);
+    // #176: the workspace grows out of the monitor where you see it now; its terminal opens once it shows.
+    this.host.seat.show(v.name, this.mac, this.glassRect(camera));
     this.host.seat.status('ok', null);
+    this.controlShown = '';
+    const seatTerm = this.seatTerminal();
+    if (seatTerm) {
+      seatTerm.clear();
+      seatTerm.setFitting(true);
+      this.seatGridWait = !seatTerm.grid;
+      void seatTerm.mount().then(
+        () => this.gridReady(id),
+        () => this.gridReady(id),
+      );
+    }
+    this.watchContent();
     this.syncChip(id);
     this.syncSecretFiles();
     this.host.seat.focus();
@@ -801,6 +967,9 @@ export class Laptops {
   stand(why: string | null = null, snap = false): void {
     const s = this.seat;
     if (!s) return;
+    const to = !snap && this.lastCam ? this.glassRect(this.lastCam) : null; // #176: the workspace shrinks back into the monitor
+    this.seatTerm?.clearSelection();
+    this.seatGridWait = false;
     this.seat = null;
     window.removeEventListener('wheel', this.onWheel);
     this.lanes.stand();
@@ -823,7 +992,11 @@ export class Laptops {
     this.profileShown = '';
     this.host.seat.profileNote?.(null);
     this.host.seat.setFullscreen?.(null);
-    this.host.seat.hide();
+    this.host.seat.readOnly?.(null);
+    this.host.seat.history?.(null);
+    this.host.seat.workerStatus?.(null);
+    this.controlShown = '';
+    this.host.seat.hide(to);
     this.leaving = snap ? null : { t0: performance.now(), from: { pos: this.camPos.clone(), quat: this.camQuat.clone() } };
     if (why) this.host.toast(why, 'error');
     this.syncWatches();
@@ -954,7 +1127,8 @@ export class Laptops {
       if (k.items.length) this.askArmed = false;
     }
     if (k.prevent) e.preventDefault();
-    if (k.action === 'stand') this.stand();
+    if (k.action === 'copy') this.copySelection(); // #176
+    else if (k.action === 'stand') this.stand();
     else if (k.action === 'toggle-transcript') this.toggleTranscript();
     else if (k.items.length) this.type(k.items);
     return true;
@@ -1191,6 +1365,7 @@ export class Laptops {
           this.transcript.suggestionSeen(suggestionOf(v.worker)); // #66
           this.transcript.codexSeen(v.worker.codex ?? null, status === 'working'); // #157: its async questions
           this.transcript.usageSeen(v.worker.usage ?? null); // #101: its context meter (the worker's usage is replaced, not edited, when it changes)
+          this.host.seat.workerStatus?.(v.display); // #176
           this.syncChild(s.id); // #26
         }
       }
@@ -1213,7 +1388,8 @@ export class Laptops {
         const desk = this.desks.get(id);
         const seated = this.seat?.id === id;
         const fps = seated ? this.cfg.seatedFps : this.cfg.fps;
-        if (t.draw(f.now, 1000 / fps - 4)) this.paints++;
+        // #176: the workspace covers the seated monitor: its texture is kept fresh, once a second, for standing up.
+        if (t.draw(f.now, seated && this.covering ? 1000 : 1000 / fps - 4)) this.paints++;
         // M16: reading the transcript, the monitor behind it stays frozen (see onMode).
         if (seated && this.transcript.shown) continue;
         const at = this.liveAt.get(id);
@@ -1241,10 +1417,12 @@ export class Laptops {
     // Seated, the glass is what the plate keeps clear of in either view; the conversation is laid over exactly it.
     const rect = this.seat ? this.glassRect(f.camera) : null;
     if (this.transcript.shown) {
-      this.transcript.place(rect);
+      // #176: in the workspace's content area (an older host: over the glass).
+      this.transcript.place(this.host.seat.content ? this.contentRect() : rect);
       this.markReading(rect);
     } else this.markReading(null);
-    if (this.seat) this.markSeated(rect);
+    // #176: the workspace fills the window: the plate has no gutter beside it (Shift+L peeks it).
+    if (this.seat) this.markSeated(this.host.seat.content ? { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight } : rect);
   }
 
   /**
@@ -1341,14 +1519,20 @@ export class Laptops {
     const want = new Map<string, number>();
     if (this.attached && !this.attached.isAsleep) for (const id of this.planner.live) want.set(id, this.cfg.fps);
     // #187: not while its worker is away (the bridge would refuse it), nor right after it refused (a retry later).
-    const watched = this.seat && !this.seat.away && performance.now() >= this.seat.retryAt ? this.seat : null;
+    const watched = this.seat && !this.seat.away && performance.now() >= this.seat.retryAt && !this.seatGridWait ? this.seat : null;
     if (watched) want.set(watched.id, this.transcript.shown ? READING_FPS : this.cfg.seatedFps);
+    // #176: the seat owns its pane at the grid its terminal fits (a bridge before it: watched as before).
+    const control = new Map<string, SeatGrid>();
+    const grid = watched ? this.seatTerm?.grid : null;
+    if (watched && grid) control.set(watched.id, grid);
     // #74: only the screen you sit at says anything about fullscreen (the others show their panes as they are, and must
     // not move the tab around); the player's preference says whether it asks for the zoom (true) or only follows the
     // pane, so the chip stays true when the human changes it (false).
+    // #176: a watch that owns its pane never zooms the tab (its size is the window's); it only follows it, so the chip of
+    // a read-only fallback has its facts.
     const fullscreen = new Map<string, boolean>();
-    if (watched) fullscreen.set(watched.id, this.host.themes?.prefs.fullscreen ?? true);
-    this.watches.sync(want, fullscreen);
+    if (watched) fullscreen.set(watched.id, control.has(watched.id) && !this.watches.noControl ? false : (this.host.themes?.prefs.fullscreen ?? true));
+    this.watches.sync(want, fullscreen, control);
     // M16: the transcript of the worker you sit at (not counted against the terminal watches), and a few items of the
     // desks that have prints (only their images matter).
     const tx = new Map<string, number>();
@@ -1471,6 +1655,13 @@ export class Laptops {
     return this.terms.get(id)?.lines() ?? null;
   }
 
+  /** #176: the seated terminal widget and what the seat's watch says of its pane (test hook). */
+  seatTerminalState(): { opened: boolean; cols: number; rows: number; grid: SeatGrid | null; font: { px: number; family: string } | null; lines: string[]; control: ReturnType<Watches['controlOf']> } | null {
+    const t = this.seatTerm;
+    if (!this.seat || !t) return null;
+    return { opened: t.opened, cols: t.cols, rows: t.rows, grid: t.grid, font: t.fontInfo, lines: t.lines(), control: this.watches.controlOf(this.seat.id) };
+  }
+
   /** #59: the font the seated screen draws with (test hook). */
   seatedFont(): string | null {
     return this.seat ? (this.terms.get(this.seat.id)?.fontStack ?? null) : null;
@@ -1572,6 +1763,9 @@ export class Laptops {
 
   dispose(): void {
     this.stand(null, true);
+    this.contentObserver?.disconnect();
+    this.seatTerm?.dispose();
+    this.seatTerm = null;
     this.lanes.clear();
     this.attach(null);
     this.prints.dispose();
@@ -1592,4 +1786,12 @@ function childInfo(c: Child, now: number): ChildInfo {
     state: c.state,
     since: childSinceText({ state: c.state, startedAt: c.started_at ?? null, endedAt: c.ended_at ?? null, lastActivityAt: c.last_activity_at ?? null }, now),
   };
+}
+
+/** #176: what the workspace says when the seated terminal is watched read only. Typing still reaches the pane (herdr's keys). */
+export function readOnlyNote(reason: string): { text: string; title: string } {
+  const title = 'herdr lets one client own a terminal at a time. Its size and history stay theirs; what you type still goes in. Stand up and sit again to try again.';
+  if (reason === 'taken_over') return { text: 'Another client took over this terminal: it shows at its own size, and the wheel does not scroll it.', title };
+  if (reason === 'failed') return { text: 'herdr-world could not take this terminal over: it shows at its own size, and the wheel does not scroll it.', title: 'The terminal controller kept failing to start, so the screen is watched read only. What you type still goes in.' };
+  return { text: 'Another client controls this terminal: it shows at its own size, and the wheel does not scroll it.', title };
 }

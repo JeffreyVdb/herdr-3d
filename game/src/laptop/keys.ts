@@ -31,9 +31,11 @@ export interface SeatKey {
    * `stand`: Esc gets you up; `paste`: the browser's paste event follows with the text; `toggle-transcript` (M16):
    * Ctrl+Esc swaps the terminal and the transcript; `zoom-in` / `zoom-out` / `zoom-reset` (#59): the text size;
    * `look` (#59): the keyboard to the seat bar's terminal preset and zoom; `palette` (#147): the command palette
-   * (the game opens it from the capture phase; the pane never gets the chord); `dictate` (#213): the dictation bar, the same way.
+   * (the game opens it from the capture phase; the pane never gets the chord); `dictate` (#213): the dictation bar, the same way;
+   * `copy` (#176): Ctrl+Shift+C off a Mac copies the terminal's selection (as Linux terminals do; Ctrl+C stays ^C, and a
+   * Mac's ⌘C is the browser's copy event).
    */
-  action?: 'stand' | 'paste' | 'toggle-transcript' | 'look' | 'palette' | 'dictate' | ZoomAction;
+  action?: 'stand' | 'paste' | 'copy' | 'toggle-transcript' | 'look' | 'palette' | 'dictate' | ZoomAction;
   /** The browser must not act on it (Tab moving focus, Backspace, F5, Ctrl+W…). */
   prevent: boolean;
 }
@@ -130,6 +132,8 @@ export function seatedKey(e: KeyLike, mac: boolean): SeatKey {
   // #213: ⌘⇧Space / Ctrl+Shift+Space is the dictation bar (the game's, from the capture phase): the pane never gets it.
   if (cmd && !e.altKey && e.shiftKey && (mac ? !e.ctrlKey : !e.metaKey) && e.code === 'Space') return { items: [], action: 'dictate', prevent: true };
   if (cmd && !e.altKey && e.code === 'KeyV') return { items: [], action: 'paste', prevent: false };
+  // #176: Ctrl+Shift+C copies (Chrome's own chord for it opens the inspector, so it is kept from the browser).
+  if (!mac && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyC') return { items: [], action: 'copy', prevent: true };
   // Cmd+← / → are the start and end of the line, as in a Mac terminal.
   if (mac && e.metaKey && !e.ctrlKey && !e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return one(e.key === 'ArrowLeft' ? 'home' : 'end');
   // The Mac's other Cmd shortcuts stay the browser's and the system's (copy, quit, …).

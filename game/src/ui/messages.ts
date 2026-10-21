@@ -30,7 +30,9 @@ const DOES: Record<CommandName | LogoAction, string> = {
   // M5
   'terminal.watch': 'show laptop screens',
   'terminal.unwatch': 'show laptop screens',
-  'terminal.zoom': 'show a laptop screen fullscreen',
+  'terminal.zoom': 'zoom a herdr tab from a laptop',
+  'terminal.resize': 'size the terminal you sit at to the window',
+  'terminal.scroll': 'scroll the terminal you sit at',
   'worker.keys': 'type on a worker’s laptop',
   // M16
   'transcript.watch': 'show a worker’s conversation',
