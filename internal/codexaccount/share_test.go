@@ -790,6 +790,174 @@ func TestMoveSkillOnlyThroughRealFolders(t *testing.T) {
 	})
 }
 
+// otherFS is a fresh folder on another file system than near (/dev/shm),
+// or the test is skipped when there is none: a rename between them fails
+// with EXDEV.
+func otherFS(t *testing.T, near string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/dev/shm", "h3d-move-")
+	if err != nil {
+		t.Skipf("no second file system: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	probe := filepath.Join(near, ".probe")
+	if err := os.Mkdir(probe, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(probe)
+	if err := renameNew(probe, filepath.Join(dir, "probe")); !errors.Is(err, syscall.EXDEV) {
+		os.Remove(filepath.Join(dir, "probe"))
+		t.Skipf("/dev/shm is not another file system: %v", err)
+	}
+	return dir
+}
+
+// noTemp fails when a copy's temp folder (.<name>.h3d-…) is left in dir.
+func noTemp(t *testing.T, dir string) {
+	t.Helper()
+	es, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range es {
+		if strings.Contains(e.Name(), ".h3d-") {
+			t.Errorf("temp %s left", e.Name())
+		}
+	}
+}
+
+// skillTree writes a skill at dir: files with their modes, a folder with
+// its own, a link inside.
+func skillTree(t *testing.T, dir string) {
+	t.Helper()
+	for name, mode := range map[string]os.FileMode{"SKILL.md": 0o644, "bin/run": 0o755, "bin/key": 0o600} {
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(name+"\n"), mode); err != nil {
+			t.Fatal(err)
+		}
+		os.Chmod(p, mode)
+	}
+	os.Chmod(filepath.Join(dir, "bin"), 0o750)
+	if err := os.Symlink("bin/run", filepath.Join(dir, "run")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// readOnly makes the folder dir read-only until the test ends.
+func readOnly(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+}
+
+// Review R2-1: across file systems the move copies beside dst and renames
+// the copy to it, never over anything: a dst that appeared meanwhile is
+// left as it is (only the copy is removed), and so is src.
+func TestMoveTreeAcrossFileSystems(t *testing.T) {
+	t.Run("a folder that appeared meanwhile stays", func(t *testing.T) {
+		src := filepath.Join(t.TempDir(), "source")
+		if err := os.Mkdir(src, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		skillTree(t, src)
+		dstRoot := otherFS(t, filepath.Dir(src))
+		dst := filepath.Join(dstRoot, "skill")
+		if err := os.Mkdir(dst, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		sentinel := filepath.Join(dst, "existing.txt")
+		if err := os.WriteFile(sentinel, []byte("irreplaceable"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		before, there := tree(t, src), tree(t, dst)
+		moved, err := moveTree(src, dst)
+		if moved || !errors.Is(err, fs.ErrExist) {
+			t.Fatalf("moved=%v err=%v", moved, err)
+		}
+		if got, err := os.ReadFile(sentinel); err != nil || string(got) != "irreplaceable" {
+			t.Fatalf("existing destination lost: %v %q", err, got)
+		}
+		if !maps(there, tree(t, dst)) || !maps(before, tree(t, src)) {
+			t.Fatal("a refused move changed a folder")
+		}
+		noTemp(t, dstRoot)
+	})
+	t.Run("nothing in the way", func(t *testing.T) {
+		src := filepath.Join(t.TempDir(), "source")
+		if err := os.Mkdir(src, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		skillTree(t, src)
+		dstRoot := otherFS(t, filepath.Dir(src))
+		dst := filepath.Join(dstRoot, "skill")
+		before := tree(t, src)
+		if moved, err := moveTree(src, dst); !moved || err != nil {
+			t.Fatalf("moved=%v err=%v", moved, err)
+		}
+		if !maps(before, tree(t, dst)) {
+			t.Fatalf("copy %v, want %v", tree(t, dst), before)
+		}
+		if _, err := os.Lstat(src); !isNotExist(err) {
+			t.Fatalf("source still there: %v", err)
+		}
+		noTemp(t, dstRoot)
+	})
+}
+
+// R2-1: MoveSkill across file systems: the skill arrives whole, the link is
+// left; an old folder that cannot all be removed is reported, the copy kept.
+func TestMoveSkillAcrossFileSystems(t *testing.T) {
+	setup := func(t *testing.T) (*Service, string, string, string) {
+		def := filepath.Join(t.TempDir(), ".codex")
+		skillTree(t, filepath.Join(def, "skills", "infra"))
+		u := otherFS(t, def)
+		s := New(u, def)
+		return s, list(u, def, s.Settings())[0].Key, filepath.Join(def, "skills", "infra"), filepath.Join(u, ".agents", "skills")
+	}
+	t.Run("moved", func(t *testing.T) {
+		s, key, src, dir := setup(t)
+		before := tree(t, src)
+		res, err := s.MoveSkill(ctx, key, "infra")
+		if err != nil || res.Failed {
+			t.Fatal(err, res)
+		}
+		if want := "Moved the skill infra to ~/.agents/skills/infra and left a link in codex's skills/: every Codex home sees it now."; res.Report != want {
+			t.Fatalf("report %q", res.Report)
+		}
+		if !maps(before, tree(t, filepath.Join(dir, "infra"))) {
+			t.Fatal("the skill did not arrive whole")
+		}
+		if l := readlink(t, src); l != filepath.Join(dir, "infra") {
+			t.Fatalf("link %s", l)
+		}
+		noTemp(t, dir)
+	})
+	t.Run("old folder not all removed", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root removes a read-only folder's files")
+		}
+		s, key, src, dir := setup(t)
+		readOnly(t, filepath.Dir(src)) // the folder cannot be removed from skills/
+		before := tree(t, src)
+		res, err := s.MoveSkill(ctx, key, "infra")
+		if err != nil || !res.Failed {
+			t.Fatal(err, res)
+		}
+		if want := "Copied the skill infra to ~/.agents/skills/infra, but its old folder in codex's skills/ could not all be removed: both are there now. Remove the old one by hand."; res.Report != want {
+			t.Fatalf("report %q", res.Report)
+		}
+		if !maps(before, tree(t, filepath.Join(dir, "infra"))) {
+			t.Fatal("the copy is not whole")
+		}
+		noTemp(t, dir)
+	})
+}
+
 // Review R3/R4: what appeared since the plan is never overwritten. A
 // backup name taken meanwhile: the next free one, and the report names it.
 // A hooks.json or an entry where the plan saw none: left as it is, and the

@@ -329,18 +329,26 @@ func copyTree(src, dst string) error {
 }
 
 // moveTree moves the folder src to dst, which must not be there: a rename
-// (never over anything), or across file systems a copy and then the
-// original removed.
-func moveTree(src, dst string) error {
-	err := renameNew(src, dst)
+// (never over anything), or across file systems a copy into a temp folder
+// beside dst, renamed to it (never over anything either), and then the
+// original removed. Only the temp folder is ever removed on a failure: a
+// dst that appeared meanwhile is an error that is fs.ErrExist, left as it
+// is. moved is whether dst is in place (with an error: src is not all gone).
+func moveTree(src, dst string) (moved bool, err error) {
+	err = renameNew(src, dst)
 	if !errors.Is(err, syscall.EXDEV) {
-		return err
+		return err == nil, err
 	}
-	if err := copyTree(src, dst); err != nil {
-		os.RemoveAll(dst)
-		return err
+	tmp := tempName(dst)
+	if err := copyTree(src, tmp); err != nil {
+		os.RemoveAll(tmp)
+		return false, err
 	}
-	return os.RemoveAll(src)
+	if err := renameNew(tmp, dst); err != nil {
+		os.RemoveAll(tmp)
+		return false, err
+	}
+	return true, os.RemoveAll(src)
 }
 
 // names joins names in words: "a", "a and b", "a, b and c".
@@ -562,7 +570,13 @@ func (s *Service) MoveSkill(ctx context.Context, key, name string) (ShareResult,
 			return ShareResult{}, &SettingsError{fmt.Sprintf("%s is a link, not a folder: the bridge moves no skill through it.", s.Display(d))}
 		}
 	}
-	if err := moveTree(src, dst); err != nil {
+	moved, err := moveTree(src, dst)
+	switch {
+	case moved && err != nil:
+		return ShareResult{Failed: true, Report: fmt.Sprintf("Copied the skill %s to %s, but its old folder in %s's skills/ could not all be removed: both are there now. Remove the old one by hand.", name, s.Display(dst), a.Name)}, nil
+	case errors.Is(err, fs.ErrExist):
+		return ShareResult{}, &SettingsError{fmt.Sprintf("A new %s appeared meanwhile: left as it is.", s.Display(dst))}
+	case err != nil:
 		return ShareResult{}, err
 	}
 	if err := os.Symlink(dst, src); err != nil {
