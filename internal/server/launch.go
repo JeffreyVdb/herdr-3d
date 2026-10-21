@@ -119,20 +119,11 @@ func (h *Hub) validRoles(r, keep proto.PresetRoles) error {
 			return bad("roles.%s: codex_profile is for a Codex role, not %q", role.name, role.hire.Harness)
 		}
 		if err := h.checkProfileKey(role.hire.Harness, role.hire.CodexProfile, role.kept.CodexProfile); err != nil {
-			return roleError("roles."+role.name, err)
+			// A bad_request, never not_found: the editor reads that as its preset gone.
+			return bad("roles.%s: %s", role.name, profileWords(err))
 		}
 	}
 	return nil
-}
-
-// roleError is a role's error with its name first, in the error's own
-// kind (a not_found stays one).
-func roleError(name string, err error) error {
-	var b *badArgsError
-	if errors.As(err, &b) {
-		return bad("%s: %v", name, b.err)
-	}
-	return fmt.Errorf("%s: %w", name, err)
 }
 
 // presetCommand runs preset.create, preset.update and preset.delete.
@@ -391,7 +382,7 @@ func (h *Hub) startRunPrepare(ctx context.Context, c *Client, cmd proto.Command)
 			return bad("orch: %v", err)
 		}
 		if err := h.checkProfileKey(a.Orch.Harness, a.Orch.CodexProfile, ""); err != nil { // #167
-			return roleError("orch", err)
+			return bad("orch: %s", profileWords(err))
 		}
 		o := *a.Orch
 		orch = &o

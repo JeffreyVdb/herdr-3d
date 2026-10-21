@@ -45,8 +45,10 @@ function setup(state: CodexProfilesState | null, preset: Preset) {
   };
   let ack: Record<string, unknown> = { id: 'w9', launch_id: 'l1', prompt: 'p', prompted: true };
   const sent: Array<[string, unknown]> = [];
+  const refusals: CommandResult[] = [];
   const send = (t: string, args: Record<string, unknown>): Promise<CommandResult> => {
     sent.push([t, args]);
+    if (t.startsWith('preset.') && refusals.length) return Promise.resolve(refusals.shift()!);
     if (t === 'run.prepare') {
       prepares.push(args);
       const prep: RunPrepare = { prompt: '/write-code the ticket', label: 'ORCH|run', preset: preset.id, orch: preset.roles.orch, cwd: '/home/test', git: null,
@@ -63,7 +65,7 @@ function setup(state: CodexProfilesState | null, preset: Preset) {
     upload: () => new Promise(() => {}), hireAt: () => {}, openPresets: () => {}, started: () => {} } as unknown as StartRunHost;
   const dlg = new StartRunDialog(document.body, host);
   const panel = new PresetsPanel(document.body, { store, send, unsupported: () => false, toast: () => {} } as unknown as PresetsHost);
-  return { dlg, panel, sent, starts, prepares, toasts, profiles, setAck: (a: Record<string, unknown>) => (ack = a) };
+  return { dlg, panel, sent, refusals, starts, prepares, toasts, profiles, setAck: (a: Record<string, unknown>) => (ack = a) };
 }
 
 const orchChips = () => document.querySelector('.desk-dlg--run [data-pick="orch-profile"]');
@@ -173,6 +175,17 @@ describe('Team presets: a Codex role’s profile (#167)', () => {
     document.querySelector<HTMLFormElement>('#presets-form')!.requestSubmit();
     await flush();
     expect(t.sent).toEqual([['preset.update', { id: 'p_1', roles: { orch: cx(), coder: cl(), reviewer: cl(), ux: cl(), researcher: cx('auto') } }]]);
+  });
+
+  it('a role profile the bridge refuses is said under the roles; the editor stays on that preset', async () => {
+    const t = setup(RUNS, { id: 'p_1', name: 'Team', roles: roles(cx(), cx()) });
+    t.refusals.push({ ok: false, code: 'bad_request', message: 'bad args: roles.reviewer: no Codex profile "work"' });
+    t.panel.open();
+    document.querySelector<HTMLButtonElement>('[data-key="edit:p_1"]')!.click();
+    document.querySelector<HTMLInputElement>('[data-key="role:reviewer:profile:work"]')!.click();
+    document.querySelector<HTMLFormElement>('#presets-form')!.requestSubmit();
+    await flush();
+    expect(t.panel.summary()?.editing).toMatchObject({ id: 'p_1', error: { field: 'roles', why: 'herdr-world refused it: roles.reviewer: no Codex profile "work"' } });
   });
 
   it('a bridge that takes no profile on runs: no chips, and none sent', async () => {

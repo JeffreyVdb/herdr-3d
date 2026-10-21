@@ -231,7 +231,7 @@ export class StartSim {
     if (typeof v.codex_profile === 'string' && v.codex_profile) {
       // #167: as checkProfileKey: Codex only, a listed key or Auto.
       if (v.harness !== 'codex') throw this.bad(`${what}: codex_profile is for a Codex hire, not "${v.harness}"`);
-      if (v.codex_profile !== 'auto' && !this.d.runProfiles?.list().some((p) => p.key === v.codex_profile)) throw this.d.error('not_found', `${what}: not found: no Codex profile "${v.codex_profile}"`);
+      if (v.codex_profile !== 'auto' && !this.d.runProfiles?.list().some((p) => p.key === v.codex_profile)) throw this.bad(`${what}: no Codex profile "${v.codex_profile}"`);
       h.codex_profile = v.codex_profile;
     }
     return h;

@@ -96,6 +96,10 @@ export class PresetsPanel {
       e.preventDefault();
       if (this.view.kind === 'edit') void this.save();
     });
+    // #167: the Codex profiles changed (one signed in, hidden, renamed): a Codex role's chips follow.
+    this.host.store.codexProfiles?.onChange(() => {
+      if (this.dialog.open) this.render();
+    });
     // Settings → Harness models changed what the role pickers offer.
     this.host.modelPrefs?.onChange(() => this.visibilityChanged());
     parent.append(this.dialog);

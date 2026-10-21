@@ -996,7 +996,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `transcript.unwatch` | `{"id": string, "child"?: TranscriptChild}` | — | — |
 | `transcript.page` | `{"id": string, "before"?: cursor, "limit"?: 1–500, "agent"?: string, "child"?: TranscriptChild}` | `{"items", "cursor", "has_more"}` | — |
 | `transcript.item` | `{"id": string, "item": string, "agent"?: string, "child"?: TranscriptChild}` | `{"item"}` | — |
-| `preset.create` | `{"name": string, "roles": {…}}` | `{"id": string}` | `preset.upsert` (see [Team presets and starting a run](#team-presets-and-starting-a-run)) |
+| `preset.create` | `{"name": string, "roles": {…}}` (#167: a role may carry `codex_profile`, see [Run profiles](#run-profiles-the-orchestrator-and-the-teams-codex-roles)) | `{"id": string}` | `preset.upsert` (see [Team presets and starting a run](#team-presets-and-starting-a-run)) |
 | `preset.update` | `{"id": string, "name"?: string, "roles"?: {…}}` (`roles` replaces all five) | — | `preset.upsert`; none when nothing changed |
 | `preset.delete` | `{"id": string}` | — | `preset.removed`, then `floor.upsert` for the floors whose `last_preset` it was |
 | `run.prepare` | `{"floor"|"session", "issue"? \| "text"? \| "work_item"?, "preset"?, "orch"?, "extra"?, "preview"?: bool}` (#134 `preview` as `hire.prepare`'s) | what the start-run dialog shows: `{"prompt", "label", "ticket", "preset", "orch", "cwd", "git", "capacity"}` | — |
@@ -2604,7 +2604,7 @@ saved with Auto stores `"auto"`); with fewer than two usable profiles there is n
 `orch` take an optional `codex_profile`: a key or `"auto"`, Codex only (another harness: `bad_request`). Absent: the
 default profile, as before; an older bridge refuses the field (`bad_request`, unknown field), so a client sends it only
 to a bridge with `runs`. A preset role keeps a stored profile that is gone on `preset.update`; a new one must be listed
-(else `not_found`).
+(else `bad_request` naming the role: never `not_found`, which says the preset itself is gone).
 
 - **The orchestrator** is hired on `orch.codex_profile` exactly as a Codex worker on its `codex_profile` (see
   [Hiring on a Codex profile](#hiring-on-a-codex-profile) and Auto above): the ack's `codex` and

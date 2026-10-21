@@ -46,6 +46,12 @@ type runTeam struct {
 // never checkProfileKey's not_found (the dialog reads that as its preset
 // gone).
 func roleProfileError(what string, err error) error {
+	return bad("the %s Codex profile cannot be used: %s", what, profileWords(err))
+}
+
+// profileWords is a profile check's error in its own words, without the
+// kind's prefix ("not found: ", "bad args: ").
+func profileWords(err error) string {
 	msg := err.Error()
 	for _, sentinel := range []error{store.ErrNotFound, errUnsupported} {
 		if errors.Is(err, sentinel) {
@@ -56,7 +62,7 @@ func roleProfileError(what string, err error) error {
 	if errors.As(err, &b) {
 		msg = b.err.Error()
 	}
-	return bad("the %s Codex profile cannot be used: %s", what, msg)
+	return msg
 }
 
 // possessive is a role's words as the owner of its profile.

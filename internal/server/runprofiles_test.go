@@ -204,7 +204,7 @@ func TestPresetRoleProfiles(t *testing.T) {
 	pb.c.mustError(proto.CmdPresetCreate, proto.PresetCreateArgs{Name: "Bad", Roles: bad}, proto.ErrBadRequest)
 	bad = roles
 	bad.Reviewer.CodexProfile = "nope"
-	pb.c.mustError(proto.CmdPresetCreate, proto.PresetCreateArgs{Name: "Bad", Roles: bad}, proto.ErrNotFound)
+	pb.c.mustError(proto.CmdPresetCreate, proto.PresetCreateArgs{Name: "Bad", Roles: bad}, proto.ErrBadRequest) // never not_found: the editor reads that as its preset gone
 
 	if err := os.RemoveAll(pb.work); err != nil {
 		t.Fatal(err)
@@ -214,7 +214,7 @@ func TestPresetRoleProfiles(t *testing.T) {
 	pb.c.mustAck(proto.CmdPresetUpdate, proto.PresetUpdateArgs{ID: id, Name: &name, Roles: &roles})
 	moved := roles
 	moved.Reviewer.CodexProfile = "work" // gone, and not this role's before
-	pb.c.mustError(proto.CmdPresetUpdate, proto.PresetUpdateArgs{ID: id, Roles: &moved}, proto.ErrNotFound)
+	pb.c.mustError(proto.CmdPresetUpdate, proto.PresetUpdateArgs{ID: id, Roles: &moved}, proto.ErrBadRequest)
 }
 
 // AC6: an agent an orchestrator started on another profile, as its prompt
