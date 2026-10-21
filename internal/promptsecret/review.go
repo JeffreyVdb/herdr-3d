@@ -87,7 +87,13 @@ func StoredDigest(text string, rev Review) string {
 // scanBytes encodes a scan (the rule set, the text, its candidates) under
 // a purpose's prefix.
 func scanBytes(purpose, text string, cands []Candidate) []byte {
-	b := []byte(purpose + "\x00" + RulesVersion + "\x00")
+	return scanBytesUnder(RulesVersion, purpose, text, cands)
+}
+
+// scanBytesUnder is scanBytes under the rule set version (a test makes a
+// review of an older one).
+func scanBytesUnder(version, purpose, text string, cands []Candidate) []byte {
+	b := []byte(purpose + "\x00" + version + "\x00")
 	b = binary.AppendUvarint(b, uint64(len(text)))
 	b = append(b, text...)
 	b = binary.AppendUvarint(b, uint64(len(cands)))
