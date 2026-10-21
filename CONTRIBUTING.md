@@ -1008,15 +1008,16 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   keeps its zoom state (the ack's `zoom`, `terminal.state`, `terminal.zoom`; a bridge without them: no chip, no error),
   `fullscreen.ts` (pure) turns it into the seat bar's chip (`Fullscreen` / `Split pane 60×40` / `Fullscreen unavailable`),
   the preference is `h3d.term.fullscreen` (`themePrefs.ts`; off is sent as `fullscreen: false`, which only follows the
-  pane, and the ambient laptops send no field), and `paint.ts` `viewport` fits a pane much narrower than the
-  screen to its width (`widthFit`). The simulator plays the zoom with `simzoom=old|single|split|headless`
-  (`tools/fixture-screen.ts`; `sim.unzoom` is the human unzooming). #57: `askCard.ts` is the question card of the transcript view (the one pinned above the
+  pane, and the ambient laptops send no field); #175: a narrow (split) pane at 100% is its whole grid, letterboxed
+  (`paint.ts` `viewport`: only the user's zoom grows the cells). The simulator plays the zoom with `simzoom=old|single|split|headless`
+  (`tools/fixture-screen.ts`; `sim.unzoom` is the human unzooming), and `simscreen=narrow` puts a split pane's 60×40
+  screen (`fixtures/screens/narrow.jsonl`) on every laptop. #57: `askCard.ts` is the question card of the transcript view (the one pinned above the
   prompt box while the worker waits, and its timeline entry), styled in `transcript.css`. #59: `paint.ts` draws each
   glyph in its own cell (no ligatures, no fallback advance moving a column) in the preset's font and colours, box
   drawing / block elements / braille as shapes (`glyphs.ts`), and seated at the zoom (`viewport`: the letterbox below
   100%, above it the pane's bottom-left, moved to keep the cursor in view); `keys.ts` `zoomKey` is Ctrl + = / + / − / 0 and `LOOK_KEY` Ctrl+, (the keyboard to the terminal's preset and zoom). Which laptops are live is `src/world/screens.ts` (pure, vitest); the textured planes and
   the frozen-screen atlas (one instanced batch) are `src/render/screens.ts`; the seat bar is `src/ui/seat.ts`. Recorded
-  screens for the simulator are `fixtures/screens/{agent,shell}.jsonl` (real `herdr terminal session observe` output of
+  screens for the simulator are `fixtures/screens/{agent,shell,narrow}.jsonl` (real `herdr terminal session observe` output of
   synthetic screens, made by `node tools/record-screens.ts` in a throwaway `h3d-m5screen-*` session); `sim=1` replays
   them for `terminal.watch` (`tools/fixture-screen.ts`: an agent's recording for a worker with an agent, the shell's
   otherwise, each from its own point, looping; at most `fps` frames a second, diffs in between concatenated),

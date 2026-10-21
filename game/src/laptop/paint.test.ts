@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { Terminal } from '@xterm/xterm';
 import { describe, expect, it } from 'vitest';
 import { THEMES } from '../ui/themes';
-import { CELL_ASPECT, cellGrid, contrast, FIT_WIDTH_MAX, GLANCE, glanceView, paintBuffer, paletteColor, readable, SCREEN_THEME, screenTheme, viewport, widthFit, type Paint2D } from './paint';
+import { CELL_ASPECT, cellGrid, contrast, GLANCE, glanceView, PAD, paintBuffer, paletteColor, readable, SCREEN_THEME, screenTheme, viewport, type Paint2D } from './paint';
 
 /**
  * A 2D context that records what is drawn: each glyph with its left edge and the width it takes on the canvas
@@ -245,51 +245,67 @@ describe('paintBuffer with the presets (#59)', () => {
   });
 });
 
-describe('width fit (#74)', () => {
-  const narrow = { cols: 60, rows: 40, width: 1200, height: 500 };
-  const pad = 30; // PAD of 1200
+describe('a narrow pane at 100% (#175)', () => {
+  const screen = { width: 1200, height: 600 };
+  const pad = Math.round(1200 * PAD);
 
-  it('a normal pane keeps the height fit: nothing changes for it', () => {
-    const wide = { cols: 120, rows: 36, width: 1200, height: 800 };
-    expect(widthFit(wide)).toBe(1);
-    expect(viewport({ ...wide, fitWidth: true })).toEqual(viewport(wide));
-    expect(viewport({ ...wide, zoom: 150, fitWidth: true })).toEqual(viewport({ ...wide, zoom: 150 }));
+  it('shows the whole grid of a 120-, 60- and 40-column pane, at the plain fit, letterboxed, letters not stretched', () => {
+    for (const cols of [120, 60, 40]) {
+      const pane = { cols, rows: 40, ...screen };
+      const v = viewport({ ...pane, zoom: 100 });
+      expect(v, `${cols} columns`).toEqual({ ...cellGrid(pane), col0: 0, row0: 0, cols, rows: 40 });
+      expect(v.cw / v.ch).toBeGreaterThanOrEqual(CELL_ASPECT.min - 1e-9);
+      expect(v.cw / v.ch).toBeLessThanOrEqual(CELL_ASPECT.max + 1e-9);
+      expect(v.x0).toBeGreaterThanOrEqual(pad - 1e-6);
+      expect(v.y0).toBeGreaterThanOrEqual(pad - 1e-6);
+      expect(v.x0 + v.cw * v.cols).toBeLessThanOrEqual(1200 - pad + 1e-6);
+      expect(v.y0 + v.ch * v.rows).toBeLessThanOrEqual(600 - pad + 1e-6);
+    }
+    // A narrow pane keeps the bars at its sides: the space is left unused, not filled by bigger cells.
+    expect(viewport({ cols: 60, rows: 40, ...screen }).x0).toBeGreaterThan(pad * 4);
   });
 
-  it('without the option a narrow pane stays at the height fit, letterboxed', () => {
-    const v = viewport(narrow);
-    expect(v).toMatchObject({ col0: 0, row0: 0, cols: 60, rows: 40 });
-    expect(v.x0).toBeGreaterThan(pad * 4);
+  it('zooms in on a narrow pane only when asked, follows the cursor there, and is whole again back at 100%', () => {
+    const pane = { cols: 60, rows: 40, ...screen };
+    const first = viewport({ ...pane, zoom: 100, cursor: { x: 59, y: 2 } });
+    for (const zoom of [150, 200]) {
+      const v = viewport({ ...pane, zoom });
+      expect(v.rows).toBeLessThan(40);
+      expect(v.cw).toBeCloseTo(cellGrid(pane).cw * (zoom / 100), 6);
+      for (const cursor of [
+        { x: 5, y: 2 },
+        { x: 59, y: 2 },
+        { x: 59, y: 39 },
+      ]) {
+        const c = viewport({ ...pane, zoom, cursor });
+        expect(cursor.x).toBeGreaterThanOrEqual(c.col0);
+        expect(cursor.x).toBeLessThan(c.col0 + c.cols);
+        expect(cursor.y).toBeGreaterThanOrEqual(c.row0);
+        expect(cursor.y).toBeLessThan(c.row0 + c.rows);
+      }
+    }
+    expect(viewport({ ...pane, zoom: 100, cursor: { x: 59, y: 2 } })).toEqual(first);
+    expect(first).toMatchObject({ col0: 0, row0: 0, cols: 60, rows: 40 });
   });
 
-  it('a pane much narrower than the screen fills its width at 100%, showing the bottom of the pane', () => {
-    const fit = cellGrid(narrow);
-    expect(widthFit(narrow)).toBeCloseTo(1140 / (fit.cw * 60), 6);
-    const v = viewport({ ...narrow, fitWidth: true });
-    expect(v.cols).toBe(60);
-    expect(v.rows).toBeLessThan(40);
-    expect(v).toMatchObject({ col0: 0, row0: 40 - v.rows });
-    expect(v.x0).toBeCloseTo(pad, 3);
-    expect(v.x0 + v.cw * v.cols).toBeCloseTo(1200 - pad, 3);
-    // The cells keep their aspect.
-    expect(v.cw / v.ch).toBeCloseTo(fit.cw / fit.ch, 6);
-  });
+  it('paints every row of a 60×40 pane at 100%, with the cursor; the glance view is unchanged', async () => {
+    const t = new Terminal({ cols: 60, rows: 40, scrollback: 0 });
+    await write(t, Array.from({ length: 40 }, (_, i) => `row${i}`).join('\r\n') + '\x1b[3;10H');
+    const o = { cols: 60, rows: 40, ...screen, cursor: true, zoom: 100 };
+    const f = fakeCtx();
+    paintBuffer(f.g, t.buffer.active, o);
+    const fit = cellGrid(o);
+    const drawn = drawnRows(f.texts, fit);
+    expect(drawn).toHaveLength(40);
+    expect(drawn[0]).toBe('row0');
+    expect(drawn[39]).toBe('row39');
+    expect(f.rects.find((r) => r.style === css(SCREEN_THEME.cursor))).toMatchObject({ x: fit.x0 + 9 * fit.cw, y: fit.y0 + 2 * fit.ch });
 
-  it('keeps the cursor in view, and the A+ / A− steps go on from the width fit', () => {
-    const v = viewport({ ...narrow, fitWidth: true, cursor: { x: 5, y: 2 } });
-    expect(v.row0).toBe(2);
-    const big = viewport({ ...narrow, fitWidth: true, zoom: 150 });
-    expect(big.cw).toBeCloseTo(viewport({ ...narrow, fitWidth: true }).cw * 1.5, 6);
-    const small = viewport({ ...narrow, fitWidth: true, zoom: 70 });
-    expect(small.cw).toBeCloseTo(viewport({ ...narrow, fitWidth: true }).cw * 0.7, 6);
-  });
-
-  it('never grows the cells past FIT_WIDTH_MAX times the height fit', () => {
-    const thin = { cols: 20, rows: 40, width: 1200, height: 500 };
-    expect(widthFit(thin)).toBe(FIT_WIDTH_MAX);
-    const v = viewport({ ...thin, fitWidth: true });
-    expect(v.cw).toBeCloseTo(cellGrid(thin).cw * FIT_WIDTH_MAX, 6);
-    expect(v.cols).toBe(20);
+    const glance = fakeCtx();
+    paintBuffer(glance.g, t.buffer.active, { ...o, glance: true });
+    expect(drawnRows(glance.texts, cellGrid({ ...GLANCE, ...screen }))).toEqual(['row35', 'row36', 'row37', 'row38', 'row39']);
+    expect(glance.rects.some((r) => r.style === css(SCREEN_THEME.cursor))).toBe(false);
+    t.dispose();
   });
 });
 

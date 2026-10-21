@@ -296,7 +296,7 @@ Decisions (orchestrator and user) and what was measured while building it:
 | 8 | Why not move the pane to its own tab instead? | `pane move` changes the pane's id across workspaces and refuses a zoomed tab; it rearranges what the human built and cannot be undone by standing up. Zoom is a flag that is put back with the same command. Resizing a split (`pane resize`) steals the siblings' space. |
 | 9 | Stop the splits at the source | The orchestrator's run prompt (`RunPrompt`, also what `run.prepare` returns) has one fixed line: every agent it hires goes in its own workspace or tab, never in a split pane of its own tab or another agent's tab, because a laptop shows a pane at its own size (a fullscreen terminal is wanted). It is there for every ticket kind. |
 | 10 | The write path | Two new shapes in `controlShapes` (`herdr --session <s> pane zoom <pane> --on` and `--off`, nothing else: never `--toggle`, never without a mode), each write its own audit row `pane.zoom` (`session`, `pane`, `mode`, `why`), apart from the command's row. |
-| 11 | When the zoom does not help | If the screen is still much narrower than the monitor (zoom off, or headless), the terminal's A+ / A− default fits the width instead of the height only (the letterbox is at least not tiny text), and the seat bar says why: "Split pane 60×40". |
+| 11 | When the zoom does not help | If the screen is still much narrower than the monitor (zoom off, or headless), the terminal's A+ / A− default fits the width instead of the height only (the letterbox is at least not tiny text), and the seat bar says why: "Split pane 60×40". *(Superseded in part by #175, row 1: 100% is the whole grid, letterboxed; the seat bar's chip stays.)* |
 
 ## 2026-10-01 — #15 M13: the whiteboard (part A) and recent drops
 
@@ -2946,3 +2946,12 @@ A return visit within the bounds no longer waits for the build (40 ms, 170 ms, 1
 **Ordinary first opens, and visits after an eviction or an invalidation, still build** and cost what they did. The timing
 over the SSH tunnel (`pnpm perf:mac`) was not measured: the saving there is the same `wait_ms`, the tunnel adds its
 round trips to both.
+
+## 2026-10-21 — the seated terminal never enlarges a narrow pane by itself (#175)
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | What is 100%? | **The whole grid**, whatever the pane's width: `viewport` at 100% is `cellGrid`'s fit, its cells kept to `CELL_ASPECT` (letters never stretched wide), centred, with bars at the sides of a narrow pane. The cells grow only by the user's own zoom: A+ / A−, Ctrl + wheel and Ctrl + = / + / − / 0 (70–200%, above 100% the bottom-left of the pane, following the cursor). The #74 width fit (`widthFit`, up to 2.5× for a pane under 0.7 of the screen's width, and `PaintOptions.fitWidth`) is removed, not switched off. Supersedes row 11 of #74 in part. |
+| 2 | Why | The hidden multiplier made "100%" up to 2.5× (and 200% up to 5×) for a split pane, so a 60×40 pane at 1200×600 showed 19 of its 40 rows, and the size depended on the pane's shape. Resetting to 100% did not bring the rows back. Unused width at the sides of a narrow pane is the accepted price. |
+| 3 | What stays | The #74 fullscreen zoom of the herdr tab (the bridge's `pane.zoom`, the usual fix for a split pane), the seat bar's "Split pane 60×40" chip, and the standing glance view (its own big-type grid, `GLANCE`). |
+| 4 | Later work | The full-window seated terminal and PTY resizing (#176) keep this invariant: 100% never enlarges or crops a pane by itself, only the user's zoom does. `paint.test.ts` (`a narrow pane at 100% (#175)`) and `terminal.test.ts` hold it. |
