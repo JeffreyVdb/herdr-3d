@@ -1,5 +1,5 @@
 import type { CommandResult } from '../net/client';
-import type { CodexProfile, CommandArgs, CommandName, HireAck, HireGit, HireOptions, HirePrepare } from '../net/protocol';
+import type { CodexProfile, CommandArgs, CommandName, HireAck, HireGit, HireOptions, HirePrepare, HirePreset } from '../net/protocol';
 import {
   baseHint,
   baseText,
@@ -143,11 +143,24 @@ export interface HirePrefill {
   /**
    * #93: the form comes from this hire preset: `choice` is its exact harness / model / effort, never resolved to another
    * one (a hidden model stays offered; a removed one or an effort it does not take is shown and blocks Hire until the
-   * player picks). `prompt` is its prompt.
+   * player picks). `prompt` is its prompt. #140: `profile` absent or `''` is the default profile (never Auto).
    */
   preset?: { id: string; name: string; scope: 'floor' | 'global'; instructions?: boolean; profile?: string };
   /** #93: the player chose to replace the desk's unsent first task with `prompt`: the new text is the desk's draft at once. */
   replaceDraft?: true;
+}
+
+/**
+ * #93: the form a hire preset opens ("Use"): its prompt and exact choice; `replace`: it replaces the desk's unsent first
+ * task. #140: a preset with no `codex_profile` hands `profile: ''` (the default), never nothing (a new form: Auto).
+ */
+export function presetPrefill(p: HirePreset, replace = false): HirePrefill {
+  return {
+    prompt: p.prompt,
+    choice: { harness: p.harness, model: p.model, effort: p.effort },
+    preset: { id: p.id, name: p.name, scope: p.floor ? 'floor' : 'global', ...(p.herdr_instructions ? { instructions: true } : {}), profile: p.codex_profile ?? '' },
+    ...(replace ? { replaceDraft: true as const } : {}),
+  };
 }
 
 /**
@@ -691,7 +704,8 @@ export class HireDialog {
     this.exact = prefill.preset && prefill.choice ? { ...prefill.preset, saved: { ...prefill.choice } } : null;
     this.addLines = this.exact?.instructions === true;
     this.profile = null;
-    this.profileWant = prefill.preset?.profile;
+    // #140: a preset with no profile keeps meaning the default (''); only a new form (no preset) is undefined, which starts on Auto.
+    this.profileWant = prefill.preset ? (prefill.preset.profile ?? '') : undefined;
     this.asking = null;
     this.askEl.replaceChildren();
     this.linesOpen = false;

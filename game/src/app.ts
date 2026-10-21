@@ -27,7 +27,7 @@ import { RadioLink } from './radio/link';
 import { createGameAudio, createReception, receptionContext, type GameAudio, type Reception, type ReceptionEvent } from './reception';
 import { Hud, type PlanLabel, type ToastAction, type ToastKind } from './ui/hud';
 import { h, icon } from './ui/dom';
-import { HireDialog, type HirePrefill } from './ui/hire';
+import { HireDialog, presetPrefill, type HirePrefill } from './ui/hire';
 import { HireReviewDialog } from './ui/hireReview';
 import { Panels } from './ui/panels';
 import { SendHomeDialog } from './ui/sendHome';
@@ -794,12 +794,7 @@ export class App {
       },
       orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ floor: s, desk: d }, true) },
       use: (s, d, p, replace) =>
-        this.hire.open(s, d, {
-          prompt: p.prompt,
-          choice: { harness: p.harness, model: p.model, effort: p.effort },
-          preset: { id: p.id, name: p.name, scope: p.floor ? 'floor' : 'global', ...(p.herdr_instructions ? { instructions: true } : {}), ...(p.codex_profile ? { profile: p.codex_profile } : {}) },
-          ...(replace ? { replaceDraft: true as const } : {}),
-        }),
+        this.hire.open(s, d, presetPrefill(p, replace)),
       unsent: (s, d) => this.hire.unsent(s, d),
     });
     this.hireReview = new HireReviewDialog(o.host, { ...hireHost, hirePrefs: this.hirePrefs, hires: this.hires, goTo: (id) => this.goToNewHire(id) });

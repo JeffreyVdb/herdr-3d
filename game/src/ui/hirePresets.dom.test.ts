@@ -659,6 +659,19 @@ describe('HirePresetsDialog: Codex profile (#139)', () => {
     await submit();
     expect(sent.at(-1)).toEqual(['hire_preset.update', expect.objectContaining({ codex_profile: 'auto' })]);
   });
+
+  it('an old preset with no profile, edited and saved again untouched, is never saved as Auto', async () => {
+    const none = preset('Plain', 'web');
+    const { dlg, sent } = setup([none], null, { profiles: { ...TWO, auto: true, rules: [] } });
+    dlg.open('web', 0);
+    click(`edit:${none.id}`);
+    expect((document.querySelector('[data-key="preset-profile:auto"]') as HTMLInputElement).checked).toBe(false);
+    type('#hp-prompt', 'Review it again.');
+    await submit();
+    expect(sent.at(-1)?.[0]).toBe('hire_preset.update');
+    expect(sent.at(-1)?.[1]).not.toMatchObject({ codex_profile: 'auto' });
+    expect(sent.at(-1)?.[1]).toMatchObject({ codex_profile: 'codex' });
+  });
 });
 
 describe('HirePresetsDialog pins', () => {

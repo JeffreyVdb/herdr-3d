@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CodexProfile, CodexProfilesState, HireOptions, HirePrepare, Limits } from '../net/protocol';
-import { HireDialog, type HireHost, type HirePrefill } from './hire';
+import { HireDialog, presetPrefill, type HireHost, type HirePrefill } from './hire';
 import { HireModelPrefs } from './hireModelPrefs';
 import { LimitBook } from '../world/limits';
 
@@ -99,11 +99,20 @@ const pick = (name: string, value: string) => {
   c.checked = true;
   c.dispatchEvent(new Event('change'));
 };
-const fromPreset = (profile: string): HirePrefill => ({
-  prompt: 'Review it.',
-  choice: { harness: 'codex', model: 'x-1', effort: 'low' },
-  preset: { id: 'hp_1', name: 'Review', scope: 'floor', profile },
-});
+// A stored preset as the bridge sends it (no `codex_profile` key when it has none), opened as the app opens it.
+const fromPreset = (profile: string): HirePrefill =>
+  presetPrefill({
+    id: 'hp_1',
+    name: 'Review',
+    floor: 'floor',
+    prompt: 'Review it.',
+    harness: 'codex',
+    model: 'x-1',
+    effort: 'low',
+    ...(profile ? { codex_profile: profile } : {}),
+    created_at: 1,
+    updated_at: 1,
+  });
 
 describe('HireDialog: Codex profile (#139)', () => {
   beforeEach(() => {
@@ -288,6 +297,16 @@ describe('HireDialog: Auto (#140)', () => {
       dlg.close();
       document.body.replaceChildren();
     }
+  });
+
+  it('a preset with no profile opens on the default also when the prefill leaves the key out (never Auto)', async () => {
+    const { dlg, hires, inner } = setup(AUTO);
+    dlg.open('floor', 0, { prompt: 'Review it.', choice: { harness: 'codex', model: 'x-1', effort: 'low' }, preset: { id: 'hp_1', name: 'Review', scope: 'floor' } });
+    await tick();
+    expect(chip('codex')?.checked).toBe(true);
+    expect(chip('auto')?.checked).toBe(false);
+    await inner.hire();
+    expect(hires[0]).toMatchObject({ codex_profile: 'codex' });
   });
 
   it('with one usable profile there is no picker and nothing is sent, also from an Auto preset', async () => {
