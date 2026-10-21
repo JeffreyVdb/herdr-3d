@@ -10,9 +10,15 @@
 //   "no folder there"; a change is a `codex_profiles.update`, a rename also a `limits.update` with the new name, a
 //   profile shown or added again its reading.
 // `simcodexprofiles=1` is the same with only the default profile (the meter looks as before profiles).
+// #139: the list says `hire` (worker.hire and presets take `codex_profile`). A Codex hire with `codex_profile` gets it
+// on its `codex` (`work`: its account confirmed, and the bare home's note; `spare`: refused, not signed in; an unknown
+// key: `not_found`). With `simcodexprofiles=2` the seeded Codex workers show the seat's profile line: Pixel (Desk 2 of
+// herdr-3d) on `work`, confirmed; Sprocket (Desk 4) woken on `codex` after its profile went; Bean (Desk 10) on `work`
+// signed in to another account; the others hired before profiles ("Runs on the default profile"). Both modes start
+// with a global hire preset "Review on old-work" on a profile that is gone: its hire form says it hires on the default.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
-import type { CodexProfile, Limits } from '../src/net/protocol.ts';
+import type { CodexProfile, Limits, Worker, WorkerCodex } from '../src/net/protocol.ts';
 
 type Obj = Record<string, unknown>;
 type Send = (m: Obj) => void;
@@ -54,7 +60,41 @@ export class CodexProfilesSim {
   }
 
   private view(): Obj {
-    return { profiles: this.profiles.map((p) => ({ ...p })) };
+    return { profiles: this.profiles.map((p) => ({ ...p })), hire: true };
+  }
+
+  /** #139: a global hire preset on a profile that is gone (`old-work`): the hire form and the preset editor say so. */
+  static readonly GONE_PRESET = { name: 'Review on old-work', prompt: 'Review the open pull requests.', harness: 'codex', model: 'gpt-6-sol', effort: 'low', codex_profile: 'old-work' };
+
+  /** #139: the seeded Codex workers' profiles (`simcodexprofiles=2`; ids from fixtures/demo.jsonl). */
+  seed(workers: Worker[]): void {
+    if (!this.profiles.some((p) => p.key === 'work')) return;
+    const on = (id: string, c: Partial<WorkerCodex>) => {
+      const w = workers.find((x) => x.id === id);
+      if (w) w.codex = { ...(w.codex ?? { mode: 'shared', server: 'running' }), ...c };
+    };
+    on(PIXEL, { profile: 'work', account: 'confirmed', plan: 'team' });
+    on(SPROCKET, { profile: 'codex', profile_note: 'old-work is gone: woke on codex. Its Codex session stays in that folder, so a new one was started.' });
+    on(BEAN, { profile: 'work', account: 'mismatch', plan: 'team', profile_note: 'Asked for work, the server signed in to another account.' });
+  }
+
+  /**
+   * #139: a Codex hire on profile `key`: its `codex` with the profile, as the bridge reports it; a refusal as the bridge's
+   * (a profile not signed in fails the hire, an unknown one is not found).
+   */
+  hire(key: string, codex: WorkerCodex | undefined): WorkerCodex {
+    const p = this.profiles.find((x) => x.key === key && !x.missing);
+    if (!p) throw this.h.error('not_found', `not found: no Codex profile "${key}"`);
+    const base = codex ?? { mode: 'shared' as const, server: 'running' as const };
+    if (p.default) return { ...base, profile: key };
+    if (!p.signed_in) throw this.h.error('hire_failed', `hire_failed: ${p.name} is not signed in. Run \`CODEX_HOME=${p.path} codex login\` in a terminal.`);
+    return {
+      ...base,
+      profile: key,
+      account: 'confirmed',
+      plan: p.plan,
+      profile_note: `${p.name} has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, so the bridge takes its thread from the worker's own Codex server and does not follow a new session started in its terminal (/new).`,
+    };
   }
 
   /** The Codex readings at `now`, one per visible profile; `base` is the scenario's own Codex reading (the default's). */
@@ -137,5 +177,9 @@ export class CodexProfilesSim {
     if (changed) this.h.emit(send, { t: 'limits.update', ...this.reading(changed, base() ?? emptyCodex(this.h.now()), this.h.now()) });
   }
 }
+
+const PIXEL = 'fc018d58-4789-46c2-afac-c062bc9fff9e';
+const SPROCKET = '0f5107ad-89da-4dd9-a49f-832839d2ca53';
+const BEAN = '4c84f4e1-d183-4025-a24b-556d2f5c8bea';
 
 const emptyCodex = (now: number): Limits => ({ provider: 'codex', plan: '', windows: [], at: now, stale: false });

@@ -149,3 +149,29 @@ describe('seat bar: the worker’s own Codex server (#155)', () => {
     expect(seat.hasAttribute('data-codex')).toBe(false);
   });
 });
+
+describe('seat bar: the worker’s Codex profile (#139)', () => {
+  it('a line under the server’s, by its name; the bar keeps its notice row while either shows', () => {
+    const hud = document.createElement('div');
+    const bar = new SeatBar(hud, noop);
+    const seat = hud.querySelector('.seat') as HTMLElement;
+    const profile = hud.querySelector('.seat-profile') as HTMLElement;
+    const server = hud.querySelector('.seat-codex') as HTMLElement;
+    expect(profile.hidden).toBe(true);
+    bar.profileNote({ tone: 'note', text: 'Work seat' });
+    expect(profile.hidden).toBe(false);
+    expect(profile.textContent).toBe('Codex profileWork seat');
+    expect(profile.dataset.tone).toBe('note');
+    expect(profile.getAttribute('role')).toBe('status');
+    expect(seat.hasAttribute('data-codex')).toBe(true);
+    bar.codexNote({ tone: 'down', text: 'Its Codex server stopped.' });
+    expect(server.compareDocumentPosition(profile) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    bar.codexNote(null);
+    expect(seat.hasAttribute('data-codex')).toBe(true); // the profile line still shows
+    bar.profileNote({ tone: 'down', text: 'Work seat. Asked for Work seat, the server signed in to another account.' });
+    expect(profile.dataset.tone).toBe('down');
+    bar.profileNote(null);
+    expect(profile.hidden).toBe(true);
+    expect(seat.hasAttribute('data-codex')).toBe(false);
+  });
+});

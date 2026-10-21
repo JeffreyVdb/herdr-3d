@@ -50,6 +50,18 @@ type fakeCodexHost struct {
 	history *codexapp.Thread
 	// #27: what a join's observational reads answer (nil: they fail).
 	reader codexapp.ChildReader
+	// #139: every launch as written (its Env), what a server's and a
+	// home's profile checks answer (nil: signed in, the same account, no
+	// policy), and those checks, in order (not in calls: a hire on the
+	// default profile makes none).
+	launches []codexapp.Launch
+	server   func(sock string) (codexapp.Account, codexapp.Requirements, error)
+	home     func(env []string) (codexapp.Account, codexapp.Requirements, error)
+	checks   []string
+	// #139 S1e: what a server says its root thread is (nil: none yet), and
+	// the sockets asked, in order.
+	root  func(sock string) (string, error)
+	asked []string
 }
 
 // fakeSend is one Steer or StartTurn of a fake watch.
@@ -157,7 +169,61 @@ func (f *fakeCodexHost) Preflight(_ context.Context, dir string, policy codexapp
 
 func (f *fakeCodexHost) Prepare(l codexapp.Launch) error {
 	f.record("prepare %s %s", l.Name, l.Cwd)
+	f.mu.Lock()
+	f.launches = append(f.launches, l)
+	f.mu.Unlock()
 	return l.Valid()
+}
+
+func (f *fakeCodexHost) ReadProfile(_ context.Context, sock string) (codexapp.Account, codexapp.Requirements, error) {
+	f.mu.Lock()
+	f.checks = append(f.checks, "server "+sock)
+	fn := f.server
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(sock)
+	}
+	return codexapp.Account{SignedIn: true, Plan: "team", ID: "acct-1"}, codexapp.Requirements{}, nil
+}
+
+func (f *fakeCodexHost) HomeProfile(_ context.Context, env []string) (codexapp.Account, codexapp.Requirements, error) {
+	f.mu.Lock()
+	f.checks = append(f.checks, "home "+strings.Join(env, " "))
+	fn := f.home
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(env)
+	}
+	return codexapp.Account{SignedIn: true, Plan: "team", ID: "acct-1"}, codexapp.Requirements{}, nil
+}
+
+func (f *fakeCodexHost) RootThread(_ context.Context, sock string) (string, error) {
+	f.mu.Lock()
+	f.asked = append(f.asked, sock)
+	fn := f.root
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(sock)
+	}
+	return "", nil
+}
+
+func (f *fakeCodexHost) Asked() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.asked)
+}
+
+func (f *fakeCodexHost) Checks() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.checks)
+}
+
+func (f *fakeCodexHost) Launches() []codexapp.Launch {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.launches)
 }
 
 func (f *fakeCodexHost) WaitReady(_ context.Context, sock string) (string, error) {
@@ -734,7 +800,13 @@ func TestSharedCodexJoinsWithoutTheTranscript(t *testing.T) {
 // wake that follows brings the pane back at its shell.
 func (sb *sharedBridge) hireAndSleep(t *testing.T, thread string) proto.HireResult {
 	t.Helper()
-	_, m := sb.c.command(proto.CmdWorkerHire, "a", codexHire(1))
+	return sb.hireArgsAndSleep(t, codexHire(1), thread)
+}
+
+// hireArgsAndSleep is hireAndSleep with the hire's args (desk 1).
+func (sb *sharedBridge) hireArgsAndSleep(t *testing.T, args proto.WorkerHireArgs, thread string) proto.HireResult {
+	t.Helper()
+	_, m := sb.c.command(proto.CmdWorkerHire, "a", args)
 	a := ackData[proto.HireResult](t, m)
 	if thread != "" {
 		sb.fl.update("w1", func(w *world.WorkerObs) { w.AgentSession = thread })
@@ -744,6 +816,14 @@ func (sb *sharedBridge) hireAndSleep(t *testing.T, thread string) proto.HireResu
 			}
 		}
 	}
+	sb.sleepShared(t, a.ID)
+	return a
+}
+
+// sleepShared puts floor s to sleep, its shared worker id's TUI quitting
+// as Codex's does, and readies its wake (the pane w1:p1 at its shell).
+func (sb *sharedBridge) sleepShared(t *testing.T, id string) {
+	t.Helper()
 	fh := sb.fl.fakeHerdr
 	var awake []world.WorkerObs
 	fh.onQuit = func(pane string) {
@@ -756,7 +836,7 @@ func (sb *sharedBridge) hireAndSleep(t *testing.T, thread string) proto.HireResu
 		sb.floorAt("s", false, withStatus(awake, "unknown"))
 	}
 	sb.c.mustAck(proto.CmdFloorSleep, proto.FloorArgs{Session: "s"})
-	if l := sb.launches(t)[a.ID]; l.ServerPID != 0 {
+	if l := sb.launches(t)[id]; l.ServerPID != 0 {
 		t.Fatalf("launch after sleep = %+v", l)
 	}
 	fh.onStart = func() {
@@ -764,7 +844,6 @@ func (sb *sharedBridge) hireAndSleep(t *testing.T, thread string) proto.HireResu
 		fh.setProcs("w1:p1", atShell())
 		sb.floorAt("s", true, withStatus(awake, "idle"))
 	}
-	return a
 }
 
 // wakeResumes wakes the floor and returns the herdr calls the wake made and

@@ -20,6 +20,10 @@ import (
 // (see launcherRun) is the fake the launchers start.
 func TestMain(m *testing.M) {
 	if filepath.Base(os.Args[0]) == "codex" {
+		if len(os.Args) == 2 && os.Args[1] == "app-server" {
+			fakeStdioCodex()
+			return
+		}
 		fakeCodex()
 		return
 	}
@@ -47,6 +51,7 @@ func fakeCodex() {
 		"via=" + os.Getenv("H3D_VIA") + "\n" +
 		"pane=" + os.Getenv("HERDR_PANE_ID") + "\n" +
 		"export=" + os.Getenv("H3D_PANE_SENTINEL") + "\n" +
+		"codex_home=" + os.Getenv("CODEX_HOME") + "\n" +
 		"path=" + os.Getenv("PATH") + "\n" +
 		"args=" + strings.Join(os.Args[1:], "\x1f") + "\n"
 	tmp := os.Getenv("PROBE_OUT") + ".tmp"
@@ -87,6 +92,7 @@ type launcherSetup struct {
 	fishrc   string            // $XDG_CONFIG_HOME/fish/config.fish
 	fishDir  string            // directory with a real fish, on PATH (fish policy)
 	extraEnv map[string]string // the pane's other exports
+	env      []string          // #139: the launch's own (Launch.Env)
 }
 
 // runLauncher writes the launch's launcher and runs it under an isolated
@@ -138,6 +144,7 @@ func runLauncher(t *testing.T, su launcherSetup) launched {
 	if err != nil {
 		t.Fatal(err)
 	}
+	l.Env = su.env
 	if err := l.Write(); err != nil {
 		t.Fatal(err)
 	}
@@ -387,6 +394,31 @@ func TestFishLauncherAppliesWrapper(t *testing.T) {
 	}
 	if left := Stop(r.l, 2*time.Second); len(left) != 0 {
 		t.Fatalf("survivors %v", left)
+	}
+}
+
+// #139: a worker on a Codex profile: the launch's CODEX_HOME reaches the
+// server over the pane's and over one ~/.bashrc (or config.fish) sets, and a
+// launch without one leaves the pane's as it is.
+func TestLauncherCodexHome(t *testing.T) {
+	const profile = "/home/u/.codex-it's work"
+	pane := map[string]string{"CODEX_HOME": "/home/u/.codex"}
+	r := runLauncher(t, launcherSetup{shell: shell.Bash, bashrc: "export CODEX_HOME=/from/bashrc\n" + bashGuard, extraEnv: pane,
+		env: []string{"CODEX_HOME=" + profile}})
+	if r.probe["codex_home"] != profile {
+		t.Fatalf("bash: CODEX_HOME = %q, want %q", r.probe["codex_home"], profile)
+	}
+	if r := runLauncher(t, launcherSetup{shell: shell.Bash, bashrc: bashGuard, extraEnv: pane}); r.probe["codex_home"] != "/home/u/.codex" {
+		t.Fatalf("bash without a profile: CODEX_HOME = %q", r.probe["codex_home"])
+	}
+	fish, err := exec.LookPath("fish")
+	if err != nil {
+		t.Skip("fish is not installed")
+	}
+	r = runLauncher(t, launcherSetup{shell: shell.Fish, fishrc: "set -gx CODEX_HOME /from/config.fish\n", fishDir: filepath.Dir(fish),
+		extraEnv: pane, env: []string{"CODEX_HOME=" + profile}})
+	if r.probe["codex_home"] != profile {
+		t.Fatalf("fish: CODEX_HOME = %q, want %q", r.probe["codex_home"], profile)
 	}
 }
 

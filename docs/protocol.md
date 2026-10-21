@@ -973,7 +973,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `floor.delete` | `{"floor": string, "move_workers"?: bool}`: a virtual floor; refused while it has workers unless `move_workers` is `true`, which moves them to its base session's real floor first | — | `floor.removed` (with `floor_id`), `building.upsert` when it was in a building, #93 `hire_preset.removed` for each of its own hire presets; with moved workers, their `worker.upsert` on the real floor (new `floor`, `desk_index`, maybe `name`) after the `floor.removed` |
 | `floor.hide` | `{"floor": string, "hidden": bool}`: #58 decision 2, a floor's stored hidden setting (any floor; see [Virtual floors](#virtual-floors)) | — | `floor.upsert` with `hidden`, to every client; none when it was already so |
 | `hire.prepare` | `{"floor"|"session": string, "cwd"?: string, "preview"?: bool}` (#134 `preview` only to a bridge whose snapshot says `prepare_preview`) | what the hire dialog shows: `{"cwd", "choice", "choice_source", "label", "git", "capacity", "herdr_instructions"}` (see [Hire and send home](#hire-and-send-home)) | — |
-| `worker.hire` | `{"floor"|"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?, "herdr_instructions"?: bool, "secrets"?: SecretsReview, "secrets_pending"?: string}` (#108: see [Prompt secrets](#prompt-secrets)) | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?, "protected"?: int}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent). #58 decision 3: on a virtual floor whose base session is asleep, `floor.wake`'s events for every floor of the session come first (see [Virtual floors](#virtual-floors)) |
+| `worker.hire` | `{"floor"|"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?, "herdr_instructions"?: bool, "secrets"?: SecretsReview, "secrets_pending"?: string, "codex_profile"?: string}` (#108: see [Prompt secrets](#prompt-secrets); #139 `codex_profile`, Codex only, only to a bridge whose `codex_profiles` says `hire`: see [Hiring on a Codex profile](#hiring-on-a-codex-profile)) | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?, "protected"?: int}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent). #58 decision 3: on a virtual floor whose base session is asleep, `floor.wake`'s events for every floor of the session come first (see [Virtual floors](#virtual-floors)) |
 | `worker.fire.prepare` | `{"id": string}` | `{"name", "label", "branch"?, "worktree", "dirty", "unpushed", "can_delete", "can_delete_branch", "reason"?, "can_fire", "fire_blocked"?}` | — |
 | `worker.fire` | `{"id": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"worktree": "kept" \| "deleted" \| "deleted_branch", "released": bool, "note"?}` | `worker.removed` with `reason: "sent_home"`, then `floor.upsert` when `desks` changes |
 | `worker.wrapup` | `{"id": string, "prompt": string, "worktree"?: "keep" \| "delete" \| "delete_branch", "secrets"?: SecretsReview, "secrets_pending"?: string}` (default `keep`; #108 round 5 `secrets_pending`: packup.detect's hand-over, see [Prompt secrets](#prompt-secrets)) | `{"queued"?: true}` | the worker's upsert with `wrapup` `armed` (before the ack); later, on CLEAN, `worker.removed` with `reason: "sent_home"` (see [Wrap up](#wrap-up)) |
@@ -1090,7 +1090,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `schedule.run_now` | `{"id", "secrets"?: SecretsReview}`; only while `scheduled` (#108: `secrets` reviews the stored prompt, see [Prompt secrets](#prompt-secrets)) | the schedule, as its fire left it (`running`, `waiting` or `failed`) | `schedule.upsert`, then the hire's |
 | `schedule.retry` | `{"id", "secrets"?: SecretsReview}`; only while `failed` or `skipped`: the same spec, fired now (#108: `secrets` as `run_now`'s) | the schedule, as its fire left it | `schedule.upsert`, then the hire's |
 | `schedule.dismiss` | `{"id"}`; only while `failed` or `skipped` | the schedule, with `dismissed_at` | `schedule.removed` |
-| `hire_preset.create` | #93: `{"name", "floor"?, "prompt", "harness", "model", "effort", "herdr_instructions"?: bool, "secrets"?: SecretsReview}`; `floor` empty or absent: global (see [Hire presets](#hire-presets)) | the preset | `hire_preset.upsert` |
+| `hire_preset.create` | #93: `{"name", "floor"?, "prompt", "harness", "model", "effort", "herdr_instructions"?: bool, "secrets"?: SecretsReview, "codex_profile"?: string}`; `floor` empty or absent: global (see [Hire presets](#hire-presets); #139 `codex_profile`: [Hiring on a Codex profile](#hiring-on-a-codex-profile)) | the preset | `hire_preset.upsert` |
 | `hire_preset.update` | `{"id", …}`: `hire_preset.create`'s args, the whole spec replaced (its scope and #95 `herdr_instructions` too) | the preset | `hire_preset.upsert`; none when nothing changed |
 | `hire_preset.delete` | `{"id"}` | — | `hire_preset.removed` |
 | `hire_preset.check` | #95: `{"prompt", "secrets"?: SecretsReview}` (1–32 KiB, not blank) | `{"delegates": bool, "score"}`; `delegates` false also when the classifier is not ready, fails or takes over 1.2 s. Asked by the preset editor's Save and (#117) by a plain Hire worker's Hire | — |
@@ -2468,7 +2468,70 @@ an account, never reads a token and never runs codex-auth: it only looks at fold
 
   `display` is `path` with `~` for the bridge user's home; `plan` is the profile's latest reading's (`""` unknown);
   `missing` marks an added folder that is not there (not read). The list is published again when a setting changes,
-  when listing finds a folder appeared or went, and when a profile's plan changes.
+  when listing finds a folder appeared or went, and when a profile's plan changes. #139: `"hire": true` says the
+  bridge hires on a profile (`worker.hire`'s and the presets' `codex_profile`); a bridge from before #139 leaves it
+  out and refuses the field as unknown.
+
+#### Hiring on a Codex profile
+
+#139 (`docs/decisions.md` "#139"). A Codex worker runs on a profile by having `CODEX_HOME=<the profile's folder>` in
+every Codex process it starts. Nothing is switched: two workers on two profiles run side by side.
+
+- **`worker.hire`'s `codex_profile`** (Codex only, else `bad_request`): a profile's key. Absent, or the default
+  profile's key, is the default: exactly the hire from before #139 (no env, nothing typed into the pane, nothing
+  checked; the key is still recorded). An unknown key, or an added folder that is gone, is `not_found`; a profile whose
+  folder has characters the bridge does not type into a terminal (the launch's path rule) is `bad_request`. A hidden
+  profile can be hired on (hidden only keeps it off the meter and out of the picker).
+- **On any other profile**, before anything of Codex starts in the new pane, the bridge types `export
+  CODEX_HOME='<folder>'` into the pane's shell (`set -gx CODEX_HOME '<folder>'` under `--shell fish`; `pane run`), so
+  every Codex herdr types there (the attached terminal, a hire the usual way, a wake's embedded resume) runs on the
+  profile; `herdr agent start` takes no environment. A [shared](#shared-codex-server) worker's launcher also sets it on
+  the server's own command line, after `~/.bashrc` (or `config.fish`), which cannot undo it.
+- **Checks**, once a shared worker's server answers: `account/read` (`refreshToken: false`) and
+  `configRequirements/read` on its socket. Not signed in (`account: null`, also when the policy read after it fails)
+  fails the hire (`hire_failed`, the server stopped): "`<name>` is not signed in. Run `` `CODEX_HOME=<folder> codex login` `` in a terminal." A workspace policy
+  (`requirements` not null) that does not allow approval `never` or sandbox `danger-full-access`, what herdr-3d hires
+  with, fails it too: "`<name>` does not allow workers that run without asking. Its workspace policy limits approvals to
+  `<list>` and sandbox to `<list>`." Neither falls back to Codex's built-in server (it would meet the same account).
+  Then the server's account is compared with the one Codex run on the profile's folder by itself reports
+  (`workspaceRouting.chatgptAccountId`, compared and dropped, never stored, logged or sent): `confirmed`, `mismatch`
+  ("Asked for `<name>`, the server signed in to another account."), or `unconfirmed` with why ("Could not confirm the
+  account: …"; e.g. a Codex that does not send the field). A worker without a server of its own (the switch off, or a
+  hire that fell back) is checked through the folder alone: signed in and the policy, its account `unconfirmed` ("it
+  has no Codex server of its own to ask").
+- **A bare folder**: a profile whose `hooks.json` (or `config.toml`) does not name herdr's `herdr-agent-state.sh` never
+  has herdr report the worker's session. A shared worker's thread is then taken from its own server (its one loaded
+  root thread, never a subagent's, never a guess between two), so the bridge joins it (`thread`) and a wake resumes it;
+  its children's `agent_session` is that thread while the worker's `agent_session` stays empty (herdr's);
+  its note says "`<name>` has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, so the
+  bridge takes its thread from the worker's own Codex server and does not follow a new session started in its terminal
+  (/new)." A worker without its own server: "… so the bridge finds it by the worker's folder in `<name>`'s sessions
+  (for its usage, and at sleep, so a wake resumes it)." Not a failure.
+- **Sessions**: such a worker's usage, transcript (lines, Codex subagents, generated images) and session found by its
+  folder are read in its profile's `sessions/`, never in `--codex-sessions`; a profile that is gone reads none. Its
+  usage's `cache.auth` is absent (the folder's `auth.json` is never read).
+- **The worker** (and the hire's ack) carry it on `codex`: `profile` (the key; absent: the default, and every worker
+  hired before #139), `account` (`confirmed` | `mismatch` | `unconfirmed`; absent: not checked, the default), `plan`
+  and `profile_note` (the notes above, in plain words). Never an email or an account id. A Codex hire on a profile
+  with the switch off is recorded too (`mode: "legacy"`, no `note`), so its seat names its profile. The client names the
+  profile from `codex_profiles` by key, so a rename follows; with fewer than two visible profiles it shows nothing of
+  this.
+- **Wake** prepares the stored profile again and exports its folder in the pane before the server starts (then the
+  checks, then the terminal attaches); a refusing profile fails the wake with the same words on the worker's `note`
+  (a worker without a server of its own: on its `profile_note`, "The wake did not resume it: …").
+  A profile that is gone (not listed, or its folder removed) wakes on the default profile with a **new** Codex session
+  (its thread is in the gone folder, which no other home can resume): `profile` becomes the default's key and
+  `profile_note` says "`<old name>` is gone: woke on `<default name>`. Its Codex session stays in that folder, so a new
+  one was started." A worker on a profile without a server of its own that herdr's own resume did not bring back is
+  checked again and gets the export before the floor's resume fallback types `codex resume <id>`; on a gone profile the
+  fallback starts a new Codex session on the default instead, with the same `profile_note`. `floor.sleep` backfills its
+  session id from its profile's folder (a gone one: `backfills[].skipped`, "its Codex profile is gone: its sessions are
+  not read").
+
+```json
+{"t":"worker.hire","req_id":"h7","args":{"floor":"herdr-3d","desk_index":5,"harness":"codex","model":"gpt-6-sol","effort":"high","codex_profile":"work"}}
+{"t":"ack","req_id":"h7","data":{"id":"…","workspace_id":"w12","trust":"none","codex":{"mode":"shared","server":"running","profile":"work","account":"confirmed","plan":"team"}}}
+```
 
 ### AI integration
 
@@ -5517,7 +5580,9 @@ levels (a named choice without a prompt, kept in the browser). Nothing here hire
 {"t":"ack","req_id":"h1","data":{"id":"hp_3c9a1e7b2d4086f5","name":"Deploy release","floor":"herdr-3d","…":"…"}}
 ```
 
-**The spec**, checked on create and on every update (`bad_request` unless said otherwise):
+**The spec**, checked on create and on every update (`bad_request` unless said otherwise; #139 `codex_profile`, a
+Codex preset's profile, as `worker.hire`'s, kept by an update when its profile has gone since: the game hires it on the
+default then and says so):
 
 - `name`: trimmed, 1–40 bytes of UTF-8 without control characters (the team presets' rule), unique ignoring case
   (the bridge compares names with full Unicode case folding: `Équipe` and `équipe`, `ΟΣ` and `ος` are one name, and so

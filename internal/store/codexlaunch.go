@@ -87,28 +87,57 @@ type CodexLaunch struct {
 	ServerStart uint64
 	// Thread is the thread Herdr last reported for its pane.
 	Thread string
+	// #139: Profile is the key of the Codex profile it runs on ("": the
+	// default, and every worker launched before #139), ProfileName that
+	// profile's name when it last started (what a wake names once the
+	// profile is gone). Account is what its server's sign-in was found to
+	// be (AccountConfirmed, AccountMismatch, AccountUnconfirmed with the
+	// reason in ProfileNote; "": not checked, on the default profile), Plan
+	// the plan it reported. Never an email or an account id.
+	Profile, ProfileName string
+	Account, ProfileNote string
+	Plan                 string
 }
+
+// What a Codex worker's sign-in was found to be (CodexLaunch.Account).
+const (
+	AccountConfirmed   = "confirmed"
+	AccountMismatch    = "mismatch"
+	AccountUnconfirmed = "unconfirmed"
+)
+
+// migrationCodexProfileHire adds #139's profile and sign-in check to
+// codex_launch and a profile to hire_preset (” for every row before it:
+// the default profile).
+const migrationCodexProfileHire = `ALTER TABLE codex_launch ADD COLUMN profile TEXT NOT NULL DEFAULT '';
+	ALTER TABLE codex_launch ADD COLUMN profile_name TEXT NOT NULL DEFAULT '';
+	ALTER TABLE codex_launch ADD COLUMN account TEXT NOT NULL DEFAULT '' CHECK (account IN ('', 'confirmed', 'mismatch', 'unconfirmed'));
+	ALTER TABLE codex_launch ADD COLUMN profile_note TEXT NOT NULL DEFAULT '';
+	ALTER TABLE codex_launch ADD COLUMN plan TEXT NOT NULL DEFAULT '';
+	ALTER TABLE hire_preset ADD COLUMN codex_profile TEXT NOT NULL DEFAULT '';`
 
 // RecordCodexLaunch stores (or replaces) a worker's launch.
 func (s *Store) RecordCodexLaunch(ctx context.Context, l CodexLaunch) error {
 	now := s.ts()
 	_, err := s.db.ExecContext(ctx, `INSERT INTO codex_launch (worker_uuid, session_name, mode, note, agent_name, cwd,
-		model, effort, run_dir, name, token, server_pid, server_start, thread_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		model, effort, run_dir, name, token, server_pid, server_start, thread_id, profile, profile_name, account, profile_note,
+		plan, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(worker_uuid) DO UPDATE SET session_name = excluded.session_name, mode = excluded.mode,
 			note = excluded.note, agent_name = excluded.agent_name, cwd = excluded.cwd, model = excluded.model,
 			effort = excluded.effort, run_dir = excluded.run_dir, name = excluded.name, token = excluded.token,
 			server_pid = excluded.server_pid, server_start = excluded.server_start, thread_id = excluded.thread_id,
-			updated_at = excluded.updated_at`,
+			profile = excluded.profile, profile_name = excluded.profile_name, account = excluded.account,
+			profile_note = excluded.profile_note, plan = excluded.plan, updated_at = excluded.updated_at`,
 		l.WorkerID, l.Session, l.Mode, l.Note, l.AgentName, l.Cwd, l.Model, l.Effort, l.RunDir, l.Name, l.Token,
-		l.ServerPID, int64(l.ServerStart), l.Thread, now, now)
+		l.ServerPID, int64(l.ServerStart), l.Thread, l.Profile, l.ProfileName, l.Account, l.ProfileNote, l.Plan, now, now)
 	return err
 }
 
 // CodexLaunches returns every recorded launch, by worker id.
 func (s *Store) CodexLaunches(ctx context.Context) (map[string]CodexLaunch, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT worker_uuid, session_name, mode, note, agent_name, cwd, model, effort,
-		run_dir, name, token, server_pid, server_start, thread_id FROM codex_launch`)
+		run_dir, name, token, server_pid, server_start, thread_id, profile, profile_name, account, profile_note, plan FROM codex_launch`)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +147,8 @@ func (s *Store) CodexLaunches(ctx context.Context) (map[string]CodexLaunch, erro
 		var l CodexLaunch
 		var start int64
 		if err := rows.Scan(&l.WorkerID, &l.Session, &l.Mode, &l.Note, &l.AgentName, &l.Cwd, &l.Model, &l.Effort,
-			&l.RunDir, &l.Name, &l.Token, &l.ServerPID, &start, &l.Thread); err != nil {
+			&l.RunDir, &l.Name, &l.Token, &l.ServerPID, &start, &l.Thread, &l.Profile, &l.ProfileName, &l.Account, &l.ProfileNote,
+			&l.Plan); err != nil {
 			return nil, err
 		}
 		l.ServerStart = uint64(start)

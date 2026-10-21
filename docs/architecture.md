@@ -206,6 +206,25 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
     at the first prompt). A resume on a **new** server reports it on every version. herdr-3d never re-attaches warm: sleep stops a shared worker's
     server and wake starts a new one, and the bridge keeps the thread it recorded. Only a terminal re-attached by hand,
     or an orchestrator's (#154 A9), is affected (findings §13 and §14; `MixedHarness` asserts it per version).
+  - **On a Codex profile (#139; protocol "Hiring on a Codex profile", decisions "#139").** A profile is a Codex home
+    folder (#138); a worker runs on one by having its `CODEX_HOME` in every Codex process it starts, nothing is switched.
+    `codexaccount.Service.Prepare(key)` gives that env (no lock, no switch: `release` is a no-op); off the default the
+    bridge types `export CODEX_HOME='<folder>'` (fish: `set -gx`) into the worker's pane before anything of Codex
+    starts there, and the shared server's launcher sets it again on the server's own command line, after `~/.bashrc`.
+    Once the server answers, `account/read` and `configRequirements/read` on its socket: not signed in, or a workspace
+    policy that refuses approval `never` / sandbox `danger-full-access`, fails the hire (no fallback); its account is
+    compared with what Codex run on the folder alone reports (`workspaceRouting.chatgptAccountId`, never kept) and the
+    launch records `confirmed`, `mismatch` or `unconfirmed` with the plan (`codex_launch.profile`, `account`,
+    `profile_note`). Wake repeats prepare → export → server → checks → attach; a profile gone meanwhile wakes on the
+    default with a new Codex session. A worker without its own server is checked again on wake and woken the same way
+    by the floor's resume fallback. The default profile is the hire from before #139, byte for byte. **Sessions:** a
+    worker on another profile writes its rollouts under that folder's `sessions/`, and the bridge reads them there
+    (usage, transcript lines, Codex subagents, the lookup by folder, the sleep backfill, generated images), never in
+    `--codex-sessions`; that folder's `auth.json` is never read. A bare folder without herdr's session hook
+    (`hooks.json` naming `herdr-agent-state.sh`) never reports its thread: the bridge asks the worker's own server for
+    its one root thread (`codexapp.RootThread`, never a subagent's, never a guess between two), so it joins it, binds
+    the worker's Codex subagents to it (while herdr reports none) and a wake resumes it; a `/new` in the terminal is not
+    followed (the hire says so).
   - **What a worker hired the usual way (legacy) lacks:** its async questions cannot be answered from the transcript
     (no join, no `worker.answer_async`); it answers them in its terminal, as every Codex worker did before #155. The rest
     (prompts, slash commands, approvals, images, sleep, wake, send home) works as for any Codex worker.

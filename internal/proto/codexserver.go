@@ -96,7 +96,27 @@ type WorkerCodex struct {
 	// prompts (through the app-server). False with an approval or a
 	// blocking question open, while idle and while not attached.
 	AsyncBlocked bool `json:"async_blocked,omitempty"`
+	// #139: Profile is the key of the Codex profile it was hired on (absent:
+	// the default, and every worker hired before profiles); the client
+	// names it from codex_profiles, so a rename follows. Account is what
+	// its server's sign-in was found to be: confirmed, mismatch or
+	// unconfirmed (absent: not checked: the default profile); Plan the plan
+	// it reported. ProfileNote says, in plain words, what to know about its
+	// profile: the sign-in not confirmed or another account's, a wake on the
+	// default because the profile is gone, what a bare profile home lacks.
+	// Never an email or an account id.
+	Profile     string `json:"profile,omitempty"`
+	Account     string `json:"account,omitempty"`
+	Plan        string `json:"plan,omitempty"`
+	ProfileNote string `json:"profile_note,omitempty"`
 }
+
+// What a Codex worker's sign-in was found to be (WorkerCodex.Account).
+const (
+	CodexAccountConfirmed   = "confirmed"
+	CodexAccountMismatch    = "mismatch"
+	CodexAccountUnconfirmed = "unconfirmed"
+)
 
 // Async question states (CodexQuestion.State).
 const (

@@ -299,6 +299,8 @@ export function limitsView(book: LimitBook, now: number, tz?: string): ProviderV
 export interface LimitTarget {
   harness: string;
   model?: string;
+  /** #139: the Codex profile it is hired on (its key; absent: the default). */
+  profile?: string;
 }
 
 /** Words of a model name that tell it apart ("Sonnet 4.5" → sonnet): the digits are versions, not names. */
@@ -331,14 +333,16 @@ export function scopedView(v: ProviderView, models: readonly (string | undefined
  */
 export function harnessViews(book: LimitBook, targets: ReadonlyArray<string | LimitTarget>, now: number, tz?: string): ProviderView[] {
   const chosen = new Map<string, Array<string | undefined>>();
+  const profiles = new Map<string, string>();
   for (const t of targets) {
-    const { harness, model } = typeof t === 'string' ? { harness: t, model: undefined } : t;
+    const { harness, model, profile } = typeof t === 'string' ? { harness: t, model: undefined, profile: undefined } : t;
     const p = providerOf(harness);
     chosen.set(p, [...(chosen.get(p) ?? []), model]);
+    if (profile && p === 'codex') profiles.set(p, profile); // only Codex has profiles
   }
-  // #138: the dialogs hire on the bridge's own Codex home: its profile's limits only.
+  // #138: the dialogs hire on the bridge's own Codex home: its profile's limits only; #139: or on the profile picked.
   return limitsView(book, now, tz)
-    .filter((v) => chosen.has(v.provider) && v.isDefault)
+    .filter((v) => chosen.has(v.provider) && (profiles.has(v.provider) ? v.account === profiles.get(v.provider) : v.isDefault))
     .map((v) => ({ ...v, profile: null }))
     .map((v) => scopedView(v, chosen.get(v.provider)!));
 }

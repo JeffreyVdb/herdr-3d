@@ -313,6 +313,15 @@
 .dd-level-switch {
   padding-left: 72px;
 }
+/* #139: a preset's gone Codex profile: under the chips, not in the legend's 64px column; with no chips, in line with them. */
+.dd-pick > .dd-profile-gone {
+  grid-column: 2;
+  margin: 0;
+}
+.dd-profile-gone--alone {
+  margin: 0;
+  padding-left: 72px;
+}
 .tape--note,
 .tape--cap-warn {
   --c: var(--warn);
@@ -653,6 +662,12 @@
     margin-top: 0;
   }
   .dd-level-switch {
+    padding-left: 0;
+  }
+  .dd-pick > .dd-profile-gone {
+    grid-column: auto;
+  }
+  .dd-profile-gone--alone {
     padding-left: 0;
   }
 }

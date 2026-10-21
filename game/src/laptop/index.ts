@@ -1,4 +1,5 @@
 import { codexNotice, type CodexNotice } from '../world/codexServer';
+import { profileNotice } from '../world/codexProfiles';
 import * as THREE from 'three/webgpu';
 import type { CommandResult } from '../net/client';
 import type { CommandCatalogs } from './commandCatalog';
@@ -113,6 +114,8 @@ export interface SeatView {
   asking?(ask: { who: string; key: 'T' | 'Ctrl+Esc' } | null): void;
   /** #155: what the seated worker's Codex launch has to tell you (null: nothing). */
   codexNote?(n: CodexNotice | null): void;
+  /** #139: the seated Codex worker's profile (null: nothing, as with one profile). */
+  profileNote?(n: CodexNotice | null): void;
   /** #59: one of the bar's own controls has the keyboard (the terminal's preset and zoom). */
   owns?(t: EventTarget | null): boolean;
   /** #59: the keyboard to the terminal's preset and zoom (Ctrl+,); false when there are none. */
@@ -248,6 +251,8 @@ export class Laptops {
   private askShown = '';
   /** #155: the Codex server line the seat bar shows ('' none). */
   private codexShown = '';
+  /** #139: the profile line as last shown. */
+  private profileShown = '';
   /** The camera gliding back after you stood up. */
   private leaving: { t0: number; from: { pos: THREE.Vector3; quat: THREE.Quaternion } } | null = null;
   private input: InputQueue | null = null;
@@ -815,6 +820,8 @@ export class Laptops {
     this.host.seat.asking?.(null);
     this.codexShown = '';
     this.host.seat.codexNote?.(null);
+    this.profileShown = '';
+    this.host.seat.profileNote?.(null);
     this.host.seat.setFullscreen?.(null);
     this.host.seat.hide();
     this.leaving = snap ? null : { t0: performance.now(), from: { pos: this.camPos.clone(), quat: this.camQuat.clone() } };
@@ -895,6 +902,14 @@ export class Laptops {
     if (key === this.codexShown) return;
     this.codexShown = key;
     this.host.seat.codexNote?.(n);
+  }
+
+  /** #139: the seat bar's line about the seated Codex worker's profile, set when it changes (a rename follows). */
+  private syncProfile(n: CodexNotice | null): void {
+    const key = n ? `${n.tone}\u0000${n.text}` : '';
+    if (key === this.profileShown) return;
+    this.profileShown = key;
+    this.host.seat.profileNote?.(n);
   }
 
   /** A keydown while seated: true when it was consumed (nothing else sees it). */
@@ -1170,6 +1185,7 @@ export class Laptops {
           this.transcript.activity(status, v.worker.status_since ?? null); // #58
           this.syncAsk(askOf(v.worker)); // #57
           this.syncCodex(codexNotice(v.worker)); // #155
+          this.syncProfile(profileNotice(v.worker, this.host.store.codexProfiles.state)); // #139
           this.transcript.followedUp(followupOf(v.worker)); // #90
           this.transcript.handoffSeen(candidateOf(v.worker)); // #223
           this.transcript.suggestionSeen(suggestionOf(v.worker)); // #66

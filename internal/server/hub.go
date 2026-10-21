@@ -275,6 +275,9 @@ type Options struct {
 	// configures it from the stored settings. Limits.Accounts is the same
 	// service when the limits are read per profile.
 	CodexProfiles *codexaccount.Service
+	// #139: CodexPrepare is a test hook in place of CodexProfiles.Prepare
+	// (nil: the service's).
+	CodexPrepare func(ctx context.Context, key string) (env []string, release func(), err error)
 	// #90 follow-up questions: FollowupsEnabled is the environment's toggle
 	// (HERDR_WORLD_FOLLOWUPS_ENABLED; nil: not set), FollowupDebounce how
 	// long an ended turn and herdr's not-working status hold before the
@@ -1837,10 +1840,10 @@ func (h *Hub) syncFloorWorkers(ctx context.Context, f *floorState, obs []world.W
 		}
 		next := workerView(id, session, w, metas[i], names[i], desk, h.resume[id])
 		h.reported[id] = modelEffort{metas[i].model, metas[i].effort}
-		next.Model, next.Effort = h.shownModel(id, next.AgentSession) // H3D-2
-		next.ChildGeneration = h.childSession(id, next.AgentSession)  // #22: a replaced session drops its children
-		next.SecretFiles = h.ps.counts[id]                            // #108 round 5
-		h.withRun(next, w, metas[i], links[id])                       // M6 runs
+		next.Model, next.Effort = h.shownModel(id, next.AgentSession)                 // H3D-2
+		next.ChildGeneration = h.childSession(id, h.childRoot(id, next.AgentSession)) // #22: a replaced session drops its children
+		next.SecretFiles = h.ps.counts[id]                                            // #108 round 5
+		h.withRun(next, w, metas[i], links[id])                                       // M6 runs
 		if w.Worktree != nil && w.Worktree.Linked && w.Worktree.CheckoutPath != "" {
 			next.Branch = h.branchOf(w.Worktree.CheckoutPath, at)
 		}

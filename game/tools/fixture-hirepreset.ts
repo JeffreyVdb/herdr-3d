@@ -76,7 +76,8 @@ export class HirePresetSim {
     this.h = h;
     this.enabled = enabled;
     this.instructions = enabled && instructions;
-    this.keys = this.instructions ? [...KEYS, 'herdr_instructions'] : KEYS;
+    // #139: a Codex preset's profile (the client sends it only when codex_profiles says `hire`, simcodexprofiles).
+    this.keys = [...(this.instructions ? [...KEYS, 'herdr_instructions'] : KEYS), 'codex_profile'];
     let g = key === null ? undefined : shared.get(key);
     if (!g) {
       g = { presets: new Map(), worlds: new Set() };
@@ -138,6 +139,14 @@ export class HirePresetSim {
     return true;
   }
 
+  /** #139: a preset the fixture starts with, checked as a create (once per key's group; none while presets are off). */
+  seed(a: Obj): void {
+    if (!this.enabled || [...this.group.presets.values()].some((p) => p.name === a.name)) return;
+    const now = this.h.now();
+    const p = this.check({ id: `hp_${(++serial).toString(16).padStart(16, '0')}`, created_at: now, updated_at: now }, a, null);
+    this.group.presets.set(p.id, p);
+  }
+
   /** A deleted virtual floor's own presets go with it (the global ones stay). */
   dropFloor(floor: string, send: Send): void {
     for (const p of [...this.group.presets.values()])
@@ -187,6 +196,9 @@ export class HirePresetSim {
     if (a.herdr_instructions !== undefined && typeof a.herdr_instructions !== 'boolean') throw this.bad('herdr_instructions must be a bool');
     const p: HirePreset = { id: base.id, name, prompt, harness, model, effort, created_at: base.created_at, updated_at: base.updated_at };
     if (a.herdr_instructions === true) p.herdr_instructions = true;
+    if (a.codex_profile !== undefined && typeof a.codex_profile !== 'string') throw this.bad('codex_profile must be a string');
+    if (a.codex_profile && harness !== 'codex') throw this.bad(`codex_profile is for a Codex hire, not "${harness}"`);
+    if (a.codex_profile) p.codex_profile = a.codex_profile as string;
     return floor ? { ...p, floor } : p;
   }
 

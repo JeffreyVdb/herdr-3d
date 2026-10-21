@@ -49,7 +49,10 @@ type HirePreset struct {
 	// SecretsReview (#108): the record that Prompt was reviewed for
 	// possible secrets with every one left as typed ("": never reviewed;
 	// see migrationPromptSecretsReviewed).
-	SecretsReview        string
+	SecretsReview string
+	// CodexProfile (#139) is the key of the Codex profile a hire from it
+	// runs on ("": the default).
+	CodexProfile         string
 	CreatedAt, UpdatedAt int64
 }
 
@@ -84,7 +87,7 @@ func hirePresetNameTaken(ctx context.Context, tx *sql.Tx, name, floor, exceptID 
 // HirePresets returns every hire preset, by name ignoring case.
 func (s *Store) HirePresets(ctx context.Context) ([]HirePreset, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(floor, ''), prompt, harness, model, effort, herdr_instructions, secrets_review,
-		created_at, updated_at FROM hire_preset ORDER BY name_key, id`)
+		codex_profile, created_at, updated_at FROM hire_preset ORDER BY name_key, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +95,7 @@ func (s *Store) HirePresets(ctx context.Context) ([]HirePreset, error) {
 	var out []HirePreset
 	for rows.Next() {
 		var p HirePreset
-		if err := rows.Scan(&p.ID, &p.Name, &p.Floor, &p.Prompt, &p.Harness, &p.Model, &p.Effort, &p.HerdrInstructions, &p.SecretsReview, &p.CreatedAt,
+		if err := rows.Scan(&p.ID, &p.Name, &p.Floor, &p.Prompt, &p.Harness, &p.Model, &p.Effort, &p.HerdrInstructions, &p.SecretsReview, &p.CodexProfile, &p.CreatedAt,
 			&p.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -113,8 +116,8 @@ func (s *Store) CreateHirePreset(ctx context.Context, p HirePreset) error {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `INSERT INTO hire_preset (id, name, name_key, floor, prompt, harness, model, effort, herdr_instructions, secrets_review,
-			created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.ID, name, hirePresetNameKey(name), null(p.Floor), p.Prompt,
-			p.Harness, p.Model, p.Effort, p.HerdrInstructions, p.SecretsReview, p.CreatedAt, p.UpdatedAt)
+			codex_profile, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.ID, name, hirePresetNameKey(name), null(p.Floor),
+			p.Prompt, p.Harness, p.Model, p.Effort, p.HerdrInstructions, p.SecretsReview, p.CodexProfile, p.CreatedAt, p.UpdatedAt)
 		return err
 	})
 }
@@ -132,8 +135,8 @@ func (s *Store) UpdateHirePreset(ctx context.Context, p HirePreset) error {
 			return err
 		}
 		res, err := tx.ExecContext(ctx, `UPDATE hire_preset SET name = ?, name_key = ?, floor = ?, prompt = ?, harness = ?, model = ?, effort = ?,
-			herdr_instructions = ?, secrets_review = ?, updated_at = ? WHERE id = ?`, name, hirePresetNameKey(name), null(p.Floor), p.Prompt,
-			p.Harness, p.Model, p.Effort, p.HerdrInstructions, p.SecretsReview, p.UpdatedAt, p.ID)
+			herdr_instructions = ?, secrets_review = ?, codex_profile = ?, updated_at = ? WHERE id = ?`, name, hirePresetNameKey(name), null(p.Floor),
+			p.Prompt, p.Harness, p.Model, p.Effort, p.HerdrInstructions, p.SecretsReview, p.CodexProfile, p.UpdatedAt, p.ID)
 		if err != nil {
 			return err
 		}

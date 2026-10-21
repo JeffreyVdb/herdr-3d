@@ -520,3 +520,79 @@ func TestHexEndedDefaultIsHashed(t *testing.T) {
 		t.Fatalf("default %+v", got[0])
 	}
 }
+
+// #139: Prepare is the env a Codex process of a profile runs with.
+func TestPrepare(t *testing.T) {
+	h := home(t, map[string]bool{".codex": true, ".codex-work": true, ".codex-shy": true, "elsewhere": true})
+	svc := New(h, filepath.Join(h, ".codex"))
+	set, err := svc.SetHidden(ctx, "shy", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.Configure(set)
+	if set, err = svc.Add(ctx, filepath.Join(h, "elsewhere")); err != nil {
+		t.Fatal(err)
+	}
+	svc.Configure(set)
+	added := hashed("elsewhere", filepath.Join(h, "elsewhere"))
+	if err := os.RemoveAll(filepath.Join(h, "elsewhere")); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		key  string
+		env  []string
+		gone bool
+	}{
+		{key: "codex", env: []string{"CODEX_HOME=" + filepath.Join(h, ".codex")}},
+		{key: "", env: []string{"CODEX_HOME=" + filepath.Join(h, ".codex")}}, // the default
+		{key: "work", env: []string{"CODEX_HOME=" + filepath.Join(h, ".codex-work")}},
+		{key: "shy", env: []string{"CODEX_HOME=" + filepath.Join(h, ".codex-shy")}}, // hidden only keeps it off the meter
+		{key: "nope", gone: true},
+		{key: added, gone: true}, // its folder went: listed, not preparable
+	} {
+		env, release, err := svc.Prepare(ctx, c.key)
+		if release == nil {
+			t.Fatalf("%q: release is nil", c.key)
+		}
+		release()
+		if c.gone {
+			var nf *NotFoundError
+			if !errors.As(err, &nf) || nf.Key != c.key || env != nil {
+				t.Fatalf("%q: env %v err %v", c.key, env, err)
+			}
+			continue
+		}
+		if err != nil || !slices.Equal(env, c.env) {
+			t.Fatalf("%q: env %v err %v, want %v", c.key, env, err, c.env)
+		}
+	}
+	var nf *NotFoundError
+	if _, _, err := svc.Prepare(ctx, added); !errors.As(err, &nf) || nf.Name != "elsewhere" || !strings.Contains(err.Error(), "no longer exists") {
+		t.Fatalf("gone folder: %v", err)
+	}
+
+	// The default's folder not there: no env (Codex refuses a CODEX_HOME
+	// that is not), as the limits probe reads it.
+	bare := home(t, map[string]bool{".codex-work": true})
+	env, release, err := New(bare, filepath.Join(bare, ".codex")).Prepare(ctx, "codex")
+	if err != nil || env != nil || release == nil {
+		t.Fatalf("missing default: env %v err %v", env, err)
+	}
+}
+
+func TestRunsHerdrHook(t *testing.T) {
+	h := home(t, map[string]bool{".codex": true, ".codex-work": true, ".codex-toml": true, ".codex-other": true})
+	write := func(rel, body string) {
+		if err := os.WriteFile(filepath.Join(h, rel), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".codex/hooks.json", `{"hooks":{"SessionStart":[{"hooks":[{"command":"bash '/home/u/.codex/herdr-agent-state.sh' session"}]}]}}`)
+	write(".codex-toml/config.toml", "[[hooks.SessionStart]]\n[[hooks.SessionStart.hooks]]\ncommand = \"bash /home/u/.codex/herdr-agent-state.sh session\"\n")
+	write(".codex-other/hooks.json", `{"hooks":{}}`)
+	for name, want := range map[string]bool{".codex": true, ".codex-toml": true, ".codex-work": false, ".codex-other": false, "nope": false} {
+		if got := RunsHerdrHook(filepath.Join(h, name)); got != want {
+			t.Errorf("%s: %v", name, got)
+		}
+	}
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { HireOptions, HirePreset } from '../net/protocol';
-import { draftBlocker, draftFrom, exactProblem, HirePresetBook, instructionsBlocker, nudgeWanted, presetChoiceText, presetSpec, promptPreview, typedProblem } from './hirePresets';
+import { draftBlocker, draftFrom, exactProblem, HirePresetBook, hirePresetOf, instructionsBlocker, nudgeWanted, presetChoiceText, presetSpec, promptPreview, typedProblem } from './hirePresets';
 
 const CATALOG: HireOptions = {
   claude: { models: ['claude-opus-5-5', 'claude-sonnet-5-5'], efforts: ['low', 'medium', 'high'] },
@@ -101,7 +101,7 @@ describe('the editor', () => {
   const draft = draftFrom(preset(), 'herdr-3d');
 
   it('opens a preset as it is saved, and scope "floor" for its own floor', () => {
-    expect(draft).toEqual({ name: 'Deploy', prompt: 'Deploy the release to A, B and C.', harness: 'claude', model: 'claude-sonnet-5-5', effort: 'low', scope: 'floor', instructions: false });
+    expect(draft).toEqual({ name: 'Deploy', prompt: 'Deploy the release to A, B and C.', harness: 'claude', model: 'claude-sonnet-5-5', effort: 'low', scope: 'floor', instructions: false, profile: '' });
     expect(draftFrom(preset({ herdr_instructions: true }), 'herdr-3d').instructions).toBe(true);
     expect(draftFrom(preset({ floor: undefined }), 'herdr-3d').scope).toBe('global');
   });
@@ -109,6 +109,16 @@ describe('the editor', () => {
   it('sends the spec with the floor for "This floor" and none for Global', () => {
     expect(presetSpec(draft, 'herdr-3d')).toEqual({ name: 'Deploy', floor: 'herdr-3d', prompt: 'Deploy the release to A, B and C.', harness: 'claude', model: 'claude-sonnet-5-5', effort: 'low' });
     expect(presetSpec({ ...draft, name: ' x ', scope: 'global' }, 'herdr-3d')).not.toHaveProperty('floor');
+  });
+
+  it('#139: keeps a Codex preset’s profile, and sends it for a Codex preset only', () => {
+    const codex = draftFrom(preset({ harness: 'codex', model: 'gpt-6-sol', codex_profile: 'work' }), 'herdr-3d');
+    expect(codex.profile).toBe('work');
+    expect(presetSpec(codex, 'herdr-3d')).toMatchObject({ codex_profile: 'work' });
+    expect(presetSpec({ ...codex, profile: '' }, 'herdr-3d')).not.toHaveProperty('codex_profile');
+    expect(presetSpec({ ...codex, harness: 'claude' }, 'herdr-3d')).not.toHaveProperty('codex_profile');
+    expect(hirePresetOf({ ...preset(), codex_profile: 'work' })?.codex_profile).toBe('work');
+    expect(hirePresetOf({ ...preset(), codex_profile: 7 })).not.toHaveProperty('codex_profile');
   });
 
   it('#95: sends herdr_instructions, on or off, only to a bridge that takes it', () => {

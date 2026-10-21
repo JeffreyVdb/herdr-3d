@@ -11,6 +11,7 @@ package server
 // resumes that thread attached to it.
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/codexaccount"
 	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -230,9 +232,26 @@ func (h *Hub) resumeShared(ctx context.Context, session, id, pane, thread string
 	if err != nil || rec.Mode != store.CodexShared {
 		return fail("no shared launch is recorded for it")
 	}
+	// #139: its profile prepared again, and its home exported in the pane's
+	// shell, before its server (or its embedded resume) starts there.
+	prof, release, gone, err := h.wakeProfile(ctx, session, id, pane, rec)
+	defer release()
+	if err != nil {
+		return fail(err.Error())
+	}
+	switch {
+	case gone != "":
+		thread = "" // its thread is in the gone folder: a new session
+		notes = append(notes, gone)
+		if rec, err = query(ctx, h, func() store.CodexLaunch { return h.cx.launches[id] }); err != nil {
+			return fail(err.Error())
+		}
+	case prof != nil:
+		profileOnRecord(prof, &rec) // checked again below
+	}
 	a := herdr.Agent{Harness: "codex", Model: rec.Model, Effort: rec.Effort}
 	embedded := func(why string) (bool, string) {
-		ok, note := h.resumeEmbedded(ctx, session, id, pane, thread, rec, why)
+		ok, note := h.resumeEmbedded(ctx, session, id, pane, thread, rec, why, prof)
 		if !ok {
 			return fail(note)
 		}
@@ -246,8 +265,11 @@ func (h *Hub) resumeShared(ctx context.Context, session, id, pane, thread string
 	if err != nil {
 		return fail(err.Error())
 	}
-	sl := &sharedLaunch{id: id, session: session, pane: pane, agent: rec.AgentName, rec: rec, policy: policy}
+	sl := &sharedLaunch{id: id, session: session, pane: pane, agent: rec.AgentName, rec: rec, policy: policy, profile: prof}
 	if err := h.startSharedServer(ctx, sl, fh); err != nil {
+		if isProfileRefused(err) {
+			return fail(err.Error())
+		}
 		return embedded(err.Error())
 	}
 	r := herdr.Remote{Socket: launchOf(sl.rec).Socket(), Cwd: rec.Cwd}
@@ -282,8 +304,17 @@ func (h *Hub) resumeShared(ctx context.Context, session, id, pane, thread string
 // permission arguments, or, with no thread, Codex started the way a legacy
 // hire starts it, its trust dialog answered as a hire answers it. The
 // worker stays shared, with the reason as its note and its server stopped.
-func (h *Hub) resumeEmbedded(ctx context.Context, session, id, pane, thread string, rec store.CodexLaunch, why string) (bool, string) {
+// #139: on a profile (prof), its home was exported in the pane already;
+// the home is checked as a legacy hire's is (checkHomeProfile).
+func (h *Hub) resumeEmbedded(ctx context.Context, session, id, pane, thread string, rec store.CodexLaunch, why string,
+	prof *codexProfileRun) (bool, string) {
 	a := herdr.Agent{Harness: "codex", Model: rec.Model, Effort: rec.Effort}
+	checked := rec
+	if prof != nil {
+		if err := h.checkHomeProfile(ctx, prof, &checked); err != nil {
+			return false, why + "; " + err.Error()
+		}
+	}
 	var err error
 	switch {
 	case thread != "":
@@ -311,10 +342,77 @@ func (h *Hub) resumeEmbedded(ctx context.Context, session, id, pane, thread stri
 		notes = append(notes, tn)
 	}
 	_ = h.doWait(ctx, func() {
-		h.updateLaunch(ctx, id, func(l *store.CodexLaunch) { l.Note = note })
+		h.updateLaunch(ctx, id, func(l *store.CodexLaunch) {
+			l.Note = note
+			l.Profile, l.ProfileName, l.Account, l.Plan, l.ProfileNote = checked.Profile, checked.ProfileName, checked.Account, checked.Plan, checked.ProfileNote
+		})
 		h.codexDone(id, proto.CodexServerStopped)
 	})
 	return true, strings.Join(notes, "; ")
+}
+
+// wakeProfile prepares a shared worker's profile again on wake (#139; off
+// the hub goroutine), its pane at its shell: off the default, its home is
+// exported there. A profile that is gone (its key no longer listed, or its
+// folder no longer there) wakes on the default profile: gone says so, its
+// record moves to the default and forgets its thread, which stays in the
+// gone folder. release is never nil. A launch without a profile (before
+// #139, or none asked for) is left as it is: prof nil.
+func (h *Hub) wakeProfile(ctx context.Context, session, id, pane string, rec store.CodexLaunch) (prof *codexProfileRun, release func(),
+	gone string, err error) {
+	if rec.Profile == "" {
+		return nil, func() {}, "", nil
+	}
+	p, release, err := h.prepareProfile(ctx, rec.Profile)
+	var nf *codexaccount.NotFoundError
+	switch {
+	case errors.As(err, &nf):
+		def, release2, gone, err := h.wakeOnDefault(ctx, id, rec, nf)
+		release = joinRelease(release, release2)
+		if err != nil {
+			return nil, release, "", err
+		}
+		return &def, release, gone, nil
+	case err != nil:
+		return nil, release, "", fmt.Errorf("preparing its Codex profile %s failed: %v", cmp.Or(rec.ProfileName, rec.Profile), err)
+	}
+	if !p.def {
+		if err := h.opts.Herdr.ExportCodexHome(ctx, session, pane, p.home); err != nil {
+			return nil, release, "", fmt.Errorf("exporting CODEX_HOME for its Codex profile %s failed: %v", p.name, err)
+		}
+	}
+	return &p, release, "", nil
+}
+
+// wakeOnDefault moves a Codex worker whose profile is gone (nf) to the
+// default profile on wake (off the hub goroutine): its record takes the
+// default and forgets its thread, which stays in the gone folder, with its
+// questions and sends; gone says so, for its seat. release is never nil.
+func (h *Hub) wakeOnDefault(ctx context.Context, id string, rec store.CodexLaunch, nf *codexaccount.NotFoundError) (def codexProfileRun,
+	release func(), gone string, err error) {
+	old := cmp.Or(nf.Name, rec.ProfileName, rec.Profile)
+	def, release, err = h.prepareProfile(ctx, "")
+	if err != nil {
+		return def, release, "", fmt.Errorf("its Codex profile %s is gone and the default one cannot be prepared: %v", old, err)
+	}
+	if a, ok := h.listedProfile(ctx, ""); ok {
+		def.key = a.Key
+	}
+	gone = fmt.Sprintf("%s is gone: woke on %s. Its Codex session stays in that folder, so a new one was started.", old, def.name)
+	_ = h.doWait(ctx, func() {
+		delete(h.cx.questions, id) // #156: the old thread's questions go with it
+		h.forgetSends(ctx, id)
+		h.updateLaunch(ctx, id, func(l *store.CodexLaunch) {
+			profileOnRecord(&def, l)
+			l.Thread, l.ProfileNote = "", gone
+		})
+	})
+	return def, release, gone, nil
+}
+
+// joinRelease is both releases.
+func joinRelease(a, b func()) func() {
+	return func() { a(); b() }
 }
 
 // remoteTUI reports whether a pane's Codex is attached with --remote.

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -49,6 +50,14 @@ type CodexHost interface {
 	Stop(l codexapp.Launch) []int
 	// Watch joins a thread as a passive second client.
 	Watch(o codexapp.Options) (CodexWatch, error)
+	// #139: ReadProfile asks a launch's server (its socket) which account
+	// it signed in to and which workspace policy applies; HomeProfile asks
+	// the same of Codex run with env (a profile's CODEX_HOME) on its own.
+	ReadProfile(ctx context.Context, sock string) (codexapp.Account, codexapp.Requirements, error)
+	HomeProfile(ctx context.Context, env []string) (codexapp.Account, codexapp.Requirements, error)
+	// #139 S1e: RootThread asks a launch's server (its socket) for the one
+	// root thread it has loaded ("": none, or more than one).
+	RootThread(ctx context.Context, sock string) (string, error)
 }
 
 // CodexChildren is #27's observer of a shared worker's child threads
@@ -111,6 +120,33 @@ func (codexHost) Stop(l codexapp.Launch) []int {
 	return left
 }
 func (codexHost) Watch(o codexapp.Options) (CodexWatch, error) { return codexapp.Watch(o) }
+func (codexHost) ReadProfile(ctx context.Context, sock string) (codexapp.Account, codexapp.Requirements, error) {
+	ctx, cancel := context.WithTimeout(ctx, codexProfileTimeout)
+	defer cancel()
+	return codexapp.ReadProfile(ctx, sock)
+}
+
+// HomeProfile runs Codex with the bridge's environment, the profile's
+// variables in place of its own.
+func (c codexHost) HomeProfile(ctx context.Context, env []string) (codexapp.Account, codexapp.Requirements, error) {
+	ctx, cancel := context.WithTimeout(ctx, codexProfileTimeout)
+	defer cancel()
+	base := herdr.CleanEnv(os.Environ())
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		base = slices.DeleteFunc(base, func(e string) bool { return strings.HasPrefix(e, k+"=") })
+	}
+	return codexapp.ReadHomeProfile(ctx, c.pre.Codex, append(base, env...))
+}
+
+func (codexHost) RootThread(ctx context.Context, sock string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, codexProfileTimeout)
+	defer cancel()
+	return codexapp.RootThread(ctx, sock)
+}
+
+// codexProfileTimeout bounds one of #139's checks of a profile.
+const codexProfileTimeout = 15 * time.Second
 
 // codexState is the hub's part of the feature (hub goroutine).
 type codexState struct {
@@ -121,6 +157,7 @@ type codexState struct {
 	server   map[string]string               // worker id → proto.CodexServer* of a shared worker
 	watches  map[string]*codexWatch          // worker id → the bridge's join of its thread
 	busy     map[string]bool                 // worker id → a launch, resume or stop is under way
+	asking   map[string]bool                 // #139 S1e: worker id → its server is asked for its thread
 	events   map[string]func(codexapp.Event) // test hook: a worker's adapter events
 	// #156: worker id → its thread's async questions. Not the join's: they
 	// outlive it (a reconnect, a sleep) and go with the thread.
@@ -157,7 +194,7 @@ type codexWatch struct {
 // initCodex loads the switch and the launches (NewHub).
 func (h *Hub) initCodex(ctx context.Context) error {
 	h.cx = codexState{launches: map[string]store.CodexLaunch{}, server: map[string]string{},
-		watches: map[string]*codexWatch{}, busy: map[string]bool{}, questions: map[string]*codexapp.Questions{},
+		watches: map[string]*codexWatch{}, busy: map[string]bool{}, asking: map[string]bool{}, questions: map[string]*codexapp.Questions{},
 		sends: map[string]map[sendKey]store.CodexAsyncSend{}}
 	en, _, err := h.st.LoadCodexServerSettings(ctx)
 	if err != nil {
@@ -265,6 +302,7 @@ func (h *Hub) codexWorkerView(id string) *proto.WorkerCodex {
 		return nil
 	}
 	v := &proto.WorkerCodex{Mode: l.Mode, Note: l.Note}
+	profileView(v, l) // #139
 	if l.Mode == store.CodexShared {
 		v.Server = h.cx.server[id]
 		v.Thread = l.Thread
@@ -369,8 +407,43 @@ func (h *Hub) codexTick(ctx context.Context) {
 			h.log.Warn("codex server died", "worker", id, "pid", l.ServerPID)
 		}
 		h.setCodexServer(id, state)
+		if state == proto.CodexServerRunning {
+			h.askCodexThread(ctx, id, l)
+		}
 	}
 	h.syncCodexWatches(ctx)
+}
+
+// askCodexThread asks a running shared worker's server for its thread
+// (#139 S1e; hub goroutine), when herdr has reported none and it runs on
+// another Codex profile than the bridge's own: a home without herdr's
+// hook never reports one. The answer goes through noteCodexThread's rules,
+// and only while the worker still has none on the same server.
+func (h *Hub) askCodexThread(ctx context.Context, id string, l store.CodexLaunch) {
+	if l.Thread != "" || h.cx.asking[id] {
+		return
+	}
+	if _, other := h.codexHomeOf(id); !other {
+		return
+	}
+	h.cx.asking[id] = true
+	sock := launchOf(l).Socket()
+	go func() {
+		thread, err := h.opts.CodexHost.RootThread(ctx, sock)
+		_ = h.do(ctx, func(ctx context.Context) {
+			delete(h.cx.asking, id)
+			cur, ok := h.cx.launches[id]
+			switch {
+			case err != nil:
+				h.log.Debug("asking the codex server for its thread failed", "worker", id, "err", err)
+			case thread == "" || !ok || cur.Thread != "" || cur.Token != l.Token || h.cx.busy[id]:
+			default:
+				h.log.Info("codex thread learned from its own server", "worker", id, "thread", thread)
+				h.noteCodexThread(ctx, id, thread)
+				h.rebindChildren(id) // N2: its children are the thread's from now, not from herdr's next refresh
+			}
+		})
+	}()
 }
 
 // syncCodexWatches joins each shared worker's thread while its server runs,
@@ -495,6 +568,10 @@ type sharedLaunch struct {
 	agentDef                 herdr.Agent
 	rec                      store.CodexLaunch
 	policy                   codexapp.VersionPolicy
+	// #139: the Codex profile it starts on (nil: none asked for, the
+	// default). Off the default its launcher sets the profile's
+	// CODEX_HOME, and its server is checked once it answers.
+	profile *codexProfileRun
 }
 
 // errNotShared means a shared launch did not get as far as the TUI: the
@@ -505,7 +582,10 @@ var errNotShared = errors.New("the shared Codex server did not start")
 // startSharedServer starts a shared worker's server from its pane at its
 // shell prompt and records it: the launcher written, the server typed into
 // the pane, its socket answering with a supported Codex, its process found.
-// On failure nothing of it is left running.
+// On failure nothing of it is left running. #139: on a profile other than
+// the default, the server starts with the profile's CODEX_HOME and is
+// checked once it answers (confirmProfile): a profile that refuses the
+// worker is a *profileRefusedError.
 func (h *Hub) startSharedServer(ctx context.Context, sl *sharedLaunch, hh interface {
 	StartCodexServer(ctx context.Context, session, pane, launcher string) error
 }) error {
@@ -513,6 +593,9 @@ func (h *Hub) startSharedServer(ctx context.Context, sl *sharedLaunch, hh interf
 	l, err := codexapp.NewLaunchFor(h.opts.CodexShell, h.opts.CodexRun, sl.rec.Name, sl.rec.Cwd)
 	if err != nil {
 		return err
+	}
+	if p := sl.profile; p != nil && !p.def {
+		l.Env = p.env
 	}
 	sl.rec.RunDir, sl.rec.Token, sl.rec.ServerPID, sl.rec.ServerStart = l.Dir, l.Token, 0, 0
 	if err := host.Prepare(l); err != nil {
@@ -542,6 +625,11 @@ func (h *Hub) startSharedServer(ctx context.Context, sl *sharedLaunch, hh interf
 	}
 	if err := sl.policy.CheckUserAgent(ua); err != nil {
 		return stop(err)
+	}
+	if p := sl.profile; p != nil && !p.def {
+		if err := h.confirmProfile(ctx, p, l.Socket(), &sl.rec); err != nil {
+			return stop(err)
+		}
 	}
 	s, err := host.FindServer(l)
 	if err != nil {
@@ -626,23 +714,37 @@ func markerHex(marker string) string { return strings.TrimPrefix(marker, "h3d-")
 // does not answer) starts the worker the usual way instead, the reason in
 // the hire's result and on the worker. A TUI that does not attach stops the
 // server; the hire then falls back too if the pane is back at its shell,
-// and fails otherwise.
-func (h *Hub) hireShared(ctx context.Context, op *hireOp, pane, dir string, a herdr.Agent, rep *hireReport, res *proto.HireResult) error {
+// and fails otherwise. #139: prof is the Codex profile it runs on (nil:
+// none asked for); one that refuses the worker (not signed in, a workspace
+// policy) fails the hire, it never falls back.
+func (h *Hub) hireShared(ctx context.Context, op *hireOp, pane, dir string, a herdr.Agent, rep *hireReport, res *proto.HireResult,
+	prof *codexProfileRun) error {
 	hh := h.opts.Hire
 	rec := store.CodexLaunch{WorkerID: op.id, Session: op.session, Mode: store.CodexShared, AgentName: op.agent, Cwd: dir,
 		Model: op.model, Effort: op.effort, Name: markerHex(op.marker)}
+	profileOnRecord(prof, &rec)
 	legacy := func(why error) error {
 		note := "shared Codex server: " + why.Error() + "; started the usual way"
 		rep.step("%s", note)
 		rep.Codex = proto.CodexModeLegacy
-		res.Codex = &proto.WorkerCodex{Mode: proto.CodexModeLegacy, Note: note}
 		lrec := store.CodexLaunch{WorkerID: op.id, Session: op.session, Mode: store.CodexLegacy, Note: note,
 			AgentName: op.agent, Cwd: dir, Model: op.model, Effort: op.effort}
+		profileOnRecord(prof, &lrec)
+		var refused error
+		if prof != nil {
+			refused = h.checkHomeProfile(ctx, prof, &lrec)
+		}
+		res.Codex = &proto.WorkerCodex{Mode: proto.CodexModeLegacy, Note: note}
+		profileView(res.Codex, lrec)
+		profileReport(rep, lrec)
 		_ = h.doWait(ctx, func() {
 			delete(h.cx.busy, op.id)
 			delete(h.cx.server, op.id)
 			h.setLaunch(ctx, lrec)
 		})
+		if refused != nil {
+			return refused
+		}
 		return hh.StartAgent(ctx, op.session, pane, op.agent, a)
 	}
 	if !shellLine(dir) {
@@ -655,10 +757,15 @@ func (h *Hub) hireShared(ctx context.Context, op *hireOp, pane, dir string, a he
 		}
 		return legacy(err)
 	}
-	sl := &sharedLaunch{id: op.id, session: op.session, pane: pane, agent: op.agent, agentDef: a, rec: rec, policy: op.codexPolicy}
+	sl := &sharedLaunch{id: op.id, session: op.session, pane: pane, agent: op.agent, agentDef: a, rec: rec, policy: op.codexPolicy, profile: prof}
 	if err := h.startSharedServer(ctx, sl, hh); err != nil {
+		if isProfileRefused(err) {
+			rep.step("%v", err)
+			return err
+		}
 		return legacy(err)
 	}
+	profileReport(rep, sl.rec)
 	rep.step("started the codex server (pid %d) from %s", sl.rec.ServerPID, pane)
 	l := launchOf(sl.rec)
 	err := hh.StartCodexRemote(ctx, op.session, pane, op.agent, a, herdr.Remote{Socket: l.Socket(), Cwd: dir})
@@ -672,6 +779,7 @@ func (h *Hub) hireShared(ctx context.Context, op *hireOp, pane, dir string, a he
 	}
 	rep.Codex = proto.CodexModeShared
 	res.Codex = &proto.WorkerCodex{Mode: proto.CodexModeShared, Server: proto.CodexServerRunning}
+	profileView(res.Codex, sl.rec)
 	_ = h.doWait(ctx, func() { h.codexDone(op.id, proto.CodexServerRunning) })
 	return err
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
@@ -39,13 +40,15 @@ func TestCodexLaunch(t *testing.T) {
 	shared := store.CodexLaunch{WorkerID: "w1", Session: "s", Mode: store.CodexShared, AgentName: "mochi-a58752",
 		Cwd: "/r", Model: "gpt-6-sol", Effort: "low", RunDir: "/run/user/7/herdr-world/codex", Name: "a58752ea6511",
 		Token: "0123456789abcdef0123456789abcdef", ServerPID: 4242, ServerStart: 1 << 40}
-	legacy := store.CodexLaunch{WorkerID: "w2", Session: "s", Mode: store.CodexLegacy, Note: ".envrc is blocked"}
+	legacy := store.CodexLaunch{WorkerID: "w2", Session: "s", Mode: store.CodexLegacy, Note: ".envrc is blocked",
+		Profile: "work", ProfileName: "Work", Account: store.AccountUnconfirmed, ProfileNote: "it runs on Codex's built-in server", Plan: "team"}
 	for _, l := range []store.CodexLaunch{shared, legacy} {
 		if err := st.RecordCodexLaunch(ctx, l); err != nil {
 			t.Fatal(err)
 		}
 	}
 	shared.Thread, shared.ServerPID, shared.ServerStart = "01a0663b-61cd-73a0-a3a0-034ca9fc6c48", 0, 0
+	shared.Profile, shared.ProfileName, shared.Account, shared.Plan = "work", "Work", store.AccountConfirmed, "team"
 	if err := st.RecordCodexLaunch(ctx, shared); err != nil {
 		t.Fatal(err)
 	}
@@ -57,6 +60,9 @@ func TestCodexLaunch(t *testing.T) {
 	}
 	if err := st.RecordCodexLaunch(ctx, store.CodexLaunch{WorkerID: "w3", Session: "s", Mode: "other"}); err == nil {
 		t.Fatal("unknown mode stored")
+	}
+	if err := st.RecordCodexLaunch(ctx, store.CodexLaunch{WorkerID: "w3", Session: "s", Mode: store.CodexShared, Account: "maybe"}); err == nil {
+		t.Fatal("unknown account state stored")
 	}
 	if err := st.ForgetCodexLaunch(ctx, "w1"); err != nil {
 		t.Fatal(err)
@@ -124,5 +130,30 @@ func TestCodexVersionPolicyMigration(t *testing.T) {
 	s, ok, err := st.LoadCodexServerSettings(context.Background())
 	if err != nil || !ok || !s.Enabled || s.AllowUnverified {
 		t.Fatalf("migrated %+v, %v, %v", s, ok, err)
+	}
+}
+
+// #139: a launch recorded before profiles runs on the default one, unchecked.
+func TestCodexProfileHireMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := len(store.Migrations) - 1
+	for _, q := range store.Migrations[:before] {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO codex_launch (worker_uuid, session_name, mode, thread_id, created_at, updated_at)
+		VALUES ('w1', 's', 'shared', 'th1', 't', 't'); PRAGMA user_version = ` + strconv.Itoa(before)); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	st := open(t, path)
+	all, err := st.CodexLaunches(context.Background())
+	if err != nil || all["w1"] != (store.CodexLaunch{WorkerID: "w1", Session: "s", Mode: store.CodexShared, Thread: "th1"}) {
+		t.Fatalf("migrated %+v, %v", all, err)
 	}
 }

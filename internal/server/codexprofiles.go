@@ -65,7 +65,7 @@ func (h *Hub) codexProfilesView() *proto.CodexProfiles {
 	if svc == nil {
 		return nil
 	}
-	out := &proto.CodexProfiles{Profiles: make([]proto.CodexProfile, 0, len(h.cp.list))}
+	out := &proto.CodexProfiles{Profiles: make([]proto.CodexProfile, 0, len(h.cp.list)), Hire: true}
 	for _, a := range h.cp.list {
 		plan := ""
 		if l, ok := h.limits[limitsKey(proto.LimitsCodex, a.Key)]; ok {

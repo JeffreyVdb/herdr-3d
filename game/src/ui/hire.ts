@@ -1,5 +1,5 @@
 import type { CommandResult } from '../net/client';
-import type { CommandArgs, CommandName, HireAck, HireGit, HireOptions, HirePrepare } from '../net/protocol';
+import type { CodexProfile, CommandArgs, CommandName, HireAck, HireGit, HireOptions, HirePrepare } from '../net/protocol';
 import {
   baseHint,
   baseText,
@@ -27,6 +27,7 @@ import { effortsFor } from '../world/settings';
 import { isComplete, levelChipText, levelProblem, preselectLevel, type TaskLevelId } from '../world/taskLevels';
 import { exactProblem, instructionsBlocker, nudgeWanted, pickExact, presetChoiceText, type ExactProblem } from '../world/hirePresets';
 import type { WorldStore } from '../world/store';
+import { hireProfiles, loneProfileGone, pickProfile, profileBlocked, profileGoneText } from '../world/codexProfiles';
 import { h, icon, ICON } from './dom';
 import { failureText } from './messages';
 import { hiredToast } from './hiredToast';
@@ -123,6 +124,8 @@ export interface HirePresetSeed {
   imagesLeftOut: number;
   /** #95: the form's "Add herdr hiring instructions" (#117: every form has one, on a bridge that adds them; absent: off). */
   instructions?: boolean;
+  /** #139: the form's Codex profile (absent: the form has no "Codex profile"). */
+  profile?: string;
 }
 
 /** M7: what "Ask a worker…" and "Review with a worker" start the dialog with. */
@@ -142,7 +145,7 @@ export interface HirePrefill {
    * one (a hidden model stays offered; a removed one or an effort it does not take is shown and blocks Hire until the
    * player picks). `prompt` is its prompt.
    */
-  preset?: { id: string; name: string; scope: 'floor' | 'global'; instructions?: boolean };
+  preset?: { id: string; name: string; scope: 'floor' | 'global'; instructions?: boolean; profile?: string };
   /** #93: the player chose to replace the desk's unsent first task with `prompt`: the new text is the desk's draft at once. */
   replaceDraft?: true;
 }
@@ -239,6 +242,34 @@ export function chips(
     row.append(e ? modelChip(input, e) : h('label', { class: 'dd-chip' }, input, h('span', {}, v)));
   }
   return h('fieldset', { class: 'dd-pick', 'data-pick': name }, h('legend', {}, legend, note), row);
+}
+
+/**
+ * #139: the "Codex profile" chips (the hire dialog's and the preset editor's): the same tape as the other choices, each
+ * profile by its name; one that is not signed in is shown, and cannot be picked. `note` goes under the chips.
+ */
+export function profileChips(name: string, list: readonly CodexProfile[], value: string, onPick: (key: string) => void, note: string | null = null): HTMLFieldSetElement {
+  const row = h('div', { class: 'dd-chips' });
+  for (const p of list) {
+    const blocked = profileBlocked(p);
+    const input = h('input', { type: 'radio', name, value: p.key, class: 'visually-hidden', 'data-key': `${name}:${p.key}`, disabled: !!blocked });
+    input.checked = p.key === value;
+    input.addEventListener('change', () => input.checked && onPick(p.key));
+    const title = blocked ? `${p.display}: ${blocked}` : p.display;
+    row.append(h('label', { class: 'dd-chip', title }, input, h('span', {}, p.name, blocked ? h('small', { class: 'dd-chip-id' }, blocked) : null)));
+  }
+  return h(
+    'fieldset',
+    { class: 'dd-pick', 'data-pick': name, 'data-hook': 'codex-profile' },
+    h('legend', {}, 'Codex profile'),
+    row,
+    note ? h('p', { class: 'field-hint dd-profile-gone', 'data-hook': 'profile-gone' }, note) : null,
+  );
+}
+
+/** #139: `profileChips`' note on its own, where there is no picker (`loneProfileGone`), in line with the chips. */
+export function profileGoneNote(note: string): HTMLElement {
+  return h('p', { class: 'field-hint dd-profile-gone dd-profile-gone--alone', 'data-hook': 'profile-gone' }, note);
 }
 
 /** The caps of a floor and the host, and what one more hire does to them: a line, or a callout past a cap. */
@@ -520,6 +551,9 @@ export class HireDialog {
   private exact: { id: string; name: string; scope: 'floor' | 'global'; instructions?: boolean; saved: { harness: string; model: string; effort: string } } | null = null;
   /** #95: this hire adds the herdr hiring instructions: ticked to match the preset, unticked for this hire only. */
   private addLines = false;
+  /** #139: the Codex profile picked here (null: none yet), and the preset's, which the form starts with while it can be. */
+  private profile: string | null = null;
+  private profileWant: string | undefined = undefined;
   /** #95: the first prompt's byte count with the lines, kept current while typing (null: not shown). */
   private bytesEl: HTMLElement | null = null;
   /** #95: "What's added" stays open across a re-render of the options. */
@@ -645,6 +679,8 @@ export class HireDialog {
     this.level = null;
     this.exact = prefill.preset && prefill.choice ? { ...prefill.preset, saved: { ...prefill.choice } } : null;
     this.addLines = this.exact?.instructions === true;
+    this.profile = null;
+    this.profileWant = prefill.preset?.profile;
     this.asking = null;
     this.askEl.replaceChildren();
     this.linesOpen = false;
@@ -983,7 +1019,7 @@ export class HireDialog {
     const fv = this.host.store.floorView(this.floor);
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const taken = this.takenBy();
-    const key = JSON.stringify([this.floor, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version, labelsOf(this.host.store.hireOptions, this.f.harness), this.levelMode, this.level, this.levelMode ? this.host.taskLevels?.version : null, this.exact, this.host.store.hirePresets?.known, this.addLines, this.host.store.hirePresets?.instructions, this.host.store.hirePresets?.version, this.host.pins?.version]);
+    const key = JSON.stringify([this.floor, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version, labelsOf(this.host.store.hireOptions, this.f.harness), this.levelMode, this.level, this.levelMode ? this.host.taskLevels?.version : null, this.exact, this.host.store.hirePresets?.known, this.addLines, this.host.store.hirePresets?.instructions, this.host.store.hirePresets?.version, this.host.pins?.version, this.profileChoice(), this.loneGone()]);
     // Typing (task, label, folder) only needs the button; everything else re-renders.
     if (key === this.renderedKey) {
       this.renderActions();
@@ -1063,7 +1099,8 @@ export class HireDialog {
                 ? h('div', { class: 'dd-level-switch' }, h('button', { type: 'button', class: 'btn btn--sm btn--quiet', 'data-key': 'levels-back', disabled: busy, onclick: () => this.switchLevels('levels') }, 'Back to task levels'))
                 : null,
             );
-      const limits = planLimits(this.host.store.limits, [{ harness: this.f.harness, model: this.f.model }], this.host.now());
+      const prof = this.profileChoice();
+      const limits = planLimits(this.host.store.limits, [{ harness: this.f.harness, model: this.f.model, ...(prof ? { profile: prof.key } : {}) }], this.host.now());
       const slot = h('div', { class: 'dd-plan-limits', 'data-hook': 'plan-limits' });
       if (limits) slot.append(limits);
       else slot.hidden = true;
@@ -1102,6 +1139,10 @@ export class HireDialog {
       const lines = this.instructionLines();
       this.bytesEl = null;
       if (lines !== null) nodes.push(this.instructionsControl(lines));
+      // #139: with the rest of the choice, above the switch between task levels and models.
+      const lone = this.loneGone();
+      if (prof) agent.insertBefore(this.profileField(prof), agent.querySelector(':scope > .dd-level-switch'));
+      else if (lone) agent.insertBefore(profileGoneNote(lone), agent.querySelector(':scope > .dd-level-switch'));
       nodes.push(agent, slot, ids);
 
       const g = this.gitView(this.prep.git);
@@ -1147,6 +1188,33 @@ export class HireDialog {
       // A chip group re-rendered on another pick: focus its checked chip.
       if (!back && focusKey.includes(':')) this.optionsPane.querySelector<HTMLElement>(`[data-pick="${focusKey.split(':')[0]}"] input:checked`)?.focus();
     }
+  }
+
+  /**
+   * #139: the Codex profile a Codex hire runs on, with two or more to pick from on a bridge that takes one (else null:
+   * the form is as before profiles): the one picked here, else the preset's while it can be picked, else the default.
+   * `gone`: the preset's is not offered any more.
+   */
+  private profileChoice(): { list: CodexProfile[]; key: string; gone: string | null } | null {
+    if (this.f.harness !== 'codex') return null;
+    const list = hireProfiles(this.host.store.codexProfiles?.state ?? null);
+    if (!list) return null;
+    const cur = this.profile !== null ? list.find((p) => p.key === this.profile && !profileBlocked(p)) : undefined;
+    return cur ? { list, key: cur.key, gone: null } : { list, ...pickProfile(list, this.profileWant) };
+  }
+
+  /** #139: a preset's gone profile, with no picker to say so (`loneProfileGone`). */
+  private loneGone(): string | null {
+    return this.f.harness === 'codex' ? loneProfileGone(this.host.store.codexProfiles?.state ?? null, this.profileWant) : null;
+  }
+
+  private profileField(c: { list: CodexProfile[]; key: string; gone: string | null }): HTMLElement {
+    const def = c.list.find((p) => p.default)?.name ?? '';
+    const note = c.gone ? profileGoneText(this.host.store.codexProfiles?.state ?? null, c.gone, def) : null;
+    return profileChips('codex-profile', c.list, c.key, (key) => {
+      this.profile = key;
+      this.render();
+    }, note);
   }
 
   /**
@@ -1346,7 +1414,8 @@ export class HireDialog {
       const s = this.editor.draft.snapshot();
       // #95: the box as this form has it (off from a form that has none); never the lines themselves.
       const instructions = this.instructionLines() !== null && this.addLines;
-      save({ floor: this.floor, prompt: presetText(s), harness: this.f.harness, model: this.f.model, effort: this.f.effort, imagesLeftOut: s.images.length, instructions }, b);
+      const prof = this.profileChoice();
+      save({ floor: this.floor, prompt: presetText(s), harness: this.f.harness, model: this.f.model, effort: this.f.effort, imagesLeftOut: s.images.length, instructions, ...(prof ? { profile: prof.key } : {}) }, b);
     });
     return b;
   }
@@ -1438,6 +1507,8 @@ export class HireDialog {
     const sent = this.draftNow();
     const doc = this.editor.draft;
     const args = hireArgs(floor, desk, this.f, this.prep.git);
+    const prof = this.profileChoice(); // #139: only to a bridge that takes it, with a choice to make
+    if (prof) args.codex_profile = prof.key;
     // #95: the flag, never the lines: the bridge adds them for the floor it hires on. Read once, here (#93 decision 8).
     const lines = this.addLines ? this.instructionLines() : null;
     const added = lines !== null && args.prompt ? 2 + new TextEncoder().encode(lines).length : 0;

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/childagents"
+	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
 
 // #22 native child agents (docs/protocol.md "Native child agents"): the
@@ -66,4 +67,22 @@ func (h *Hub) childSession(id, agentSession string) uint64 {
 		}
 	}
 	return gen
+}
+
+// rebindChildren binds a worker's children to its root now (#139: a thread
+// learned from its own server between herdr's refreshes) and re-emits it
+// when that gave it another generation.
+func (h *Hub) rebindChildren(id string) {
+	w := h.workers[id]
+	if w == nil {
+		return
+	}
+	gen := h.childSession(id, h.childRoot(id, w.AgentSession))
+	if gen == w.ChildGeneration {
+		return
+	}
+	next := *w
+	next.ChildGeneration = gen
+	h.workers[id] = &next
+	h.emit(proto.Event{T: proto.EvWorkerUpsert, Worker: &next})
 }

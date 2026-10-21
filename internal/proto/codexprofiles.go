@@ -30,6 +30,8 @@ type CodexProfiles struct {
 	// Profiles: the bridge's own first, then the found folders by path,
 	// then the added ones in the order added. Hidden ones included.
 	Profiles []CodexProfile `json:"profiles"`
+	// Hire (#139): worker.hire and hire presets take codex_profile.
+	Hire bool `json:"hire,omitempty"`
 }
 
 // CodexProfile is one Codex home folder.

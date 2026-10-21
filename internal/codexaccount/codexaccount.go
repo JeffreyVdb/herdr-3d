@@ -92,10 +92,16 @@ type SettingsError struct{ Msg string }
 
 func (e *SettingsError) Error() string { return e.Msg }
 
-// NotFoundError is a key no profile has.
-type NotFoundError struct{ Key string }
+// NotFoundError is a key no profile has, or (#139, Prepare) a profile
+// whose folder is gone: Name is its name then.
+type NotFoundError struct{ Key, Name string }
 
-func (e *NotFoundError) Error() string { return fmt.Sprintf("no Codex profile %q", e.Key) }
+func (e *NotFoundError) Error() string {
+	if e.Name != "" {
+		return fmt.Sprintf("the folder of the Codex profile %q no longer exists", e.Name)
+	}
+	return fmt.Sprintf("no Codex profile %q", e.Key)
+}
 
 // Service detects the profiles and keeps the user's settings. Safe for
 // concurrent use: the hub configures it, the limits poller lists.
@@ -336,6 +342,38 @@ func (s *Service) Display(path string) string {
 	return path
 }
 
+// Prepare is the environment a Codex process runs with on the profile key
+// ("": the default), as listed now (#139): CODEX_HOME is its home. Nothing
+// is switched, so there is nothing to undo: release is a no-op, kept for
+// the interface, never nil and safe to call on every path. The default's
+// folder that is not there gives no env (Codex refuses a CODEX_HOME that
+// is not; the limits probe's rule). An unknown key, or a profile whose
+// folder is gone, is a *NotFoundError. A hidden profile still prepares:
+// hidden only keeps it off the meter and out of the hire dialog.
+func (s *Service) Prepare(ctx context.Context, key string) (env []string, release func(), err error) {
+	release = func() {}
+	all := list(s.userHome, s.defaultHome, s.Settings())
+	a, ok := Account{}, false
+	if key == "" {
+		for _, x := range all {
+			if x.Default {
+				a, ok = x, true
+			}
+		}
+	} else {
+		a, ok = find(all, key)
+	}
+	switch {
+	case !ok:
+		return nil, release, &NotFoundError{Key: key}
+	case a.Default && !a.Exists:
+		return nil, release, nil
+	case !a.Exists:
+		return nil, release, &NotFoundError{Key: key, Name: a.Name}
+	}
+	return []string{"CODEX_HOME=" + a.Home}, release, nil
+}
+
 // find is the profile with key in list.
 func find(list []Account, key string) (Account, bool) {
 	for _, a := range list {
@@ -375,7 +413,7 @@ func (s *Service) Rename(ctx context.Context, key, name string) (Settings, error
 	all := list(s.userHome, s.defaultHome, set)
 	a, ok := find(all, key)
 	if !ok {
-		return set, &NotFoundError{key}
+		return set, &NotFoundError{Key: key}
 	}
 	name = strings.TrimSpace(name)
 	switch {
@@ -403,7 +441,7 @@ func (s *Service) SetHidden(ctx context.Context, key string, hidden bool) (Setti
 	set := s.Settings()
 	a, ok := find(list(s.userHome, s.defaultHome, set), key)
 	if !ok {
-		return set, &NotFoundError{key}
+		return set, &NotFoundError{Key: key}
 	}
 	if a.Default && hidden {
 		return set, &SettingsError{"The bridge's own Codex profile cannot be hidden."}
@@ -462,7 +500,7 @@ func (s *Service) Remove(ctx context.Context, key string) (Settings, error) {
 	set := s.Settings()
 	a, ok := find(list(s.userHome, s.defaultHome, set), key)
 	if !ok {
-		return set, &NotFoundError{key}
+		return set, &NotFoundError{Key: key}
 	}
 	if !a.Added {
 		return set, &SettingsError{"A profile the bridge found cannot be removed, only hidden."}
@@ -495,4 +533,19 @@ func Clean(set Settings) Settings {
 		out.Overrides = append(out.Overrides, Override{Path: filepath.Clean(o.Path), Name: name, Hidden: o.Hidden})
 	}
 	return out
+}
+
+// RunsHerdrHook reports whether a Codex home runs herdr's session hook
+// (#139): its hooks.json, or a [hooks] table in its config.toml, names
+// herdr-agent-state.sh, the script herdr installs to learn a Codex
+// session's id. A fresh profile home has neither (#137). Only those two
+// files are read; never auth.json.
+func RunsHerdrHook(home string) bool {
+	for _, name := range []string{"hooks.json", "config.toml"} {
+		b, err := os.ReadFile(filepath.Join(home, name))
+		if err == nil && strings.Contains(string(b), "herdr-agent-state") {
+			return true
+		}
+	}
+	return false
 }

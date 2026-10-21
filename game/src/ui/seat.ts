@@ -50,6 +50,9 @@ export class SeatBar implements SeatView {
   private readonly askLine = el('div', 'seat-ask');
   /** #155: the line about the worker's own Codex server (in the ask line's place while no question shows). */
   private readonly codexLine = el('div', 'seat-codex');
+  /** #139: the seated Codex worker's profile, under its server's line (both in the question's place). */
+  private readonly profileLine = el('div', 'seat-profile');
+  private readonly codexBox = el('div', 'seat-codex-box');
   private readonly modeOpts: Record<SeatMode, HTMLSpanElement> = { terminal: el('span', 'seat-mode-opt', 'Terminal'), transcript: el('span', 'seat-mode-opt', 'Transcript'), images: el('span', 'seat-mode-opt', 'Images') };
   /** #59: the terminal's preset and zoom. */
   private readonly look = el('div', 'seat-look');
@@ -132,7 +135,10 @@ export class SeatBar implements SeatView {
     this.askLine.setAttribute('role', 'status');
     this.codexLine.hidden = true;
     this.codexLine.setAttribute('role', 'status');
-    this.el.append(this.askLine, this.codexLine, line, this.keys, this.modeBtn, this.standBtn, this.input);
+    this.profileLine.hidden = true;
+    this.profileLine.setAttribute('role', 'status');
+    this.codexBox.append(this.codexLine, this.profileLine);
+    this.el.append(this.askLine, this.codexBox, line, this.keys, this.modeBtn, this.standBtn, this.input);
     if (prefs) {
       this.zoomBtns = this.buildLook(prefs, handlers.fullscreen);
       // At the end of the keys row (renderMode puts it back after the keys): the bar keeps its two rows.
@@ -361,14 +367,23 @@ export class SeatBar implements SeatView {
 
   /** #155: what the worker's Codex launch has to tell you (null: nothing): its own server stopped, or it runs without one. */
   codexNote(n: CodexNotice | null): void {
-    this.codexLine.hidden = !n;
-    this.el.toggleAttribute('data-codex', !!n);
+    this.noteLine(this.codexLine, 'Codex server', n);
+  }
+
+  /** #139: the worker's Codex profile, with two or more profiles (null: nothing): its name, and what its start found. */
+  profileNote(n: CodexNotice | null): void {
+    this.noteLine(this.profileLine, 'Codex profile', n);
+  }
+
+  private noteLine(line: HTMLElement, tag: string, n: CodexNotice | null): void {
+    line.hidden = !n;
+    this.el.toggleAttribute('data-codex', !this.codexLine.hidden || !this.profileLine.hidden);
     if (!n) {
-      this.codexLine.replaceChildren();
+      line.replaceChildren();
       return;
     }
-    this.codexLine.dataset.tone = n.tone;
-    this.codexLine.replaceChildren(el('span', 'seat-codex-tag', 'Codex server'), el('span', 'seat-codex-text', n.text));
+    line.dataset.tone = n.tone;
+    line.replaceChildren(el('span', 'seat-codex-tag', tag), el('span', 'seat-codex-text', n.text));
   }
 
   hide(): void {

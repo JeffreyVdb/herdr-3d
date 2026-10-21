@@ -17,7 +17,7 @@
 // sleep are their session's (every floor of it), and a virtual floor stays in its base floor's building.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
-import type { Building, Cap, Floor, FloorSettings, Hire, HireOptions, TranscriptItem, Worker } from '../src/net/protocol.ts';
+import type { Building, Cap, Floor, FloorSettings, Hire, HireOptions, TranscriptItem, Worker, WorkerCodex } from '../src/net/protocol.ts';
 import { screensOf, type SimScreens } from './fixture-screen.ts';
 import { hashOf, type StoredLogo } from './fixture-logo.ts';
 import { logoPng, MAGENTA, type Palette } from './logo-art.ts';
@@ -443,6 +443,8 @@ export class SimWorld {
     );
     this.codexProfiles = o.codexProfiles ? new CodexProfilesSim({ emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: this.now }, o.codexProfiles) : null; // #138
     this.limits = new LimitsSim(o.limits ?? 'ok', o.fail !== 'no_m10', this.now, (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message), this.codexProfiles);
+    this.codexProfiles?.seed(this.workers); // #139
+    if (this.codexProfiles) this.hirePresets.seed(CodexProfilesSim.GONE_PRESET); // #139: a preset whose profile is gone
     this.boards = new BoardSim(
       {
         floors: this.floors,
@@ -1817,7 +1819,7 @@ export class SimWorld {
   }
 
   private hireWorker(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): void {
-    onlyKeys(a, ['session', 'desk_index', 'harness', 'model', 'effort', 'label', 'cwd', 'worktree', 'prompt', ...(this.hirePresets.instructions ? ['herdr_instructions'] : [])]);
+    onlyKeys(a, ['session', 'desk_index', 'harness', 'model', 'effort', 'label', 'cwd', 'worktree', 'prompt', ...(this.hirePresets.instructions ? ['herdr_instructions'] : []), ...(this.codexProfiles ? ['codex_profile'] : [])]);
     const f = this.runningFloor(a);
     const desk = a.desk_index;
     if (typeof desk !== 'number' || !Number.isInteger(desk) || desk < 0) throw bad('desk_index must be an int >= 0');
@@ -1891,7 +1893,11 @@ export class SimWorld {
       status_since: now,
       hired_at: now,
     };
-    const codex = this.codexServer.hire(harness); // #186
+    let codex: WorkerCodex | undefined = this.codexServer.hire(harness); // #186
+    if (typeof a.codex_profile === 'string' && a.codex_profile) {
+      if (harness !== 'codex') throw new CmdError('bad_request', `bad args: codex_profile is for a Codex hire, not "${harness}"`);
+      codex = (this.codexProfiles as CodexProfilesSim).hire(a.codex_profile, codex); // #139 (a bridge before it refused the field above)
+    }
     if (codex) w.codex = codex;
     if (branch && root) {
       w.branch = branch;

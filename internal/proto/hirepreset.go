@@ -37,8 +37,11 @@ type HirePreset struct {
 	Model             string `json:"model"`
 	Effort            string `json:"effort"`
 	HerdrInstructions bool   `json:"herdr_instructions,omitempty"`
-	CreatedAt         int64  `json:"created_at"`
-	UpdatedAt         int64  `json:"updated_at"`
+	// CodexProfile (#139; left out for the default): the Codex profile a
+	// hire from it runs on (worker.hire's codex_profile).
+	CodexProfile string `json:"codex_profile,omitempty"`
+	CreatedAt    int64  `json:"created_at"`
+	UpdatedAt    int64  `json:"updated_at"`
 }
 
 // HirePresetSpec is what a preset holds: hire_preset.create's args (and
@@ -59,6 +62,9 @@ type HirePresetSpec struct {
 	// Secrets (#108 round 2, optional): the review of Prompt's possible
 	// secrets; a stored prompt's decisions all ignore.
 	Secrets *SecretsReview `json:"secrets,omitempty"`
+	// CodexProfile (#139, optional, Codex only): worker.hire's
+	// codex_profile; sent only to a bridge whose codex_profiles has hire.
+	CodexProfile string `json:"codex_profile,omitempty"`
 }
 
 // HirePresetUpdateArgs are hire_preset.update's: the whole spec replaces the

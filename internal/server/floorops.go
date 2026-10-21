@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/codex"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
@@ -40,6 +41,9 @@ type FloorHerdr interface {
 	// whose server does not start resumes on Codex's embedded server.
 	StartCodexRemote(ctx context.Context, session, pane, name string, a herdr.Agent, r herdr.Remote) error
 	ResumeCodexEmbedded(ctx context.Context, session, pane, name, thread string, a herdr.Agent) error
+	// #139: a Codex worker on a profile: its home exported in its pane's
+	// shell before its server or its resume starts there.
+	ExportCodexHome(ctx context.Context, session, pane, home string) error
 }
 
 // Defaults of the wake/sleep Options.
@@ -212,7 +216,14 @@ func (h *Hub) startFloorOp(ctx context.Context, c *Client, cmd proto.Command) er
 		if w.AgentSession != "" {
 			known[w.AgentSession] = true
 		} else if w.AgentKind == "codex" && w.PaneID != "" && w.Cwd != "" {
-			backfills = append(backfills, backfill{Worker: id, Pane: w.PaneID, cwd: w.Cwd})
+			b := backfill{Worker: id, Pane: w.PaneID, cwd: w.Cwd}
+			if home, other := h.codexHomeOf(id); other { // #139: found in its own profile's folder, never the default's
+				b.root = profileSessions(home)
+				if home == "" {
+					b.Skipped = "its Codex profile is gone: its sessions are not read"
+				}
+			}
+			backfills = append(backfills, b)
 		}
 	}
 	h.wg.Add(1)
@@ -569,12 +580,26 @@ func (h *Hub) fallback(ctx, phase context.Context, op *floorOp, p pendingWait) {
 	case !herdr.CanResume(p.harness):
 		note = fmt.Sprintf("no fallback: cannot resume %q", p.harness)
 	default:
+		run := func(ctx context.Context) error {
+			return h.opts.Herdr.ResumeAgent(ctx, op.session, p.pane, p.harness, p.agentSession)
+		}
+		how := "fallback: ran the resume command"
+		if p.harness == "codex" { // #139: its Codex profile
+			start, gone, err := h.legacyWake(phase, op.session, p.id, p.pane)
+			if err != nil {
+				note = "no fallback: " + err.Error()
+				break
+			}
+			if start != nil {
+				run, how = start, "fallback: "+gone
+			}
+		}
 		_ = h.doWait(ctx, func() {
 			if w := op.waits[p.id]; w != nil {
 				w.fallback = true
 			}
 		})
-		if err := h.opts.Herdr.ResumeAgent(phase, op.session, p.pane, p.harness, p.agentSession); err != nil {
+		if err := run(phase); err != nil {
 			note = "fallback failed: " + err.Error()
 			_ = h.doWait(ctx, func() {
 				if w := op.waits[p.id]; w != nil {
@@ -582,7 +607,7 @@ func (h *Hub) fallback(ctx, phase context.Context, op *floorOp, p pendingWait) {
 				}
 			})
 		} else {
-			note = "fallback: ran the resume command"
+			note = how
 			h.log.Info("resuming agent with the fallback", "session", op.session, "pane", p.pane, "harness", p.harness)
 		}
 	}
@@ -601,6 +626,9 @@ type backfill struct {
 	Skipped      string `json:"skipped,omitempty"`
 	Error        string `json:"error,omitempty"`
 	cwd          string
+	// root is the worker's Codex profile's sessions folder (#139; "": the
+	// bridge's own, --codex-sessions).
+	root string
 }
 
 // sleepReport is the audit-log result of a floor.sleep.
@@ -625,7 +653,11 @@ func (h *Hub) runSleep(ctx context.Context, op *floorOp, shared []sharedSleep, b
 		report.Shared = append(report.Shared, s)
 	}
 	for _, b := range backfills {
-		switch id, err := h.codexSession(b.cwd, known); {
+		if b.Skipped != "" {
+			report.Backfills = append(report.Backfills, b)
+			continue
+		}
+		switch id, err := h.codexSession(b.root, b.cwd, known); {
 		case err != nil:
 			b.Error = "finding the codex session: " + err.Error()
 		case id == "":
@@ -682,11 +714,17 @@ func (h *Hub) awaitFlag(ctx context.Context, op *floorOp, deadline time.Time, fl
 	}
 }
 
-func (h *Hub) codexSession(cwd string, known map[string]bool) (string, error) {
+// codexSession finds the session of a Codex worker by its folder: in
+// --codex-sessions (CodexSession), or (#139) in root, its profile's.
+func (h *Hub) codexSession(root, cwd string, known map[string]bool) (string, error) {
+	skip := func(id string) bool { return known[id] }
+	if root != "" {
+		return codex.FindSession(root, cwd, skip)
+	}
 	if h.opts.CodexSession == nil {
 		return "", nil
 	}
-	return h.opts.CodexSession(cwd, func(id string) bool { return known[id] })
+	return h.opts.CodexSession(cwd, skip)
 }
 
 // finishOp ends a floor operation on the hub goroutine: pending resumes

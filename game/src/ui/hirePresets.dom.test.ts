@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { HireOptions, HirePreset } from '../net/protocol';
+import type { CodexProfile, CodexProfilesState, HireOptions, HirePreset } from '../net/protocol';
 import { HirePresetBook } from '../world/hirePresets';
 import { HirePresetsDialog, type HirePresetsHost, type HirePresetsSummary } from './hirePresets';
 import { HireModelPrefs } from './hireModelPrefs';
@@ -30,7 +30,11 @@ const preset = (name: string, floor: string | null, over: Partial<HirePreset> = 
  * `list` null: a bridge before #93 (no `hire_presets`). #95 `o.instructions`: the bridge adds the herdr hiring
  * instructions; `o.classifier`: the AI integration's classifier state (absent: none).
  */
-function setup(list: HirePreset[] | null = [], unsent: { text: string; images: number } | null = null, o: { instructions?: boolean; classifier?: string } = {}) {
+function setup(
+  list: HirePreset[] | null = [],
+  unsent: { text: string; images: number } | null = null,
+  o: { instructions?: boolean; classifier?: string; profiles?: CodexProfilesState } = {},
+) {
   const book = new HirePresetBook();
   book.reset(list ?? undefined, o.instructions);
   const sent: Array<[string, unknown]> = [];
@@ -63,6 +67,7 @@ function setup(list: HirePreset[] | null = [], unsent: { text: string; images: n
       floorName: (id: string) => (id === 'web' ? 'Web' : id),
       floorView: () => ({}),
       ai: { state: o.classifier ? { classifier: { state: o.classifier } } : null },
+      codexProfiles: { state: o.profiles ?? null },
     } as unknown as HirePresetsHost['store'],
     send: send as unknown as HirePresetsHost['send'],
     unsupported: () => false,
@@ -557,6 +562,77 @@ describe('HirePresetsDialog: herdr hiring instructions (#95)', () => {
     dlg.open('web', 0);
     click('new');
     expect(document.querySelector('[data-hook="hp-instructions-off"]')?.textContent).toBe('This herdr-world can’t add hiring instructions yet. Update the bridge to use it.');
+  });
+});
+
+// #139: a Codex preset's profile, as the hire dialog picks it.
+describe('HirePresetsDialog: Codex profile (#139)', () => {
+  beforeEach(() => {
+    n = 0;
+    HTMLDialogElement.prototype.showModal = function () {
+      this.setAttribute('open', '');
+    };
+    HTMLDialogElement.prototype.close = function () {
+      this.removeAttribute('open');
+      this.dispatchEvent(new Event('close'));
+    };
+    vi.stubGlobal('CSS', { escape: (s: string) => s });
+  });
+  afterEach(() => {
+    document.body.replaceChildren();
+    vi.unstubAllGlobals();
+  });
+  const prof = (key: string, more: Partial<CodexProfile> = {}): CodexProfile => ({
+    key,
+    name: key,
+    path: `/h/.codex-${key}`,
+    display: `~/.codex-${key}`,
+    plan: '',
+    signed_in: true,
+    default: key === 'codex',
+    hidden: false,
+    added: false,
+    ...more,
+  });
+  const TWO: CodexProfilesState = { hire: true, profiles: [prof('codex'), prof('work')] };
+
+  it('keeps the profile a preset has, and saves the one picked', async () => {
+    const p = preset('Review', 'web', { codex_profile: 'work' });
+    const { dlg, sent } = setup([p], null, { profiles: TWO });
+    dlg.open('web', 0);
+    click(`edit:${p.id}`);
+    expect((document.querySelector('[data-key="preset-profile:work"]') as HTMLInputElement).checked).toBe(true);
+    await submit();
+    expect(sent.at(-1)).toEqual(['hire_preset.update', expect.objectContaining({ codex_profile: 'work' })]);
+    click(`edit:${p.id}`);
+    pick('preset-profile:codex');
+    await submit();
+    expect(sent.at(-1)).toEqual(['hire_preset.update', expect.objectContaining({ codex_profile: 'codex' })]);
+  });
+
+  it('a gone profile shows the default and says so; with one profile no picker, the note, and the key kept; an older bridge gets none', async () => {
+    const p = preset('Review', 'web', { codex_profile: 'old' });
+    let { dlg, sent } = setup([p], null, { profiles: TWO });
+    dlg.open('web', 0);
+    click(`edit:${p.id}`);
+    expect((document.querySelector('[data-key="preset-profile:codex"]') as HTMLInputElement).checked).toBe(true);
+    expect(document.querySelector('[data-hook="profile-gone"]')?.textContent).toBe('This preset’s Codex profile “old” is gone: it hires on codex.');
+    document.body.replaceChildren();
+    ({ dlg, sent } = setup([p], null, { profiles: { hire: true, profiles: [prof('codex')] } }));
+    dlg.open('web', 0);
+    click(`edit:${p.id}`);
+    expect(document.querySelector('[data-pick="preset-profile"]')).toBeNull();
+    expect(document.querySelector('[data-hook="profile-gone"]')?.textContent).toBe('This preset’s Codex profile “old” is gone: it hires on codex.');
+    await submit();
+    expect(sent.at(-1)?.[1]).toMatchObject({ codex_profile: 'old' });
+    document.body.replaceChildren();
+    ({ dlg, sent } = setup([p], null, { profiles: { profiles: TWO.profiles } }));
+    dlg.open('web', 0);
+    click(`edit:${p.id}`);
+    expect(document.querySelector('[data-pick="preset-profile"]')).toBeNull();
+    expect(document.querySelector('[data-hook="profile-gone"]')).toBeNull();
+    await submit();
+    expect(sent.at(-1)?.[1]).not.toHaveProperty('codex_profile');
   });
 });
 
