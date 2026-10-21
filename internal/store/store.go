@@ -223,6 +223,8 @@ var migrations = []string{
 	migrationNotifyMode,
 	// #127: schedules' "Add herdr hiring instructions".
 	migrationScheduleInstructions,
+	// #138: the Codex profiles' names, hidden ones and added folders.
+	migrationCodexProfiles,
 }
 
 // Fingerprint kinds.

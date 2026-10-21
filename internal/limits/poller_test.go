@@ -19,7 +19,7 @@ import (
 func TestCodexPrimaryOnly(t *testing.T) {
 	c, r := newCfg(t, nil)
 	r.scripts = map[string]script{"codex": codexAnswers(t, fixture(t, "codex_primary.json"))}
-	l, err := c.probeCodex(context.Background())
+	l, err := c.probeCodex(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestCodexPrimaryOnly(t *testing.T) {
 func TestCodexPrimaryAndSecondary(t *testing.T) {
 	c, r := newCfg(t, nil)
 	r.scripts = map[string]script{"codex": codexAnswers(t, fixture(t, "codex_two.json"))}
-	l, err := c.probeCodex(context.Background())
+	l, err := c.probeCodex(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestCodexPrimaryAndSecondary(t *testing.T) {
 func TestCodexRateLimitReached(t *testing.T) {
 	c, r := newCfg(t, nil)
 	r.scripts = map[string]script{"codex": codexAnswers(t, fixture(t, "codex_reached.json"))}
-	l, err := c.probeCodex(context.Background())
+	l, err := c.probeCodex(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,11 +113,11 @@ func TestCodexAppServerErrorFallsBackToTranscript(t *testing.T) {
 		}
 	}})
 	c.CodexSessions = "testdata/codex-sessions"
-	if _, err := c.probeCodex(context.Background()); err == nil || !strings.Contains(err.Error(), "401 Unauthorized") {
+	if _, err := c.probeCodex(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "401 Unauthorized") {
 		t.Fatalf("probe err = %v", err)
 	}
 	p := New(c)
-	l := p.read(context.Background(), proto.LimitsCodex, t0)
+	l := p.read(context.Background(), target{provider: proto.LimitsCodex}, t0)
 	// The newest rollout has no rate_limits: the fallback goes on to the one before, and takes its last token_count.
 	want := []proto.LimitWindow{
 		{Label: "5h", Pct: 45, ResetsAt: 1790600000000, WindowMins: 300},
@@ -143,14 +143,14 @@ func TestCodexErrorWithoutTranscriptKeepsLastReading(t *testing.T) {
 		}}).Start(c)
 	})
 	p := New(c)
-	first := p.read(context.Background(), proto.LimitsCodex, t0)
+	first := p.read(context.Background(), target{provider: proto.LimitsCodex}, t0)
 	ok = false
-	second := p.read(context.Background(), proto.LimitsCodex, t0.Add(time.Minute))
+	second := p.read(context.Background(), target{provider: proto.LimitsCodex}, t0.Add(time.Minute))
 	if first.Stale || !second.Stale || second.Error != proto.LimitsFailed || !slices.Equal(first.Windows, second.Windows) || second.At != first.At {
 		t.Fatalf("first %+v\nsecond %+v", first, second)
 	}
 	// With no reading before and no transcript, the error stands alone.
-	fresh := New(c).read(context.Background(), proto.LimitsCodex, t0)
+	fresh := New(c).read(context.Background(), target{provider: proto.LimitsCodex}, t0)
 	if !fresh.Stale || fresh.Error != proto.LimitsFailed || len(fresh.Windows) != 0 || fresh.Provider != "codex" {
 		t.Fatalf("fresh %+v", fresh)
 	}
@@ -164,14 +164,14 @@ func TestNoPlanAndNotInstalled(t *testing.T) {
 	c, r := newCfg(t, nil)
 	r.scripts = map[string]script{"claude": claudeAnswers(t, "claude_no_plan.jsonl")}
 	p := New(c)
-	l := p.read(context.Background(), proto.LimitsClaude, t0)
+	l := p.read(context.Background(), target{provider: proto.LimitsClaude}, t0)
 	if l.Error != proto.LimitsNoPlan || l.Stale || len(l.Windows) != 0 || l.Windows == nil {
 		t.Fatalf("no plan: %+v", l)
 	}
 	if got := p.state["claude"].next; !got.Equal(t0.Add(30 * time.Minute)) {
 		t.Errorf("no plan: next %v, want +30m", got)
 	}
-	l = p.read(context.Background(), proto.LimitsCodex, t0) // no codex script: the CLI is not there
+	l = p.read(context.Background(), target{provider: proto.LimitsCodex}, t0) // no codex script: the CLI is not there
 	if l.Error != proto.LimitsNotInstalled || !l.Stale {
 		t.Fatalf("not installed: %+v", l)
 	}
@@ -184,7 +184,7 @@ func TestNoPlanAndNotInstalled(t *testing.T) {
 func TestCodexNotInstalledStillUsesTranscript(t *testing.T) {
 	c, _ := newCfg(t, nil)
 	c.CodexSessions = "testdata/codex-sessions"
-	l := New(c).read(context.Background(), proto.LimitsCodex, t0) // no codex script: the CLI is not there
+	l := New(c).read(context.Background(), target{provider: proto.LimitsCodex}, t0) // no codex script: the CLI is not there
 	if l.Error != proto.LimitsNotInstalled || l.Source != proto.LimitsTranscript || !l.Stale || len(l.Windows) == 0 {
 		t.Fatalf("got %+v", l)
 	}
@@ -193,7 +193,7 @@ func TestCodexNotInstalledStillUsesTranscript(t *testing.T) {
 func TestTimeoutReading(t *testing.T) {
 	c, r := newCfg(t, nil)
 	r.scripts = map[string]script{"claude": func(p *fakeProc) { p.hang() }}
-	l := New(c).read(context.Background(), proto.LimitsClaude, t0)
+	l := New(c).read(context.Background(), target{provider: proto.LimitsClaude}, t0)
 	if l.Error != proto.LimitsTimeout || !l.Stale || l.Provider != "claude" {
 		t.Fatalf("got %+v", l)
 	}
@@ -348,7 +348,7 @@ func TestRunDoesNotProbeWithoutAClient(t *testing.T) {
 		default:
 		}
 		return is
-	}, func(l proto.Limits) { got <- l })
+	}, func(l proto.Limits) { got <- l }, nil)
 	time.Sleep(60 * time.Millisecond)
 	if len(r.Started) != 0 {
 		t.Fatalf("probed with no client: %v", r.Started)

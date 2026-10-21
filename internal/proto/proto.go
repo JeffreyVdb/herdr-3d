@@ -226,6 +226,9 @@ type World struct {
 	// #108: "Review prompt secrets before sending" and whether protected
 	// files can be kept. Always present.
 	PromptSecrets *PromptSecrets `json:"prompt_secrets,omitempty"`
+	// #138: the Codex profiles (Codex home folders). nil (left out) when
+	// the bridge has no profile service.
+	CodexProfiles *CodexProfiles `json:"codex_profiles,omitempty"`
 	// #54: repository discovery's settings and status. nil (left out) when
 	// the bridge does not scan for repositories.
 	RepoDiscovery *RepoDiscovery `json:"repo_discovery,omitempty"`

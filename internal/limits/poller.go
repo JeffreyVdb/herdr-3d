@@ -5,9 +5,12 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/codexaccount"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
 
@@ -28,8 +31,14 @@ type Config struct {
 	// ClaudeBin and CodexBin are the executables ("" : claude, codex).
 	ClaudeBin, CodexBin string
 	// CodexSessions is the Codex rollout directory of the transcript
-	// fallback ("": none).
+	// fallback of the bridge's own Codex home ("": none).
 	CodexSessions string
+	// Accounts lists the Codex profiles (#138): each visible one is read
+	// with its own CODEX_HOME, one after the other, and its transcript
+	// fallback reads its own <home>/sessions (the default profile's is
+	// CodexSessions). nil: Codex is read once, in the bridge's environment
+	// as it is, and its readings carry no account.
+	Accounts codexaccount.Lister
 	// Runner starts the probes (default ExecRunner), Env is the environment
 	// they start from (default os.Environ, before probeEnv), Now the clock.
 	Runner Runner
@@ -77,15 +86,31 @@ func (c *Config) defaults() {
 
 func (c *Config) timing() timing { return timing{Timeout: c.Timeout, Grace: c.Grace} }
 
-// providerState is what the poller keeps of one provider.
+// providerState is what the poller keeps of one reading: Claude's, or one
+// Codex profile's.
 type providerState struct {
 	next     time.Time
 	failures int
 	// again is a manual refresh asked for after the read in flight began
-	// (step clears it as a read starts): that read may predate the request,
-	// so when it ends the provider is due at once instead of at next.
+	// (read clears it as it starts): that read may predate the request,
+	// so when it ends the reading is due at once instead of at next.
 	again bool
 	last  *proto.Limits // the last fresh reading
+}
+
+// target is one thing to read: Claude, or a Codex profile (acct nil: the
+// bridge's environment as it is, Config.Accounts being nil).
+type target struct {
+	provider string
+	acct     *codexaccount.Account
+}
+
+// key is the target's state key: the provider, and a Codex profile's key.
+func (t target) key() string {
+	if t.acct == nil {
+		return t.provider
+	}
+	return t.provider + "/" + t.acct.Key
 }
 
 // Poller reads the Claude and Codex limits while somebody looks.
@@ -94,8 +119,14 @@ type Poller struct {
 	kick chan struct{}
 
 	mu         sync.Mutex
-	state      map[string]*providerState
+	state      map[string]*providerState // by target key
 	lastManual time.Time
+	// The Codex profiles as last listed (hidden ones included), and when
+	// to list them again: every Interval, on a refresh, and on Relist.
+	accounts []codexaccount.Account
+	listed   bool
+	listNext time.Time
+	relist   bool
 }
 
 // providers in the order they are read and shown.
@@ -105,23 +136,22 @@ var providers = []string{proto.LimitsClaude, proto.LimitsCodex}
 func New(cfg Config) *Poller {
 	cfg.defaults()
 	p := &Poller{cfg: cfg, kick: make(chan struct{}, 1), state: map[string]*providerState{}}
-	for _, name := range providers {
-		p.state[name] = &providerState{}
+	for _, t := range p.targets() {
+		p.state[t.key()] = &providerState{}
 	}
 	return p
 }
 
-// Run reads the limits of every provider that is due, as long as active
-// says a client is connected, and hands each reading to publish, until ctx
-// is done.
-func (p *Poller) Run(ctx context.Context, active func() bool, publish func(proto.Limits)) {
+// Run reads the limits of everything that is due, as long as active says a
+// client is connected, and hands each reading to publish as it comes, until
+// ctx is done. Codex profiles are listed only then too; accounts (may be
+// nil) gets the list whenever it is not the one before.
+func (p *Poller) Run(ctx context.Context, active func() bool, publish func(proto.Limits), accounts func([]codexaccount.Account)) {
 	t := time.NewTicker(p.cfg.Tick)
 	defer t.Stop()
 	for {
 		if active() {
-			for _, l := range p.step(ctx, p.cfg.Now()) {
-				publish(l)
-			}
+			p.poll(ctx, p.cfg.Now(), func(_ int, l proto.Limits) { publish(l) }, accounts)
 		}
 		select {
 		case <-ctx.Done():
@@ -132,8 +162,9 @@ func (p *Poller) Run(ctx context.Context, active func() bool, publish func(proto
 	}
 }
 
-// Refresh makes every provider due now, unless the last refresh was less
-// than ManualMin ago (queued is then false).
+// Refresh makes every reading due now and lists the Codex profiles again,
+// unless the last refresh was less than ManualMin ago (queued is then
+// false).
 func (p *Poller) Refresh() (queued bool) {
 	now := p.cfg.Now()
 	p.mu.Lock()
@@ -145,67 +176,188 @@ func (p *Poller) Refresh() (queued bool) {
 	for _, st := range p.state {
 		st.next, st.again = time.Time{}, true
 	}
+	p.relist = true
+	p.wake()
+	return true
+}
+
+// Relist lists the Codex profiles again at the next poll (their settings
+// changed): a profile shown again or added is read then, a hidden one is
+// no longer. Not throttled; still only while a client is connected.
+func (p *Poller) Relist() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.relist = true
+	p.wake()
+}
+
+func (p *Poller) wake() {
 	select {
 	case p.kick <- struct{}{}:
 	default:
 	}
-	return true
 }
 
-// step reads the providers that are due at now, at the same time, and
-// returns the readings in provider order.
-func (p *Poller) step(ctx context.Context, now time.Time) []proto.Limits {
-	var due []string
-	p.mu.Lock()
-	for _, name := range providers {
-		if st := p.state[name]; !now.Before(st.next) {
-			st.next = now.Add(p.cfg.Timeout + p.cfg.Grace + time.Second) // not due again while this read runs
-			st.again = false
-			due = append(due, name)
+// targets are what is read, in display order: Claude, then every visible
+// Codex profile (the default first) that is there to be read. Called with
+// p.mu held, or before the poller is shared.
+func (p *Poller) targets() []target {
+	out := []target{{provider: proto.LimitsClaude}}
+	if p.cfg.Accounts == nil {
+		return append(out, target{provider: proto.LimitsCodex})
+	}
+	for i := range p.accounts {
+		a := &p.accounts[i]
+		if a.Hidden || (!a.Exists && !a.Default) { // a missing added folder: listed, not read
+			continue
 		}
-	}
-	p.mu.Unlock()
-	if len(due) == 0 {
-		return nil
-	}
-	out := make([]proto.Limits, len(due))
-	var wg sync.WaitGroup
-	for i, name := range due {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			out[i] = p.read(ctx, name, now)
-		}()
-	}
-	wg.Wait()
-	if ctx.Err() != nil {
-		return nil
+		out = append(out, target{provider: proto.LimitsCodex, acct: a})
 	}
 	return out
 }
 
-// read probes one provider and works out what to show and when to look
+// listAccounts lists the Codex profiles when it is time to, and keeps a
+// state for each target and none for anything else. It returns the list
+// when it is not the one before.
+func (p *Poller) listAccounts(ctx context.Context, now time.Time) ([]codexaccount.Account, bool) {
+	if p.cfg.Accounts == nil {
+		return nil, false
+	}
+	p.mu.Lock()
+	due := !p.listed || p.relist || !now.Before(p.listNext)
+	p.mu.Unlock()
+	if !due {
+		return nil, false
+	}
+	list, err := p.cfg.Accounts.Accounts(ctx)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.relist, p.listNext = false, now.Add(p.cfg.Interval)
+	if err != nil {
+		p.cfg.Log.Warn("limits: cannot list the Codex profiles", "error", err)
+		return nil, false
+	}
+	changed := !p.listed || !slices.Equal(list, p.accounts)
+	p.accounts, p.listed = list, true
+	keep := map[string]bool{}
+	for _, t := range p.targets() {
+		keep[t.key()] = true
+		if p.state[t.key()] == nil {
+			p.state[t.key()] = &providerState{} // due at once
+		}
+	}
+	for k := range p.state {
+		if !keep[k] {
+			delete(p.state, k)
+		}
+	}
+	if !changed {
+		return nil, false
+	}
+	return slices.Clone(list), true
+}
+
+// step reads what is due at now and returns the readings in display order.
+func (p *Poller) step(ctx context.Context, now time.Time) []proto.Limits {
+	var mu sync.Mutex
+	got := map[int]proto.Limits{}
+	n := p.poll(ctx, now, func(i int, l proto.Limits) {
+		mu.Lock()
+		got[i] = l
+		mu.Unlock()
+	}, nil)
+	var out []proto.Limits
+	for i := range n {
+		if l, ok := got[i]; ok {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// poll lists the Codex profiles when due (accounts gets a changed list),
+// then reads what is due at now: Claude beside the Codex profiles, the
+// profiles one after the other. Each reading goes to emit with its place in
+// display order as soon as it is taken (none once ctx is done). It returns
+// how many reads were due.
+func (p *Poller) poll(ctx context.Context, now time.Time, emit func(int, proto.Limits), accounts func([]codexaccount.Account)) int {
+	if list, changed := p.listAccounts(ctx, now); changed && accounts != nil {
+		accounts(list)
+	}
+	var due []target
+	p.mu.Lock()
+	for _, t := range p.targets() {
+		if st := p.state[t.key()]; st != nil && !now.Before(st.next) {
+			// Not due again while this poll runs (the profiles are read in turn).
+			st.next = now.Add(p.cfg.Timeout + p.cfg.Grace + time.Second)
+			due = append(due, t)
+		}
+	}
+	p.mu.Unlock()
+	byProvider := map[string][]int{}
+	for i, t := range due {
+		byProvider[t.provider] = append(byProvider[t.provider], i)
+	}
+	var wg sync.WaitGroup
+	for _, idx := range byProvider {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for _, i := range idx {
+				l := p.read(ctx, due[i], now)
+				if ctx.Err() != nil {
+					return
+				}
+				emit(i, l)
+			}
+		}()
+	}
+	wg.Wait()
+	return len(due)
+}
+
+// read probes one target and works out what to show and when to look
 // again.
-func (p *Poller) read(ctx context.Context, name string, now time.Time) proto.Limits {
+func (p *Poller) read(ctx context.Context, t target, now time.Time) proto.Limits {
+	p.mu.Lock()
+	st := p.state[t.key()]
+	if st == nil { // listed away meanwhile: kept apart until done
+		st = &providerState{}
+	}
+	st.again = false
+	p.mu.Unlock()
 	var l proto.Limits
 	var err error
-	if name == proto.LimitsClaude {
+	if t.provider == proto.LimitsClaude {
 		l, err = p.cfg.probeClaude(ctx)
 	} else {
-		l, err = p.cfg.probeCodex(ctx)
+		l, err = p.cfg.probeCodex(ctx, t.acct)
+		if err != nil && t.acct != nil && t.acct.Exists && !t.acct.SignedIn && !errors.Is(err, errNotInstalled) && !errors.Is(err, errTimeout) {
+			err = errNoPlan // a home with no auth.json that does not answer is not signed in
+		}
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	st := p.state[name]
 	defer func() { // a refresh that came in while the probe ran wants a read that began after it
 		if st.again {
 			st.next = time.Time{}
 		}
 	}()
-	l.Provider = name
+	l = p.settle(ctx, t, st, l, err, now)
+	l.Provider = t.provider
+	if a := t.acct; a != nil {
+		l.Account = &proto.LimitsAccount{Key: a.Key, Name: a.Name, Plan: l.Plan, Default: a.Default}
+	}
+	return l
+}
+
+// settle is what a probe's result shows, and when the target is due again.
+// Called with p.mu held.
+func (p *Poller) settle(ctx context.Context, t target, st *providerState, l proto.Limits, err error, now time.Time) proto.Limits {
 	if l.Windows == nil {
 		l.Windows = []proto.LimitWindow{}
 	}
+	codex := t.provider == proto.LimitsCodex
 	switch {
 	case err == nil:
 		st.failures, st.next = 0, now.Add(p.cfg.Interval)
@@ -215,10 +367,13 @@ func (p *Poller) read(ctx context.Context, name string, now time.Time) proto.Lim
 	case errors.Is(err, errNoPlan):
 		st.failures, st.next, st.last = 0, now.Add(p.cfg.NoPlanRetry), nil
 		l.Windows, l.Error, l.Stale = []proto.LimitWindow{}, proto.LimitsNoPlan, false
+		if l.At == 0 {
+			l.At = now.UnixMilli()
+		}
 		return l
 	case errors.Is(err, errNotInstalled):
 		st.failures, st.next = 0, now.Add(p.cfg.NoPlanRetry)
-		return p.failed(name, proto.LimitsNotInstalled, now, name == proto.LimitsCodex) // the rollouts may still say something
+		return p.failed(t, st, proto.LimitsNotInstalled, now, codex) // the rollouts may still say something
 	}
 	code := proto.LimitsFailed
 	if errors.Is(err, errTimeout) {
@@ -229,9 +384,12 @@ func (p *Poller) read(ctx context.Context, name string, now time.Time) proto.Lim
 	if st.failures >= p.cfg.Failures {
 		st.next = now.Add(p.cfg.Backoff)
 	}
-	p.cfg.Log.Log(ctx, logLevel(st.failures, p.cfg.Failures), "limits probe failed", "provider", name, "error", err,
-		"failures", st.failures, "next", st.next)
-	return p.failed(name, code, now, name == proto.LimitsCodex)
+	args := []any{"provider", t.provider, "error", err, "failures", st.failures, "next", st.next}
+	if t.acct != nil {
+		args = append(args, "profile", t.acct.Key)
+	}
+	p.cfg.Log.Log(ctx, logLevel(st.failures, p.cfg.Failures), "limits probe failed", args...)
+	return p.failed(t, st, code, now, codex)
 }
 
 func logLevel(failures, limit int) slog.Level {
@@ -241,13 +399,23 @@ func logLevel(failures, limit int) slog.Level {
 	return slog.LevelDebug
 }
 
+// sessions is the rollout directory of a Codex target's transcript
+// fallback: the default profile's is the configured one, another's its own.
+func (p *Poller) sessions(t target) string {
+	if t.acct == nil || t.acct.Default {
+		return p.cfg.CodexSessions
+	}
+	return filepath.Join(t.acct.Home, "sessions")
+}
+
 // failed is what shows when a probe did not answer: for Codex, the last
-// rate_limits a rollout recorded (marked with its time) when it is newer
-// than the reading before; else that reading, if any; else the error alone. Called with p.mu held.
-func (p *Poller) failed(name, code string, now time.Time, transcript bool) proto.Limits {
-	last := p.state[name].last
+// rate_limits one of the profile's rollouts recorded (marked with its time)
+// when it is newer than the reading before; else that reading, if any; else
+// the error alone. Called with p.mu held.
+func (p *Poller) failed(t target, st *providerState, code string, now time.Time, transcript bool) proto.Limits {
+	last := st.last
 	if transcript {
-		if l, ok := p.cfg.fromTranscript(); ok && (last == nil || l.At > last.At) {
+		if l, ok := fromTranscript(p.sessions(t)); ok && (last == nil || l.At > last.At) {
 			l.Error = code
 			return l
 		}
@@ -257,5 +425,5 @@ func (p *Poller) failed(name, code string, now time.Time, transcript bool) proto
 		l.Stale, l.Error = true, code
 		return l
 	}
-	return proto.Limits{Provider: name, Windows: []proto.LimitWindow{}, At: now.UnixMilli(), Stale: true, Error: code}
+	return proto.Limits{Provider: t.provider, Windows: []proto.LimitWindow{}, At: now.UnixMilli(), Stale: true, Error: code}
 }

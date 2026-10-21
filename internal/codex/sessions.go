@@ -16,14 +16,19 @@ import (
 	"strings"
 )
 
-// DefaultSessionsDir is $CODEX_HOME/sessions, else ~/.codex/sessions.
-func DefaultSessionsDir() string {
+// DefaultHome is the Codex home the bridge's own environment selects:
+// $CODEX_HOME, else ~/.codex.
+func DefaultHome() string {
 	if home := os.Getenv("CODEX_HOME"); home != "" {
-		return filepath.Join(home, "sessions")
+		return home
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".codex", "sessions")
+	return filepath.Join(home, ".codex")
 }
+
+// DefaultSessionsDir is DefaultHome's sessions folder: $CODEX_HOME/sessions,
+// else ~/.codex/sessions.
+func DefaultSessionsDir() string { return filepath.Join(DefaultHome(), "sessions") }
 
 // MaxScan bounds how many rollout files one lookup reads.
 const MaxScan = 2000

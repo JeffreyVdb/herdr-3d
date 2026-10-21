@@ -1,0 +1,257 @@
+package codexaccount
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+)
+
+var ctx = context.Background()
+
+// home makes a user home folder with Codex homes: name → whether it has an
+// auth.json.
+func home(t *testing.T, homes map[string]bool) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, auth := range homes {
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(p, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if auth {
+			if err := os.WriteFile(filepath.Join(p, "auth.json"), []byte(`{"tokens":{"access_token":"secret"}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	return dir
+}
+
+func keys(list []Account) []string {
+	out := []string{}
+	for _, a := range list {
+		out = append(out, a.Key)
+	}
+	return out
+}
+
+func TestOnlyTheDefaultHome(t *testing.T) {
+	h := home(t, map[string]bool{".codex": true, ".config": false})
+	got, err := New(h, filepath.Join(h, ".codex")).Accounts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Account{{Key: "codex", Name: "codex", Home: filepath.Join(h, ".codex"), Default: true, Exists: true, SignedIn: true}}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %+v\nwant %+v", got, want)
+	}
+}
+
+func TestSiblingsNeedAnAuthJSON(t *testing.T) {
+	h := home(t, map[string]bool{".codex": true, ".codex-work": true, ".codex-empty": false, ".codex-": true, "codex-x": true})
+	if err := os.WriteFile(filepath.Join(h, ".codex-file"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := New(h, filepath.Join(h, ".codex")).Accounts(ctx)
+	if k := keys(got); !slices.Equal(k, []string{"codex", "work"}) {
+		t.Fatalf("keys %v", k)
+	}
+	if w := got[1]; w.Default || w.Added || !w.SignedIn || w.Name != "work" || w.Home != filepath.Join(h, ".codex-work") {
+		t.Fatalf("work %+v", w)
+	}
+}
+
+// The bridge's own home without an auth.json (or not there at all) is
+// still its profile: "not signed in", not an error.
+func TestDefaultWithoutAuthIsAProfile(t *testing.T) {
+	h := home(t, map[string]bool{".codex": false})
+	got, _ := New(h, filepath.Join(h, ".codex")).Accounts(ctx)
+	if len(got) != 1 || got[0].SignedIn || !got[0].Exists {
+		t.Fatalf("got %+v", got)
+	}
+	got, _ = New(h, filepath.Join(h, "nowhere")).Accounts(ctx)
+	if len(got) != 1 || got[0].SignedIn || got[0].Exists || !got[0].Default || got[0].Key != "nowhere" {
+		t.Fatalf("missing default: %+v", got)
+	}
+}
+
+// $CODEX_HOME pointing at a sibling makes that sibling the default, once.
+func TestDefaultIsDeduplicatedAgainstSiblings(t *testing.T) {
+	h := home(t, map[string]bool{".codex": true, ".codex-work": true})
+	link := filepath.Join(t.TempDir(), "work-link")
+	if err := os.Symlink(filepath.Join(h, ".codex-work"), link); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := New(h, link).Accounts(ctx)
+	if k := keys(got); !slices.Equal(k, []string{"work"}) || !got[0].Default || got[0].Home != filepath.Join(h, ".codex-work") {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestKeysAreUniqueAndFromTheFolder(t *testing.T) {
+	for in, want := range map[string]string{"/h/.codex": "codex", "/h/.codex-work": "work", "/data/Team Codex": "team-codex", "/x/codex-": "codex", "/x/...": "profile"} {
+		if got := keyOf(in); got != want {
+			t.Errorf("keyOf(%q) = %q, want %q", in, got, want)
+		}
+	}
+	h := home(t, map[string]bool{".codex": true, ".codex-codex": true, "else/codex": false})
+	s := New(h, filepath.Join(h, ".codex"))
+	s.Configure(Settings{Added: []string{filepath.Join(h, "else/codex")}})
+	got, _ := s.Accounts(ctx)
+	if k := keys(got); !slices.Equal(k, []string{"codex", "codex-2", "codex-3"}) {
+		t.Fatalf("keys %v", k)
+	}
+}
+
+func TestRenameHideAddRemove(t *testing.T) {
+	h := home(t, map[string]bool{".codex": true, ".codex-work": true, "spare": false})
+	s := New(h, filepath.Join(h, ".codex"))
+	apply := func(set Settings, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.Configure(set)
+	}
+	apply(s.Rename(ctx, "work", "  Work seat "))
+	apply(s.SetHidden(ctx, "work", true))
+	apply(s.Add(ctx, "~/spare/"))
+	got, _ := s.Accounts(ctx)
+	if k := keys(got); !slices.Equal(k, []string{"codex", "work", "spare"}) {
+		t.Fatalf("keys %v", k)
+	}
+	if w := got[1]; w.Name != "Work seat" || !w.Hidden {
+		t.Fatalf("work %+v", w)
+	}
+	if sp := got[2]; !sp.Added || sp.SignedIn || !sp.Exists || sp.Home != filepath.Join(h, "spare") {
+		t.Fatalf("spare %+v", sp)
+	}
+	if set := s.Settings(); !slices.Equal(set.Added, []string{filepath.Join(h, "spare")}) {
+		t.Fatalf("added %v", set.Added)
+	}
+	// Back to its own key: the override is gone once it holds nothing.
+	apply(s.Rename(ctx, "work", "work"))
+	apply(s.SetHidden(ctx, "work", false))
+	if set := s.Settings(); len(set.Overrides) != 0 {
+		t.Fatalf("overrides %+v", set.Overrides)
+	}
+	apply(s.Rename(ctx, "spare", "Spare"))
+	apply(s.Remove(ctx, "spare"))
+	if set := s.Settings(); len(set.Added) != 0 || len(set.Overrides) != 0 {
+		t.Fatalf("after remove %+v", set)
+	}
+}
+
+func TestSettingsAreChecked(t *testing.T) {
+	h := home(t, map[string]bool{".codex": true, ".codex-work": true, "other": false})
+	if err := os.WriteFile(filepath.Join(h, "file"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := New(h, filepath.Join(h, ".codex"))
+	set, err := s.Add(ctx, filepath.Join(h, "other"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Configure(set)
+	refuse := func(what, says string, err error) {
+		t.Helper()
+		var se *SettingsError
+		if !errors.As(err, &se) || !strings.Contains(se.Msg, says) {
+			t.Errorf("%s: err %v, want a SettingsError with %q", what, err, says)
+		}
+	}
+	var nf *NotFoundError
+	if _, err := s.Rename(ctx, "nope", "x"); !errors.As(err, &nf) {
+		t.Errorf("unknown key: %v", err)
+	}
+	refuse("empty name", "Type a name", errOf(s.Rename(ctx, "work", "   ")))
+	refuse("long name", "at most 40", errOf(s.Rename(ctx, "work", strings.Repeat("é", MaxName+1))))
+	refuse("line break", "line break", errOf(s.Rename(ctx, "work", "a\nb")))
+	refuse("taken name", "Another profile", errOf(s.Rename(ctx, "work", "CODEX")))
+	refuse("taken key", "Another profile", errOf(s.Rename(ctx, "codex", "Work")))
+	if _, err := s.Rename(ctx, "work", strings.Repeat("é", MaxName)); err != nil {
+		t.Errorf("a name of MaxName characters: %v", err)
+	}
+	refuse("hide default", "cannot be hidden", errOf(s.SetHidden(ctx, "codex", true)))
+	refuse("remove found", "only hidden", errOf(s.Remove(ctx, "work")))
+	refuse("relative", "absolute path", errOf(s.Add(ctx, "devel/x")))
+	refuse("empty path", "Type the folder", errOf(s.Add(ctx, " ")))
+	refuse("missing", "no folder there", errOf(s.Add(ctx, filepath.Join(h, "gone"))))
+	refuse("file", "not a folder", errOf(s.Add(ctx, filepath.Join(h, "file"))))
+	refuse("detected", "already the profile", errOf(s.Add(ctx, "~/.codex-work")))
+	refuse("default", "already the profile", errOf(s.Add(ctx, filepath.Join(h, ".codex", "."))))
+	refuse("added twice", "already the profile", errOf(s.Add(ctx, filepath.Join(h, "other")+"/")))
+	full := Settings{}
+	for i := range MaxAdded {
+		full.Added = append(full.Added, filepath.Join(h, "x", strings.Repeat("a", i+1)))
+	}
+	s.Configure(full)
+	refuse("too many", "At most 16", errOf(s.Add(ctx, filepath.Join(h, "other"))))
+}
+
+// A folder that was added and is gone (or cannot be read) is still listed,
+// so it can be removed, and is not there to be read.
+func TestMissingOrUnreadableAddedFolder(t *testing.T) {
+	h := home(t, map[string]bool{".codex": true, "locked": true})
+	s := New(h, filepath.Join(h, ".codex"))
+	s.Configure(Settings{Added: []string{filepath.Join(h, "gone"), filepath.Join(h, "locked")}})
+	if err := os.Chmod(filepath.Join(h, "locked"), 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(h, "locked"), 0o700) })
+	got, err := s.Accounts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k := keys(got); !slices.Equal(k, []string{"codex", "gone", "locked"}) {
+		t.Fatalf("keys %v", k)
+	}
+	if g := got[1]; g.Exists || g.SignedIn || !g.Added {
+		t.Errorf("gone %+v", g)
+	}
+	if l := got[2]; !l.Exists || (l.SignedIn && os.Geteuid() != 0) {
+		t.Errorf("locked %+v", l)
+	}
+	set, err := s.Remove(ctx, "gone")
+	if err != nil || len(set.Added) != 1 {
+		t.Fatalf("remove gone: %v %+v", err, set)
+	}
+}
+
+func TestCleanDropsWhatCannotBe(t *testing.T) {
+	got := Clean(Settings{
+		Added:     []string{"/a/", "/a", "rel", ""},
+		Overrides: []Override{{Path: "/a", Name: " A "}, {Path: "rel", Name: "x"}, {Path: "/b"}, {Path: "/c", Hidden: true}},
+	})
+	if !slices.Equal(got.Added, []string{"/a"}) || !slices.Equal(got.Overrides, []Override{{Path: "/a", Name: "A"}, {Path: "/c", Hidden: true}}) {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestDisplay(t *testing.T) {
+	s := New("/home/u", "/home/u/.codex")
+	for in, want := range map[string]string{"/home/u/.codex-work": "~/.codex-work", "/home/u": "~", "/home/user2/x": "/home/user2/x", "/srv/codex": "/srv/codex"} {
+		if got := s.Display(in); got != want {
+			t.Errorf("Display(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The auth.json is never opened: a home whose auth.json cannot be read is
+// signed in all the same.
+func TestAuthJSONIsOnlyStated(t *testing.T) {
+	h := home(t, map[string]bool{".codex": true})
+	if err := os.Chmod(filepath.Join(h, ".codex", "auth.json"), 0); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := New(h, filepath.Join(h, ".codex")).Accounts(ctx)
+	if !got[0].SignedIn {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func errOf(_ Settings, err error) error { return err }
