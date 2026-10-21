@@ -1,0 +1,444 @@
+{
+  "date": "2026-10-21",
+  "environment": "Linux; Chromium 149.0.7827.55 via Playwright 1.61.1, 1280x900, same isolated Python PTY fixture as issue #176; no real Herdr/Claude/Codex",
+  "results": [
+    {
+      "engine": "xterm",
+      "full": {
+        "x": 90,
+        "y": 53,
+        "cw": 9.601769911504425,
+        "ch": 19,
+        "cols": 113,
+        "rows": 22
+      },
+      "selection": "elect this sentenc",
+      "nativeSelection": "elect this sentenc",
+      "copied": "COPY SENTINEL",
+      "clipboardViaHost": "elect this sentenc",
+      "split": {
+        "x": 90,
+        "y": 53,
+        "cw": 9.6,
+        "ch": 19,
+        "cols": 55,
+        "rows": 22
+      },
+      "fixedFont": true,
+      "ptyResize": {
+        "cols": 55,
+        "rows": 22
+      },
+      "links": [
+        "https://example.com/plain",
+        "https://example.com/osc8"
+      ],
+      "plainLink": true,
+      "osc8Link": true,
+      "keyboard": true,
+      "pastePacket": "\u001b[200~PASTE ONE\rPASTE TWO\u001b[201~",
+      "bracketedPaste": true,
+      "mouseFresh": {
+        "reports": [
+          "\u001b[<0;8;5M",
+          "\u001b[<0;8;5m"
+        ],
+        "selected": true
+      },
+      "scrollBefore": 127,
+      "scrollAfter": 124,
+      "wheelHistory": true,
+      "menuGeometry": {
+        "scroll": 0,
+        "history": 0
+      },
+      "mouse": {
+        "reports": [
+          "\u001b[<0;8;5M",
+          "\u001b[<0;8;5m"
+        ],
+        "selected": true
+      },
+      "keyboardMenu": true,
+      "historyBeforeReset": 254,
+      "historyAfterReset": 0,
+      "truecolor": {
+        "chars": "X",
+        "width": 1,
+        "fg": 818154,
+        "fgRGB": true
+      },
+      "graphemes": [
+        {
+          "chars": "é",
+          "width": 1,
+          "fg": -1,
+          "fgRGB": false
+        },
+        {
+          "chars": "👨‍",
+          "width": 1,
+          "fg": -1,
+          "fgRGB": false
+        },
+        {
+          "chars": "👩‍",
+          "width": 1,
+          "fg": -1,
+          "fgRGB": false
+        },
+        {
+          "chars": "👧‍",
+          "width": 1,
+          "fg": -1,
+          "fgRGB": false
+        },
+        {
+          "chars": "👦",
+          "width": 1,
+          "fg": -1,
+          "fgRGB": false
+        },
+        {
+          "chars": "Z",
+          "width": 1,
+          "fg": -1,
+          "fgRGB": false
+        },
+        {
+          "chars": "",
+          "width": 1,
+          "fg": -1,
+          "fgRGB": false
+        }
+      ],
+      "reflow": [
+        "ABCDEFGHIJ",
+        "",
+        ""
+      ],
+      "clearHistory": {
+        "history": 0,
+        "scroll": 0,
+        "scrollHeight": 430,
+        "clientHeight": 430,
+        "hostY": 53
+      },
+      "errors": []
+    },
+    {
+      "engine": "wterm",
+      "full": {
+        "x": 90,
+        "y": 53,
+        "cw": 9.649122807017545,
+        "ch": 20,
+        "cols": 114,
+        "rows": 21
+      },
+      "selection": "elect this sentenc",
+      "nativeSelection": "elect this sentenc",
+      "copied": "elect this sentenc",
+      "clipboardViaHost": "elect this sentenc",
+      "split": {
+        "x": 90,
+        "y": 53,
+        "cw": 9.649122807017545,
+        "ch": 20,
+        "cols": 57,
+        "rows": 21
+      },
+      "fixedFont": true,
+      "ptyResize": {
+        "cols": 57,
+        "rows": 21
+      },
+      "links": [
+        "https://example.com/osc8"
+      ],
+      "plainLink": false,
+      "osc8Link": true,
+      "keyboard": true,
+      "pastePacket": "\u001b[200~PASTE ONE\nPASTE TWO\u001b[201~",
+      "bracketedPaste": true,
+      "mouseFresh": {
+        "reports": [
+          "\u001b[<0;8;5M",
+          "\u001b[<0;8;5m"
+        ],
+        "selected": true
+      },
+      "scrollBefore": 2550,
+      "scrollAfter": 1650,
+      "wheelHistory": true,
+      "menuGeometry": {
+        "scroll": 2550,
+        "gridY": -2497,
+        "mouse": 1000,
+        "sgr": true,
+        "history": 128
+      },
+      "mouse": {
+        "reports": [
+          "\u001b[<0;8;5M",
+          "\u001b[<0;8;5m"
+        ],
+        "selected": true
+      },
+      "keyboardMenu": true,
+      "historyBeforeReset": 256,
+      "historyAfterReset": 256,
+      "truecolor": {
+        "char": 88,
+        "fg": 33,
+        "bg": 256,
+        "flags": 0,
+        "width": 1
+      },
+      "graphemes": [
+        {
+          "char": 101,
+          "fg": 256,
+          "bg": 256,
+          "flags": 0,
+          "width": 1
+        },
+        {
+          "char": 769,
+          "fg": 256,
+          "bg": 256,
+          "flags": 0,
+          "width": 1
+        },
+        {
+          "char": 128104,
+          "fg": 256,
+          "bg": 256,
+          "flags": 0,
+          "width": 2
+        },
+        {
+          "char": 0,
+          "fg": 256,
+          "bg": 256,
+          "flags": 0,
+          "width": 0
+        },
+        {
+          "char": 8205,
+          "fg": 256,
+          "bg": 256,
+          "flags": 0,
+          "width": 1
+        },
+        {
+          "char": 128105,
+          "fg": 256,
+          "bg": 256,
+          "flags": 0,
+          "width": 2
+        },
+        {
+          "char": 0,
+          "fg": 256,
+          "bg": 256,
+          "flags": 0,
+          "width": 0
+        }
+      ],
+      "reflow": [
+        "ABCDEFGHIJ",
+        "",
+        ""
+      ],
+      "clearHistory": {
+        "history": 0,
+        "scroll": 10571,
+        "scrollHeight": 11001,
+        "clientHeight": 430,
+        "firstRowY": -10518,
+        "hostY": 53
+      },
+      "scaledFit": [
+        {
+          "scale": 1,
+          "cols": 95,
+          "rows": 23,
+          "cw": "8.40625px",
+          "rh": "17px"
+        },
+        {
+          "scale": 0.5,
+          "cols": 95,
+          "rows": 47,
+          "cw": "4.203125px",
+          "rh": "8.5px"
+        }
+      ],
+      "errors": []
+    },
+    {
+      "engine": "wterm-ghostty",
+      "full": {
+        "x": 90,
+        "y": 53,
+        "cw": 9.649122807017545,
+        "ch": 20,
+        "cols": 114,
+        "rows": 21
+      },
+      "selection": "elect this sentenc",
+      "nativeSelection": "elect this sentenc",
+      "copied": "elect this sentenc",
+      "clipboardViaHost": "elect this sentenc",
+      "split": {
+        "x": 90,
+        "y": 53,
+        "cw": 9.649122807017545,
+        "ch": 20,
+        "cols": 57,
+        "rows": 21
+      },
+      "fixedFont": true,
+      "ptyResize": {
+        "cols": 57,
+        "rows": 21
+      },
+      "links": [
+        "https://example.com/osc8"
+      ],
+      "plainLink": false,
+      "osc8Link": true,
+      "keyboard": true,
+      "pastePacket": "\u001b[200~PASTE ONE\nPASTE TWO\u001b[201~",
+      "bracketedPaste": true,
+      "mouseFresh": {
+        "reports": [
+          "\u001b[<0;8;5M",
+          "\u001b[<0;8;5m"
+        ],
+        "selected": true
+      },
+      "scrollBefore": 2550,
+      "scrollAfter": 1650,
+      "wheelHistory": true,
+      "menuGeometry": {
+        "scroll": 2531,
+        "gridY": -2478,
+        "mouse": 1000,
+        "sgr": true,
+        "history": 0
+      },
+      "mouse": {
+        "reports": [],
+        "selected": false
+      },
+      "mouseAfterRefocus": {
+        "reports": [
+          "\u001b[<0;8;5M",
+          "\u001b[<0;8;5m"
+        ],
+        "selected": true
+      },
+      "keyboardMenu": true,
+      "historyBeforeReset": 256,
+      "historyAfterReset": 0,
+      "truecolor": {
+        "char": 88,
+        "fg": 256,
+        "bg": 256,
+        "flags": 0,
+        "width": 1,
+        "underlineStyle": "none",
+        "fgRgb": 818154
+      },
+      "graphemes": [
+        {
+          "char": 101,
+          "fg": 256,
+          "bg": 256,
+          "flags": 0,
+          "width": 1,
+          "underlineStyle": "none",
+          "chars": "é"
+        },
+        {
+          "char": 128104,
+          "fg": 256,
+          "bg": 256,
+          "flags": 0,
+          "width": 2,
+          "underlineStyle": "none",
+          "chars": "👨‍👩‍👧‍👦"
+        },
+        {
+          "char": 32,
+          "fg": 256,
+          "bg": 256,
+          "flags": 0,
+          "width": 0,
+          "underlineStyle": "none"
+        },
+        {
+          "char": 90,
+          "fg": 256,
+          "bg": 256,
+          "flags": 0,
+          "width": 1,
+          "underlineStyle": "none"
+        },
+        {
+          "char": 32,
+          "fg": 256,
+          "bg": 256,
+          "flags": 0,
+          "width": 1
+        },
+        {
+          "char": 32,
+          "fg": 256,
+          "bg": 256,
+          "flags": 0,
+          "width": 1
+        },
+        {
+          "char": 32,
+          "fg": 256,
+          "bg": 256,
+          "flags": 0,
+          "width": 1
+        }
+      ],
+      "reflow": [
+        "ABCDEFGHIJKLMNOPQR",
+        "",
+        ""
+      ],
+      "clearHistory": {
+        "history": 0,
+        "scroll": 5551,
+        "scrollHeight": 5981,
+        "clientHeight": 430,
+        "firstRowY": -5498,
+        "hostY": 53
+      },
+      "scaledFit": [
+        {
+          "scale": 1,
+          "cols": 95,
+          "rows": 23,
+          "cw": "8.40625px",
+          "rh": "17px"
+        },
+        {
+          "scale": 0.5,
+          "cols": 95,
+          "rows": 47,
+          "cw": "4.203125px",
+          "rh": "8.5px"
+        }
+      ],
+      "errors": []
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Herdr wterm research fixture</title>
+<style>
+body { margin:32px auto; padding:0 24px; max-width:1100px; font:16px system-ui; }
+#terminal { width:100%; height:430px; overflow:hidden; box-sizing:border-box; }
+#terminal.narrow { width:50%; }
+#terminal.wterm { --term-font-size:16px; --term-font-family:monospace; --term-row-height:20px; padding:0; border-radius:0; }
+#terminal.wterm.has-scrollback { overflow-y:auto; }
+</style>
+<button id="split">Toggle split</button>
+<button id="history">History</button>
+<button id="menu">Mouse menu</button>
+<div id="terminal" aria-label="Research terminal"></div>
+<pre id="status"></pre>
+<script type="module" src="/main.js"></script>
+</html>
