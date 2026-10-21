@@ -119,6 +119,8 @@ export interface SimOptions {
   models?: number;
   /** #74: the bridge's pane zoom as played by the screens (tools/fixture-screen.ts; `simzoom=`; absent: a bridge before it). */
   zoom?: 'old' | 'single' | 'split' | 'headless';
+  /** #175: every worker's laptop replays this recording (`simscreen=narrow`: a split pane's 60×40; absent: agent or shell). */
+  screen?: 'narrow';
   /** #58: a prompt's `user` item goes to its worker's transcript watch this long after the agent took it (`simecho=<ms>`; absent: never). */
   echoMs?: number;
   /** #98: seeds the workers' activities on start (`simactivity=demo|all`, tools/fixture-activity.ts). */
@@ -261,6 +263,7 @@ export class SimWorld {
   private readonly stepMs: number;
   private fail: string | undefined;
   private readonly zoomMode: SimOptions['zoom'];
+  private readonly screenName: SimOptions['screen'];
   private nextId = 0;
   /** M4: desks a hire in flight reserved, per floor (`session:desk`). */
   private readonly hiring = new Set<string>();
@@ -346,6 +349,7 @@ export class SimWorld {
     if (o.crewMs !== undefined) this.crewMs = o.crewMs;
     this.echoMs = o.echoMs ?? null;
     this.zoomMode = o.zoom;
+    this.screenName = o.screen;
     this.transcripts = new TranscriptSim(
       {
         worker: (id) => this.workers.find((x) => x.id === id),
@@ -771,6 +775,7 @@ export class SimWorld {
         now: () => this.now(),
         failNext: (code: string) => this.fail === code && ((this.fail = undefined), true),
         zoomMode: () => this.zoomMode,
+        recording: () => this.screenName,
       }));
       send = screens.tap(send);
       // M16: world events end the transcript watches they concern, too.

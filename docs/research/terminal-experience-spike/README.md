@@ -37,7 +37,7 @@ python3 docs/research/terminal-experience-spike/herdr-probe.py \
 
 The browser probe writes [results.json](results.json) and screenshots under ignored `artifacts/`. It checks the full interaction set for xterm and Ghostty prerelease; stable Ghostty's missing mouse reporting, named links and bracketed paste are recorded. Screenshots show history and menu selection. Links are intercepted in the probe so it opens no external site; the interactive demo uses the widgets' normal link handling.
 
-The sizing probe loads the actual production `paint.ts` using the game's installed Vite. Its red result is intentional: no production fix has been applied. It also reports the same grid with automatic width-fit disabled, where all rows fit again.
+The sizing probe loads the actual production `paint.ts` using the game's installed Vite. It was red when the spike ran (the automatic width fit cropped rows at 100%) and is green since #175 removed that fit: all three cases show their 40 rows at 100%.
 
 [herdr-results.json](herdr-results.json) records observed versus actual PTY sizes, history scrolling, OSC 8 retention, absent mouse-mode events, refusal of a competing controller and cleanup. The probe was run with Herdr 0.9.1. It uses no `--takeover` and never targets an existing session. A future Herdr version that fixes mode forwarding may deliberately fail its current expected-gap assertion.
 
