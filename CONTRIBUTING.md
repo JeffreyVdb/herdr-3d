@@ -1256,6 +1256,17 @@ minutes ago) plus a hidden one (`old`) and an added one not signed in (`spare`);
 (click it for the panel) and Menu → Settings → Codex profiles (an added path ending in `/nothing` plays the bridge's
 "no folder there").
 
+#139 hiring on a Codex profile (docs/protocol.md "Hiring on a Codex profile"). Tests: `go test ./internal/codexaccount
+./internal/codexapp ./internal/herdr ./internal/store ./internal/server -run 'Profile|Prepare|Launch|Account|Control'`,
+`game/src/world/codexProfiles.test.ts`, `ui/hire.profile.dom.test.ts`, `ui/hirePresets.dom.test.ts`, `ui/seat.test.ts`,
+`tools/fixture-codex-profiles.test.ts` and `e2e/h139-codex-profile.spec.ts`. On the simulating server
+`simcodexprofiles=2` also gives a Codex hire the "Codex profile" field (`codex`, the default, picked; `work`; `spare`,
+not signed in, shown and not pickable; the hidden `old` not offered), and seeds the seat's profile line: sit at Pixel
+(Desk 2 of herdr-3d, on `work`), Sprocket (Desk 4, woken on `codex` after its profile went) or Bean (Desk 10, signed in
+to another account). Same URL as above:
+`?ws=%2Ffixture%2Fdemo-m5%3Fplay%3Dnone%26sim%3D1%26simusage%3D0%26simcodexprofiles%3D2&floor=herdr-3d`, then E on an
+empty desk (Desk 6) and pick Codex, or sit at one of those workers. With `simcodexprofiles=1` the dialog is as before.
+
 M6 on the simulating server: presets and runs on any fixture (herdr-3d of demo-m4 has a suggested repo, pastry none);
 `simfail=no_m6` plays a bridge without them. E.g. `?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simms%3D300`.
 

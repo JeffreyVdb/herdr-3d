@@ -153,10 +153,10 @@ describe('seat bar: the worker’s own Codex server (#155)', () => {
 describe('seat bar: the worker’s Codex profile (#139)', () => {
   it('a line under the server’s, by its name; the bar keeps its notice row while either shows', () => {
     const hud = document.createElement('div');
-    const bar = new SeatBar(hud, () => {});
+    const bar = new SeatBar(hud, noop);
     const seat = hud.querySelector('.seat') as HTMLElement;
     const profile = hud.querySelector('.seat-profile') as HTMLElement;
-    const server = hud.querySelector('.seat-codex:not(.seat-profile)') as HTMLElement;
+    const server = hud.querySelector('.seat-codex') as HTMLElement;
     expect(profile.hidden).toBe(true);
     bar.profileNote({ tone: 'note', text: 'Work seat' });
     expect(profile.hidden).toBe(false);

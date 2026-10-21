@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { Limits } from '../src/net/protocol.ts';
+import type { Limits, Worker } from '../src/net/protocol.ts';
+import { loadFixture } from './fixture-server.ts';
+import { SimWorld } from './fixture-sim.ts';
 import { CodexProfilesSim } from './fixture-codex-profiles.ts';
 import { LimitsSim, readings } from './fixture-limits.ts';
 
@@ -86,5 +88,47 @@ describe('the fixture’s Codex profiles (#138)', () => {
     const added = run('codex_profiles.set', { add: '~/.codex-team' }).profiles;
     expect(added.at(-1)).toMatchObject({ key: 'team', added: true });
     expect(run('codex_profiles.set', { key: 'team', remove: true }).profiles.map((p) => p.key)).toEqual(['codex', 'work', 'old', 'spare']);
+  });
+});
+
+describe('the fixture’s Codex profiles on a hire (#139)', () => {
+  type Msg = Record<string, unknown> & { t: string; req_id?: string; data?: Record<string, unknown>; code?: string };
+  function world(n?: number) {
+    const timers: Array<() => void> = [];
+    const { snapshot } = loadFixture('demo');
+    const sim = new SimWorld(snapshot as never, { ...(n ? { codexProfiles: n } : {}), setTimeout: (fn) => timers.push(fn), clearTimeout: () => {} });
+    let k = 0;
+    const cmd = (t: string, args: unknown): Msg | undefined => {
+      const out: Msg[] = [];
+      const req_id = `r${++k}`;
+      sim.handle({ t, req_id, args }, (m) => out.push(m as Msg));
+      while (timers.length) (timers.shift() as () => void)();
+      return out.find((m) => (m.t === 'ack' || m.t === 'error') && m.req_id === req_id);
+    };
+    const snap = sim.snapshot() as unknown as { world: { workers: Worker[]; codex_profiles?: { hire?: boolean } } };
+    return { cmd, snap };
+  }
+  const hire = (desk: number, more: Record<string, unknown>) => ({ floor: 'herdr-3d', desk_index: desk, harness: 'codex', model: 'gpt-6-sol', effort: 'high', ...more });
+
+  it('says the bridge takes a profile on a hire, and seeds the seat lines', () => {
+    const { snap } = world(2);
+    expect(snap.world.codex_profiles?.hire).toBe(true);
+    const by = (name: string) => snap.world.workers.find((w) => w.name === name)?.codex;
+    expect(by('Pixel')).toMatchObject({ profile: 'work', account: 'confirmed' });
+    expect(by('Sprocket')?.profile_note).toContain('is gone: woke on codex');
+    expect(by('Bean')).toMatchObject({ profile: 'work', account: 'mismatch' });
+    expect(by('Pip')?.profile).toBeUndefined();
+  });
+
+  it('a hire on a profile carries it; not signed in fails, an unknown one is not found; an older bridge refuses the field', () => {
+    const { cmd } = world(2);
+    const r = cmd('worker.hire', hire(5, { codex_profile: 'work' }));
+    expect(r, JSON.stringify(r)).toBeDefined();
+    expect(r?.data?.codex, JSON.stringify(r)).toMatchObject({ profile: 'work', account: 'confirmed', plan: 'team' });
+    const spare = cmd('worker.hire', hire(12, { codex_profile: 'spare' }));
+    expect([spare?.code, spare?.message]).toEqual(['hire_failed', 'hire_failed: spare is not signed in. Run `CODEX_HOME=/srv/codex-spare codex login` in a terminal.']);
+    expect(cmd('worker.hire', hire(12, { codex_profile: 'nope' }))?.code).toBe('not_found');
+    expect(cmd('worker.hire', hire(12, { harness: 'claude', model: 'claude-opus-5-5', codex_profile: 'work' }))?.code).toBe('bad_request');
+    expect(world().cmd('worker.hire', hire(12, { codex_profile: 'work' }))?.code).toBe('bad_request');
   });
 });

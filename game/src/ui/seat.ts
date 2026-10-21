@@ -51,7 +51,7 @@ export class SeatBar implements SeatView {
   /** #155: the line about the worker's own Codex server (in the ask line's place while no question shows). */
   private readonly codexLine = el('div', 'seat-codex');
   /** #139: the seated Codex worker's profile, under its server's line (both in the question's place). */
-  private readonly profileLine = el('div', 'seat-codex seat-profile');
+  private readonly profileLine = el('div', 'seat-profile');
   private readonly codexBox = el('div', 'seat-codex-box');
   private readonly modeOpts: Record<SeatMode, HTMLSpanElement> = { terminal: el('span', 'seat-mode-opt', 'Terminal'), transcript: el('span', 'seat-mode-opt', 'Transcript'), images: el('span', 'seat-mode-opt', 'Images') };
   /** #59: the terminal's preset and zoom. */

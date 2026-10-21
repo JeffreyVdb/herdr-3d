@@ -76,7 +76,8 @@ export class HirePresetSim {
     this.h = h;
     this.enabled = enabled;
     this.instructions = enabled && instructions;
-    this.keys = this.instructions ? [...KEYS, 'herdr_instructions'] : KEYS;
+    // #139: a Codex preset's profile (the client sends it only when codex_profiles says `hire`, simcodexprofiles).
+    this.keys = [...(this.instructions ? [...KEYS, 'herdr_instructions'] : KEYS), 'codex_profile'];
     let g = key === null ? undefined : shared.get(key);
     if (!g) {
       g = { presets: new Map(), worlds: new Set() };
@@ -187,6 +188,9 @@ export class HirePresetSim {
     if (a.herdr_instructions !== undefined && typeof a.herdr_instructions !== 'boolean') throw this.bad('herdr_instructions must be a bool');
     const p: HirePreset = { id: base.id, name, prompt, harness, model, effort, created_at: base.created_at, updated_at: base.updated_at };
     if (a.herdr_instructions === true) p.herdr_instructions = true;
+    if (a.codex_profile !== undefined && typeof a.codex_profile !== 'string') throw this.bad('codex_profile must be a string');
+    if (a.codex_profile && harness !== 'codex') throw this.bad(`codex_profile is for a Codex hire, not "${harness}"`);
+    if (a.codex_profile) p.codex_profile = a.codex_profile as string;
     return floor ? { ...p, floor } : p;
   }
 

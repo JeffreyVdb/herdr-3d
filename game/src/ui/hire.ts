@@ -1114,9 +1114,9 @@ export class HireDialog {
       const lines = this.instructionLines();
       this.bytesEl = null;
       if (lines !== null) nodes.push(this.instructionsControl(lines));
-      nodes.push(agent);
-      if (prof) nodes.push(this.profileField(prof));
-      nodes.push(slot, ids);
+      // #139: with the rest of the choice, above the switch between task levels and models.
+      if (prof) agent.insertBefore(this.profileField(prof), agent.querySelector(':scope > .dd-level-switch'));
+      nodes.push(agent, slot, ids);
 
       const g = this.gitView(this.prep.git);
       if (g) {
