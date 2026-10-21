@@ -4,8 +4,7 @@ import type { Schedule } from '../net/protocol';
 import { floorDepartures, lobbyBoardPlan, lobbyDepartures, type DepartureRow, type FloorBoard } from '../world/departures';
 import { ScheduleBook } from '../world/schedule';
 import { attentionText, buildFloorDepartures, buildLobbyDepartures, EMPTY, OLD_BRIDGE, paintFloorBoard, paintLobbyBoard, rowColumns, type LobbyBoardModel } from './departuresBoard';
-import { WALL_COLORS } from './overviewScreen';
-import { STATUS_CHIP_CSS, STATUS_CSS } from './palette';
+import { STATUS_CHIP_CSS, STATUS_CSS, WALL as WALL_COLORS, WALL_UBUNTU } from './palette';
 
 // #65 (part 4 of #61): the departures boards' textures. The fake canvas measures 10 px a character and records nothing,
 // so each test records what the painter writes (`fillText`) and the colours it fills shapes with (`fill`).
@@ -98,8 +97,8 @@ describe('the floor board’s texture (#65)', () => {
     expect(line).toBeDefined();
     expect(r.fills).toContain(STATUS_CSS.needs_you);
     expect(line.y).toBeGreaterThan(r.H * 0.85);
-    // Red on the board's ink reads (text: 4.5:1).
-    expect(contrast(STATUS_CSS.needs_you, WALL_COLORS.ink)).toBeGreaterThanOrEqual(4.5);
+    // Red on the board's ink reads (text: 4.5:1), in either UI theme's office.
+    for (const c of [WALL_COLORS, WALL_UBUNTU]) expect(contrast(STATUS_CSS.needs_you, c.ink)).toBeGreaterThanOrEqual(4.5);
   });
 
   it('waiting boards on a teal chip; departing on a blue one, its time dimmed; late is a red "Delayed +Xm" chip', () => {
@@ -152,11 +151,32 @@ describe('the floor board’s texture (#65)', () => {
     expect(other.s.length).toBe(t.s.length);
   });
 
-  it('the sun yellow on a flap and white titles on the ink read', () => {
-    expect(contrast(WALL_COLORS.accent, WALL_COLORS.flap)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(WALL_COLORS.text, WALL_COLORS.ink)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(WALL_COLORS.text2, WALL_COLORS.ink)).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(WALL_COLORS.text3, WALL_COLORS.ink)).toBeGreaterThanOrEqual(4.5);
+  it('the sun yellow on a flap and white titles on the ink read (Ubuntu: its orange text on aubergine)', () => {
+    for (const c of [WALL_COLORS, WALL_UBUNTU]) {
+      expect(contrast(c.accent, c.flap)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(c.accent, c.ink)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(c.text, c.ink)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(c.text2, c.ink)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(c.text3, c.ink)).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(c.text, c.flap)).toBeGreaterThanOrEqual(4.5);
+      for (const d of ['working', 'done', 'waiting', 'needs_you'] as const) expect(contrast('#ffffff', STATUS_CHIP_CSS[d]), d).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('Ubuntu’s office board: its glass, its orange clocks, its face', () => {
+    const r = recorder();
+    const fills: string[] = [];
+    const rect = r.g.fillRect.bind(r.g);
+    r.g.fillRect = (x: number, y: number, w: number, h: number) => (fills.push(String(r.g.fillStyle)), rect(x, y, w, h));
+    let font = '';
+    const text = r.g.fillText;
+    r.g.fillText = (s: string, x: number, y: number) => ((font ||= r.g.font), text(s, x, y));
+    paintFloorBoard(r.g, r.W, r.H, board({ rows: [row({})] }), WALL_UBUNTU);
+    expect(fills[0]).toBe(WALL_UBUNTU.ink);
+    expect(fills).not.toContain(WALL_COLORS.ink);
+    const flapInks = r.texts.filter((t) => t.align === 'center').map((t) => t.fill);
+    expect(flapInks.slice(0, 4).every((f) => f === WALL_UBUNTU.accent)).toBe(true);
+    expect(font).toContain('"Ubuntu"');
   });
 });
 

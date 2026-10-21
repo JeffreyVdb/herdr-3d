@@ -1,9 +1,8 @@
 import * as THREE from 'three/webgpu';
 import type { Box3 } from '../world/layout';
 import type { DepartureRow, FloorBoard, LobbyGroup, LobbyPlan } from '../world/departures';
-import { FONT } from './cards/atlasCards';
-import { STATUS_CHIP_CSS, STATUS_CSS } from './palette';
-import { fitText, glass, pictureMaterial, WALL_COLORS as C, WALL_MIN_MS } from './overviewScreen';
+import { STATUS_CHIP_CSS, STATUS_CSS, WALL, type WallPalette } from './palette';
+import { fitText, glass, pictureMaterial, WALL_MIN_MS } from './overviewScreen';
 
 /**
  * #65 (part 4 of #61): the departures boards. A floor's stands on its board partition (both faces: the desks' and the
@@ -21,8 +20,6 @@ import { fitText, glass, pictureMaterial, WALL_COLORS as C, WALL_MIN_MS } from '
 /** Resolution per metre of a board. */
 const PX_PER_M = 320;
 const BEZEL = 0.05;
-/** The face's housing, and the posts the floor board stands on. */
-const HOUSING = 0x141a2b;
 /** The floor board's posts: this tall, its face above them. */
 const POSTS = 0.12;
 
@@ -46,7 +43,8 @@ class Face<M extends Model> {
   constructor(
     readonly w: number,
     readonly h: number,
-    private readonly paint: (g: CanvasRenderingContext2D, W: number, H: number, m: M) => void,
+    private readonly paint: (g: CanvasRenderingContext2D, W: number, H: number, m: M, c: Readonly<WallPalette>) => void,
+    private readonly colors: Readonly<WallPalette>,
   ) {
     const scale = Math.min(PX_PER_M, 2048 / Math.max(w, h));
     this.canvas = document.createElement('canvas');
@@ -90,7 +88,7 @@ class Face<M extends Model> {
     this.drawnAt = now;
     this.draws++;
     this.shown = m;
-    this.paint(g, this.canvas.width, this.canvas.height, m);
+    this.paint(g, this.canvas.width, this.canvas.height, m, this.colors);
     this.texture.needsUpdate = true;
     return true;
   }
@@ -105,7 +103,8 @@ class Face<M extends Model> {
   }
 }
 
-const housing = () => new THREE.MeshToonMaterial({ color: HOUSING });
+/** The face's housing, and the posts the floor board stands on. */
+const housing = (c: Readonly<WallPalette>) => new THREE.MeshToonMaterial({ color: c.housing });
 
 /** What a floor board shows (test hook). */
 export interface DeparturesInfo {
@@ -127,7 +126,7 @@ export interface FloorDeparturesMesh {
 }
 
 /** The floor's board on its partition: `box` is the prop's (posts and face), the face readable from -z and +z. */
-export function buildFloorDepartures(box: Box3): FloorDeparturesMesh {
+export function buildFloorDepartures(box: Box3, c: Readonly<WallPalette> = WALL): FloorDeparturesMesh {
   const group = new THREE.Group();
   group.name = 'board.departures';
   const [x0, y0, z0] = box.min;
@@ -135,19 +134,19 @@ export function buildFloorDepartures(box: Box3): FloorDeparturesMesh {
   const cx = (x0 + x1) / 2;
   const cz = (z0 + z1) / 2;
   const fy0 = y0 + POSTS;
-  const body = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - fy0, z1 - z0), housing());
+  const body = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - fy0, z1 - z0), housing(c));
   body.position.set(cx, (fy0 + y1) / 2, cz);
   body.castShadow = true;
   body.receiveShadow = true;
   group.add(body);
   for (const x of [x0 + 0.45, x1 - 0.45]) {
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, POSTS, 0.08), housing());
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.08, POSTS, 0.08), housing(c));
     post.position.set(x, y0 + POSTS / 2, cz);
     group.add(post);
   }
   const screenW = x1 - x0 - 2 * BEZEL;
   const screenH = y1 - fy0 - 2 * BEZEL;
-  const face = new Face<FloorBoard>(screenW, screenH, paintFloorBoard);
+  const face = new Face<FloorBoard>(screenW, screenH, paintFloorBoard, c);
   // One texture on both faces: the desks' (north, -z) and the elevator's (south, +z).
   const geo = new THREE.PlaneGeometry(screenW, screenH);
   const south = new THREE.Mesh(geo, face.material);
@@ -211,18 +210,18 @@ export interface LobbyDeparturesMesh {
 }
 
 /** The lobby's board on a north wall: `box`'s front is at max z, facing +z. */
-export function buildLobbyDepartures(box: Box3): LobbyDeparturesMesh {
+export function buildLobbyDepartures(box: Box3, c: Readonly<WallPalette> = WALL): LobbyDeparturesMesh {
   const group = new THREE.Group();
   group.name = 'lobby.departures';
   const [x0, y0, z0] = box.min;
   const [x1, y1, z1] = box.max;
-  const body = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0), housing());
+  const body = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0), housing(c));
   body.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
   group.add(body);
   const screen: Box3 = { min: [x0 + BEZEL, y0 + BEZEL, z0], max: [x1 - BEZEL, y1 - BEZEL, z1] };
   const sw = screen.max[0] - screen.min[0];
   const sh = screen.max[1] - screen.min[1];
-  const face = new Face<LobbyBoardModel>(sw, sh, paintLobbyBoard);
+  const face = new Face<LobbyBoardModel>(sw, sh, paintLobbyBoard, c);
   const plane = new THREE.Mesh(new THREE.PlaneGeometry(sw, sh), face.material);
   plane.position.set((x0 + x1) / 2, (y0 + y1) / 2, z1 + 0.003);
   group.add(plane);
@@ -287,14 +286,14 @@ const COLON = 0.42;
 const flapsWidth = (s: Pick<RowStyle, 'flapW'>) => s.flapW * (4 + 2 * FLAP_GAP + COLON);
 
 /** Split-flap tiles of `text` (one character each) from `x`, centred on `mid`; a colon is its two dots. Returns the width. */
-function flaps(g: CanvasRenderingContext2D, text: string, x: number, mid: number, w: number, h: number, ink: string): number {
+function flaps(g: CanvasRenderingContext2D, c: Readonly<WallPalette>, text: string, x: number, mid: number, w: number, h: number, ink: string): number {
   let at = x;
   let prev = false; // a flap before: the next starts a gap after it
   g.textAlign = 'center';
   g.textBaseline = 'alphabetic';
   for (const ch of text) {
     if (ch === ':') {
-      g.fillStyle = C.text2;
+      g.fillStyle = c.text2;
       const r = Math.max(1, w * 0.07);
       for (const dy of [-h * 0.17, h * 0.17]) {
         g.beginPath();
@@ -306,15 +305,15 @@ function flaps(g: CanvasRenderingContext2D, text: string, x: number, mid: number
       continue;
     }
     if (prev) at += w * FLAP_GAP;
-    g.fillStyle = C.flap;
+    g.fillStyle = c.flap;
     g.beginPath();
     g.roundRect(at, mid - h / 2, w, h, w * 0.12);
     g.fill();
     g.fillStyle = ink;
-    g.font = `700 ${Math.round(h * 0.72)}px ${FONT}`;
+    g.font = `700 ${Math.round(h * 0.72)}px ${c.font}`;
     g.fillText(ch, at + w / 2, mid + h * 0.27);
     // The flap's seam, across the character.
-    g.fillStyle = C.ink;
+    g.fillStyle = c.ink;
     g.fillRect(at, mid - Math.max(0.5, h * 0.02), w, Math.max(1, h * 0.04));
     at += w;
     prev = true;
@@ -324,14 +323,14 @@ function flaps(g: CanvasRenderingContext2D, text: string, x: number, mid: number
 }
 
 /** A status chip's width (its text in `size` px, half that either side). */
-function chipW(g: CanvasRenderingContext2D, text: string, size: number): number {
-  g.font = `700 ${Math.round(size)}px ${FONT}`;
+function chipW(g: CanvasRenderingContext2D, c: Readonly<WallPalette>, text: string, size: number): number {
+  g.font = `700 ${Math.round(size)}px ${c.font}`;
   return g.measureText(text).width + size;
 }
 
 /** A status chip, right-aligned at `right` and centred on `mid`; returns its width. */
-function chip(g: CanvasRenderingContext2D, text: string, right: number, mid: number, size: number, bg: string): number {
-  const w = chipW(g, text, size);
+function chip(g: CanvasRenderingContext2D, c: Readonly<WallPalette>, text: string, right: number, mid: number, size: number, bg: string): number {
+  const w = chipW(g, c, text, size);
   const padX = size * 0.5;
   const h = size * 1.55;
   g.fillStyle = bg;
@@ -345,35 +344,35 @@ function chip(g: CanvasRenderingContext2D, text: string, right: number, mid: num
 }
 
 /** A departure row: `[day] HH:MM  title……  status`, centred on `mid`, from `x` to `right`. */
-function paintRow(g: CanvasRenderingContext2D, r: DepartureRow, x: number, right: number, mid: number, s: RowStyle, statusRoom: number): void {
+function paintRow(g: CanvasRenderingContext2D, c: Readonly<WallPalette>, r: DepartureRow, x: number, right: number, mid: number, s: RowStyle, statusRoom: number): void {
   const col = rowColumns(x, right, s, statusRoom);
   const sp = r.time.lastIndexOf(' ');
   const day = sp < 0 ? '' : r.time.slice(0, sp);
   const clock = sp < 0 ? r.time : r.time.slice(sp + 1);
   if (day) {
-    g.font = `600 ${Math.round(s.flapH * 0.42)}px ${FONT}`;
-    g.fillStyle = C.text2;
+    g.font = `600 ${Math.round(s.flapH * 0.42)}px ${c.font}`;
+    g.fillStyle = c.text2;
     g.textAlign = 'right';
     g.fillText(day, col.flaps - s.flapW * 0.35, mid + s.flapH * 0.15);
     g.textAlign = 'left';
   }
-  flaps(g, clock, col.flaps, mid, s.flapW, s.flapH, r.state === 'departing' ? C.text3 : C.accent);
-  g.font = `600 ${Math.round(s.title)}px ${FONT}`;
-  g.fillStyle = r.state === 'departing' ? C.text2 : C.text;
+  flaps(g, c, clock, col.flaps, mid, s.flapW, s.flapH, r.state === 'departing' ? c.text3 : c.accent);
+  g.font = `600 ${Math.round(s.title)}px ${c.font}`;
+  g.fillStyle = r.state === 'departing' ? c.text2 : c.text;
   fitText(g, r.title, col.title, mid + s.title * 0.36, col.titleMax);
   switch (r.state) {
     case 'boarding':
-      chip(g, r.status, right, mid, s.status * 0.86, STATUS_CHIP_CSS.waiting);
+      chip(g, c, r.status, right, mid, s.status * 0.86, STATUS_CHIP_CSS.waiting);
       break;
     case 'departing':
-      chip(g, r.status, right, mid, s.status * 0.86, STATUS_CHIP_CSS.working);
+      chip(g, c, r.status, right, mid, s.status * 0.86, STATUS_CHIP_CSS.working);
       break;
     case 'delayed':
-      chip(g, r.status, right, mid, s.status * 0.86, STATUS_CHIP_CSS.needs_you);
+      chip(g, c, r.status, right, mid, s.status * 0.86, STATUS_CHIP_CSS.needs_you);
       break;
     default:
-      g.font = `${r.state === 'due' ? 700 : 500} ${Math.round(s.status)}px ${FONT}`;
-      g.fillStyle = r.state === 'due' ? C.accent : C.text2;
+      g.font = `${r.state === 'due' ? 700 : 500} ${Math.round(s.status)}px ${c.font}`;
+      g.fillStyle = r.state === 'due' ? c.accent : c.text2;
       g.textAlign = 'right';
       g.fillText(r.status, right, mid + s.status * 0.36);
       g.textAlign = 'left';
@@ -385,12 +384,12 @@ function paintRow(g: CanvasRenderingContext2D, r: DepartureRow, x: number, right
  * form), so every title of the board or the group is cut at the same place, and that place moves only when a row's
  * state does, never with a countdown's seconds.
  */
-function statusRoom(g: CanvasRenderingContext2D, size: number, rows: readonly DepartureRow[]): number {
+function statusRoom(g: CanvasRenderingContext2D, c: Readonly<WallPalette>, size: number, rows: readonly DepartureRow[]): number {
   let room = 0;
   for (const r of rows) {
-    if (r.state === 'boarding' || r.state === 'departing' || r.state === 'delayed') room = Math.max(room, chipW(g, r.status, size * 0.86));
+    if (r.state === 'boarding' || r.state === 'departing' || r.state === 'delayed') room = Math.max(room, chipW(g, c, r.status, size * 0.86));
     else {
-      g.font = `${r.state === 'due' ? 700 : 500} ${Math.round(size)}px ${FONT}`;
+      g.font = `${r.state === 'due' ? 700 : 500} ${Math.round(size)}px ${c.font}`;
       room = Math.max(room, g.measureText(r.state === 'due' ? r.status : COUNTDOWN_ROOM).width);
     }
   }
@@ -398,20 +397,20 @@ function statusRoom(g: CanvasRenderingContext2D, size: number, rows: readonly De
 }
 
 /** The room a day before the flaps takes, when a row has one. */
-function dayRoom(g: CanvasRenderingContext2D, rows: readonly DepartureRow[], flapH: number, flapW: number): number {
+function dayRoom(g: CanvasRenderingContext2D, c: Readonly<WallPalette>, rows: readonly DepartureRow[], flapH: number, flapW: number): number {
   if (!rows.some((r) => r.time.includes(' '))) return 0;
-  g.font = `600 ${Math.round(flapH * 0.42)}px ${FONT}`;
+  g.font = `600 ${Math.round(flapH * 0.42)}px ${c.font}`;
   return g.measureText('30 Sep').width + flapW * 0.35;
 }
 
 /** The attention line: a red light and "N need attention", from `x` on `base`; returns its width. */
-function attention(g: CanvasRenderingContext2D, n: number, x: number, base: number, size: number, max: number): number {
+function attention(g: CanvasRenderingContext2D, c: Readonly<WallPalette>, n: number, x: number, base: number, size: number, max: number): number {
   const r = size * 0.3;
   g.fillStyle = STATUS_CSS.needs_you;
   g.beginPath();
   g.arc(x + r, base - size * 0.34, r, 0, Math.PI * 2);
   g.fill();
-  g.font = `700 ${Math.round(size)}px ${FONT}`;
+  g.font = `700 ${Math.round(size)}px ${c.font}`;
   return r * 2 + size * 0.45 + fitText(g, attentionText(n), x + r * 2 + size * 0.45, base, max - r * 2 - size * 0.45);
 }
 
@@ -419,46 +418,46 @@ function attention(g: CanvasRenderingContext2D, n: number, x: number, base: numb
  * The floor board: "Departures", then a row per departure (its time on flaps, its title cut to the room before the
  * status column, its status), then the attention line and how many more come later. Exported for its test.
  */
-export function paintFloorBoard(g: CanvasRenderingContext2D, W: number, H: number, m: FloorBoard): void {
-  glass(g, W, H);
+export function paintFloorBoard(g: CanvasRenderingContext2D, W: number, H: number, m: FloorBoard, c: Readonly<WallPalette> = WALL): void {
+  glass(g, W, H, c);
   const u = H / 100;
   const pad = u * 5;
   g.textBaseline = 'alphabetic';
   g.textAlign = 'left';
-  g.fillStyle = C.accent;
-  g.font = `800 ${Math.round(u * 12)}px ${FONT}`;
+  g.fillStyle = c.accent;
+  g.font = `800 ${Math.round(u * 12)}px ${c.font}`;
   g.fillText('Departures', pad, u * 15.5);
-  g.fillStyle = C.ink3;
+  g.fillStyle = c.ink3;
   g.fillRect(pad, u * 21, W - pad * 2, Math.max(2, u * 0.4));
   const top = u * 23;
   const rowH = u * 20;
   if (!m.known || !m.rows.length) {
-    g.fillStyle = C.text2;
-    g.font = `600 ${Math.round(u * 8)}px ${FONT}`;
+    g.fillStyle = c.text2;
+    g.font = `600 ${Math.round(u * 8)}px ${c.font}`;
     fitText(g, m.known ? EMPTY : OLD_BRIDGE, pad, top + u * 15, W - pad * 2);
     if (m.known) {
-      g.fillStyle = C.text3;
-      g.font = `500 ${Math.round(u * 5.5)}px ${FONT}`;
+      g.fillStyle = c.text3;
+      g.font = `500 ${Math.round(u * 5.5)}px ${c.font}`;
       fitText(g, 'Look here and press E to schedule an agent.', pad, top + u * 26, W - pad * 2);
     }
   }
   const style: RowStyle = { flapW: u * 8, flapH: u * 13, title: u * 8, status: u * 7, day: 0 };
-  style.day = dayRoom(g, m.rows, style.flapH, style.flapW);
-  const room = statusRoom(g, style.status, m.rows);
+  style.day = dayRoom(g, c, m.rows, style.flapH, style.flapW);
+  const room = statusRoom(g, c, style.status, m.rows);
   m.rows.forEach((r, i) => {
     const mid = top + rowH * i + rowH / 2;
-    paintRow(g, r, pad, W - pad, mid, style, room);
+    paintRow(g, c, r, pad, W - pad, mid, style, room);
     if (i < m.rows.length - 1) {
-      g.fillStyle = 'rgba(185,195,220,0.10)';
+      g.fillStyle = `rgba(${c.rule},0.10)`;
       g.fillRect(pad, top + rowH * (i + 1), W - pad * 2, Math.max(1, u * 0.25));
     }
   });
   const foot = H - u * 5;
   let left = pad;
-  if (m.attention > 0) left += attention(g, m.attention, pad, foot, u * 6.5, W * 0.6);
+  if (m.attention > 0) left += attention(g, c, m.attention, pad, foot, u * 6.5, W * 0.6);
   if (m.later > 0) {
-    g.font = `500 ${Math.round(u * 5.5)}px ${FONT}`;
-    g.fillStyle = C.text3;
+    g.font = `500 ${Math.round(u * 5.5)}px ${c.font}`;
+    g.fillStyle = c.text3;
     g.textAlign = 'right';
     const text = `+${m.later} later`;
     if (g.measureText(text).width < W - pad - left - u * 4) g.fillText(text, W - pad, foot);
@@ -472,8 +471,8 @@ export function paintFloorBoard(g: CanvasRenderingContext2D, W: number, H: numbe
  * attention count, and its departures as the floor board's rows.
  * Exported for its test.
  */
-export function paintLobbyBoard(g: CanvasRenderingContext2D, W: number, H: number, m: LobbyBoardModel): void {
-  glass(g, W, H);
+export function paintLobbyBoard(g: CanvasRenderingContext2D, W: number, H: number, m: LobbyBoardModel, c: Readonly<WallPalette> = WALL): void {
+  glass(g, W, H, c);
   const u = H / 100;
   const pad = m.plan.cells[0] ? m.plan.cells[0].u0 * W : u * 5;
   const head = m.plan.head * H;
@@ -498,52 +497,52 @@ export function paintLobbyBoard(g: CanvasRenderingContext2D, W: number, H: numbe
   const first = m.groups[0];
   const last = m.groups[m.groups.length - 1];
   if (m.pages > 1 && first && last) {
-    g.fillStyle = C.text2;
-    g.font = `600 ${Math.round(head * 0.26)}px ${FONT}`;
+    g.fillStyle = c.text2;
+    g.font = `600 ${Math.round(head * 0.26)}px ${c.font}`;
     g.textAlign = 'right';
     const text = `${first === last ? `Floor ${first.level}` : `Floors ${first.level}–${last.level}`} · ${m.page + 1}/${m.pages}`;
     g.fillText(text, W - pad - logoW, base);
     g.textAlign = 'left';
     pageW = g.measureText(text).width + u * 3;
   }
-  g.fillStyle = C.accent;
-  g.font = `800 ${Math.round(head * 0.5)}px ${FONT}`;
+  g.fillStyle = c.accent;
+  g.font = `800 ${Math.round(head * 0.5)}px ${c.font}`;
   const w = fitText(g, 'Departures', pad, base, W - pad * 2 - logoW - pageW);
-  g.fillStyle = C.text2;
-  g.font = `600 ${Math.round(head * 0.26)}px ${FONT}`;
+  g.fillStyle = c.text2;
+  g.font = `600 ${Math.round(head * 0.26)}px ${c.font}`;
   fitText(g, m.building, pad + w + u * 3, base, W - pad * 2 - logoW - pageW - w - u * 3);
-  g.fillStyle = C.ink3;
+  g.fillStyle = c.ink3;
   g.fillRect(pad, head, W - pad * 2, Math.max(2, u * 0.35));
   if (!m.known) {
-    g.fillStyle = C.text3;
-    g.font = `500 ${Math.round(u * 3.4)}px ${FONT}`;
+    g.fillStyle = c.text3;
+    g.font = `500 ${Math.round(u * 3.4)}px ${c.font}`;
     g.textAlign = 'right';
     g.fillText(OLD_BRIDGE, W - pad, head - u * 1.2);
     g.textAlign = 'left';
   }
   const line = m.plan.line * H;
   m.groups.forEach((gr, i) => {
-    const c = m.plan.cells[i];
-    if (!c) return;
-    const x = c.u0 * W;
-    const right = c.u1 * W;
-    const y = c.v0 * H;
+    const cell = m.plan.cells[i];
+    if (!cell) return;
+    const x = cell.u0 * W;
+    const right = cell.u1 * W;
+    const y = cell.v0 * H;
     // The floor's line: its number on a flap, its name, its attention count at the right.
     const mid = y + line / 2;
     const fw = line * 0.62;
     const fh = line * 0.86;
-    const nw = flaps(g, String(gr.level), x, mid, fw, fh, C.text);
+    const nw = flaps(g, c, String(gr.level), x, mid, fw, fh, c.text);
     let r = right;
     if (gr.attention > 0) {
-      g.font = `700 ${Math.round(line * 0.42)}px ${FONT}`;
+      g.font = `700 ${Math.round(line * 0.42)}px ${c.font}`;
       const text = attentionText(gr.attention);
       const tw = Math.min(g.measureText(text).width + line * 0.5, (right - x) * 0.5);
-      attention(g, gr.attention, right - tw, mid + line * 0.15, line * 0.42, tw);
+      attention(g, c, gr.attention, right - tw, mid + line * 0.15, line * 0.42, tw);
       r = right - tw - line * 0.4;
     }
     if (gr.later > 0) {
-      g.font = `500 ${Math.round(line * 0.36)}px ${FONT}`;
-      g.fillStyle = C.text3;
+      g.font = `500 ${Math.round(line * 0.36)}px ${c.font}`;
+      g.fillStyle = c.text3;
       const text = `+${gr.later} later`;
       const tw = g.measureText(text).width;
       if (tw < (r - x) * 0.3) {
@@ -553,20 +552,20 @@ export function paintLobbyBoard(g: CanvasRenderingContext2D, W: number, H: numbe
         r -= tw + line * 0.4;
       }
     }
-    g.fillStyle = C.text;
-    g.font = `700 ${Math.round(line * 0.5)}px ${FONT}`;
+    g.fillStyle = c.text;
+    g.font = `700 ${Math.round(line * 0.5)}px ${c.font}`;
     fitText(g, gr.name, x + nw + line * 0.3, mid + line * 0.18, r - x - nw - line * 0.3);
-    g.fillStyle = 'rgba(185,195,220,0.16)';
+    g.fillStyle = `rgba(${c.rule},0.16)`;
     g.fillRect(x, y + line, right - x, Math.max(1, u * 0.2));
     if (!gr.rows.length) {
-      g.fillStyle = C.text3;
-      g.font = `500 ${Math.round(line * 0.42)}px ${FONT}`;
+      g.fillStyle = c.text3;
+      g.font = `500 ${Math.round(line * 0.42)}px ${c.font}`;
       fitText(g, m.known ? EMPTY : '—', x, y + line * 1.5 + line * 0.15, right - x);
       return;
     }
     const style: RowStyle = { flapW: line * 0.4, flapH: line * 0.72, title: line * 0.46, status: line * 0.42, day: 0 };
-    style.day = dayRoom(g, gr.rows, style.flapH, style.flapW);
-    const room = statusRoom(g, style.status, gr.rows);
-    gr.rows.forEach((row, k) => paintRow(g, row, x, right, y + line * (1.5 + k), style, room));
+    style.day = dayRoom(g, c, gr.rows, style.flapH, style.flapW);
+    const room = statusRoom(g, c, style.status, gr.rows);
+    gr.rows.forEach((row, k) => paintRow(g, c, row, x, right, y + line * (1.5 + k), style, room));
   });
 }

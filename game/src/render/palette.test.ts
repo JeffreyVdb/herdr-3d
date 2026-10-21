@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { STATUS_CHIP_CSS, STATUS_CSS } from './palette';
+import { INK as BOARD_INK } from './boards/paint';
+import { OFFICE, OFFICE_UBUNTU, STATUS_CHIP_CSS, STATUS_CSS, WALL, WALL_UBUNTU } from './palette';
 
 /** WCAG 2 contrast ratio of two #rrggbb colours. */
 function contrast(a: string, b: string): number {
@@ -27,5 +28,38 @@ describe('status colours', () => {
   it('uiTheme.css (Quiet) and palette.ts agree', () => {
     for (const [d, c] of Object.entries(STATUS_CSS)) expect(token(d), d).toBe(c);
     for (const [d, c] of Object.entries(STATUS_CHIP_CSS)) expect(token(`${d}-chip`) ?? token(d), `${d}-chip`).toBe(c);
+  });
+});
+
+describe('the office in Ubuntu', () => {
+  const ubuntu = css.slice(css.indexOf(":root[data-ui-theme='ubuntu'] {"));
+  const tok = (name: string) => ubuntu.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1]?.toLowerCase();
+  const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`;
+
+  it('its screens are the page’s Ubuntu tokens (the glass the darkest aubergine)', () => {
+    expect(WALL_UBUNTU.ink).toBe(tok('chrome'));
+    expect(WALL_UBUNTU.flap).toBe(tok('raised'));
+    expect(WALL_UBUNTU.ink3).toBe(tok('hover'));
+    expect(WALL_UBUNTU.text).toBe(tok('text'));
+    expect(WALL_UBUNTU.text2).toBe(tok('text-2'));
+    expect(WALL_UBUNTU.text3).toBe(tok('text-3'));
+    expect(WALL_UBUNTU.accent).toBe(tok('accent-text'));
+    expect(WALL_UBUNTU.font.startsWith('"Ubuntu"')).toBe(true);
+    // Every status light reads on its glass (>= 3:1), as on Quiet's.
+    for (const [d, c] of Object.entries(STATUS_CSS)) expect(contrast(c, WALL_UBUNTU.ink), d).toBeGreaterThanOrEqual(3);
+  });
+
+  it('its room: the theme’s aubergines and orange where Quiet has navy and yellow', () => {
+    expect(hex(OFFICE_UBUNTU.boardWall)).toBe(tok('hover'));
+    expect(hex(OFFICE_UBUNTU.chairBase)).toBe(tok('chrome'));
+    expect(hex(OFFICE_UBUNTU.frame)).toBe(tok('chrome'));
+    expect(hex(OFFICE_UBUNTU.accent)).toBe(tok('action'));
+    expect(hex(OFFICE_UBUNTU.rug)).toBe(tok('action'));
+    expect(OFFICE_UBUNTU.sign).toEqual({ ground: tok('chrome'), text: tok('accent-text') });
+    expect(contrast(OFFICE_UBUNTU.sign.text, OFFICE_UBUNTU.sign.ground)).toBeGreaterThanOrEqual(4.5);
+    expect(OFFICE_UBUNTU.boardStrip).toBe(tok('chrome'));
+    expect(OFFICE.boardStrip).toBe(BOARD_INK);
+    expect(OFFICE_UBUNTU.screens).toBe(WALL_UBUNTU);
+    expect(OFFICE.screens).toBe(WALL);
   });
 });

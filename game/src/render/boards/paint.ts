@@ -92,11 +92,11 @@ export function wrap(g: CanvasRenderingContext2D, s: string, w: number, lines: n
 }
 
 /** The cork board: title strip, column heads, "+N more", or the reason there is nothing to show. */
-export function drawBackdrop(g: CanvasRenderingContext2D, size: BoardSize, b: Backdrop): void {
+export function drawBackdrop(g: CanvasRenderingContext2D, size: BoardSize, b: Backdrop, ground = INK): void {
   const { w, h } = canvasSize(size);
   corkGrain(g, w, h);
   const strip = HEADER_H * PPM;
-  g.fillStyle = '#1c2540';
+  g.fillStyle = ground;
   g.fillRect(0, 0, w, strip);
   g.fillStyle = b.accent;
   g.fillRect(0, strip - 6, w, 6);

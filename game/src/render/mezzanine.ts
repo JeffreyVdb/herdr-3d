@@ -4,7 +4,7 @@ import { DESK_D, DESK_H, GLASS_H, POST_W, SEAT_OFFSET, type Mezzanine } from '..
 import { FONT } from './cards/atlasCards';
 import { deskGeometries, keyboardPieces, monitorPieces, screenGeometry } from './desks';
 import { KEYBOARD, MONITOR } from '../world/deskKit';
-import { OFFICE } from './palette';
+import { OFFICE, type OfficePalette } from './palette';
 import { canvasTexture } from './props';
 
 /**
@@ -27,6 +27,13 @@ export const MEZZ_COLORS = {
   frame: 0x1c2540,
   screen: 0x2d4a7c,
 };
+
+/** The corner office in an office palette: its steel, rails and frames follow the UI theme; oak and soffit stay. */
+export function mezzColors(P: Readonly<OfficePalette>): typeof MEZZ_COLORS {
+  return { ...MEZZ_COLORS, steel: P.boardWall, rail: P.accent, frame: P.frame };
+}
+
+const css = (hex: number) => `#${hex.toString(16).padStart(6, '0')}`;
 
 /** Geometry parts with a colour each, merged into one non-indexed buffer (position, normal, color). */
 class Parts {
@@ -75,19 +82,19 @@ function pane(w: number, h: number, m: THREE.Matrix4): THREE.BufferGeometry[] {
 }
 
 /** The name plate on your desk (top half, opaque) and the name on the glass by the door (bottom half, cut out). */
-function nameTexture(owner: string): THREE.CanvasTexture {
+function nameTexture(owner: string, plate: string, ink: string): THREE.CanvasTexture {
   return canvasTexture(512, 256, (g) => {
     const name = owner.length > 22 ? `${owner.slice(0, 21)}…` : owner;
-    g.fillStyle = '#ffc233';
+    g.fillStyle = plate;
     g.fillRect(0, 0, 512, 128);
-    g.fillStyle = '#1c2540';
+    g.fillStyle = ink;
     g.fillRect(0, 118, 512, 10);
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     g.font = `800 ${name.length > 12 ? 44 : 60}px ${FONT}`;
     g.fillText(name, 256, 62, 480);
     g.clearRect(0, 128, 512, 128);
-    g.fillStyle = '#1c2540';
+    g.fillStyle = ink;
     g.font = `800 ${name.length > 12 ? 40 : 52}px ${FONT}`;
     g.fillText(name === 'You' ? 'Your office' : name, 256, 176, 490);
     g.font = `600 26px ${FONT}`;
@@ -114,9 +121,10 @@ export class MezzanineView {
     owner: string,
     glassMat: THREE.Material,
     shadows: boolean,
+    P: Readonly<OfficePalette> = OFFICE,
   ) {
     this.group.name = 'mezzanine';
-    const C = MEZZ_COLORS;
+    const C = mezzColors(P);
     const { rect, y, under, stair } = m;
     const lo = new Parts();
     const up = new Parts();
@@ -187,7 +195,7 @@ export class MezzanineView {
     // Your desk: the worker desk art with the office's monitor and keyboard (M6b, as on every desk; nothing live), and a mug.
     const desk = new THREE.Matrix4().compose(v3(m.desk.seat.x, y, m.desk.seat.z), new THREE.Quaternion().setFromAxisAngle(v3(0, 1, 0), m.desk.yaw), v3(1, 1, 1));
     const art = deskGeometries();
-    const colors: Partial<Record<keyof typeof art, number>> = { top: OFFICE.deskTop, legs: OFFICE.deskLeg, chair: OFFICE.chair, chairBase: OFFICE.chairBase };
+    const colors: Partial<Record<keyof typeof art, number>> = { top: P.deskTop, legs: P.deskLeg, chair: P.chair, chairBase: P.chairBase };
     for (const [k, g] of Object.entries(art) as Array<[keyof typeof art, THREE.BufferGeometry]>) {
       const hex = colors[k];
       if (hex === undefined) g.dispose();
@@ -208,8 +216,8 @@ export class MezzanineView {
     inDesk(new THREE.BoxGeometry(0.36, 0.1, 0.05).translate(plateX, DESK_H + 0.05, plateZ), C.frame);
     // A plant in the back corner.
     const pl = m.plant;
-    up.add(new THREE.CylinderGeometry(0.2, 0.16, 0.36, 12).translate(pl.x, y + 0.18, pl.z), OFFICE.pot);
-    up.add(new THREE.IcosahedronGeometry(0.34, 0).translate(pl.x, y + 0.72, pl.z), OFFICE.plant);
+    up.add(new THREE.CylinderGeometry(0.2, 0.16, 0.36, 12).translate(pl.x, y + 0.18, pl.z), P.pot);
+    up.add(new THREE.IcosahedronGeometry(0.34, 0).translate(pl.x, y + 0.72, pl.z), P.plant);
     up.add(new THREE.IcosahedronGeometry(0.22, 0).translate(pl.x + 0.12, y + 1.02, pl.z + 0.05), 0x5cbf73);
 
     this.material = new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: true });
@@ -220,7 +228,7 @@ export class MezzanineView {
     for (const o of [this.lower, this.upper]) o.castShadow = o.receiveShadow = shadows;
 
     // Name plate and the name on the glass: one texture, one draw.
-    const tex = nameTexture(owner);
+    const tex = nameTexture(owner, css(C.rail), css(C.frame));
     const half = (g: THREE.PlaneGeometry, top: boolean) => {
       const uv = g.getAttribute('uv') as THREE.BufferAttribute;
       for (let i = 0; i < uv.count; i++) uv.setY(i, top ? 0.5 + uv.getY(i) * 0.5 : uv.getY(i) * 0.5);
@@ -266,9 +274,9 @@ export class MezzanineView {
     for (const g of m.glass) pp.box(g.min[0] - 0.03, py, g.min[2] - 0.03, g.max[0] + 0.03, py + 0.03, g.max[2] + 0.03, 0x7fc4ec);
     const dr = { w: DESK_D, d: 1.4 };
     const dc = m.desk.desk;
-    pp.box(dc.x - dr.w / 2, py, dc.z - dr.d / 2, dc.x + dr.w / 2, py + 0.05, dc.z + dr.d / 2, OFFICE.deskTop);
+    pp.box(dc.x - dr.w / 2, py, dc.z - dr.d / 2, dc.x + dr.w / 2, py + 0.05, dc.z + dr.d / 2, P.deskTop);
     pp.box(dc.x - dr.w / 2, py + 0.05, dc.z - dr.d / 2, dc.x - dr.w / 2 + 0.08, py + 0.07, dc.z + dr.d / 2, C.rail);
-    pp.box(m.desk.seat.x - 0.24, py, m.desk.seat.z - 0.24, m.desk.seat.x + 0.24, py + 0.05, m.desk.seat.z + 0.24, OFFICE.chair);
+    pp.box(m.desk.seat.x - 0.24, py, m.desk.seat.z - 0.24, m.desk.seat.x + 0.24, py + 0.05, m.desk.seat.z + 0.24, P.chair);
     this.plan = new THREE.Mesh(pp.build(), this.material);
     this.plan.name = 'mezzanine.plan';
     this.plan.visible = false;
