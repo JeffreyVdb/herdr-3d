@@ -40,6 +40,9 @@ type FloorHerdr interface {
 	// whose server does not start resumes on Codex's embedded server.
 	StartCodexRemote(ctx context.Context, session, pane, name string, a herdr.Agent, r herdr.Remote) error
 	ResumeCodexEmbedded(ctx context.Context, session, pane, name, thread string, a herdr.Agent) error
+	// #139: a Codex worker on a profile: its home exported in its pane's
+	// shell before its server or its resume starts there.
+	ExportCodexHome(ctx context.Context, session, pane, home string) error
 }
 
 // Defaults of the wake/sleep Options.
@@ -568,6 +571,8 @@ func (h *Hub) fallback(ctx, phase context.Context, op *floorOp, p pendingWait) {
 		note = "no fallback: the pane is not at its shell prompt"
 	case !herdr.CanResume(p.harness):
 		note = fmt.Sprintf("no fallback: cannot resume %q", p.harness)
+	case p.harness == "codex" && h.exportProfileHome(phase, op.session, p.id, p.pane) != nil:
+		note = "no fallback: its Codex profile's home could not be exported in its pane"
 	default:
 		_ = h.doWait(ctx, func() {
 			if w := op.waits[p.id]; w != nil {

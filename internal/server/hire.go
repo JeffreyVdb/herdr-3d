@@ -43,6 +43,9 @@ type HireHerdr interface {
 	// #155: a shared-server Codex hire's server, typed into its pane, and
 	// its TUI attached to it.
 	StartCodexServer(ctx context.Context, session, pane, launcher string) error
+	// #139: a Codex hire on a profile: its home exported in the pane's
+	// shell first.
+	ExportCodexHome(ctx context.Context, session, pane, home string) error
 	StartCodexRemote(ctx context.Context, session, pane, name string, a herdr.Agent, r herdr.Remote) error
 	CloseWorkspace(ctx context.Context, session, workspace string) error
 	RemoveWorktree(ctx context.Context, session, workspace string) error
@@ -120,6 +123,7 @@ type hireOp struct {
 	worktree                   bool
 	codexPolicy                codexapp.VersionPolicy
 	shared                     bool // #155: a Codex hire with its own app-server
+	profile                    string // #139: the Codex profile's key ("": none asked for, the default)
 	hiredAt                    int64
 	client                     *Client
 	cmd                        proto.Command
@@ -606,9 +610,11 @@ func (h *Hub) hireShape(a proto.WorkerHireArgs) error {
 		return bad("prompt must be 1-%d bytes of text, not starting with \"--\"", herdr.MaxPrompt)
 	}
 	if a.Prompt != "" {
-		return checkTyped(a.Harness, a.Prompt, herdr.MaxPrompt, "prompt") // #95
+		if err := checkTyped(a.Harness, a.Prompt, herdr.MaxPrompt, "prompt"); err != nil { // #95
+			return err
+		}
 	}
-	return nil
+	return h.checkProfileKey(a.Harness, a.CodexProfile, "") // #139
 }
 
 // beginHire is the hire of worker.hire, run.start and a schedule's fire
@@ -683,7 +689,7 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 		agent: slug(name) + "-" + hex[:6], harness: a.Harness, model: a.Model, effort: a.Effort, cwd: cwd,
 		prompt: a.Prompt, worktree: a.Worktree, hiredAt: at.UnixMilli(), client: c, cmd: cmd,
 		notify: make(chan struct{}, 1), launched: launched, compose: compose, shared: a.Harness == "codex" && h.cx.enabled, codexPolicy: h.cx.policy,
-		watch: watch}
+		watch: watch, profile: a.CodexProfile}
 	if a.Worktree {
 		op.branch = "h3d/" + op.agent
 	}
@@ -756,6 +762,7 @@ type hireReport struct {
 	Prompt      string   `json:"prompt,omitempty"`
 	Launch      string   `json:"launch,omitempty"` // run.start's launch id
 	Codex       string   `json:"codex,omitempty"`  // #155: shared, or legacy and why
+	Profile     string   `json:"codex_profile,omitempty"` // #139: the Codex profile's name
 	Rollback    []string `json:"rollback,omitempty"`
 	Steps       []string `json:"steps"`
 }
@@ -777,7 +784,7 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 	var created herdr.Created
 	var repo string
 	fail := func(err error) {
-		if op.shared { // #155: its server (if one started) goes with it
+		if op.shared || op.profile != "" { // #155: its server (if one started) goes with it; #139: its launch too
 			if note := h.stopSharedServer(ctx, op.id); note != "" {
 				rep.Rollback = append(rep.Rollback, note)
 			}
@@ -885,16 +892,41 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 		dir = created.CheckoutPath
 	}
 	agent := herdr.Agent{Harness: op.harness, Model: op.model, Effort: op.effort, Label: op.label}
+	// #139: a Codex profile is prepared, and off the default its home is
+	// exported in the pane's shell, before anything of Codex starts there.
+	var prof *codexProfileRun
+	if op.harness == "codex" && op.profile != "" {
+		p, release, err := h.prepareProfile(ctx, op.profile)
+		defer release()
+		if err != nil {
+			fail(fmt.Errorf("%w: codex profile: %v", errHireFailed, err))
+			return
+		}
+		prof, rep.Profile = &p, p.name
+		if !p.def {
+			if err := hh.ExportCodexHome(ctx, op.session, created.PaneID, p.home); err != nil {
+				fail(fmt.Errorf("%w: exporting CODEX_HOME: %v", errHireFailed, err))
+				return
+			}
+			rep.step("exported CODEX_HOME=%s in %s (codex profile %s)", p.home, created.PaneID, p.name)
+		}
+	}
 	var startErr error
-	if op.shared {
-		startErr = h.hireShared(ctx, op, created.PaneID, dir, agent, rep, &res)
-	} else {
+	switch {
+	case op.shared:
+		startErr = h.hireShared(ctx, op, created.PaneID, dir, agent, rep, &res, prof)
+	case prof != nil:
+		startErr = h.hireOnProfile(ctx, op, created.PaneID, dir, agent, rep, &res, prof)
+	default:
 		startErr = hh.StartAgent(ctx, op.session, created.PaneID, op.agent, agent)
 	}
 	var api *herdr.APIError
 	switch {
 	case startErr == nil:
 		rep.Start = "ready"
+	case isProfileRefused(startErr): // #139: in its own words
+		fail(fmt.Errorf("%w: %v", errHireFailed, startErr))
+		return
 	case errors.As(startErr, &api) && api.Code == "agent_not_ready":
 		rep.Start = "blocked during startup"
 	default:

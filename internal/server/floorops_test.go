@@ -190,6 +190,11 @@ func (f *fakeHerdr) StartCodexServer(_ context.Context, session, pane, launcher 
 	return nil
 }
 
+func (f *fakeHerdr) ExportCodexHome(_ context.Context, session, pane, home string) error {
+	f.record("codex-home %s %s", pane, home)
+	return nil
+}
+
 func (f *fakeHerdr) StartCodexRemote(_ context.Context, session, pane, name string, a herdr.Agent, r herdr.Remote) error {
 	f.record("codex-remote %s %s %s %s %s %s", pane, name, a.Model, a.Effort, r.Socket, r.Cwd)
 	f.setProcs(pane, remoteCodex(r.Socket, ""))

@@ -534,3 +534,18 @@ func Clean(set Settings) Settings {
 	}
 	return out
 }
+
+// RunsHerdrHook reports whether a Codex home runs herdr's session hook
+// (#139): its hooks.json, or a [hooks] table in its config.toml, names
+// herdr-agent-state.sh, the script herdr installs to learn a Codex
+// session's id. A fresh profile home has neither (#137). Only those two
+// files are read; never auth.json.
+func RunsHerdrHook(home string) bool {
+	for _, name := range []string{"hooks.json", "config.toml"} {
+		b, err := os.ReadFile(filepath.Join(home, name))
+		if err == nil && strings.Contains(string(b), "herdr-agent-state") {
+			return true
+		}
+	}
+	return false
+}

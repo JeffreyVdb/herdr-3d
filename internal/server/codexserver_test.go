@@ -50,6 +50,14 @@ type fakeCodexHost struct {
 	history *codexapp.Thread
 	// #27: what a join's observational reads answer (nil: they fail).
 	reader codexapp.ChildReader
+	// #139: every launch as written (its Env), what a server's and a
+	// home's profile checks answer (nil: signed in, the same account, no
+	// policy), and those checks, in order (not in calls: a hire on the
+	// default profile makes none).
+	launches []codexapp.Launch
+	server   func(sock string) (codexapp.Account, codexapp.Requirements, error)
+	home     func(env []string) (codexapp.Account, codexapp.Requirements, error)
+	checks   []string
 }
 
 // fakeSend is one Steer or StartTurn of a fake watch.
@@ -157,7 +165,44 @@ func (f *fakeCodexHost) Preflight(_ context.Context, dir string, policy codexapp
 
 func (f *fakeCodexHost) Prepare(l codexapp.Launch) error {
 	f.record("prepare %s %s", l.Name, l.Cwd)
+	f.mu.Lock()
+	f.launches = append(f.launches, l)
+	f.mu.Unlock()
 	return l.Valid()
+}
+
+func (f *fakeCodexHost) ReadProfile(_ context.Context, sock string) (codexapp.Account, codexapp.Requirements, error) {
+	f.mu.Lock()
+	f.checks = append(f.checks, "server "+sock)
+	fn := f.server
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(sock)
+	}
+	return codexapp.Account{SignedIn: true, Plan: "team", ID: "acct-1"}, codexapp.Requirements{}, nil
+}
+
+func (f *fakeCodexHost) HomeProfile(_ context.Context, env []string) (codexapp.Account, codexapp.Requirements, error) {
+	f.mu.Lock()
+	f.checks = append(f.checks, "home "+strings.Join(env, " "))
+	fn := f.home
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(env)
+	}
+	return codexapp.Account{SignedIn: true, Plan: "team", ID: "acct-1"}, codexapp.Requirements{}, nil
+}
+
+func (f *fakeCodexHost) Checks() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.checks)
+}
+
+func (f *fakeCodexHost) Launches() []codexapp.Launch {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.launches)
 }
 
 func (f *fakeCodexHost) WaitReady(_ context.Context, sock string) (string, error) {

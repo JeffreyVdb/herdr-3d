@@ -38,7 +38,7 @@ func (h *Hub) loadHirePresets(ctx context.Context) error {
 
 func hirePresetView(p store.HirePreset) proto.HirePreset {
 	return proto.HirePreset{ID: p.ID, Name: p.Name, Floor: p.Floor, Prompt: p.Prompt, Harness: p.Harness, Model: p.Model,
-		Effort: p.Effort, HerdrInstructions: p.HerdrInstructions, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
+		Effort: p.Effort, HerdrInstructions: p.HerdrInstructions, CodexProfile: p.CodexProfile, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
 }
 
 // hirePresetViews are the snapshot's hire_presets: by name ignoring case,
@@ -87,8 +87,14 @@ func (h *Hub) applyHirePresetSpec(p *store.HirePreset, a proto.HirePresetSpec) e
 	if err := checkTyped(a.Harness, a.Prompt, herdr.MaxPrompt, "prompt"); err != nil {
 		return err
 	}
+	if err := h.checkProfileKey(a.Harness, a.CodexProfile, p.CodexProfile); err != nil { // #139: a gone one it had stays
+		return err
+	}
+	if a.Harness != "codex" && a.CodexProfile != "" {
+		return bad("codex_profile is for a Codex hire, not %q", a.Harness)
+	}
 	p.Name, p.Floor, p.Prompt, p.Harness, p.Model, p.Effort = name, a.Floor, a.Prompt, a.Harness, a.Model, a.Effort
-	p.HerdrInstructions = a.HerdrInstructions
+	p.HerdrInstructions, p.CodexProfile = a.HerdrInstructions, a.CodexProfile
 	return nil
 }
 

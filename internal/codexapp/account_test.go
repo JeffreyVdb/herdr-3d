@@ -87,8 +87,9 @@ func TestRequirementsRefuses(t *testing.T) {
 }
 
 // fakeStdioCodex is `codex app-server` on stdio (TestMain): it answers
-// initialize and account/read, signed in as its CODEX_HOME's last element,
-// or not signed in when that is "nobody".
+// initialize, account/read (signed in as its CODEX_HOME's last element, or
+// not signed in when that is "nobody") and configRequirements/read (a
+// policy when that is "managed").
 func fakeStdioCodex() {
 	sc := bufio.NewScanner(os.Stdin)
 	for sc.Scan() {
@@ -110,6 +111,11 @@ func fakeStdioCodex() {
 			if home == "nobody" {
 				res = map[string]any{"account": nil}
 			}
+		case "configRequirements/read":
+			res = map[string]any{"requirements": nil}
+			if filepath.Base(os.Getenv("CODEX_HOME")) == "managed" {
+				res = map[string]any{"requirements": map[string]any{"allowedSandboxModes": []any{"read-only"}}}
+			}
 		}
 		fmt.Println(`{"method":"configWarning","params":{}}`) // a notification first: skipped
 		b, _ := json.Marshal(map[string]any{"id": m["id"], "result": res})
@@ -117,7 +123,7 @@ func fakeStdioCodex() {
 	}
 }
 
-func TestReadHomeAccount(t *testing.T) {
+func TestReadHomeProfile(t *testing.T) {
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -128,14 +134,17 @@ func TestReadHomeAccount(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	a, err := ReadHomeAccount(ctx, bin, []string{"CODEX_HOME=/home/u/.codex-work"})
-	if err != nil || a != (Account{SignedIn: true, Plan: "team", ID: ".codex-work"}) {
-		t.Fatalf("got %+v, %v", a, err)
+	a, r, err := ReadHomeProfile(ctx, bin, []string{"CODEX_HOME=/home/u/.codex-work"})
+	if err != nil || a != (Account{SignedIn: true, Plan: "team", ID: ".codex-work"}) || r.Present {
+		t.Fatalf("got %+v %+v, %v", a, r, err)
 	}
-	if a, err := ReadHomeAccount(ctx, bin, []string{"CODEX_HOME=/home/u/nobody"}); err != nil || a.SignedIn {
+	if a, _, err := ReadHomeProfile(ctx, bin, []string{"CODEX_HOME=/home/u/nobody"}); err != nil || a.SignedIn {
 		t.Fatalf("not signed in: %+v, %v", a, err)
 	}
-	if _, err := ReadHomeAccount(ctx, filepath.Join(t.TempDir(), "nope"), nil); err == nil {
+	if _, r, err := ReadHomeProfile(ctx, bin, []string{"CODEX_HOME=/home/u/managed"}); err != nil || !r.Refuses() {
+		t.Fatalf("managed: %+v, %v", r, err)
+	}
+	if _, _, err := ReadHomeProfile(ctx, filepath.Join(t.TempDir(), "nope"), nil); err == nil {
 		t.Fatal("a missing codex answered")
 	}
 }

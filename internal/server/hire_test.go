@@ -524,6 +524,9 @@ func (p hireProxy) TypeExit(ctx context.Context, s, pane, h string) error {
 func (p hireProxy) StartCodexServer(ctx context.Context, s, pane, l string) error {
 	return p.get().StartCodexServer(ctx, s, pane, l)
 }
+func (p hireProxy) ExportCodexHome(ctx context.Context, s, pane, home string) error {
+	return p.get().ExportCodexHome(ctx, s, pane, home)
+}
 func (p hireProxy) StartCodexRemote(ctx context.Context, s, pane, n string, a herdr.Agent, r herdr.Remote) error {
 	return p.get().StartCodexRemote(ctx, s, pane, n, a, r)
 }

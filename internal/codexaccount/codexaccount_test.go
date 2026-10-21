@@ -579,3 +579,20 @@ func TestPrepare(t *testing.T) {
 		t.Fatalf("missing default: env %v err %v", env, err)
 	}
 }
+
+func TestRunsHerdrHook(t *testing.T) {
+	h := home(t, map[string]bool{".codex": true, ".codex-work": true, ".codex-toml": true, ".codex-other": true})
+	write := func(rel, body string) {
+		if err := os.WriteFile(filepath.Join(h, rel), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".codex/hooks.json", `{"hooks":{"SessionStart":[{"hooks":[{"command":"bash '/home/u/.codex/herdr-agent-state.sh' session"}]}]}}`)
+	write(".codex-toml/config.toml", "[[hooks.SessionStart]]\n[[hooks.SessionStart.hooks]]\ncommand = \"bash /home/u/.codex/herdr-agent-state.sh session\"\n")
+	write(".codex-other/hooks.json", `{"hooks":{}}`)
+	for name, want := range map[string]bool{".codex": true, ".codex-toml": true, ".codex-work": false, ".codex-other": false, "nope": false} {
+		if got := RunsHerdrHook(filepath.Join(h, name)); got != want {
+			t.Errorf("%s: %v", name, got)
+		}
+	}
+}

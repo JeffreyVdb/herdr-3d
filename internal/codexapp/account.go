@@ -10,11 +10,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -151,13 +151,15 @@ func ReadProfile(ctx context.Context, sock string) (Account, Requirements, error
 	return acct.account(), req.requirements(), nil
 }
 
-// ReadHomeAccount asks `codex app-server` over stdio, run with env (the
+// ReadHomeProfile asks `codex app-server` over stdio, run with env (the
 // profile's CODEX_HOME) in a scratch directory, which account the home is
-// signed in to: the reference a worker's server is compared with.
-func ReadHomeAccount(ctx context.Context, codex string, env []string) (Account, error) {
+// signed in to and which workspace policy applies there: the reference a
+// worker's own server is compared with, and the check of a worker that has
+// no server of its own.
+func ReadHomeProfile(ctx context.Context, codex string, env []string) (Account, Requirements, error) {
 	dir, err := os.MkdirTemp("", "h3d-account-")
 	if err != nil {
-		return Account{}, err
+		return Account{}, Requirements{}, err
 	}
 	defer os.RemoveAll(dir)
 	ctx, cancel := context.WithCancel(ctx)
@@ -166,65 +168,68 @@ func ReadHomeAccount(ctx context.Context, codex string, env []string) (Account, 
 	cmd.Dir, cmd.Env = dir, env
 	in, err := cmd.StdinPipe()
 	if err != nil {
-		return Account{}, err
+		return Account{}, Requirements{}, err
 	}
 	out, err := cmd.StdoutPipe()
 	if err != nil {
-		return Account{}, err
+		return Account{}, Requirements{}, err
 	}
 	if err := cmd.Start(); err != nil {
-		return Account{}, err
+		return Account{}, Requirements{}, err
 	}
 	defer func() {
 		in.Close()
 		cancel()
 		_ = cmd.Wait()
 	}()
-	send := func(v any) error {
-		b, err := json.Marshal(v)
+	lines := bufio.NewScanner(out)
+	lines.Buffer(make([]byte, 64<<10), MaxMessage)
+	next := 0
+	call := func(method string, params, result any) error {
+		next++
+		req := map[string]any{"id": next, "method": method}
+		if params != nil {
+			req["params"] = params
+		}
+		b, err := json.Marshal(req)
 		if err != nil {
 			return err
 		}
-		_, err = in.Write(append(b, '\n'))
-		return err
-	}
-	lines := bufio.NewScanner(out)
-	lines.Buffer(make([]byte, 64<<10), MaxMessage)
-	reply := func(id string) (json.RawMessage, error) {
+		if _, err := in.Write(append(b, '\n')); err != nil {
+			return fmt.Errorf("%s: %w", method, err)
+		}
+		id := strconv.Itoa(next)
 		for lines.Scan() {
 			var m Message
 			if json.Unmarshal(lines.Bytes(), &m) != nil || m.Method != "" || strings.TrimSpace(string(m.ID)) != id {
 				continue // a notification, or not ours
 			}
 			if m.Error != nil {
-				return nil, m.Error
+				return fmt.Errorf("%s: %w", method, m.Error)
 			}
-			return m.Result, nil
+			if result == nil {
+				return nil
+			}
+			return json.Unmarshal(m.Result, result)
 		}
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return fmt.Errorf("%s: %w", method, err)
 		}
-		return nil, errors.New("codex app-server ended before it answered")
+		return fmt.Errorf("%s: codex app-server ended before it answered", method)
 	}
-	if err := send(map[string]any{"id": 1, "method": "initialize", "params": initParams("account")}); err != nil {
-		return Account{}, fmt.Errorf("initialize: %w", err)
+	if err := call("initialize", initParams("account"), nil); err != nil {
+		return Account{}, Requirements{}, err
 	}
-	if _, err := reply("1"); err != nil {
-		return Account{}, fmt.Errorf("initialize: %w", err)
+	if _, err := in.Write([]byte(`{"method":"initialized"}` + "\n")); err != nil {
+		return Account{}, Requirements{}, err
 	}
-	if err := send(map[string]any{"method": "initialized"}); err != nil {
-		return Account{}, err
+	var acct accountReply
+	if err := call("account/read", map[string]any{"refreshToken": false}, &acct); err != nil {
+		return Account{}, Requirements{}, err
 	}
-	if err := send(map[string]any{"id": 2, "method": "account/read", "params": map[string]any{"refreshToken": false}}); err != nil {
-		return Account{}, fmt.Errorf("account/read: %w", err)
+	var req requirementsReply
+	if err := call("configRequirements/read", nil, &req); err != nil {
+		return acct.account(), Requirements{}, err
 	}
-	res, err := reply("2")
-	if err != nil {
-		return Account{}, fmt.Errorf("account/read: %w", err)
-	}
-	var r accountReply
-	if err := json.Unmarshal(res, &r); err != nil {
-		return Account{}, fmt.Errorf("account/read: %w", err)
-	}
-	return r.account(), nil
+	return acct.account(), req.requirements(), nil
 }

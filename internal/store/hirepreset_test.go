@@ -306,3 +306,29 @@ func TestHirePresetInstructions(t *testing.T) {
 		t.Fatalf("after unticking = %+v", l)
 	}
 }
+
+// #139: a preset keeps its Codex profile's key.
+func TestHirePresetCodexProfile(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "w.db")
+	st := open(t, path)
+	p := store.HirePreset{ID: "hp_w", Name: "On work", Prompt: "Review it.", Harness: "codex", Model: "m", Effort: "e", CodexProfile: "work",
+		CreatedAt: 1, UpdatedAt: 1}
+	if err := st.CreateHirePreset(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	p.CodexProfile, p.UpdatedAt = "", 2
+	if err := st.UpdateHirePreset(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	q := store.HirePreset{ID: "hp_x", Name: "Other", Prompt: "Fix it.", Harness: "codex", Model: "m", Effort: "e", CodexProfile: "team-32b74a",
+		CreatedAt: 3, UpdatedAt: 3}
+	if err := st.CreateHirePreset(ctx, q); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	st = open(t, path)
+	if l, err := st.HirePresets(ctx); err != nil || !reflect.DeepEqual(l, []store.HirePreset{p, q}) {
+		t.Fatalf("presets = %+v, %v", l, err)
+	}
+}

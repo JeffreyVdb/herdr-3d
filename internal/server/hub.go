@@ -275,6 +275,9 @@ type Options struct {
 	// configures it from the stored settings. Limits.Accounts is the same
 	// service when the limits are read per profile.
 	CodexProfiles *codexaccount.Service
+	// #139: CodexPrepare is a test hook in place of CodexProfiles.Prepare
+	// (nil: the service's).
+	CodexPrepare func(ctx context.Context, key string) (env []string, release func(), err error)
 	// #90 follow-up questions: FollowupsEnabled is the environment's toggle
 	// (HERDR_WORLD_FOLLOWUPS_ENABLED; nil: not set), FollowupDebounce how
 	// long an ended turn and herdr's not-working status hold before the

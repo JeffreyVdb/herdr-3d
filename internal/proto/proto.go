@@ -853,6 +853,11 @@ type WorkerHireArgs struct {
 	// secrets").
 	Secrets        *SecretsReview `json:"secrets,omitempty"`
 	SecretsPending string         `json:"secrets_pending,omitempty"`
+	// #139 (optional, Codex only): the key of the Codex profile the worker
+	// runs on (codex_profiles). Absent: the default profile, exactly as
+	// before. A client sends it only to a bridge whose codex_profiles has
+	// hire (an older one refuses the unknown field).
+	CodexProfile string `json:"codex_profile,omitempty"`
 }
 
 // HireResult is the ack data of worker.hire.
