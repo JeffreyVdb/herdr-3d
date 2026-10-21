@@ -250,6 +250,8 @@ test('a paste into an agent’s terminal is reviewed first: exact UTF-16 ranges 
   const clean = watchErrors(page);
   await openGame(page, 'demo-m5', '', `${SIM}&simsecretson=1`);
   const id = await sitAt(page, 'Pebble', 'terminal');
+  // #176 part 2: the seat owns the pane: the reviewed paste is inserted (worker.paste), not submitted.
+  await expect.poll(() => page.evaluate(() => window.__h3d.seatTerminal()?.control?.mode)).toBe('control');
   const paste = 'line one\r\nPASSWORD=p😀ss-w0rd\r\nAPI_KEY="k3y😀value"\r\nend';
   await page.evaluate((text) => {
     const dt = new DataTransfer();
@@ -260,14 +262,15 @@ test('a paste into an agent’s terminal is reviewed first: exact UTF-16 ranges 
   await secretReviewReady(page);
   expect(await page.evaluate(() => window.__h3d.seated())).toBe(id);
   expect(await reviewText(page)).toBe(paste);
+  expect(await sent(page, 'worker.paste')).toEqual([]);
   expect(await sent(page, 'worker.prompt')).toEqual([]);
   await dlg.getByRole('button', { name: 'Confirm and send' }).click();
-  await expect.poll(async () => (await sent(page, 'worker.prompt')).length).toBe(1);
-  const { secrets } = (await sent(page, 'worker.prompt'))[0]!.args as { secrets: { decisions: Array<{ start: number; end: number }> } };
+  await expect.poll(async () => (await sent(page, 'worker.paste')).length).toBe(1);
+  const { secrets } = (await sent(page, 'worker.paste'))[0]!.args as { secrets: { decisions: Array<{ start: number; end: number }> } };
   expect(secrets.decisions.map((d) => paste.slice(d.start, d.end))).toEqual(['p😀ss-w0rd', 'k3y😀value']);
   await expect.poll(() => page.evaluate(() => window.__h3d.seat().note)).toMatch(/Pasted into Pebble/);
   // The files hold exactly those bytes (the fixture's files are the whole simulated host's: this paste's by their paths).
-  const ack = (await sent(page, 'worker.prompt'))[0]!.result as { ok: boolean; data?: { sent?: string } };
+  const ack = (await sent(page, 'worker.paste'))[0]!.result as { ok: boolean; data?: { sent?: string } };
   expect(ack.data?.sent).toMatch(/^line one\r\nPASSWORD=\[secret in file [^\]]+\]\r\nAPI_KEY="\[secret in file [^\]]+\]"\r\nend$/);
   const refs = refsOf(ack.data?.sent);
   const files = (await page.evaluate(() => window.__h3d.simSecretFiles())).filter((f) => refs.has(f.path));

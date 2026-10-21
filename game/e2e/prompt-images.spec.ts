@@ -675,22 +675,24 @@ test('transcript: a file the box refused holds the send (prompt kept, refusal st
   clean();
 });
 
-test('terminal: an image pasted at an agent’s laptop is uploaded and pasted as its marker (worker.prompt); a text paste is as before', async ({ page }) => {
+test('terminal: an image pasted at an agent’s laptop is uploaded and pasted as its marker (worker.paste, #176 part 2: inserted); a text paste is as before', async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   const { id } = await sitAt(page, 'Pebble');
   await seatMode(page, 'terminal');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seatTerminal()?.control?.mode)).toBe('control');
   await paste(page, '.seat-input', [{ name: 'shot-a.png' }, { name: 'shot-b.png', color: '#12a26a' }]);
-  await expect.poll(async () => (await sentOf(page, 'worker.prompt')).map((c) => c.args)).toEqual([
+  await expect.poll(async () => (await sentOf(page, 'worker.paste')).map((c) => c.args)).toEqual([
     { id, text: `[Image #1: ${DROP}/h3d-terminal-pebble-1.png][Image #2: ${DROP}/h3d-terminal-pebble-2.png]` },
   ]);
   await expect.poll(() => seatNote(page)).toMatch(/Pasted into Pebble.s terminal/);
   await pasteText(page, '.seat-input', 'Run the tests.');
-  await expect.poll(async () => (await sentOf(page, 'worker.prompt')).map((c) => (c.args as { text: string }).text)).toEqual([
+  await expect.poll(async () => (await sentOf(page, 'worker.paste')).map((c) => (c.args as { text: string }).text)).toEqual([
     `[Image #1: ${DROP}/h3d-terminal-pebble-1.png][Image #2: ${DROP}/h3d-terminal-pebble-2.png]`,
     'Run the tests.',
   ]);
   expect(await sentOf(page, 'worker.keys')).toHaveLength(0);
+  expect(await sentOf(page, 'worker.prompt')).toHaveLength(0);
   expect(await page.evaluate(() => window.__h3d.seated())).toBe(id);
   await shot(page, '07-terminal-pasted');
   clean();
@@ -703,20 +705,21 @@ test('terminal: a failed upload (Drop Zone down), a refused file and a pending u
   const clean = scriptErrors(page);
   const { key } = await sitAt(page, 'Pebble', '&fail_upload=1&upload_delay=800');
   await seatMode(page, 'terminal');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seatTerminal()?.control?.mode)).toBe('control');
   await paste(page, '.seat-input', [{ name: 'huge.png', bytes: (25 << 20) + 1 }]);
   await expect.poll(() => seatNote(page)).toMatch(/huge\.png is 25\.0 MB.* Nothing was pasted\./);
   await paste(page, '.seat-input', [{ name: 'a.png' }]);
   await expect.poll(() => seatNote(page)).toMatch(/^Uploading the image for Pebble/);
-  expect(await sentOf(page, 'worker.prompt')).toHaveLength(0);
+  expect(await sentOf(page, 'worker.paste')).toHaveLength(0);
   await expect.poll(() => seatNote(page)).toMatch(/Nothing was pasted into Pebble.s terminal: image 1 \(a\.png\) did not upload \(.*Drop Zone.*\)\. Paste again to retry\./);
   expect((await page.evaluate(() => window.__h3d.seat())).state).toBe('error');
   await expect(page.locator('.toast').last()).toContainText('did not upload');
-  expect(await sentOf(page, 'worker.prompt')).toHaveLength(0);
+  expect(await sentOf(page, 'worker.paste')).toHaveLength(0);
   // Paste again: the fixture fails only the first upload; while it is on its way nothing is sent.
   await paste(page, '.seat-input', [{ name: 'a.png' }]);
   await page.waitForTimeout(200);
-  expect(await sentOf(page, 'worker.prompt')).toHaveLength(0);
-  await expect.poll(async () => (await sentOf(page, 'worker.prompt')).length, { timeout: 10_000 }).toBe(1);
+  expect(await sentOf(page, 'worker.paste')).toHaveLength(0);
+  await expect.poll(async () => (await sentOf(page, 'worker.paste')).length, { timeout: 10_000 }).toBe(1);
   const log = (await page.evaluate(async (k) => (await fetch(`/upload/_log?upload_key=${k}`)).json(), key)).data as Array<{ result: string }>;
   expect(log.map((e) => e.result)).toEqual(['dropzone_unavailable', 'ok']);
   clean();
