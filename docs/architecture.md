@@ -230,6 +230,14 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
     `beginHire` (hub goroutine) copies the profiles, each one's latest Codex reading and the rules; `runHire` reads the
     source folder's origin (`cachedOrigin`, off the hub) and calls the pure `codexaccount.Pick` (rules first, then the
     flagged profiles by what they have left, then the default). Everything after, and every wake, runs on that key.
+    **Shared setup (#167; protocol "Sharing a profile's setup", decisions "#167"):** "Share setup with <default>" links
+    a profile's `config.toml`, `AGENTS.md`, `AGENTS.override.md` and `rules/` to the default home's and writes its own
+    `hooks.json` with the default's commands (`codexaccount.Service.Share`: plan, confirm, apply; anything replaced is
+    backed up as `<name>.before-share-<stamp>`). The hub runs the file work off its goroutine, then
+    `codexapp.SeedHookTrust` trusts the profile's hooks the default trusts, through Codex's own `config/batchWrite`.
+    `Service.Accounts` adds each visible shared profile's drift (read only: links, parsed `hooks.json` commands, real
+    skill folders), so the limits poller's 2-minute listing publishes it in `codex_profiles.update`. A hire on a profile
+    that does not share, or drifted, says so (`codexaccount.SetupNote`).
   - **What a worker hired the usual way (legacy) lacks:** its async questions cannot be answered from the transcript
     (no join, no `worker.answer_async`); it answers them in its terminal, as every Codex worker did before #155. The rest
     (prompts, slash commands, approvals, images, sleep, wake, send home) works as for any Codex worker.
