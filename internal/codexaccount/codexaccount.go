@@ -157,19 +157,21 @@ func clone(set Settings) Settings {
 	return Settings{Overrides: slices.Clone(set.Overrides), Added: append([]string{}, set.Added...), Rules: append([]Rule{}, set.Rules...)}
 }
 
-// Accounts detects the profiles now (a few stat calls and one read of the
-// user's home folder) and applies the settings; a visible profile that
-// shares the default's setup gets its drift (#167: read only).
-func (s *Service) Accounts(context.Context) ([]Account, error) {
-	all := list(s.userHome, s.defaultHome, s.Settings())
-	var def Account
-	for _, a := range all {
-		if a.Default {
-			def = a
-		}
-	}
+// List detects the profiles now (a few stat calls and one read of the
+// user's home folder) and applies the settings, without their drift
+// (#167: Accounts reads it; the hub, which lists here, keeps the drift
+// read off its goroutine: WithDrift).
+func (s *Service) List(context.Context) []Account {
+	return list(s.userHome, s.defaultHome, s.Settings())
+}
+
+// Accounts is List with the drift of each profile checksDrift names
+// (#167: read only, a few files of each).
+func (s *Service) Accounts(ctx context.Context) ([]Account, error) {
+	all := s.List(ctx)
+	def := defaultOf(all)
 	for i, a := range all {
-		if !a.Share || a.Hidden || !a.Exists || !def.Exists {
+		if !checksDrift(def, a) {
 			continue
 		}
 		if items := driftOf(def.Home, def.Name, a.Home, a.Name); len(items) > 0 {
@@ -177,6 +179,55 @@ func (s *Service) Accounts(context.Context) ([]Account, error) {
 		}
 	}
 	return all, nil
+}
+
+// defaultOf is the default profile of a list (zero: none).
+func defaultOf(all []Account) Account {
+	for _, a := range all {
+		if a.Default {
+			return a
+		}
+	}
+	return Account{}
+}
+
+// checksDrift reports whether a's drift is checked: a visible profile
+// that shares the default's setup, its folder and the default's there.
+func checksDrift(def, a Account) bool {
+	return a.Share && !a.Hidden && a.Exists && !a.Default && def.Exists
+}
+
+// DriftCheck is a profile's drift as Accounts read it: the home it read
+// (nil Drift: in step).
+type DriftCheck struct {
+	Home  string
+	Drift *Drift
+}
+
+// DriftChecks are the checks of a list from Accounts, by key: each profile
+// whose drift it read.
+func DriftChecks(all []Account) map[string]DriftCheck {
+	def := defaultOf(all)
+	out := map[string]DriftCheck{}
+	for _, a := range all {
+		if checksDrift(def, a) {
+			out[a.Key] = DriftCheck{Home: a.Home, Drift: a.Drift}
+		}
+	}
+	return out
+}
+
+// WithDrift is a list from List with the drift of each profile checked
+// now from checks (read earlier, off the hub goroutine), where its key
+// still names the same home.
+func WithDrift(all []Account, checks map[string]DriftCheck) []Account {
+	def := defaultOf(all)
+	for i, a := range all {
+		if c, ok := checks[a.Key]; ok && c.Home == a.Home && checksDrift(def, a) {
+			all[i].Drift = c.Drift
+		}
+	}
+	return all
 }
 
 // found is a home before the settings apply.

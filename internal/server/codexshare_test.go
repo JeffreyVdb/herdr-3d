@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -257,5 +258,48 @@ func TestCodexShareTrustErrorNotLogged(t *testing.T) {
 	}
 	if got := log.String(); strings.Contains(got, shareSecret) || !strings.Contains(got, "app-server error -32600") {
 		t.Fatalf("log %s", got)
+	}
+}
+
+// Review R7: codex_profiles.get and .set read no drift file on the hub
+// goroutine: they show the drift as last read off it (the poller's, a
+// share's or a move's). With no poller, a hooks.json changed after a share
+// (a FIFO here: read nowhere without blocking) shows only once a move
+// reads the drift again.
+func TestCodexShareDriftReadOffHub(t *testing.T) {
+	t.Parallel()
+	home := shareHome(t)
+	work := filepath.Join(home, ".codex-work")
+	opts := profilesOptions(home, &profileRunner{})
+	opts.Limits = nil
+	b := startBridge(t, "", opts)
+	a := b.connect(proto.Hello{Client: "a"})
+	a.snapshot()
+	shareAck(t, a, proto.CodexShareArgs{Key: "work", Share: ptr(true), Replace: []string{"config.toml"}})
+	hooks := filepath.Join(work, "hooks.json")
+	if err := os.Remove(hooks); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(hooks, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(work, "skills", "mine"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, get := a.mustAck(proto.CmdCodexProfilesGet, struct{}{})
+	_, set := a.mustAck(proto.CmdCodexProfilesSet, proto.CodexProfilesSetArgs{Key: "work", Name: ptr("Work")})
+	for _, ack := range []any{get.Data, set.Data} {
+		p := profilesOf(t, ack)
+		if d := profileByKey(&p, "work").Drift; d != nil {
+			t.Fatalf("drift read on the hub goroutine: %+v", d)
+		}
+	}
+	_, move := a.mustAck(proto.CmdCodexProfilesMoveSkill, proto.CodexMoveSkillArgs{Key: "work", Skill: "mine"})
+	var done proto.CodexShareAck
+	if err := json.Unmarshal(mustMarshal(t, move.Data), &done); err != nil {
+		t.Fatal(err)
+	}
+	if d := profileByKey(&done.CodexProfiles, "work").Drift; len(d) != 1 || d[0].Kind != "hooks_differ" {
+		t.Fatalf("drift after the move: %+v", d)
 	}
 }

@@ -9,10 +9,12 @@ package server
 // plan in its latest limits reading.
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -29,6 +31,24 @@ import (
 type codexProfilesState struct {
 	list []codexaccount.Account // as last listed
 	last string                 // the view last published
+	// drift (#167) is each shared profile's drift as last read: off the
+	// hub goroutine (the limits poller's list, a share's), by key.
+	drift map[string]codexaccount.DriftCheck
+}
+
+// keepDrift keeps the drift a list from Accounts read (off the hub
+// goroutine) for the hub's lists.
+func (h *Hub) keepDrift(list []codexaccount.Account) {
+	if h.cp.drift == nil {
+		h.cp.drift = map[string]codexaccount.DriftCheck{}
+	}
+	maps.Copy(h.cp.drift, codexaccount.DriftChecks(list))
+}
+
+// listCodexProfiles lists the profiles on the hub goroutine: the settings
+// and a few stat calls, the drift as last read (never a file read here).
+func (h *Hub) listCodexProfiles(ctx context.Context) []codexaccount.Account {
+	return codexaccount.WithDrift(h.opts.CodexProfiles.List(ctx), h.cp.drift)
 }
 
 // initCodexProfiles hands the stored settings to the service and lists the
@@ -43,7 +63,8 @@ func (h *Hub) initCodexProfiles(ctx context.Context) error {
 		return err
 	}
 	svc.Configure(codexaccount.Clean(fromStoredProfiles(set)))
-	h.cp.list, _ = svc.Accounts(ctx)
+	h.cp.list, _ = svc.Accounts(ctx) // before the hub runs: the drift read here
+	h.keepDrift(h.cp.list)
 	h.cp.last = string(mustJSON(h.codexProfilesView()))
 	return nil
 }
@@ -157,7 +178,8 @@ func (h *Hub) publishCodexProfiles() {
 }
 
 // startCodexProfiles answers codex_profiles.get and .set on the hub
-// goroutine. Both list the profiles afresh; a change is stored, handed to
+// goroutine. Both list the profiles afresh (their drift as last read: the
+// poller reads it again at its next poll); a change is stored, handed to
 // the service and the poller (which reads a profile shown or added at its
 // next poll), and published before the ack.
 func (h *Hub) startCodexProfiles(ctx context.Context, c *Client, cmd proto.Command) error {
@@ -191,11 +213,7 @@ func (h *Hub) startCodexProfiles(ctx context.Context, c *Client, cmd proto.Comma
 	} else if err := decodeArgs(cmd.Args, &struct{}{}); err != nil {
 		return err
 	}
-	list, err := svc.Accounts(ctx)
-	if err != nil {
-		return err
-	}
-	h.applyCodexAccounts(list)
+	h.applyCodexAccounts(h.listCodexProfiles(ctx))
 	h.audit(ctx, c, cmd, nil)
 	h.reply(c, cmd, h.codexProfilesView(), nil)
 	return nil
@@ -373,7 +391,7 @@ func shareSteps(steps []codexaccount.Step) []proto.CodexShareStep {
 // they are trusted (already, or now: then it says so), else Codex's
 // one-time review (also when this bridge cannot run Codex to seed it).
 func (h *Hub) seedTrust(ctx context.Context, svc *codexaccount.Service, key string) string {
-	list, _ := svc.Accounts(ctx)
+	list := svc.List(ctx)
 	var a, def codexaccount.Account
 	for _, x := range list {
 		if x.Key == key {
@@ -406,39 +424,38 @@ func (h *Hub) seedTrust(ctx context.Context, svc *codexaccount.Service, key stri
 	return ""
 }
 
-// shareDone stores the share setting (set: on or off; nil: as it is),
-// lists the profiles again and publishes them (hub goroutine), and answers
-// the list with what was done.
+// shareDone stores the share setting (set: on or off; nil: as it is) on
+// the hub goroutine, reads the drift with it off the hub goroutine, then
+// lists the profiles and publishes them (hub goroutine), and answers the
+// list with what was done.
 func (h *Hub) shareDone(ctx context.Context, res codexaccount.ShareResult, key string, set *bool) (any, error) {
 	svc := h.opts.CodexProfiles
-	type out struct {
-		v   *proto.CodexProfiles
-		err error
-	}
-	o, err := query(ctx, h, func() out {
-		if set != nil {
+	if set != nil {
+		err, qerr := query(ctx, h, func() error {
 			next, err := svc.SetShare(ctx, key, *set)
 			if err == nil {
 				err = h.st.SaveCodexProfiles(ctx, toStoredProfiles(next))
 			}
-			if err != nil {
-				return out{err: err}
+			if err == nil {
+				svc.Configure(next)
 			}
-			svc.Configure(next)
+			return err
+		})
+		if err = cmp.Or(qerr, err); err != nil {
+			return nil, err
 		}
-		if list, err := svc.Accounts(ctx); err == nil {
-			h.applyCodexAccounts(list)
-		}
+	}
+	drift, _ := svc.Accounts(ctx)
+	v, err := query(ctx, h, func() *proto.CodexProfiles {
+		h.keepDrift(drift)
+		h.applyCodexAccounts(h.listCodexProfiles(ctx))
 		if h.limitsPoller != nil {
 			h.limitsPoller.Relist()
 		}
-		return out{v: h.codexProfilesView()}
+		return h.codexProfilesView()
 	})
-	if err == nil {
-		err = o.err
-	}
 	if err != nil {
 		return nil, err
 	}
-	return proto.CodexShareAck{CodexProfiles: *o.v, Steps: shareSteps(res.Steps), Report: res.Report, Failed: res.Failed}, nil
+	return proto.CodexShareAck{CodexProfiles: *v, Steps: shareSteps(res.Steps), Report: res.Report, Failed: res.Failed}, nil
 }
