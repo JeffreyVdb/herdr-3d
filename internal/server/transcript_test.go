@@ -391,6 +391,71 @@ func TestTranscriptReadLog(t *testing.T) {
 	}
 }
 
+// #149: a worker watched again after the usage rounds dropped its watch
+// gets its log as kept, with what was appended meanwhile: the read waits
+// for no build, and the debug log says reused (with the hit counts), never
+// content.
+func TestTranscriptReturnVisit(t *testing.T) {
+	t.Parallel()
+	const sess = "0a0b0c0d-1491-4491-8491-149149149151"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "-home-u-w1", sess+".jsonl")
+	writeTranscript(t, path, fixture(t, "claude", "message.jsonl"))
+	var logs logBuf
+	b := startBridge(t, "", server.Options{Usage: &server.UsageConfig{Roots: usage.Roots{ClaudeProjects: dir},
+		Interval: 20 * time.Millisecond}, TranscriptFlush: 10 * time.Millisecond,
+		Log: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))})
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	w1 := worker("w1", "a", sess, "working")
+	w1.Harness = world.HarnessClaude
+	b.floor("s1", true, w1)
+	id := workerID(t, c, sess)
+	await := func(msg string, n int) []string {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for len(logs.lines(msg)) < n {
+			if time.Now().After(deadline) {
+				t.Fatalf("no %q: %s", msg, logs.String())
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		return logs.lines(msg)
+	}
+
+	_, ack := c.mustAck(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: id})
+	cold := decode[proto.TranscriptWatchResult](t, ack)
+	c.mustAck(proto.CmdTranscriptUnwatch, proto.WorkerArgs{ID: id})
+	await("transcript log retained", 1)
+	appendLine(t, path, fixtureLine(t, "claude", "user.jsonl", 0))
+	time.Sleep(60 * time.Millisecond) // a few rounds away
+
+	_, ack = c.mustAck(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: id})
+	back := decode[proto.TranscriptWatchResult](t, ack)
+	if len(back.Items) != len(cold.Items)+1 || back.Items[len(back.Items)-1].Kind != proto.ItemUser {
+		t.Fatalf("return visit: %d items after %d", len(back.Items), len(cold.Items))
+	}
+	if l := logs.lines("transcript log built"); len(l) != 1 || !strings.Contains(l[0], "worker="+id) {
+		t.Fatalf("built = %q", l)
+	}
+	r := await("transcript log reused", 1)
+	for _, f := range []string{"level=DEBUG", "worker=" + id, "child=false", "idle_ms=", "footprint=", "items=", "reused=1", "built=1"} {
+		if !strings.Contains(r[0], f) {
+			t.Errorf("reused log lacks %q: %q", f, r[0])
+		}
+	}
+	if l := logs.lines("transcript watch read"); len(l) != 2 || !strings.Contains(l[1], "wait_ms=0") {
+		t.Fatalf("read logs = %q", l)
+	}
+	for _, it := range back.Items {
+		for _, part := range it.Parts {
+			if len(part.Text) > 8 && strings.Contains(logs.String(), part.Text) {
+				t.Errorf("the log has the text of %s", it.ID)
+			}
+		}
+	}
+}
+
 // A transcript's pushes never push a connection past half its send queue:
 // the watch ends with resync instead (the game watches again), and the
 // connection is not dropped as a slow consumer.

@@ -3,6 +3,7 @@ package server
 import (
 	"cmp"
 	"context"
+	"io/fs"
 	"slices"
 	"time"
 
@@ -40,6 +41,16 @@ type UsageConfig struct {
 	// found is read too: its evidence counts once the hub binds it (herdr
 	// reports it), which replays it.
 	CodexChildren func(session string) ChildReader
+	// #149: the transcript logs of workers (and children) nobody watches
+	// any more are kept for a return visit, still fed by their sessions'
+	// tails: each for at most IdleLogTTL since its last watch ended
+	// (default DefaultIdleLogTTL), at most MaxIdleLogs of them (default
+	// DefaultMaxIdleLogs) and at most IdleLogBudget bytes of their
+	// estimated footprints (default DefaultIdleLogBudget). The least
+	// recently watched go first.
+	IdleLogTTL    time.Duration
+	MaxIdleLogs   int
+	IdleLogBudget int64
 }
 
 // ChildReader reads one session's subagent evidence (#23, #25).
@@ -54,6 +65,19 @@ const (
 	DefaultUsageThrottle = 5 * time.Second
 	// WatchedUsageInterval is how often the transcripts are checked while a connection watches one.
 	WatchedUsageInterval = time.Second
+)
+
+// The bounds of the transcript logs kept for return visits (#149,
+// UsageConfig; docs/decisions.md). Each kept log holds its file open (a
+// deleted file's space too, until the TTL) and its index in memory, which
+// grows with the items, not the file: about 0.1 MB for a 220 MB Codex
+// rollout, 1.1 MB for the largest of a thousand real transcripts. The
+// budget holds eight of that one twice over: the count binds, the budget
+// stops an index far past any seen.
+const (
+	DefaultIdleLogTTL    = 10 * time.Minute
+	DefaultMaxIdleLogs   = 8
+	DefaultIdleLogBudget = 16 << 20
 )
 
 // usageWorker is what the tracker needs of a worker.
@@ -158,6 +182,12 @@ type usageTracker struct {
 	callShown map[string]string
 	callUps   []callsUpdate
 	now       func() time.Time
+	// #149: how a watched transcript's log is made (transcript.Follow;
+	// tests count it), this round's events of the logs kept for return
+	// visits, and how many watches reused one or built one since the start.
+	follow        func(harness, path string, fi fs.FileInfo, next int64, opts ...transcript.Option) (*transcript.Log, error)
+	logEvents     []logEvent
+	reused, built int
 }
 
 // foundCodex is a Codex session found by a worker's cwd, and when.
@@ -176,6 +206,15 @@ func newUsageTracker(cfg UsageConfig) *usageTracker {
 	if cfg.Throttle <= 0 {
 		cfg.Throttle = DefaultUsageThrottle
 	}
+	if cfg.IdleLogTTL <= 0 { // #149
+		cfg.IdleLogTTL = DefaultIdleLogTTL
+	}
+	if cfg.MaxIdleLogs <= 0 {
+		cfg.MaxIdleLogs = DefaultMaxIdleLogs
+	}
+	if cfg.IdleLogBudget <= 0 {
+		cfg.IdleLogBudget = DefaultIdleLogBudget
+	}
 	if cfg.FindCodex == nil {
 		f := &codex.Finder{Root: cfg.Roots.CodexSessions}
 		cfg.FindCodex = func(cwd string, skip func(string) bool) (string, error) {
@@ -191,7 +230,7 @@ func newUsageTracker(cfg UsageConfig) *usageTracker {
 		asks: map[string]*transcript.AskTracker{}, askShown: map[string]askShown{}, lines: map[string]*txLines{},
 		fuOffered: map[string]followupOffered{}, actOffered: map[string]activityOffered{}, dgOffered: map[string]digestOffered{},
 		hoOffered: map[string]handoffOffered{}, kids: map[string]ChildReader{}, calls: map[string]*transcript.CallTracker{},
-		callShown: map[string]string{}, now: time.Now}
+		callShown: map[string]string{}, now: time.Now, follow: transcript.Follow}
 }
 
 // trackUsage runs the tracker until ctx is done.
@@ -246,7 +285,7 @@ func (tr *usageTracker) closeLogs() {
 		delete(tr.logs, id)
 	}
 	for id := range tr.kidLogs {
-		tr.closeKidLogs(id, nil)
+		tr.closeKidLogs(id, time.Time{})
 	}
 }
 
@@ -259,6 +298,9 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 	ups := tr.poll(ws, h.opts.Now())
 	for id, o := range tr.txOffers { // M16 transcript
 		h.tx.offer(id, o)
+	}
+	for _, e := range tr.logEvents { // #149
+		h.logKeptLog(e)
 	}
 	asks := tr.askUps              // #57
 	wraps := tr.wrapUps            // #83
@@ -317,7 +359,7 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 	ws = tr.findCodex(ws, now)
 	tr.askUps, tr.wrapUps, tr.pasted, tr.followUps, tr.actUps, tr.dgUps, tr.hoUps = nil, nil, nil, nil, nil, nil, nil
-	tr.agentUps, tr.callUps = nil, nil
+	tr.agentUps, tr.callUps, tr.logEvents = nil, nil, nil
 	var ups []usageUpdate
 	seen := map[string]bool{}
 	for _, w := range ws {
@@ -372,8 +414,8 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			delete(tr.throttle.shown, w.id)
 		}
 		s := tr.sessions[w.id]
-		tr.syncTranscript(w, s, tr.keys[w.id])
-		tr.syncKidTranscripts(w, s)                          // #26
+		tr.syncTranscript(w, s, tr.keys[w.id], now)
+		tr.syncKidTranscripts(w, s, now)                     // #26
 		tr.wrapBefore(w)                                     // #83
 		tr.agentBefore(w)                                    // #224
 		if l := tr.lines[w.id]; l != nil && l.paste != nil { // #95
@@ -402,8 +444,8 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			l.activity.Status(w.status, w.idleAt)
 		}
 		u, ok := s.Poll(now)
-		tr.syncTranscript(w, s, tr.keys[w.id])
-		tr.syncKidTranscripts(w, s) // #26
+		tr.syncTranscript(w, s, tr.keys[w.id], now)
+		tr.syncKidTranscripts(w, s, now) // #26
 		tr.offerAsk(w)
 		tr.offerCalls(w) // #106
 		tr.offerWrapUp(w)
@@ -444,13 +486,12 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 	}
 	for id, l := range tr.logs {
 		if !seen[id] {
-			l.log.Close()
-			delete(tr.logs, id)
+			tr.dropLog(id, l, nil, keptGone, now)
 		}
 	}
 	for id := range tr.kidLogs { // #26
 		if !seen[id] {
-			tr.closeKidLogs(id, nil)
+			tr.closeKidLogs(id, now)
 		}
 	}
 	for id, l := range tr.lines { // #95
@@ -458,6 +499,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			tr.pasted = append(tr.pasted, id)
 		}
 	}
+	tr.evictLogs(now) // #149
 	tr.txOffers = tr.offers(ws)
 	return ups
 }
