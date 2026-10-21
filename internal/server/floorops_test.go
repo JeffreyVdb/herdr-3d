@@ -40,7 +40,7 @@ type fakeHerdr struct {
 	remoteErr, embeddedErr error
 	// #139: ExportCodexHome fails with it.
 	exportErr error
-	gate                   chan struct{} // StartSession waits for it when set
+	gate      chan struct{} // StartSession waits for it when set
 	// #58 session.create: what `session list` says, CreateSession's error
 	// and hook (after it "started" the server), and the gate a create of
 	// holdCreate waits for.
