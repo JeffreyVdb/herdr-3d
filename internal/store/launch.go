@@ -71,9 +71,10 @@ type Preset struct {
 }
 
 type hireJSON struct {
-	Harness string `json:"harness"`
-	Model   string `json:"model"`
-	Effort  string `json:"effort"`
+	Harness      string `json:"harness"`
+	Model        string `json:"model"`
+	Effort       string `json:"effort"`
+	CodexProfile string `json:"codex_profile,omitempty"` // #167
 }
 
 type rolesJSON struct {

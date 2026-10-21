@@ -61,14 +61,18 @@ func (h *Hub) loadLaunch(ctx context.Context) error {
 }
 
 func presetView(p store.Preset) proto.Preset {
-	v := func(x store.Hire) proto.Hire { return proto.Hire{Harness: x.Harness, Model: x.Model, Effort: x.Effort} }
+	v := func(x store.Hire) proto.Hire {
+		return proto.Hire{Harness: x.Harness, Model: x.Model, Effort: x.Effort, CodexProfile: x.CodexProfile}
+	}
 	return proto.Preset{ID: p.ID, Name: p.Name, Seeded: p.Seeded, Roles: proto.PresetRoles{
 		Orch: v(p.Roles.Orch), Coder: v(p.Roles.Coder), Reviewer: v(p.Roles.Reviewer), UX: v(p.Roles.UX),
 		Researcher: v(p.Roles.Researcher)}}
 }
 
 func storeRoles(r proto.PresetRoles) store.PresetRoles {
-	v := func(x proto.Hire) store.Hire { return store.Hire{Harness: x.Harness, Model: x.Model, Effort: x.Effort} }
+	v := func(x proto.Hire) store.Hire {
+		return store.Hire{Harness: x.Harness, Model: x.Model, Effort: x.Effort, CodexProfile: x.CodexProfile}
+	}
 	return store.PresetRoles{Orch: v(r.Orch), Coder: v(r.Coder), Reviewer: v(r.Reviewer), UX: v(r.UX), Researcher: v(r.Researcher)}
 }
 
@@ -98,18 +102,37 @@ func (h *Hub) lastPresetOf(session string) string {
 	return id
 }
 
-// validRoles checks all five roles against hire_options.
-func (h *Hub) validRoles(r proto.PresetRoles) error {
+// validRoles checks all five roles against hire_options, and (#167) each
+// one's Codex profile as a hire preset's is checked: keep are the roles as
+// stored (preset.update's), whose profile a role keeps even when gone.
+func (h *Hub) validRoles(r, keep proto.PresetRoles) error {
 	opts := h.hireOptions()
 	for _, role := range []struct {
-		name string
-		hire proto.Hire
-	}{{"orch", r.Orch}, {"coder", r.Coder}, {"reviewer", r.Reviewer}, {"ux", r.UX}, {"researcher", r.Researcher}} {
+		name       string
+		hire, kept proto.Hire
+	}{{"orch", r.Orch, keep.Orch}, {"coder", r.Coder, keep.Coder}, {"reviewer", r.Reviewer, keep.Reviewer}, {"ux", r.UX, keep.UX},
+		{"researcher", r.Researcher, keep.Researcher}} {
 		if err := validHireIn(opts, role.hire); err != nil {
 			return bad("roles.%s: %v", role.name, err)
 		}
+		if role.hire.Harness != "codex" && role.hire.CodexProfile != "" {
+			return bad("roles.%s: codex_profile is for a Codex role, not %q", role.name, role.hire.Harness)
+		}
+		if err := h.checkProfileKey(role.hire.Harness, role.hire.CodexProfile, role.kept.CodexProfile); err != nil {
+			return roleError("roles."+role.name, err)
+		}
 	}
 	return nil
+}
+
+// roleError is a role's error with its name first, in the error's own
+// kind (a not_found stays one).
+func roleError(name string, err error) error {
+	var b *badArgsError
+	if errors.As(err, &b) {
+		return bad("%s: %v", name, b.err)
+	}
+	return fmt.Errorf("%s: %w", name, err)
 }
 
 // presetCommand runs preset.create, preset.update and preset.delete.
@@ -120,7 +143,7 @@ func (h *Hub) presetCommand(ctx context.Context, cmd proto.Command) (any, error)
 		if err := decodeArgs(cmd.Args, &a); err != nil {
 			return nil, err
 		}
-		if err := h.validRoles(a.Roles); err != nil {
+		if err := h.validRoles(a.Roles, proto.PresetRoles{}); err != nil {
 			return nil, err
 		}
 		p, err := h.st.CreatePreset(ctx, "p_"+randHex(6), a.Name, storeRoles(a.Roles))
@@ -150,7 +173,7 @@ func (h *Hub) presetCommand(ctx context.Context, cmd proto.Command) (any, error)
 			next.Name = name
 		}
 		if a.Roles != nil {
-			if err := h.validRoles(*a.Roles); err != nil {
+			if err := h.validRoles(*a.Roles, presetView(cur).Roles); err != nil {
 				return nil, err
 			}
 			next.Roles = storeRoles(*a.Roles)
@@ -367,6 +390,9 @@ func (h *Hub) startRunPrepare(ctx context.Context, c *Client, cmd proto.Command)
 		if err := validHireIn(h.hireOptions(), *a.Orch); err != nil {
 			return bad("orch: %v", err)
 		}
+		if err := h.checkProfileKey(a.Orch.Harness, a.Orch.CodexProfile, ""); err != nil { // #167
+			return roleError("orch", err)
+		}
 		o := *a.Orch
 		orch = &o
 	case havePreset:
@@ -379,23 +405,29 @@ func (h *Hub) startRunPrepare(ctx context.Context, c *Client, cmd proto.Command)
 	}
 	res := proto.RunPrepareResult{Preset: p.ID, Orch: orch, Cwd: cwd, Capacity: h.capacity(a.Floor)}
 	roles := presetView(p).Roles
-	compose := func(t *proto.RunTicket) {
+	// #167: the preview names the team's profiles as run.start would pick
+	// them now; a role whose profile cannot be used is on the default here
+	// (run.start refuses it).
+	ask, _ := h.askTeam(roles, cwd, false)
+	call := ""
+	if orch != nil {
+		call = h.writeCodeCall(orch.Harness)
+	}
+	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
+		t := ticket
+		if resolve != nil {
+			var err error
+			if t, err = resolve(ctx); err != nil {
+				return nil, err
+			}
+		}
 		res.Ticket = t
 		if t != nil {
 			res.Label = runLabel(t)
 			if havePreset && orch != nil {
-				res.Prompt = TicketPrompt(h.writeCodeCall(orch.Harness), t, roles, a.Floor, a.Extra)
+				team, _ := h.resolveTeam(ctx, ask, false)
+				res.Prompt = TeamPrompt(call, t, roles, team.profiles, a.Floor, a.Extra)
 			}
-		}
-	}
-	compose(ticket)
-	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
-		if resolve != nil {
-			t, err := resolve(ctx)
-			if err != nil {
-				return nil, err
-			}
-			compose(t)
 		}
 		res.Git = h.gitInfo(ctx, cwd, !a.Preview)
 		if h.opts.Load != nil {
@@ -562,6 +594,64 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 	if !ok {
 		return fmt.Errorf("%w: preset %q", store.ErrNotFound, a.Preset)
 	}
+	// #167: the orchestrator's profile is a hire's (beginHire checks it
+	// again), said here as the run's; the roles' are resolved once, off
+	// the hub goroutine, unless the prompt is the user's own.
+	if err := h.checkProfileKey(a.Orch.Harness, a.Orch.CodexProfile, ""); err != nil {
+		return roleProfileError("orchestrator's", err)
+	}
+	var ask *teamAsk
+	if a.Prompt == "" {
+		cwd, err := h.hireCwd(a.Floor, f, "")
+		if err != nil {
+			return err
+		}
+		if ask, err = h.askTeam(presetView(p).Roles, cwd, true); err != nil {
+			return err
+		}
+	}
+	if ask == nil {
+		return h.launchRun(ctx, c, cmd, a, ticket, p, f, runTeam{}, sec)
+	}
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		team, err := h.resolveTeam(ctx, ask, true)
+		if derr := h.doWait(ctx, func() {
+			var f *floorState
+			if err == nil {
+				f, err = h.hireFloor(a.Floor)
+			}
+			if err == nil && sec != nil { // #108 review B2: the switch changed while the team was resolved
+				err = h.reviewCurrent(sec.rev)
+			}
+			if err == nil {
+				if cur, ok := h.presets[a.Preset]; !ok {
+					err = fmt.Errorf("%w: preset %q", store.ErrNotFound, a.Preset)
+				} else if cur != p {
+					err = fmt.Errorf("%w: the team preset changed while its Codex profiles were read: start the run again", errStale)
+				}
+			}
+			if err == nil {
+				err = h.launchRun(ctx, c, cmd, a, ticket, p, f, team, sec)
+			}
+			if err != nil {
+				h.dropHireSecrets(ctx, sec)
+				h.audit(ctx, c, cmd, err)
+				h.reply(c, cmd, nil, err)
+			}
+		}); derr != nil {
+			h.log.Warn("command abandoned", "cmd", cmd.T, "err", derr)
+		}
+	}()
+	return nil
+}
+
+// launchRun is runStart with its ticket, preset and (#167) team resolved:
+// the prompt composed with the team's profiles, and the orchestrator's
+// hire begun (beginHire) on its own profile.
+func (h *Hub) launchRun(ctx context.Context, c *Client, cmd proto.Command, a proto.RunStartArgs, ticket *proto.RunTicket, p store.Preset,
+	f *floorState, team runTeam, sec *hireSecrets) error {
 	// #39: what was typed (the extra, or an edited prompt whole) is
 	// translated for the orchestrator's harness when the hire sends it, never
 	// the ticket the bridge composes around the extra (an issue's text).
@@ -569,8 +659,8 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 	var compose firstPrompt
 	if prompt == "" {
 		call, roles := h.writeCodeCall(a.Orch.Harness), presetView(p).Roles
-		prompt = TicketPrompt(call, ticket, roles, a.Floor, a.Extra)
-		compose = func(tr func(string) string) string { return TicketPrompt(call, ticket, roles, a.Floor, tr(a.Extra)) }
+		prompt = TeamPrompt(call, ticket, roles, team.profiles, a.Floor, a.Extra)
+		compose = func(tr func(string) string) string { return TeamPrompt(call, ticket, roles, team.profiles, a.Floor, tr(a.Extra)) }
 	}
 	label := a.Label
 	if label == "" {
@@ -587,7 +677,7 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 		launch.TicketText = ticket.Text
 	}
 	hire := proto.WorkerHireArgs{Floor: a.Floor, Session: f.session, DeskIndex: a.DeskIndex, Harness: a.Orch.Harness, Model: a.Orch.Model,
-		Effort: a.Orch.Effort, Label: label, Worktree: worktree, Prompt: prompt}
+		Effort: a.Orch.Effort, Label: label, Worktree: worktree, Prompt: prompt, CodexProfile: a.Orch.CodexProfile}
 	return h.beginHire(ctx, c, cmd, hire, func(ctx context.Context, res proto.HireResult, rep *hireReport, sent string) any {
 		launch.OrchWorkerID = res.ID
 		rep.Launch = launch.ID
@@ -611,7 +701,9 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 				h.lastPreset[a.Floor] = p.ID
 			}
 		}
-		return proto.RunStartResult{HireResult: res, LaunchID: launch.ID, Prompt: sent}
+		out := proto.RunStartResult{HireResult: res, LaunchID: launch.ID, Prompt: sent}
+		teamReport(rep, &out, team)
+		return out
 	}, compose, nil, sec)
 }
 

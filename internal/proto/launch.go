@@ -142,4 +142,9 @@ type RunStartResult struct {
 	HireResult
 	LaunchID string `json:"launch_id"`
 	Prompt   string `json:"prompt"`
+	// #167: what run.start found about the team's Codex profiles: Auto's
+	// pick per role and why ("reviewers: rule … picked Work"; "; "
+	// between them), and the notes of their homes that run no herdr hook.
+	CodexTeamReason string `json:"codex_team_reason,omitempty"`
+	CodexTeamNote   string `json:"codex_team_note,omitempty"`
 }

@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -136,5 +137,45 @@ func TestItemPrompt(t *testing.T) {
 	issue := &proto.RunTicket{Kind: proto.TicketIssue, Repo: "JeffreyVdb/lab", Number: 3, URL: server.IssueURL("JeffreyVdb/lab", 3)}
 	if got := server.TicketPrompt("/write-code", issue, buildTeam, "s", ""); got != server.RunPrompt("/write-code", issue.URL, true, buildTeam, "s", "") {
 		t.Fatalf("issue prompt = %q", got)
+	}
+}
+
+// #167: a Codex role on another profile than the bridge's own has its
+// profile's name, home and token on its team line, and one line after the
+// hiring lines says how to start and tag such an agent. A team all on the
+// default (no profiles, or each one the default) is the prompt it always
+// was, also when the roles' own codex_profile say "auto" or a key.
+func TestTeamPromptProfiles(t *testing.T) {
+	t.Parallel()
+	ticket := &proto.RunTicket{Kind: proto.TicketText, Text: "Fix the lobby."}
+	team := buildTeam
+	team.Reviewer.CodexProfile, team.Researcher.CodexProfile = "auto", "work"
+	want := "/write-code Fix the lobby.\n\n" + buildHead
+	for _, profiles := range []server.TeamProfiles{nil, {}} {
+		if got := server.TeamPrompt("/write-code", ticket, team, profiles, "s", ""); got != want {
+			t.Fatalf("all on the default =\n%s\nwant\n%s", got, want)
+		}
+	}
+	profiles := server.TeamProfiles{
+		"reviewer":   {Key: "work", Name: "Work", Home: "/home/u/.codex-work"},
+		"researcher": {Key: "lab-1a2b3c", Name: "Lab", Home: "/data/lab"},
+	}
+	got := server.TeamPrompt("/write-code", ticket, team, profiles, "s", "Keep it small.")
+	want = "/write-code Fix the lobby.\n\nTeam:\n" +
+		"- coders: claude claude-opus-5-5, effort medium\n" +
+		"- reviewers: codex gpt-6-sol, reasoning high, Codex profile Work (CODEX_HOME=/home/u/.codex-work, token h3d_codex_profile=work)\n" +
+		"- ux reviewers: codex gpt-6-sol, reasoning high\n" +
+		"- researchers: codex gpt-6-sol, reasoning low, Codex profile Lab (CODEX_HOME=/data/lab, token h3d_codex_profile=lab-1a2b3c)\n\n" +
+		placementLine + "\n\n" + floorLineS + "\n\n" + agentLineT + "\n\n" +
+		"Start an agent whose team line names a Codex profile with CODEX_HOME set to that folder for its Codex: " +
+		"create its workspace with herdr workspace create --env CODEX_HOME=<folder> (or run export CODEX_HOME=<folder> in its pane before herdr agent start), " +
+		"and also tag that workspace with the token h3d_codex_profile=<key> its team line gives, in the same herdr workspace report-metadata call as its other h3d_ tokens: " +
+		"the floor then reads that agent's transcript in that profile's folder." +
+		"\n\nKeep it small."
+	if got != want {
+		t.Fatalf("prompt =\n%s\nwant\n%s", got, want)
+	}
+	if strings.Contains(got, "auto") {
+		t.Fatalf("the prompt says auto: %s", got)
 	}
 }
