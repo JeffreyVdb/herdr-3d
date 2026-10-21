@@ -1273,7 +1273,8 @@ client must not put a path in a marker that did not come from `POST /upload`. Th
 | command | field | cap (bytes, markers included) | sent |
 |---|---|---|---|
 | `worker.hire` | `prompt` | 32 KiB (`herdr.MaxPrompt`) | the hire dialog's first task |
-| `worker.prompt` | `text` | 16 KiB (`herdr.MaxMessage`) | the P overlay, the transcript view's prompt box, a paste at a laptop's terminal (an agent only: a plain shell answers `invalid_state`, so the game says an image cannot be pasted there before it uploads anything) |
+| `worker.prompt` | `text` | 16 KiB (`herdr.MaxMessage`) | the P overlay, the transcript view's prompt box, a paste at a laptop's terminal the seat does not own (an agent only: a plain shell answers `invalid_state`, so the game says an image cannot be pasted there before it uploads anything) |
+| `worker.paste` | `text` | 16 KiB (`herdr.MaxMessage`, NUL and paste markers not counted) | #176 part 2: a paste at a laptop's terminal the seat owns (an agent's markers are inserted, not submitted; a shell still takes no image) |
 | `run.prepare`, `run.start` | `extra` | 8 KiB (`maxRunExtra`) | Start Run's Extra instructions; the bridge folds it, trimmed, into the orchestrator's first prompt, so `run.prepare`'s `prompt` shows the markers (#39: and `/skill`, `@path` as typed; `run.start` rewrites them for Codex when it sends the prompt) |
 | `run.start` | `prompt` | 32 KiB (the hire's) | an edited First prompt, as it is; never sent when not edited (the bridge composes it) |
 
@@ -2960,7 +2961,7 @@ for it instead of an observer, `herdr --session <s> terminal session control <pa
 ```json
 {"t":"terminal.watch","req_id":"60","args":{"id":"6db1905e-…","fps":15,"cols":150,"rows":41,"fullscreen":false,"control":true}}
 {"t":"ack","req_id":"60","data":{"pane":"w1:p1","cols":150,"rows":41,"zoom":{"state":"single","applied":false},"control":true}}
-{"t":"terminal.control","id":"6db1905e-…","pane":"w1:p1","mode":"control","cols":150,"rows":41}
+{"t":"terminal.control","id":"6db1905e-…","pane":"w1:p1","mode":"control","cols":150,"rows":41,"paste":true,"mouse":true}
 {"t":"terminal.frame","id":"6db1905e-…","pane":"w1:p1","n":1,"full":true,"cols":150,"rows":41,"data":"G1s/MjAyNmgb…"}
 {"t":"terminal.resize","req_id":"61","args":{"id":"6db1905e-…","cols":132,"rows":38,"cell_width_px":8,"cell_height_px":17}}
 {"t":"ack","req_id":"61","data":{"cols":132,"rows":38}}
@@ -2970,6 +2971,10 @@ for it instead of an observer, `herdr --session <s> terminal session control <pa
 {"t":"terminal.history","id":"6db1905e-…","pane":"w1:p1","offset":6,"max":279,"rows":38}
 {"t":"terminal.scroll","req_id":"63","args":{"id":"6db1905e-…","bottom":true}}
 {"t":"terminal.history","id":"6db1905e-…","pane":"w1:p1","offset":0,"max":279,"rows":38}
+{"t":"worker.paste","req_id":"64","args":{"id":"6db1905e-…","text":"first line\nsecond line"}}
+{"t":"ack","req_id":"64","data":{}}
+{"t":"terminal.mouse","req_id":"65","args":{"id":"6db1905e-…","button":"left","column":5,"row":2}}
+{"t":"ack","req_id":"65"}
 ```
 
 - **The watch.** `cols` × `rows` (40–300 × 10–100; absent: the pane's size) is the PTY's size from the attach on.
@@ -2994,7 +2999,9 @@ for it instead of an observer, `herdr --session <s> terminal session control <pa
   took it with `--takeover`) or `failed` (the controller kept failing: 4 failures in 30 s). Read only, the observer
   has the **pane's own size** (an observer does not reflow) and follows it like a watch without `cols` (#74's
   `terminal.state`); the bridge never retries control (sit again for that). `cols` × `rows` is the size of the
-  frames from then on. Two game connections at one worker: the second is `busy`.
+  frames from then on. Two game connections at one worker: the second is `busy`. #176 part 2: while owned it says
+  what else the pane takes: `paste: true` (`worker.paste`) and `mouse: true` (`terminal.mouse`: the bridge's herdr is
+  0.9.2 or later, read once with `herdr --version`); both absent read only and from a bridge before them.
 - **`terminal.resize`** `{id, cols, rows, cell_width_px?, cell_height_px?}` (40–300 × 10–100, a cell 0–256 px; a
   smaller area is the client's to clip): the PTY's new size, for the connection's control watch of the worker. The
   ack is `{cols, rows}`; herdr answers with a full frame at that size. While the controller is between processes
@@ -3011,6 +3018,47 @@ for it instead of an observer, `herdr --session <s> terminal session control <pa
   bridge reads it a few times after a scroll and about once a second while the view is above the live bottom (new
   output does not move the view, herdr keeps it where it was, so the offset grows and no frame comes for it).
   Lossy like `terminal.state` (dropped when the connection has no room; the next reading sends it again).
+- **`worker.paste`** `{id, text, secrets?}` (#176 part 2, fixes #38 for a seat that owns its pane) inserts `text`
+  where the terminal's cursor is, as a terminal's paste does, and never submits it: no Enter is added. It goes to the
+  controller as **one** `terminal.input` whose text is `ESC[200~` + text + `ESC[201~`: herdr hands an application that
+  asked for bracketed paste (DECSET 2004: a shell's readline, Claude Code, Codex) a bracketed paste, and strips the
+  markers for one that did not (measured on 0.9.1 and 0.9.5; `pane send-text` would type the markers literally, so it
+  is never used for this). Before it is wrapped NUL and any `ESC[200~` / `ESC[201~` are removed from the text (one
+  inside would end herdr's envelope early and herdr would write the whole line raw) and line ends become CR (`\r`,
+  Enter's byte, as a terminal's paste sends them: in raw mode a `\n` is Ctrl+J). `text` is UTF-8, at most 16 KiB once
+  stripped (`bad_request`; an empty one is an ack that sends nothing). It works for a shell and an agent alike, in any
+  state: a question's or an approval's own input takes it as typed text (it is not `worker.prompt`, whose guards
+  stay). It needs the connection's control watch of the worker owning the pane: `bad_request` without one,
+  `invalid_state` read only or while the controller is starting, checked again when its turn comes. It runs on the
+  worker's input lane, in order with `worker.keys` before and after it: the next keys go by `pane send-keys`, another
+  way into herdr, so the bridge sends a resize to the size asked last with the paste and ends the job once herdr's
+  full frame for it came (herdr acknowledges no input, but answers each resize with a full frame after what came
+  before it; at most 2 s, then it goes on). The game's screen gets that full frame too. A full controller queue makes room as the reset to live
+  does (queued wheels are moot once input lands); a paste that still finds no room, or that is dropped when the pane
+  is released, fails with `input_failed`, never silently. A paste still queued when its 5 s run out (or the bridge
+  stops) is taken out of the queue and fails: it is never written later, behind what was typed after it; once herdr's
+  stdin is taking it, the job waits for that write, so the lane's next input cannot overtake it. #108: an agent's
+  paste goes through the same gate as its prompt (with prompt secrets reviewed, a possible secret without `secrets` is
+  `secrets_review_required`; with a review, the protected ranges go as file references, checked again right before
+  the paste is written; a paste that failed before any of it was written removes its files, one whose write failed
+  leaves them the worker's, as some of it may be with the pane); the review is of the text the bridge scans, the text
+  with NUL and paste markers removed (a client strips them first, `herdr.PasteStrip`'s rule: the game's `pasteStrip`
+  passes its test vectors, `internal/herdr/testdata/paste-strip.json`; a review of the unstripped text is
+  `secrets_review_stale`); the ack's `sent` is then the text pasted and `protected` the ranges that went to files. A shell's paste is not scanned (as its
+  keys), unless a review comes with it. The game sends it only when `terminal.control` says `paste`; otherwise (read
+  only, an older bridge) a paste goes as before (`worker.prompt` for an agent, `worker.keys` for a shell).
+- **`terminal.mouse`** `{id, button?, column, row, modifiers?}` (#176 part 2) is a click: `button` `left` (the default),
+  `right` or `middle`, on cell `column` × `row` (0-based, inside the controlled grid: `bad_request` otherwise, as herdr
+  would drop it silently), `modifiers` 0–7 (Shift 1, Ctrl 2, Alt 4). The bridge writes the controller's
+  `terminal.mouse` `down` then `up` at that cell; herdr gives it to an application that turned mouse reporting on (SGR
+  `ESC[<0;col+1;row+1M` / `m`, measured on 0.9.5) and to nothing else: a shell gets no byte. Only when
+  `terminal.control` says `mouse` (herdr 0.9.2 or later; older is `invalid_state` "mouse clicks need herdr 0.9.2 or
+  newer", and its CLI would ignore the line); the same watch rules as `worker.paste`; on the worker's input lane in
+  order with the keys; at most 10 a second per watch (`capacity`). Clicks only: no drag or motion reporting. Unlike
+  typing, a click leaves an armed wrap-up, a handoff request and follow-up questions as they are (herdr drops it for
+  an application without mouse reporting, and the bridge cannot tell). The game
+  sends a left click that selected nothing, did not move off its cell and opened no link, and none while the view is
+  up the history.
 - **Typing returns to the live bottom.** Every input to the worker (`worker.keys`, `worker.prompt`, `worker.answer`,
   every command on its input lane) first brings each controlled view of the worker back to the live bottom (herdr's
   `pane send-keys` / `send-text` alone would leave it where it is), in lane order, and says so (`terminal.history`
@@ -3024,11 +3072,12 @@ for it instead of an observer, `herdr --session <s> terminal session control <pa
   screen attached to the session shows the pane at the game's size (wrapped or padded in its split) until you stand
   up. Typing in the TUI still works.
 - **Limits.** Herdr's controller closes a client that sends more than 1 MiB of input at once (silently): the bridge
-  writes at most 64 KiB per command (the commands of #176 are a few dozen bytes). Mouse clicks to applications
-  (`terminal.mouse`, herdr 0.9.2+), pasting through the controller's bracketed paste and a history scrollbar are not
-  part of this: paste goes through `worker.prompt` / `worker.keys` as before.
-- **Audit.** `terminal.watch` (with `control`), `terminal.resize` and `terminal.scroll` are audited like the other
-  laptop commands, with their arguments (sizes, directions, line counts: no content). A client batches wheel events
+  writes at most 128 KiB per command (the commands are a few dozen bytes; a 16 KiB paste is at most about 98 KiB once
+  JSON escapes its control characters). Not done: drag and motion mouse reporting, pixel mouse (herdr's CLI sends
+  cells only), and reading the application's mouse or paste mode (herdr's JSONL stream does not carry them).
+- **Audit.** `terminal.watch` (with `control`), `terminal.resize`, `terminal.scroll` and `terminal.mouse` are audited
+  like the other laptop commands, with their arguments (sizes, directions, line counts, cells: no content);
+  `worker.paste` by its lengths (`text_bytes`, `text_runes`) and its review's decision counts, never its text. A client batches wheel events
   (the game: at most one `terminal.scroll` per 60 ms) and debounces resizes, so the rows stay few.
 
 #### Input
@@ -3064,7 +3113,8 @@ refusing is `input_failed` (the message says which step and why).
 0.9.0 takes a leading `--` as text, too). Only for a worker with an agent (`agent_kind`); a plain shell is
 `invalid_state` (use `worker.keys`), and so is a `blocked` worker (answer its question first; herdr would refuse with
 `agent_blocked`), except a shared Codex worker blocked only by an async question (#156: sent through its app-server,
-see [Codex async questions](#codex-async-questions)). The game uses it for paste too.
+see [Codex async questions](#codex-async-questions)). The game uses it for paste on a seat it does not own (read only,
+or a bridge before `worker.paste`); on one it owns a paste is `worker.paste`, inserted and never submitted.
 
 **Claude** (#95): the prompt is **typed**, as in the hire's step 5 (chunks of at most 700 characters via `herdr pane
 send-text`, 50 ms apart, then `herdr pane send-keys <pane> enter`; the whole of it on the worker's input lane), so
@@ -4612,6 +4662,7 @@ beside an edited `prompt`), is `secrets_review_required`, and the message starts
 | `worker.wrapup` | `prompt` (before its footer); round 5: `secrets_pending`: `packup.detect`'s | the worker | — |
 | `worker.handoff` (`agent`, `llm`) | `instruction` (blank: the default one, nothing to review) | the worker | `agent`: `protected` |
 | `worker.prompt` | round 1's `text`; `secrets_pending`: `packup.detect`'s | the worker | round 1's |
+| `worker.paste` (#176 part 2) | `text` (an agent's; a shell's only with a review) | the worker | `sent`, `protected` |
 
 The worker's routes follow `worker.prompt`'s rules: on its input lane, in order with its other input, the checks
 again on the texts with their references, a failure removes the files it made, a success keeps them for its identical

@@ -28,11 +28,18 @@
 // back to read only (`terminal.control` mode `observe`, reason `busy`, at the recording's size). `sim.terminal {id}`
 // answers what the watch has: its grid, control mode, history offset and the resizes and scrolls it got;
 // `sim.write {id, data}` prints raw text (escapes too) on a worker's screen.
+// #176 part 2: an owned pane's `terminal.control` says `paste: true` and `mouse: true` (`simcontrol=nomouse`: herdr
+// 0.9.1, no clicks; `simcontrol=part1`: a bridge of #176 part 1, neither, and `worker.paste` / `terminal.mouse` are
+// unknown). `worker.paste` shows its text where the cursor is (line ends as new lines, nothing submitted) and
+// `terminal.mouse` takes a click inside the grid, each answered with a full frame at the same size (the bridge waits for
+// herdr's); `sim.terminal` lists both (`pastes`, `clicks`). Output written while
+// the view is up the history (`sim.write`) grows its offset and its max, as herdr's pinned view does.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pasteStrip } from '../src/laptop/pasteStrip.ts';
 import type { Floor, Worker } from '../src/net/protocol.ts';
 
 type Msg = Record<string, unknown>;
@@ -108,7 +115,7 @@ export interface ScreenHost {
   controlMode?(): ControlMode | undefined;
 }
 
-export type ControlMode = 'old' | 'none' | 'busy';
+export type ControlMode = 'old' | 'none' | 'busy' | 'nomouse' | 'part1';
 
 /** #176: the pretend history a controlled pane has. */
 const SIM_HISTORY = 200;
@@ -141,7 +148,7 @@ interface Watch {
   send: Send;
   failAfterFirst: boolean;
   /** #176: the watch owns its pane at this grid (null: an observer at the recording's size). */
-  control: { mode: 'control' | 'observe'; cols: number; rows: number; offset: number; resizes: Array<[number, number]>; scrolls: string[] } | null;
+  control: { mode: 'control' | 'observe'; cols: number; rows: number; offset: number; max: number; resizes: Array<[number, number]>; scrolls: string[]; pastes: string[]; clicks: string[] } | null;
 }
 
 /** One worker's screen: where it is in its recording, and the bytes since the last full frame. */
@@ -212,6 +219,16 @@ export class SimScreens {
           this.keys(a);
           ack();
           return true;
+        case 'worker.paste':
+          if (!this.inputCaps('control').paste) return false;
+          this.paste(a);
+          ack({});
+          return true;
+        case 'terminal.mouse':
+          if (!this.inputCaps('control').paste) return false;
+          this.mouse(a);
+          ack();
+          return true;
         case 'sim.watches':
           ack({ watches: this.watches.size, ids: [...this.watches.keys()] });
           return true;
@@ -234,6 +251,15 @@ export class SimScreens {
           const data = Buffer.from(String(a.data ?? ''), 'utf8');
           sc.tape.push(data);
           for (const x of this.watchersOf(id)) this.push(x, data, false);
+          // #176 part 2: new lines while the view is up the history: herdr keeps the view, so it is further up.
+          const own = this.watches.get(id)?.control;
+          const lines = (String(a.data ?? '').match(/\n/g) ?? []).length;
+          if (own?.mode === 'control' && lines) {
+            own.max += lines;
+            if (own.offset > 0) own.offset += lines;
+            const ww = this.watches.get(id);
+            if (ww) this.pushHistory(ww);
+          }
           ack();
           return true;
         }
@@ -295,8 +321,8 @@ export class SimScreens {
     const s = this.screen(w);
     const control: Watch['control'] = owning
       ? ctl === 'busy'
-        ? { mode: 'observe', cols: s.rec.cols, rows: s.rec.rows, offset: 0, resizes: [], scrolls: [] }
-        : { mode: 'control', cols: cols ?? s.rec.cols, rows: rows ?? s.rec.rows, offset: 0, resizes: [], scrolls: [] }
+        ? { mode: 'observe', cols: s.rec.cols, rows: s.rec.rows, offset: 0, max: SIM_HISTORY, resizes: [], scrolls: [], pastes: [], clicks: [] }
+        : { mode: 'control', cols: cols ?? s.rec.cols, rows: rows ?? s.rec.rows, offset: 0, max: SIM_HISTORY, resizes: [], scrolls: [], pastes: [], clicks: [] }
       : null;
     const watch: Watch = { id, pane: w.pane_id as string, fps, n: 0, pending: [Buffer.concat(s.tape)], full: true, timer: null, lastSent: -Infinity, send, failAfterFirst: this.host.failNext('observer_failed'), control };
     this.watches.set(id, watch);
@@ -309,7 +335,7 @@ export class SimScreens {
     const zoom = this.zoomState(id);
     const size = control?.mode === 'control' ? control : s.rec;
     ack({ pane: watch.pane, cols: size.cols, rows: size.rows, ...(zoom ? { zoom } : {}), ...(control ? { control: true } : {}) });
-    if (control) send({ t: 'terminal.control', id, pane: watch.pane, mode: control.mode, ...(control.mode === 'observe' ? { reason: 'busy' } : {}), cols: control.cols, rows: control.rows });
+    if (control) send({ t: 'terminal.control', id, pane: watch.pane, mode: control.mode, ...(control.mode === 'observe' ? { reason: 'busy' } : {}), cols: control.cols, rows: control.rows, ...this.inputCaps(control.mode) });
     const slow = this.slow.get(id);
     this.slow.delete(id);
     if (slow) {
@@ -319,6 +345,74 @@ export class SimScreens {
       }, slow);
     } else this.flush(watch);
     if (!s.timer && !s.typed) this.advance(id, s);
+  }
+
+  /** #176 part 2: what an owned pane takes besides keys (a bridge of part 1: nothing; herdr 0.9.1: no clicks). */
+  private inputCaps(mode: 'control' | 'observe'): { paste?: true; mouse?: true } {
+    const ctl = this.host.controlMode?.();
+    if (mode !== 'control' || ctl === 'part1') return {};
+    return ctl === 'nomouse' ? { paste: true } : { paste: true, mouse: true };
+  }
+
+  /** #176 part 2: the owned pane of `id` (its watch on this connection), or why there is none. */
+  private owned(id: string, what: string): NonNullable<Watch['control']> {
+    this.target(id);
+    const w = this.watches.get(id);
+    if (!w?.control) throw new ScreenError('bad_request', `bad args: ${what} needs a terminal.watch of the worker with control`);
+    if (w.control.mode === 'observe') throw new ScreenError('invalid_state', 'invalid state: another client controls this terminal: it is shown read only');
+    return w.control;
+  }
+
+  /** #176 part 2: a paste inserted where the cursor is: on the screen as typed, nothing submitted. */
+  private paste(a: Obj): void {
+    this.only(a, ['id', 'text', 'secrets']);
+    const id = this.str(a, 'id');
+    if (typeof a.text !== 'string') throw new ScreenError('bad_request', 'bad args: text must be a string');
+    const text = pasteStrip(a.text); // as herdr.PasteStrip
+    if (Buffer.byteLength(text) > 16384) throw new ScreenError('bad_request', `bad args: text must be at most 16384 bytes, got ${Buffer.byteLength(text)}`);
+    const c = this.owned(id, 'worker.paste');
+    if (this.host.failNext('input_failed')) throw new ScreenError('input_failed', 'input_failed: herdr terminal controller: broken pipe (simulated)');
+    c.pastes.push(text);
+    this.live(id);
+    if (text) this.typeOut(id, text.replace(/\r\n?|\n/g, '\r\n'));
+    this.applied(id);
+  }
+
+  /** The bridge ends a paste or a click once herdr answered the resize sent with it: a full frame at the same size. */
+  private applied(id: string): void {
+    const w = this.watches.get(id);
+    const s = this.screens.get(id);
+    if (w?.control?.mode === 'control') this.push(w, Buffer.concat(s?.tape ?? []), true);
+  }
+
+  /** #176 part 2: a click on a cell of the owned pane (herdr 0.9.2+). */
+  private mouse(a: Obj): void {
+    this.only(a, ['id', 'button', 'column', 'row', 'modifiers']);
+    const id = this.str(a, 'id');
+    const button = a.button ?? 'left';
+    if (button !== 'left' && button !== 'right' && button !== 'middle') throw new ScreenError('bad_request', 'bad args: button must be "left", "right" or "middle"');
+    const int = (k: string, hi: number) => {
+      const v = a[k] ?? 0;
+      if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > hi) throw new ScreenError('bad_request', `bad args: ${k} must be 0-${hi}`);
+      return v;
+    };
+    const modifiers = int('modifiers', 7);
+    const c = this.owned(id, 'terminal.mouse');
+    if (this.host.controlMode?.() === 'nomouse') throw new ScreenError('invalid_state', 'invalid state: mouse clicks need herdr 0.9.2 or newer');
+    const column = int('column', c.cols - 1);
+    const row = int('row', c.rows - 1);
+    c.clicks.push(`${button} ${column},${row}${modifiers ? ` mods ${modifiers}` : ''}`);
+    this.live(id);
+    this.applied(id);
+  }
+
+  /** Input brings a controlled view back to the live bottom (the bridge does it before any). */
+  private live(id: string): void {
+    const own = this.watches.get(id);
+    if (own?.control?.mode === 'control' && own.control.offset > 0) {
+      own.control.offset = 0;
+      this.pushHistory(own);
+    }
   }
 
   /** #176: the controlled pane's PTY to a new grid: a full frame at it. */
@@ -363,7 +457,7 @@ export class SimScreens {
     } else {
       const lines = a.lines;
       if ((a.direction !== 'up' && a.direction !== 'down') || typeof lines !== 'number' || !Number.isInteger(lines) || lines < 1 || lines > 1000) throw new ScreenError('bad_request', 'bad args: direction up or down and lines 1-1000');
-      c.offset = Math.max(0, Math.min(SIM_HISTORY, c.offset + (a.direction === 'up' ? lines : -lines)));
+      c.offset = Math.max(0, Math.min(c.max, c.offset + (a.direction === 'up' ? lines : -lines)));
       c.scrolls.push(`${a.direction} ${lines}`);
     }
     ack();
@@ -372,7 +466,7 @@ export class SimScreens {
 
   private pushHistory(w: Watch): void {
     const c = w.control;
-    if (c?.mode === 'control') w.send({ t: 'terminal.history', id: w.id, pane: w.pane, offset: c.offset, max: SIM_HISTORY, rows: c.rows });
+    if (c?.mode === 'control') w.send({ t: 'terminal.history', id: w.id, pane: w.pane, offset: c.offset, max: c.max, rows: c.rows });
   }
 
   /** #52 (`sim.swap`): the next watch of `id` holds its first frame `ms`. */
@@ -537,12 +631,14 @@ export class SimScreens {
     const w = this.target(id);
     if (this.host.failNext('input_failed')) throw new ScreenError('input_failed', 'input_failed: herdr pane send-keys: exit status 1 (simulated)');
     // #176: input brings a controlled view back to the live bottom (the bridge does it before the keys).
-    const own = this.watches.get(id);
-    if (own?.control?.mode === 'control' && own.control.offset > 0) {
-      own.control.offset = 0;
-      this.pushHistory(own);
-    }
-    const s = this.screen(w);
+    this.live(id);
+    const echo = ECHO[this.screen(w).rec.name] ?? {};
+    this.typeOut(id, items.map((it) => ('text' in it ? it.text : (echo[it.key] ?? ''))).join(''));
+  }
+
+  /** What was typed (or pasted) shows on the worker's screen; the screen stops replaying its recording. */
+  private typeOut(id: string, out: string): void {
+    const s = this.screen(this.target(id));
     if (!s.typed) {
       // Someone is typing: the screen stops replaying and settles where its recording ends.
       s.typed = true;
@@ -551,8 +647,6 @@ export class SimScreens {
       for (let i = s.pos; i < s.rec.frames.length; i++) this.apply(s, i, true, id);
       s.pos = s.rec.frames.length;
     }
-    const echo = ECHO[s.rec.name] ?? {};
-    const out = items.map((it) => ('text' in it ? it.text : (echo[it.key] ?? ''))).join('');
     if (!out) return;
     const data = Buffer.from(out, 'utf8');
     s.tape.push(data);

@@ -163,7 +163,7 @@ export interface H3DDebug {
   /** M5: how much of a worker's frozen laptop screen is not black (0–1), null when it is not frozen. */
   frozenInk(workerId: string): number | null;
   /** M5: the seat bar (shown, its tape, its note, ok / busy / error / offline); M16: which mode it shows. */
-  seat(): { shown: boolean; tape: string; note: string; state: string; mode?: string; ask?: string | null; fullscreen?: { label: string; pressed: boolean; unavailable: boolean } | null };
+  seat(): { shown: boolean; tape: string; note: string; state: string; mode?: string; ask?: string | null; fullscreen?: { label: string; pressed: boolean; unavailable: boolean } | null; /** #176 part 2 */ scrollbar?: { offset: number; max: number } | null; clicks?: string | null };
   /** #74: plays the human unzooming the watched pane's tab, in the fixture simulator (`simzoom=`): a `terminal.state` follows. */
   simUnzoom(workerId: string): Promise<boolean>;
   /**

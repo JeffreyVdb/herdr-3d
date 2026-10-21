@@ -66,6 +66,9 @@ describe('Watches: control (#176)', () => {
     ]);
     h.w.history({ t: 'terminal.history', id: 'a', pane: 'w1:p1', offset: 3, max: 200, rows: 40 });
     expect(h.w.controlOf('a')?.history).toEqual({ offset: 3, max: 200, rows: 40 });
+    expect(h.w.controlOf('a')).toMatchObject({ paste: false, mouse: false }); // a bridge of #176 part 1 says neither
+    h.w.control({ t: 'terminal.control', id: 'a', pane: 'w1:p1', mode: 'control', cols: 150, rows: 40, paste: true, mouse: true });
+    expect(h.w.controlOf('a')).toMatchObject({ paste: true, mouse: true });
     const n = h.control.length;
     h.w.history({ t: 'terminal.history', id: 'a', pane: 'w1:p1', offset: 3, max: 200, rows: 40 });
     expect(h.control).toHaveLength(n); // the same says nothing
@@ -79,7 +82,7 @@ describe('Watches: control (#176)', () => {
     h.w.sync(new Map([['a', 15]]), new Map(), new Map([['a', grid]]));
     await h.answer(0, { ok: true, data: { pane: 'w1:p1', cols: 120, rows: 36, control: true } });
     h.w.control({ t: 'terminal.control', id: 'a', pane: 'w1:p1', mode: 'observe', reason: 'busy', cols: 120, rows: 36 });
-    expect(h.w.controlOf('a')).toMatchObject({ mode: 'observe', reason: 'busy', history: null });
+    expect(h.w.controlOf('a')).toMatchObject({ mode: 'observe', reason: 'busy', history: null, paste: false, mouse: false });
     expect(h.w.resize('a', grid)).toBeNull();
     expect(h.w.scroll('a', { lines: 1 })).toBeNull();
     h.w.history({ t: 'terminal.history', id: 'a', pane: 'w1:p1', offset: 9, max: 9, rows: 36 });

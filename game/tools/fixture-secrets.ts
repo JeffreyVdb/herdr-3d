@@ -65,6 +65,7 @@
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { pasteStrip } from '../src/laptop/pasteStrip.ts';
 
 type Obj = Record<string, unknown>;
 type Send = (m: Obj) => void;
@@ -82,6 +83,8 @@ export interface SecretsHost {
 export interface RouteWorld {
   /** Whether `packup.detect` looks at a prompt to this worker (a skipped one is not reviewed). */
   packupLooks(id: unknown): boolean;
+  /** #176 part 2: whether the worker runs an agent (a shell's paste is not reviewed unless a review comes with it). */
+  agentWorker?(id: unknown): boolean;
   /** A schedule's stored prompt (undefined: no such schedule). */
   schedulePrompt(id: unknown): string | undefined;
 }
@@ -148,6 +151,7 @@ export const storedFireReason = (n: number) =>
 /** The routes that carry typed text through the gate (docs/protocol.md "Round 2: every other route"). */
 const GATED = new Set([
   'worker.prompt',
+  'worker.paste', // #176 part 2: an agent's paste, as its prompt
   'worker.hire',
   'run.start',
   'schedule.create',
@@ -626,6 +630,11 @@ export class SecretsSim {
       switch (t) {
         case 'worker.prompt':
           return this.gatePrompt(a, review, pending, one, undo);
+        case 'worker.paste':
+          if (pending !== undefined) throw this.h.error('bad_request', 'bad args: json: unknown field "secrets_pending"');
+          if (typeof a.text === 'string') a.text = pasteStrip(a.text); // the bridge scans the text stripped (herdr.PasteStrip)
+          if (review === undefined && w.agentWorker && !w.agentWorker(a.id)) return null;
+          return this.gatePrompt(a, review, undefined, one, undo);
         case 'worker.hire': {
           const prompt = typeof a.prompt === 'string' ? a.prompt : '';
           const tok = pending !== undefined ? this.pendingFor(pending, null) : null;

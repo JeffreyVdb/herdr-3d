@@ -59,6 +59,10 @@ type ctlWatch struct {
 	hist     herdr.PaneScroll // as last read
 	histSent bool             // hist was queued to the connection
 	poke     chan struct{}    // (cap 1) read the offset soon
+	// #176 part 2: the controller takes mouse clicks (herdr 0.9.2+), and the
+	// times of the last clicks (seatinput.go).
+	mouse  bool
+	clicks []time.Time
 }
 
 // ctlProc is one running controller, until it is released and reaped.
@@ -132,6 +136,10 @@ func (h *Hub) startController(ctx context.Context, w *watch) (herdr.ControlStrea
 			h.term.mu.Unlock()
 		}
 	}
+	mouse := h.mouseClicks(ctx) // #176 part 2 (read once)
+	h.term.mu.Lock()
+	w.ctl.mouse = mouse
+	h.term.mu.Unlock()
 	cols, rows, cw, ch := h.term.ctlGrid(w)
 	cs, err := h.controller().ControlTerminal(ctx, w.session, w.pane, cols, rows)
 	if err != nil {
@@ -252,7 +260,8 @@ func (t *termWatches) sendControl(w *watch) bool {
 		return true
 	}
 	msg := mustJSON(proto.TerminalControl{T: proto.TTerminalControl, ID: w.id, Pane: w.pane, Mode: w.ctl.mode, Reason: w.ctl.reason,
-		Cols: w.ctl.cols, Rows: w.ctl.rows})
+		Cols: w.ctl.cols, Rows: w.ctl.rows,
+		Paste: w.ctl.mode == proto.ControlOwned, Mouse: w.ctl.mode == proto.ControlOwned && w.ctl.mouse}) // #176 part 2
 	select {
 	case w.c.send <- msg:
 		w.ctl.modeSent = w.ctl.mode + w.ctl.reason + fmt.Sprint(w.ctl.cols, w.ctl.rows)

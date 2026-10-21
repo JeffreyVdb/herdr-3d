@@ -242,6 +242,74 @@ describe('the seated workspace (#176)', () => {
     expect(bar.content.dataset.mode).toBe('transcript');
   });
 
+  it('#176 part 2: a paste anywhere in the terminal view is the terminal’s, once; a text field keeps its own', () => {
+    const pastes: string[] = [];
+    const { bar, hud, topbar } = setup({ paste: (t: string) => pastes.push(t) });
+    bar.show('Tofu', false);
+    const field = document.createElement('textarea'); // the conversation's prompt box, a look control's input
+    const editable = document.createElement('div');
+    editable.setAttribute('contenteditable', 'true');
+    bar.content.append(field, editable);
+    const xtermTextarea = document.createElement('textarea');
+    bar.termHost.append(xtermTextarea);
+    let xtermOwn = 0;
+    bar.termHost.addEventListener('paste', () => xtermOwn++); // xterm's own listener: never reached
+    const paste = (target: EventTarget, text: string) => {
+      const e = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent;
+      Object.defineProperty(e, 'clipboardData', { value: { getData: () => text, files: [], items: [] } });
+      target.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    const stand = hud.querySelector<HTMLButtonElement>('.seat-stand')!;
+    expect([paste(bar.input, 'a'), paste(stand, 'b'), paste(xtermTextarea, 'c'), paste(document.body, 'd')]).toEqual([true, true, true, true]);
+    expect(pastes).toEqual(['a', 'b', 'c', 'd']);
+    expect(xtermOwn).toBe(0);
+    expect([paste(field, 'e'), paste(editable, 'f'), paste(topbar, 'g')]).toEqual([false, false, false]);
+    bar.setMode('transcript');
+    expect(paste(bar.input, 'h')).toBe(false);
+    bar.setMode('terminal');
+    bar.hide();
+    paste(document.body, 'i'); // (the bars of the tests before are still seated: this one only must not take it)
+    expect(pastes).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('#176 part 2: the history scrollbar follows the history; the footer says when clicks cannot reach the terminal', () => {
+    const { bar } = setup();
+    bar.show('Tofu', false);
+    bar.history({ offset: 0, max: 0, rows: 30 });
+    expect(bar.summary().scrollbar).toBeNull();
+    bar.history({ offset: 5, max: 80, rows: 30 });
+    expect(bar.summary().scrollbar).toEqual({ offset: 5, max: 80 });
+    bar.history({ offset: 5, max: 80 }); // a host without the rows: no scrollbar
+    expect(bar.summary().scrollbar).toBeNull();
+    expect(bar.summary().clicks).toBeNull();
+    bar.mouse('old');
+    expect(bar.summary().clicks).toBe('Mouse clicks need herdr 0.9.2 or newer');
+    bar.mouse('on');
+    expect(bar.summary().clicks).toBeNull();
+    expect(bar.el.querySelector('.seat-keys')?.textContent).toContain('a click goes to an app that uses the mouse');
+    bar.hide();
+    bar.show('Mochi', false);
+    expect(bar.el.querySelector('.seat-keys')?.textContent).not.toContain('mouse');
+  });
+
+  it('#176 part 2: the history scrollbar owns its Tab and Shift+Tab, and is in the Tab route after the header, before the terminal', () => {
+    const { bar } = setup();
+    bar.show('Tofu', false);
+    bar.history({ offset: 5, max: 80, rows: 30 });
+    const rail = bar.el.querySelector<HTMLElement>('.seat-scroll')!;
+    expect(rail.hidden).toBe(false);
+    expect(rail.tabIndex).toBe(0);
+    expect(bar.owns(rail)).toBe(true); // Laptops.key: its Tab, Shift+Tab, Enter and Space take the browser's path
+    expect(bar.owns(rail.firstElementChild)).toBe(true); // its thumb
+    // Document order is the Tab order: Stand up, the rail, then the terminal (whose focus goes to the seat's keyboard).
+    const stand = [...bar.el.querySelectorAll('button')].find((b) => b.textContent?.includes('Stand up'))!;
+    const tabbable = [...bar.el.querySelectorAll<HTMLElement>('button, [tabindex], textarea')];
+    expect(tabbable.indexOf(stand)).toBeLessThan(tabbable.indexOf(rail));
+    expect(rail.compareDocumentPosition(bar.termHost) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(bar.owns(bar.input)).toBe(false); // Tab in the terminal's keyboard stays the application's
+  });
+
   it('the worker’s status, the read-only line and the history indicator; Back to live goes to the host', () => {
     const { bar, hud, calls } = setup();
     bar.show('Tofu', false);

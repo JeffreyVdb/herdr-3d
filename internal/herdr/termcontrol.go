@@ -9,6 +9,7 @@ package herdr
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,10 +17,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // DuplexProc is a started long-running command with a stdin.
@@ -38,9 +41,10 @@ type DuplexStreamer func(argv []string) (DuplexProc, error)
 const (
 	// maxControlLine bounds one JSONL command written to the controller's
 	// stdin (herdr takes up to 1 MiB of input and closes the connection of
-	// a client that sends more; the commands of #176 are a few dozen bytes,
-	// and #176 part 2's bracketed paste stays under this too).
-	maxControlLine = 64 << 10
+	// a client that sends more). The commands are a few dozen bytes but a
+	// paste: at most MaxMessage of text, which JSON may spell out as 6 bytes
+	// a byte (\u001b).
+	maxControlLine = 128 << 10
 	// controlQueue is how many commands may wait for the controller's
 	// stdin; a full queue drops what the next one supersedes, or refuses it
 	// (the caller never blocks on a wedged herdr).
@@ -55,9 +59,40 @@ const (
 	ReleaseGrace = time.Second
 )
 
+// writeWait bounds how long Paste and Click wait for their turn on the
+// controller's stdin (see sendWritten; a variable for tests).
+var writeWait = 5 * time.Second
+
+// appliedWait bounds how long Paste and Click then wait for herdr's full
+// frame that shows it applied them (see sendWritten; a variable for tests).
+var appliedWait = 2 * time.Second
+
+// Bracketed paste's markers (DECSET 2004): herdr unwraps one whole envelope
+// in a terminal.input and wraps the text again only for an application
+// that asked for bracketed paste.
+const (
+	PasteStart = "\x1b[200~"
+	PasteEnd   = "\x1b[201~"
+)
+
+// Mouse buttons a click can be made with (terminal.mouse's "button").
+var MouseButtons = []string{"left", "right", "middle"}
+
 // ErrControlClosed is returned by a command to a controller that was
 // released or stopped.
 var ErrControlClosed = errors.New("herdr: the terminal controller is closed")
+
+// ErrInputUnsent is a paste's or a click's error from before any of it was
+// written to the controller's stdin (see InputUnsent).
+var ErrInputUnsent = errors.New("herdr: the input was not sent")
+
+// InputUnsent reports whether a Paste's or a Click's error is from before any
+// of it was written to the controller's stdin: refused, given up while it was
+// still queued, dropped at Close. It never reaches herdr, later neither. Any
+// other error (a write that failed) may have left some of it with herdr.
+func InputUnsent(err error) bool {
+	return errors.Is(err, ErrInputUnsent) || errors.Is(err, ErrControlClosed) || errors.Is(err, ErrNotAllowed)
+}
 
 // ControlRefused reports whether a controller's terminal.closed reason is
 // herdr refusing it because another client owns the pane ("terminal <t>
@@ -89,6 +124,21 @@ type ControlStream interface {
 	// Live brings the view back to the live bottom of the history (an
 	// empty terminal.input: herdr resets the scroll before any input).
 	Live() error
+	// Paste writes text as one bracketed paste (PasteText: one
+	// terminal.input, ESC[200~ … ESC[201~): herdr gives it to the application
+	// as a paste when it asked for that, as plain text otherwise; nothing is
+	// added, Enter neither. It returns once the line is on herdr's stdin, or
+	// fails: it is never dropped without a word, and one that fails before it
+	// is written (InputUnsent: a cancel or a timeout while it is queued) is
+	// never written later. Once its line is being written it waits for that
+	// (Close, which stops a wedged herdr, ends the wait).
+	Paste(ctx context.Context, text string) error
+	// Click is a click of button (MouseButtons) on cell (col, row), 0-based,
+	// with modifier bits mods (Shift 1, Ctrl 2, Alt 4): terminal.mouse down,
+	// then up (herdr 0.9.2+; herdr drops it when the application has no
+	// mouse reporting on). It returns once both lines are on herdr's stdin;
+	// a failure is as Paste's.
+	Click(ctx context.Context, button string, col, row, mods int) error
 	// RestoreOnRelease makes Close resize the PTY to cols × rows before it
 	// releases the pane (0, 0: release only).
 	RestoreOnRelease(cols, rows int)
@@ -116,7 +166,8 @@ func (c *Control) ControlTerminal(ctx context.Context, session, pane string, col
 	if err != nil {
 		return nil, fmt.Errorf("herdr control %s: %w", opControl, err)
 	}
-	ct := &controller{observer: observer{p: p, r: bufio.NewReaderSize(p.Stdout(), 64<<10)}, p: p, wrote: make(chan struct{})}
+	ct := &controller{observer: observer{p: p, r: bufio.NewReaderSize(p.Stdout(), 64<<10)}, p: p, wrote: make(chan struct{}),
+		size: [4]int{cols, rows, 0, 0}, full: make(chan struct{})}
 	ct.more = sync.NewCond(&ct.mu)
 	go ct.write()
 	return ct, nil
@@ -137,6 +188,13 @@ type controller struct {
 	released bool          // the writer wrote terminal.release
 	restore  [2]int
 	once     sync.Once
+	// #176 part 2: herdr answers each resize with one full frame (and the
+	// attach with the first): resizes is how many the writer wrote, fulls how
+	// many full frames came (full is closed and replaced at each), size the
+	// last size asked for (cols, rows, cell px).
+	resizes, fulls int
+	full           chan struct{}
+	size           [4]int
 }
 
 // A controller command's kind says which queued commands it supersedes.
@@ -147,11 +205,31 @@ const (
 	kindScroll
 	kindLive
 	kindRelease
+	// #176 part 2: a paste or a click; its sender waits for it (done).
+	kindInput
 )
 
 type ctlCmd struct {
 	kind ctlKind
 	line []byte
+	// resizes is how many terminal.resize lines the line holds.
+	resizes int
+	// done (nil: none) gets the write's outcome, or ErrControlClosed when
+	// the command was dropped at Close, and how many resizes were written by
+	// then.
+	done chan written
+}
+
+type written struct {
+	err     error
+	resizes int
+}
+
+// finish tells a command's sender what became of it.
+func (c ctlCmd) finish(err error, resizes int) {
+	if c.done != nil {
+		c.done <- written{err, resizes}
+	}
 }
 
 // write writes the queued commands to the controller's stdin, in order,
@@ -162,24 +240,29 @@ func (ct *controller) write() {
 	defer close(ct.wrote)
 	stdin := ct.p.Stdin()
 	defer stdin.Close()
-	broken := false
+	var broken error
 	for {
 		c, ok := ct.next()
 		if !ok {
 			return
 		}
-		if broken {
-			continue // drain: nothing more reaches herdr
-		}
-		if _, err := stdin.Write(c.line); err != nil {
-			broken = true
+		if broken != nil {
+			c.finish(fmt.Errorf("%w: %w", ErrInputUnsent, broken), 0) // drain: nothing more reaches herdr
 			continue
 		}
-		if c.kind == kindRelease {
-			ct.mu.Lock()
-			ct.released = true
-			ct.mu.Unlock()
+		if _, err := stdin.Write(c.line); err != nil {
+			broken = err
+			c.finish(err, 0)
+			continue
 		}
+		ct.mu.Lock()
+		ct.resizes += c.resizes
+		n := ct.resizes
+		if c.kind == kindRelease {
+			ct.released = true
+		}
+		ct.mu.Unlock()
+		c.finish(nil, n)
 	}
 }
 
@@ -199,16 +282,39 @@ func (ct *controller) next() (ctlCmd, bool) {
 	return c, true
 }
 
-// command is one JSONL command for the controller's stdin.
-func command(kind ctlKind, cmd any) (ctlCmd, error) {
-	line, err := json.Marshal(cmd)
-	if err != nil {
-		return ctlCmd{}, err
+// command is JSONL commands for the controller's stdin (one write), within
+// maxControlLine; text as it is (no HTML escapes: a paste's "<" stays one
+// byte).
+func command(kind ctlKind, cmds ...any) (ctlCmd, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	for _, cmd := range cmds {
+		if err := enc.Encode(cmd); err != nil {
+			return ctlCmd{}, err
+		}
 	}
-	if len(line)+1 > maxControlLine {
-		return ctlCmd{}, fmt.Errorf("%w: a controller command of %d bytes (at most %d)", ErrNotAllowed, len(line)+1, maxControlLine)
+	if b.Len() > maxControlLine {
+		return ctlCmd{}, fmt.Errorf("%w: a controller command of %d bytes (at most %d)", ErrNotAllowed, b.Len(), maxControlLine)
 	}
-	return ctlCmd{kind, append(line, '\n')}, nil
+	c := ctlCmd{kind: kind, line: b.Bytes()}
+	if kind == kindResize {
+		c.resizes = 1
+	}
+	return c, nil
+}
+
+// Next is the observer's, and (#176 part 2) counts herdr's full frames.
+func (ct *controller) Next() (Frame, error) {
+	f, err := ct.observer.Next()
+	if err == nil && f.Full && !f.Closed {
+		ct.mu.Lock()
+		ct.fulls++
+		close(ct.full)
+		ct.full = make(chan struct{})
+		ct.mu.Unlock()
+	}
+	return f, err
 }
 
 // send queues one command, without waiting for herdr. A full queue first
@@ -218,13 +324,22 @@ func (ct *controller) send(kind ctlKind, cmd any) error {
 	if err != nil {
 		return err
 	}
+	return ct.queueCmd(c)
+}
+
+func (ct *controller) queueCmd(c ctlCmd) error {
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
+	return ct.queueLocked(c)
+}
+
+// queueLocked is queueCmd under mu.
+func (ct *controller) queueLocked(c ctlCmd) error {
 	if ct.closed {
 		return ErrControlClosed
 	}
 	if len(ct.queue) == controlQueue {
-		ct.supersede(kind)
+		ct.supersede(c.kind)
 	}
 	if len(ct.queue) == controlQueue {
 		return errors.New("herdr: the terminal controller is not reading its commands")
@@ -237,8 +352,13 @@ func (ct *controller) send(kind ctlKind, cmd any) error {
 // supersede drops the queued commands a new one of kind makes moot, keeping
 // the rest in order (under mu, so the writer takes none meanwhile): a size
 // makes the sizes before it moot, the reset to the live bottom the wheels and
-// resets before it and all sizes but the last. A wheel drops nothing.
+// resets before it and all sizes but the last. #176 part 2: input (a
+// paste, a click) as the reset (herdr resets the view before any input); a
+// queued input is never dropped. A wheel drops nothing.
 func (ct *controller) supersede(kind ctlKind) {
+	if kind == kindInput {
+		kind = kindLive
+	}
 	if kind != kindResize && kind != kindLive {
 		return
 	}
@@ -268,7 +388,19 @@ func (ct *controller) Resize(cols, rows, cellW, cellH int) error {
 	case cellW < 0 || cellW > MaxCellPx || cellH < 0 || cellH > MaxCellPx:
 		return fmt.Errorf("%w: cell size %d×%d px", ErrNotAllowed, cellW, cellH)
 	}
-	return ct.send(kindResize, resizeCmd{"terminal.resize", cols, rows, cellW, cellH})
+	c, err := command(kindResize, resizeCmd{"terminal.resize", cols, rows, cellW, cellH})
+	if err != nil {
+		return err
+	}
+	// The size with its place in the queue (see sendWritten); a refused
+	// resize changes neither.
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	if err := ct.queueLocked(c); err != nil {
+		return err
+	}
+	ct.size = [4]int{cols, rows, cellW, cellH}
+	return nil
 }
 
 type resizeCmd struct {
@@ -309,6 +441,155 @@ func (ct *controller) Live() error {
 	}{"terminal.input"})
 }
 
+func (ct *controller) Paste(ctx context.Context, text string) error {
+	if len(text) > MaxMessage || !utf8.ValidString(text) {
+		return fmt.Errorf("%w: a paste of %d bytes (UTF-8, at most %d)", ErrNotAllowed, len(text), MaxMessage)
+	}
+	return ct.sendWritten(ctx, struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}{"terminal.input", PasteText(text)})
+}
+
+func (ct *controller) Click(ctx context.Context, button string, col, row, mods int) error {
+	switch {
+	case !slices.Contains(MouseButtons, button):
+		return fmt.Errorf("%w: mouse button %q", ErrNotAllowed, button)
+	case col < 0 || col >= MaxCols || row < 0 || row >= MaxRows:
+		return fmt.Errorf("%w: click at cell %d,%d", ErrNotAllowed, col, row)
+	case mods < 0 || mods > 7:
+		return fmt.Errorf("%w: click modifiers %d", ErrNotAllowed, mods)
+	}
+	type mouse struct {
+		Type      string `json:"type"`
+		Action    string `json:"action"`
+		Button    string `json:"button"`
+		Column    int    `json:"column"`
+		Row       int    `json:"row"`
+		Modifiers int    `json:"modifiers"`
+	}
+	return ct.sendWritten(ctx, mouse{"terminal.mouse", "down", button, col, row, mods},
+		mouse{"terminal.mouse", "up", button, col, row, mods})
+}
+
+// sendWritten queues input as one write and waits until herdr applied it:
+// the caller's next input takes another way into herdr (`pane send-keys`),
+// and on herdr 0.9.5 such keys were seen to overtake input that was only
+// written to the controller's stdin. herdr acknowledges no input, but it
+// answers every resize with a full frame, after what came before it on the
+// controller's connection: so a resize to the size asked last goes with the
+// input, and sendWritten returns once herdr's full frame for it came (or
+// after appliedWait, the input written). A full queue makes room as a reset
+// does, else the input is refused; one dropped at Close says so. The
+// resize's size is the one current when the input is queued, under the same
+// lock as Resize's, so a resize at the same time is either before the input
+// (and that is the size) or after it: never undone. A cancel or writeWait
+// while the input is still queued takes it out (ErrInputUnsent: never
+// written later, behind what came after it); once the writer has it, they
+// wait for the write, which ends or fails (Close stops a wedged herdr).
+func (ct *controller) sendWritten(ctx context.Context, cmds ...any) error {
+	c, err := command(kindInput, cmds...)
+	if err != nil {
+		return err
+	}
+	c.done = make(chan written, 1)
+	ct.mu.Lock()
+	sz := ct.size
+	barrier, err := command(kindResize, resizeCmd{"terminal.resize", sz[0], sz[1], sz[2], sz[3]})
+	if err == nil {
+		c.line, c.resizes = append(c.line, barrier.line...), 1
+		if len(c.line) > maxControlLine {
+			err = fmt.Errorf("%w: a controller command of %d bytes (at most %d)", ErrNotAllowed, len(c.line), maxControlLine)
+		} else if err = ct.queueLocked(c); err != nil && !errors.Is(err, ErrControlClosed) {
+			err = fmt.Errorf("%w: %w", ErrInputUnsent, err)
+		}
+	}
+	ct.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	timer := time.NewTimer(writeWait)
+	defer timer.Stop()
+	var w written
+	select {
+	case w = <-c.done:
+	case <-ctx.Done():
+		if ct.withdraw(c.done) {
+			return fmt.Errorf("%w: %w", ErrInputUnsent, ctx.Err())
+		}
+		w = <-c.done
+	case <-timer.C:
+		if ct.withdraw(c.done) {
+			return fmt.Errorf("%w: the terminal controller is not reading its commands", ErrInputUnsent)
+		}
+		w = <-c.done
+	}
+	switch {
+	case InputUnsent(w.err):
+		return w.err
+	case w.err != nil:
+		return fmt.Errorf("herdr: writing to the terminal controller: %w", w.err)
+	}
+	// The attach's full frame, then one per resize written.
+	timer.Reset(appliedWait)
+	for {
+		ct.mu.Lock()
+		seen, full := ct.fulls, ct.full
+		ct.mu.Unlock()
+		if seen >= w.resizes+1 || ctx.Err() != nil {
+			return nil // (cancelled: written, herdr's answer not waited for)
+		}
+		select {
+		case <-full:
+		case <-ctx.Done():
+		case <-timer.C:
+			return nil // written; herdr's answer is late (or one frame answered two resizes)
+		case <-ct.p.Done():
+			return nil
+		}
+	}
+}
+
+// withdraw takes the input whose sender waits on done out of the queue,
+// keeping the rest in order; false when it is not there (the writer took it,
+// or Close dropped it: done gets its outcome).
+func (ct *controller) withdraw(done chan written) bool {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	for i, c := range ct.queue {
+		if c.done == done {
+			ct.queue = slices.Delete(ct.queue, i, i+1)
+			return true
+		}
+	}
+	return false
+}
+
+// PasteText is text as one bracketed paste: NUL and any paste marker in it
+// removed (one inside would end herdr's envelope early, and herdr would
+// write the whole line raw), line ends as CR (a terminal's paste: Enter's
+// byte, as xterm.js sends it), between ESC[200~ and ESC[201~.
+func PasteText(text string) string {
+	return PasteStart + PasteClean(text) + PasteEnd
+}
+
+// PasteClean is the text of a paste as it is sent: PasteStrip, its line ends
+// as CR.
+func PasteClean(text string) string {
+	t := PasteStrip(text)
+	return strings.ReplaceAll(strings.ReplaceAll(t, "\r\n", "\r"), "\n", "\r")
+}
+
+// PasteStrip is text without what a paste cannot carry: NUL, and the paste
+// markers (removed until none is left: taking one out may join another).
+func PasteStrip(text string) string {
+	t := strings.ReplaceAll(text, "\x00", "")
+	for strings.Contains(t, PasteStart) || strings.Contains(t, PasteEnd) {
+		t = strings.ReplaceAll(strings.ReplaceAll(t, PasteStart, ""), PasteEnd, "")
+	}
+	return t
+}
+
 func (ct *controller) RestoreOnRelease(cols, rows int) {
 	ct.mu.Lock()
 	ct.restore = [2]int{cols, rows}
@@ -335,6 +616,9 @@ func (ct *controller) Close() error {
 		}
 		ct.closed = true
 		if over := len(ct.queue) + len(final) - controlQueue; over > 0 {
+			for _, c := range ct.queue[:over] {
+				c.finish(ErrControlClosed, 0) // a paste or a click waiting on it hears so
+			}
 			ct.queue = ct.queue[over:]
 		}
 		ct.queue = append(ct.queue, final...)

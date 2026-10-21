@@ -121,8 +121,8 @@ export interface SimOptions {
   zoom?: 'old' | 'single' | 'split' | 'headless';
   /** #175: every worker's laptop replays this recording (`simscreen=narrow`: a split pane's 60×40; absent: agent or shell). */
   screen?: 'narrow';
-  /** #176: how the bridge owns the seated pane (`simcontrol=old|none|busy`, tools/fixture-screen.ts; absent: it does). */
-  control?: 'old' | 'none' | 'busy';
+  /** #176: how the bridge owns the seated pane (`simcontrol=old|none|busy|nomouse|part1`, tools/fixture-screen.ts; absent: it does). */
+  control?: 'old' | 'none' | 'busy' | 'nomouse' | 'part1';
   /** #58: a prompt's `user` item goes to its worker's transcript watch this long after the agent took it (`simecho=<ms>`; absent: never). */
   echoMs?: number;
   /** #98: seeds the workers' activities on start (`simactivity=demo|all`, tools/fixture-activity.ts). */
@@ -807,7 +807,7 @@ export class SimWorld {
       // #108: prompt secrets' commands (a revoke changes a worker's `secret_files`); every route that carries typed
       // text passes their gate first, and is from here on its texts with their references (round 2).
       if (this.secrets.handle(m.t, a, send, (d) => (this.syncSecretFiles(send), ack(d)))) return;
-      const g = this.secrets.gate(m.t, a, send, { packupLooks: (id) => this.packup.looksAt(id), schedulePrompt: (id) => this.schedules.promptOf(id) });
+      const g = this.secrets.gate(m.t, a, send, { packupLooks: (id) => this.packup.looksAt(id), schedulePrompt: (id) => this.schedules.promptOf(id), agentWorker: (id) => !!this.workers.find((x) => x.id === id)?.agent_kind });
       if (g) {
         const [plainAck, plainFail] = [ack, fail];
         ack = (data?: unknown) => {

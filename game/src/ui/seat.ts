@@ -9,6 +9,7 @@ import { LOOK_KEY } from '../laptop/keys';
 import type { FullscreenChip } from '../laptop/fullscreen';
 import type { SeatMode } from '../laptop/transcriptMode';
 import { filesOf } from './composer/field';
+import { HistoryBar } from './seatScrollbar';
 import type { ViewPrefs } from './themePrefs';
 import { stepZoom, THEMES, ZOOM, type ThemeId } from './themes';
 
@@ -63,6 +64,12 @@ export class SeatBar implements SeatView {
   /** #176: the view is up herdr's history: how far, and the way back to the live bottom. */
   private readonly historyBtn = el('button', 'seat-history');
   private readonly historyText = el('span', 'seat-history-text');
+  /** #176 part 2: a paste while seated (on the document, capture phase). */
+  private readonly onPaste: (e: ClipboardEvent) => void;
+  /** #176 part 2: the history's scrollbar, beside the terminal. */
+  private readonly historyBar: HistoryBar;
+  /** #176 part 2: whether clicks reach the terminal: `on`, `old` (herdr before 0.9.2), `readonly` (null: nothing to say). */
+  private clicks: 'on' | 'old' | 'readonly' | null = null;
   private inerted: HTMLElement[] = [];
   private returnFocus: HTMLElement | null = null;
   private anim: Animation | null = null;
@@ -107,6 +114,8 @@ export class SeatBar implements SeatView {
       mode?(m: SeatMode): void;
       /** #176: "Back to live": the terminal's view to the live bottom of herdr's history. */
       live?(): void;
+      /** #176 part 2: the history scrollbar: wheel lines over the terminal (positive: up the history). */
+      historyScroll?(lines: number): void;
       /** #176: the terminal's selected text, for a copy ('' or none: the browser's own copy). */
       selection?(): string;
     },
@@ -173,12 +182,17 @@ export class SeatBar implements SeatView {
       if (!ie.isComposing && ie.inputType === 'insertText' && ie.data) handlers.text(ie.data);
       if (!ie.isComposing) this.input.value = '';
     });
-    this.input.addEventListener('paste', (e) => {
+    // #176 part 2 (#38): a paste anywhere in the workspace while the terminal shows is the terminal's (a header button
+    // focused, the page itself), before xterm's own listener could take it; a text field keeps its own. Listened to
+    // on the document while seated (`show` to `hide`).
+    this.onPaste = (e: ClipboardEvent) => {
+      if (!this.pasteIsTerminals(e.target)) return;
       e.preventDefault();
+      e.stopPropagation();
       // #64: a screenshot on the clipboard comes as files (the text a copied file may carry is its name, not a paste).
       const files = filesOf(e.clipboardData);
       handlers.paste(e.clipboardData?.getData('text/plain') ?? '', files);
-    });
+    };
     this.askLine.hidden = true;
     this.askLine.setAttribute('role', 'status');
     this.codexLine.hidden = true;
@@ -198,7 +212,11 @@ export class SeatBar implements SeatView {
       this.backToPane();
     });
     this.notes.append(this.askLine, this.codexBox, this.roLine);
-    this.content.append(this.termHost, this.historyBtn);
+    this.termHost.id = 'seat-term';
+    this.historyBar = new HistoryBar(this.termHost, { scroll: (n) => handlers.historyScroll?.(n), bottom: () => handlers.live?.() });
+    // #176 part 2: the scrollbar before the terminal, so Tab reaches it after the header, before the terminal's keyboard
+    // (from which Tab is the application's); it lies over the terminal all the same (absolute, z-index).
+    this.content.append(this.historyBar.el, this.termHost, this.historyBtn);
     this.head.append(line, this.modeBtn, this.standBtn);
     this.el.append(this.head, this.notes, this.content, this.keys, this.input);
     // #176: a copy while the seat has the keyboard (⌘C on a Mac, the browser's menu) takes the terminal's selection.
@@ -349,6 +367,19 @@ export class SeatBar implements SeatView {
     return true;
   }
 
+  /**
+   * #176 part 2: a paste at `t` goes to the terminal: the workspace shows the terminal and `t` is in it (its keyboard,
+   * a header button, the terminal) or nowhere (the page), but not a text field, which pastes into itself.
+   */
+  pasteIsTerminals(t: EventTarget | null): boolean {
+    if (this.el.hidden || this.leaving || this.current !== 'terminal') return false;
+    if (t === this.input) return true;
+    if (t === document.body || t === document.documentElement || t === document) return true;
+    if (!(t instanceof Element) || !this.el.contains(t)) return false;
+    if (this.termHost.contains(t)) return true; // xterm's own textarea too
+    return !t.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
+  }
+
   /** #59: `t` is one of the terminal's preset and zoom controls (Esc there hands the keyboard back, see the controller). */
   inLook(t: EventTarget | null): boolean {
     return t instanceof Element && this.look.contains(t);
@@ -356,10 +387,16 @@ export class SeatBar implements SeatView {
 
   /**
    * #59: a control of the bar has the keyboard (its Tab, Enter, Space and arrows are its own, not the pane's). #176: so
-   * has the read-only terminal once tabbed to: its arrows scroll it (the rest still types).
+   * has the read-only terminal once tabbed to: its arrows scroll it (the rest still types). Part 2: so has the history
+   * scrollbar (Tab and Shift+Tab move the focus on; its own keys it handles itself).
    */
   owns(t: EventTarget | null): boolean {
-    return t instanceof Element && t !== this.input && this.el.contains(t) && (!!t.closest('button') || (t === this.termHost && t.hasAttribute('data-readonly')));
+    return (
+      t instanceof Element &&
+      t !== this.input &&
+      this.el.contains(t) &&
+      (!!t.closest('button') || this.historyBar.el.contains(t) || (t === this.termHost && t.hasAttribute('data-readonly')))
+    );
   }
 
   /**
@@ -386,8 +423,10 @@ export class SeatBar implements SeatView {
     this.status('ok', null);
     this.readOnly(null);
     this.history(null);
+    this.mouse(null);
     this.el.hidden = false;
     this.hud.dataset.seated = '1';
+    document.addEventListener('paste', this.onPaste, { capture: true }); // #176 part 2 (once: the same listener)
     if (was) return;
     const active = document.activeElement;
     this.returnFocus = active instanceof HTMLElement && !this.el.contains(active) ? active : null;
@@ -468,7 +507,9 @@ export class SeatBar implements SeatView {
   }
 
   /** #176: how far up herdr's history the terminal's view is (null or 0: at the live bottom, nothing shown). */
-  history(h: { offset: number; max: number } | null): void {
+  history(h: { offset: number; max: number; rows?: number } | null): void {
+    // #176 part 2: the scrollbar (hidden without a history, or without the bridge's rows).
+    this.historyBar.update(h && h.rows !== undefined ? { offset: h.offset, max: h.max, rows: h.rows } : null);
     const up = h && h.offset > 0 ? h.offset : 0;
     this.historyBtn.hidden = !up;
     if (!up) return;
@@ -512,8 +553,8 @@ export class SeatBar implements SeatView {
       return k;
     };
     const nothing = 'nothing you type here goes to the terminal';
-    const aside = (text: string) => {
-      const a = el('span', 'seat-aside', text);
+    const aside = (text: string, cls = 'seat-aside') => {
+      const a = el('span', cls, text);
       a.title = text;
       return a;
     };
@@ -529,9 +570,18 @@ export class SeatBar implements SeatView {
               key([this.mac ? '⌘' : 'Ctrl', 'V'], 'Paste'),
               key(this.mac ? ['⌘', 'C'] : ['Ctrl', 'Shift', 'C'], 'Copy'),
               swap('Conversation'),
-              aside(`Tab, arrows and Ctrl keys go to the terminal; the wheel scrolls its history; ${this.mac ? '⌘' : 'Ctrl'}+click opens a link`),
+              aside(`Tab, arrows and Ctrl keys go to the terminal; the wheel scrolls its history; ${this.clicks === 'on' ? 'a click goes to an app that uses the mouse; ' : ''}${this.mac ? '⌘' : 'Ctrl'}+click opens a link`),
+              // #176 part 2: said once, beside the keys, never in the way: the pane cannot take clicks from here.
+              ...(this.clicks === 'old' ? [aside('Mouse clicks need herdr 0.9.2 or newer', 'seat-aside seat-clicks')] : []),
             ]),
     );
+  }
+
+  /** #176 part 2: whether a click in the terminal reaches its app (`old`: herdr before 0.9.2 cannot; null: nothing to say). */
+  mouse(state: 'on' | 'old' | 'readonly' | null): void {
+    if (state === this.clicks) return;
+    this.clicks = state;
+    this.renderMode();
   }
 
   /** #57: "Claude is asking a question. T to answer in the transcript view." (null: hidden). */
@@ -574,6 +624,7 @@ export class SeatBar implements SeatView {
     if (this.el.hidden) return;
     this.covered = false;
     delete this.hud.dataset.seated;
+    document.removeEventListener('paste', this.onPaste, { capture: true });
     this.inertBackground(false);
     const back = this.returnFocus;
     this.returnFocus = null;
@@ -622,8 +673,13 @@ export class SeatBar implements SeatView {
     readOnly: string | null;
     history: string | null;
     covering: boolean;
+    /** #176 part 2: the history scrollbar (null: hidden) and the footer's word on clicks (null: none). */
+    scrollbar: { offset: number; max: number } | null;
+    clicks: string | null;
   } {
     return {
+      scrollbar: this.historyBar.shown,
+      clicks: this.keys.querySelector('.seat-clicks')?.textContent ?? null,
       status: this.statusTape.hidden ? null : (this.statusTape.textContent ?? ''),
       readOnly: this.roLine.hidden ? null : (this.roLine.textContent ?? ''),
       history: this.historyBtn.hidden ? null : (this.historyBtn.textContent ?? ''),

@@ -321,6 +321,7 @@
   width: fit-content;
 }
 .seat-content:not([data-mode='terminal']) .seat-term,
+.seat-content:not([data-mode='terminal']) .seat-scroll,
 .seat-content:not([data-mode='terminal']) .seat-history {
   visibility: hidden;
   pointer-events: none;
@@ -367,6 +368,55 @@
   outline-offset: 2px;
 }
 
+/* #176 part 2: herdr's history as a rail in the terminal's right padding, drawn in the terminal's own ink: a hairline
+   thumb that thickens under the pointer, while dragged and with the focus. The live bottom is the rail's bottom. */
+.seat-scroll {
+  position: absolute;
+  top: 6px;
+  right: 0;
+  bottom: 6px;
+  z-index: 2;
+  width: 10px;
+  touch-action: none;
+  cursor: default;
+  border-radius: 999px;
+}
+.seat-scroll[hidden] {
+  display: none;
+}
+.seat-scroll-thumb {
+  position: absolute;
+  top: 0;
+  right: 3px;
+  width: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--seat-term-fg, #c9d1e6) 34%, transparent);
+  transition: width 120ms cubic-bezier(0.16, 1, 0.3, 1), right 120ms cubic-bezier(0.16, 1, 0.3, 1), background-color 120ms ease-out;
+}
+.seat-scroll:hover .seat-scroll-thumb,
+.seat-scroll:focus-visible .seat-scroll-thumb,
+.seat-scroll[data-dragging] .seat-scroll-thumb {
+  right: 1px;
+  width: 8px;
+  background: color-mix(in srgb, var(--seat-term-fg, #c9d1e6) 58%, transparent);
+}
+.seat-scroll:hover {
+  background: color-mix(in srgb, var(--seat-term-fg, #c9d1e6) 7%, transparent);
+}
+.seat-scroll:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .seat-scroll-thumb {
+    transition: none;
+  }
+}
+/* #176 part 2: the footer's word that clicks cannot reach the terminal: last, never cut short by the hint before it. */
+.seat-aside.seat-clicks {
+  flex: none;
+}
+
 /* M16: the conversation; #176: over the whole content area (placed at its size). */
 .seat-transcript {
   position: absolute;
@@ -410,6 +460,12 @@
 @media (max-width: 760px) {
   .seat-aside {
     display: none;
+  }
+  /* #176 part 2: but not the word that clicks cannot reach the terminal (nothing else says it): it wraps, never overflows. */
+  .seat-aside.seat-clicks {
+    display: block;
+    flex: 1 1 auto;
+    white-space: normal;
   }
 }
 

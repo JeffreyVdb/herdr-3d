@@ -26,6 +26,9 @@ type fakeCtl struct {
 	mu       sync.Mutex
 	cmds     []string
 	released bool
+	// pasteErr (nil: none) is what Paste returns, recording nothing (#176
+	// part 2: a paste that failed).
+	pasteErr error
 }
 
 func (c *fakeCtl) cmd(format string, args ...any) error {
@@ -52,6 +55,27 @@ func (c *fakeCtl) Scroll(up bool, lines, col, row, mods int) error {
 }
 
 func (c *fakeCtl) Live() error { return c.cmd("live") }
+
+// #176 part 2
+func (c *fakeCtl) Paste(_ context.Context, text string) error {
+	c.mu.Lock()
+	err := c.pasteErr
+	c.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return c.cmd("paste %q", text)
+}
+
+func (c *fakeCtl) failPastes(err error) {
+	c.mu.Lock()
+	c.pasteErr = err
+	c.mu.Unlock()
+}
+
+func (c *fakeCtl) Click(_ context.Context, button string, col, row, mods int) error {
+	return c.cmd("click %s at %d,%d mods %d", button, col, row, mods)
+}
 
 func (c *fakeCtl) RestoreOnRelease(cols, rows int) { _ = c.cmd("restore %dx%d", cols, rows) }
 
@@ -103,6 +127,13 @@ type ctlTerm struct {
 	closeDelay time.Duration
 	scroll     map[string]herdr.PaneScroll
 	controlFn  func(n int) error
+	mouse      bool // #176 part 2: its herdr takes mouse clicks
+}
+
+func (f *ctlTerm) MouseClicks(context.Context) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.mouse
 }
 
 func (f *ctlTerm) ControlTerminal(_ context.Context, session, pane string, cols, rows int) (herdr.ControlStream, error) {
@@ -237,7 +268,7 @@ func TestControlWatchOwnsThePane(t *testing.T) {
 	// Its first frame says the pane is ours, then comes.
 	k.push(t, true, "\x1b[2Jhello")
 	if m := ctlMsg[proto.TerminalControl](c, proto.TTerminalControl); m != (proto.TerminalControl{T: proto.TTerminalControl, ID: id, Pane: "w1:p1",
-		Mode: proto.ControlOwned, Cols: 150, Rows: 45}) {
+		Mode: proto.ControlOwned, Cols: 150, Rows: 45, Paste: true}) {
 		t.Fatalf("control = %+v", m)
 	}
 	if f := c.frame(); !f.Full || f.N != 1 || f.Cols != 150 || decoded(t, f) != "\x1b[2Jhello" {

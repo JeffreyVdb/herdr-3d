@@ -207,13 +207,17 @@ test('E sits at a worker’s laptop: typed input echoes in its terminal, game ke
   expect([still?.x, still?.z, still?.yaw]).toEqual([standing?.x, standing?.z, standing?.yaw]);
   expect(await page.locator('.btn--battery').getAttribute('aria-pressed')).toBe('false');
 
-  // Paste (the browser's paste event) goes to the pane as typed keys for a plain shell.
+  // Paste (the browser's paste event): #176 part 2 (#38): on the pane the seat owns it is inserted (worker.paste), never
+  // typed as keys, whose Enter would run it.
+  await expect.poll(() => page.evaluate(() => window.__h3d.seatTerminal()?.control?.mode)).toBe('control');
+  const keysBefore = (await sentOf(page, 'worker.keys')).length;
   await page.evaluate(() => {
     const dt = new DataTransfer();
     dt.setData('text/plain', 'pwd\n');
     document.querySelector('.seat-input')?.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
   });
-  await expect.poll(async () => (await sentOf(page, 'worker.keys')).at(-1)?.args).toEqual({ id: sprout, input: [{ text: 'pwd' }, { key: 'enter' }] });
+  await expect.poll(async () => (await sentOf(page, 'worker.paste')).at(-1)?.args).toEqual({ id: sprout, text: 'pwd\n' });
+  expect((await sentOf(page, 'worker.keys')).length).toBe(keysBefore);
 
   // Esc stands you up and unwatches at once (screens=4: it may come back live at 4 fps as a nearby laptop).
   await page.keyboard.press('Escape');
@@ -226,7 +230,7 @@ test('E sits at a worker’s laptop: typed input echoes in its terminal, game ke
   clean();
 });
 
-test('paste into an agent’s laptop sends worker.prompt; a failed key shows in the seat bar; the worker leaving keeps you seated, away', async ({ page }) => {
+test('paste into an agent’s laptop inserts it (worker.paste); a failed key shows in the seat bar; the worker leaving keeps you seated, away', async ({ page }) => {
   const clean = watchErrors(page);
   const { L, ids } = await enter(page, '', '&simfail=input_failed');
   const nibble = ids.Nibble as string; // desk 0, claude
@@ -240,12 +244,16 @@ test('paste into an agent’s laptop sends worker.prompt; a failed key shows in 
   // The next key goes through and the bar is back to normal.
   await page.keyboard.type('y');
   await expect.poll(() => page.evaluate(() => window.__h3d.seat().state)).toBe('ok');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seatTerminal()?.control?.mode)).toBe('control');
   await page.evaluate(() => {
     const dt = new DataTransfer();
     dt.setData('text/plain', 'Run the tests.');
     document.querySelector('.seat-input')?.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
   });
-  await expect.poll(async () => (await sentOf(page, 'worker.prompt')).map((c) => c.args)).toEqual([{ id: nibble, text: 'Run the tests.' }]);
+  // #176 part 2 (#38): inserted, not submitted: no worker.prompt.
+  await expect.poll(async () => (await sentOf(page, 'worker.paste')).map((c) => c.args)).toEqual([{ id: nibble, text: 'Run the tests.' }]);
+  expect(await sentOf(page, 'worker.prompt')).toEqual([]);
+  await expect.poll(() => page.evaluate(() => window.__h3d.seat().note)).toMatch(/Pasted into Nibble.s terminal: Enter sends it/);
   // Nibble goes home (#187): you stay at the laptop, and the bar says nothing more will be sent.
   await page.evaluate((id) => window.__h3d.inject({ t: 'worker.removed', seq: 1_000_000, id, session: 'herdr-3d', workspace_id: 'w1' }), nibble);
   await frames(page, 3);
@@ -281,7 +289,9 @@ test('standing up leaves the laptop showing its last frame, not a blank one (scr
 test('standing up while a paste is on its way still sends what you typed after it, in order', async ({ page }) => {
   const clean = watchErrors(page);
   // demo-m5: Zippy (desk 18) is an idle claude; a slow simulator (1.5 s per step) holds the paste's worker.prompt.
-  await openGame(page, 'demo-m5', '&screens=0', 'play=none&sim=1&simms=1500');
+  // #176 part 2: a bridge of #176 part 1 (simcontrol=part1) keeps today's paste, worker.prompt (h176-seat-input has
+  // the same order through worker.paste).
+  await openGame(page, 'demo-m5', '&screens=0', 'play=none&sim=1&simms=1500&simcontrol=part1');
   await page.evaluate((s) => window.__h3d.enterFloor(s), FLOOR);
   await frames(page, 3);
   const L = await page.evaluate((s) => window.__h3d.layout(s), FLOOR);

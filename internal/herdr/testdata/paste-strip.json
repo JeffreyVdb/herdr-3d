@@ -1,0 +1,14 @@
+[
+  ["", ""],
+  ["plain", "plain"],
+  ["two\nlines\r\nthree\rfour", "two\nlines\r\nthree\rfour"],
+  ["\u0000\u0000", ""],
+  ["\u001b[200~inner\u001b[201~", "inner"],
+  ["\u001b[20\u001b[201~0~", ""],
+  ["\u001b[2\u0000\u0000\u0000\u000001~x", "x"],
+  ["keep \u001b[31mred\u001b[0m and \u001b[2", "keep \u001b[31mred\u001b[0m and \u001b[2"],
+  ["\u001b[200\u001b[200~~", ""],
+  ["\u001b[200~deploy PASSWORD=Rq-Sentinel-93xQ!\nthen check\u001b[201~\u0000", "deploy PASSWORD=Rq-Sentinel-93xQ!\nthen check"],
+  ["a<b>&\u0000c\r\nd\ne\t✓\u001b[201~; rm -rf ~\u001b[20\u001b[200~0~x", "a<b>&c\r\nd\ne\t✓; rm -rf ~x"],
+  ["😀\u001b[201~😀", "😀😀"]
+]

@@ -68,6 +68,8 @@ func TestControlAllowlist(t *testing.T) {
 		// #176: the seated laptop's controller, never --takeover.
 		"control": {"{herdr}", "--session", "{session}", "terminal", "session", "control", "{pane}",
 			"--cols", "{cols}", "--rows", "{rows}"},
+		// #176 part 2: the CLI's version (mouse clicks from 0.9.2).
+		"version":       {"{herdr}", "--version"},
 		"send-keys":     {"{herdr}", "--session", "{session}", "pane", "send-keys", "{pane}", "{keys}"},
 		"send-text":     {"{herdr}", "--session", "{session}", "pane", "send-text", "{pane}", "{input}"},
 		"send-sequence": {"{herdr}", "--session", "{session}", "pane", "send-text", "{pane}", "{seq}"},
@@ -106,10 +108,10 @@ func TestControlAllowlist(t *testing.T) {
 	for i := range typ.NumMethod() {
 		methods = append(methods, typ.Method(i).Name)
 	}
-	if w := []string{"CloseWorkspace", "ControlTerminal", "CreateSession", "CreateWorkspace", "CreateWorktree", "EraseTyped", "ExportCodexHome", "MarkPane", "Observe", "PaneProcesses", "Prompt",
+	if w := []string{"CloseWorkspace", "ControlTerminal", "CreateSession", "CreateWorkspace", "CreateWorktree", "EraseTyped", "ExportCodexHome", "MarkPane", "MouseClicks", "Observe", "PaneProcesses", "Prompt",
 		"QueuePrompt", "ReadPane", "RemoveWorktree", "ReportCodexSession", "ResumeAgent", "ResumeCodexEmbedded", "ResumeCodexRemote", "SendKey", "SendKeys",
 		"SendSequence", "SendText", "SetZoom", "StartAgent", "StartCodexRemote", "StartCodexServer", "StartSession", "StopSession",
-		"SubmitPrompt", "TypeExit", "TypePrompt"}; !slices.Equal(methods, w) {
+		"SubmitPrompt", "TypeExit", "TypePrompt", "Version"}; !slices.Equal(methods, w) {
 		t.Fatalf("Control methods = %v, want %v", methods, w)
 	}
 
@@ -236,6 +238,8 @@ func checkAllowlistArgv(t *testing.T, pol shellPolicy) {
 	c.TypeGap = time.Nanosecond
 	must(c.TypePrompt(ctx, "h3d-it-1", "w7:p1", "--help\r\n/run it; rm -rf ~ $(id)")) // #95
 	must(c.EraseTyped(ctx, "h3d-it-1", "w7:p1", 2))                                   // #95 R1
+	c.MouseClicks(ctx)                                                                // #176 part 2 (once: kept)
+	c.Version(ctx)
 	// #155
 	run := "/run/user/7/herdr-world/codex/"
 	remote := Remote{Socket: run + "a58752ea6511.sock", Cwd: "/home/u/.herdr/worktrees/r/h3d-mochi-a58752"}
@@ -298,6 +302,7 @@ func checkAllowlistArgv(t *testing.T, pol shellPolicy) {
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-text", "w7:p1", "--help\n/run it; rm -rf ~ $(id)"},
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-keys", "w7:p1", "enter"},
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-keys", "w7:p1", "ctrl+u", "backspace", "ctrl+u", "backspace"},
+		{"/opt/herdr", "--version"},
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "run", "w7:p1",
 			"setsid -f " + pol.typed + " /run/user/7/herdr-world/codex/a58752ea6511" + pol.ext + " </dev/null >/dev/null 2>&1"},
 		{"/opt/herdr", "--session", "h3d-it-1", "agent", "start", "mochi-a58752", "--kind", "codex", "--pane", "w7:p1",

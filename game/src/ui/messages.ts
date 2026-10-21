@@ -33,6 +33,8 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'terminal.zoom': 'zoom a herdr tab from a laptop',
   'terminal.resize': 'size the terminal you sit at to the window',
   'terminal.scroll': 'scroll the terminal you sit at',
+  'terminal.mouse': 'click in the terminal you sit at',
+  'worker.paste': 'paste into the terminal you sit at without sending it',
   'worker.keys': 'type on a worker’s laptop',
   // M16
   'transcript.watch': 'show a worker’s conversation',

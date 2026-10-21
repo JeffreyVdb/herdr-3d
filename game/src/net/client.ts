@@ -163,6 +163,9 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   'worker.wrapup': 30_000,
   // M5: a prompt waits up to 8 s for the agent to start, then 5 s after one more Enter; changes run git (10 s).
   'worker.prompt': 20_000,
+  // #176 part 2: a reviewed paste's scan (10 s at most), then up to 5 s for its turn on herdr's controller and 2 s for its
+  // frame; a paste being written is waited for (it may still land: never reported failed meanwhile).
+  'worker.paste': 20_000,
   // #108: the bridge bounds a scan at 10 s (past it `secrets_unavailable`): its answer has 5 s to get here.
   'prompt_secrets.scan': 15_000,
   'worker.changes': 15_000,

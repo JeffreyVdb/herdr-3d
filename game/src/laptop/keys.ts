@@ -229,14 +229,35 @@ export function takeBatch(queue: KeyItem[]): KeyItem[] {
   return out;
 }
 
-/** A prompt op: its text through the sender's `prompt`, or (#108, a paste reviewed for secrets) its own `send`. */
-type Op = { kind: 'keys'; items: KeyItem[] } | { kind: 'prompt'; text: string; send?: () => Promise<CommandResult> };
+/** #176 part 2: a click on a cell (0-based) of the pane the seat owns, with herdr's modifier bits. */
+export interface SeatClick {
+  button: 'left' | 'right' | 'middle';
+  column: number;
+  row: number;
+  modifiers: number;
+}
+
+/**
+ * A prompt op: its text through the sender's `prompt`, or (#108, a paste reviewed for secrets) its own `send`. #176
+ * part 2: a `paste` inserts its text (the sender's `paste`, or its own `send`) and a `click` clicks, both in order
+ * with the keys around them.
+ */
+type Op =
+  | { kind: 'keys'; items: KeyItem[] }
+  | { kind: 'prompt' | 'paste'; text: string; send?: () => Promise<CommandResult> }
+  | { kind: 'click'; click: SeatClick };
+
+/** What an answer was for: typing, a paste as a prompt (`worker.prompt`), a paste inserted (`worker.paste`), a click. */
+export type InputKind = 'keys' | 'prompt' | 'paste' | 'click';
 
 export interface InputSender {
   keys(items: KeyItem[]): Promise<CommandResult>;
   prompt(text: string): Promise<CommandResult>;
+  /** #176 part 2: `worker.paste` (inserted, never submitted) and `terminal.mouse`. */
+  paste?(text: string): Promise<CommandResult>;
+  click?(c: SeatClick): Promise<CommandResult>;
   /** Every answer, in order (the seat bar shows failures). */
-  done(kind: 'keys' | 'prompt', r: CommandResult): void;
+  done(kind: InputKind, r: CommandResult): void;
 }
 
 /**
@@ -289,11 +310,31 @@ export class InputQueue {
   }
 
   /**
-   * #108: a paste whose possible secrets were reviewed: `send` sends it (the review's flow, which may ask for the review
-   * again before it goes), in order with what was typed before it. Only an agent's paste is reviewed.
+   * #176 part 2: a paste inserted where the terminal's cursor is (`worker.paste`: the seat owns the pane), for an
+   * agent and a shell alike: nothing is submitted. False when it is too long to send.
    */
-  pasteReviewed(send: () => Promise<CommandResult>): void {
-    this.ops.push({ kind: 'prompt', text: '', send });
+  insert(text: string): boolean {
+    const t = text.replace(/\u0000/g, '');
+    if (!t) return true;
+    if (bytes(t) > MAX_PROMPT) return false;
+    this.ops.push({ kind: 'paste', text: t });
+    this.pump();
+    return true;
+  }
+
+  /** #176 part 2: a click on the pane the seat owns, after what was typed before it. */
+  click(c: SeatClick): void {
+    this.ops.push({ kind: 'click', click: c });
+    this.pump();
+  }
+
+  /**
+   * #108: a paste whose possible secrets were reviewed: `send` sends it (the review's flow, which may ask for the review
+   * again before it goes), in order with what was typed before it. Only an agent's paste is reviewed. `kind`: `paste`
+   * when it is inserted (#176 part 2).
+   */
+  pasteReviewed(send: () => Promise<CommandResult>, kind: 'prompt' | 'paste' = 'prompt'): void {
+    this.ops.push({ kind, text: '', send });
     this.pump();
   }
 
@@ -308,16 +349,17 @@ export class InputQueue {
     if (!op) return;
     this.busy = true;
     let p: Promise<CommandResult>;
-    let kind: 'keys' | 'prompt';
+    const kind: InputKind = op.kind;
     if (op.kind === 'keys') {
-      kind = 'keys';
       const batch = takeBatch(op.items);
       if (!op.items.length) this.ops.shift();
       p = this.out.keys(batch);
-    } else {
-      kind = 'prompt';
+    } else if (op.kind === 'click') {
       this.ops.shift();
-      p = op.send ? op.send() : this.out.prompt(op.text);
+      p = this.out.click ? this.out.click(op.click) : Promise.resolve(unsupported('terminal.mouse'));
+    } else {
+      this.ops.shift();
+      p = op.send ? op.send() : op.kind === 'paste' ? (this.out.paste ? this.out.paste(op.text) : Promise.resolve(unsupported('worker.paste'))) : this.out.prompt(op.text);
     }
     this.sent++;
     void p.then((r) => {
@@ -326,6 +368,11 @@ export class InputQueue {
       this.pump();
     });
   }
+}
+
+/** The answer of a command the sender has no way to send. */
+function unsupported(cmd: string): CommandResult {
+  return { ok: false, code: 'unknown_command', message: `${cmd} is not available here` };
 }
 
 /**

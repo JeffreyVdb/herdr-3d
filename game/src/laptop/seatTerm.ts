@@ -1,17 +1,17 @@
-import { Terminal, type IDisposable } from '@xterm/xterm';
+import { Terminal, type IBufferRange, type IDisposable } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import type { TerminalFrame } from '../net/protocol';
 import type { ScreenTheme } from './paint';
-import { clampGrid, Debounce, linkHint, linkOpens, RESIZE_DEBOUNCE_MS, WheelLines, WHEEL_FLUSH_MS, wheelModifiers, xtermTheme } from './seatTermLogic';
+import { cellAt, clampGrid, Debounce, isClick, linkHint, linkOpens, RESIZE_DEBOUNCE_MS, WheelLines, WHEEL_FLUSH_MS, wheelModifiers, xtermTheme } from './seatTermLogic';
 import { decodeFrame } from './terminal';
 
 /**
  * The replies xterm's parser makes to a frame's query bytes (device attributes and status, mode and setting requests,
  * window reports, OSC colour queries) are swallowed where they start, so none can become input, whatever reads
- * `onData` later (#176 part 2's mouse). Colour sets (OSC 4/10/11/12 without `?`) still apply.
+ * `onData` later (part 2's clicks go through the bridge, never `onData`). Colour sets (OSC 4/10/11/12 without `?`) still apply.
  */
 export function swallowReplies(term: Terminal): IDisposable[] {
   const swallow = () => true;
@@ -48,6 +48,8 @@ export interface SeatTermDeps {
   paste(text: string, files: File[]): void;
   /** The widget would take the keyboard (a click): the seat's own keyboard keeps it (IME, paste, the lanes). */
   keyboard(): void;
+  /** #176 part 2: a left click on a cell (no drag, no selection, no link opened): the seat sends it when the pane takes clicks. */
+  click?(c: { column: number; row: number; modifiers: number }): void;
   mac: boolean;
 }
 
@@ -58,7 +60,8 @@ export interface SeatTermDeps {
  * bridge, which resizes the real PTY, and herdr's next full frame is at that size. It never types: `disableStdin`, no
  * `onData`, the parser's replies swallowed, every key the seat's (`Laptops.key`). Selection is the widget's own; links
  * (plain URLs, soft-wrapped ones too, and OSC 8) open through the app's opener on Ctrl/⌘+click; the wheel goes to
- * herdr's history.
+ * herdr's history. #176 part 2: a left click that selects nothing and opens no link is the cell's (`click`): herdr gives
+ * it to an application with mouse reporting on, and to nothing else.
  */
 export class SeatTerminal {
   private term: Terminal | null = null;
@@ -76,6 +79,9 @@ export class SeatTerminal {
   private theme: ScreenTheme | null = null;
   private proposed: SeatGrid | null = null;
   private mounting: Promise<void> | null = null;
+  /** #176 part 2: the left press a click may come of (null: none), and whether a link opened since. */
+  private press: { x: number; y: number; column: number; row: number } | null = null;
+  private linkOpened = false;
   /** Fits its area (the seat owns the pane) or shows the pane at its own size (read only). */
   private fitting = true;
   /** The host's scroll at a press, kept through xterm focusing its textarea (read only, the pane scrolls in the host). */
@@ -169,6 +175,8 @@ export class SeatTerminal {
     this.host.addEventListener('mousedown', this.onPress, { capture: true });
     this.host.addEventListener('focus', this.onHostFocus);
     this.host.addEventListener('paste', this.onPaste, { capture: true });
+    this.host.addEventListener('pointerdown', this.onCellPress, { capture: true });
+    this.host.addEventListener('click', this.onCellClick, { capture: true });
     // xterm knows its cell size only once it has rendered: a fit that found none is tried again then.
     this.offs.push(term.onRender(() => {
       if (!this.proposed && this.fitting) this.refit(true);
@@ -181,8 +189,34 @@ export class SeatTerminal {
 
   /** #176: a link's activation: Ctrl/⌘+click and https only, through the app's opener (never window.open, no confirm). */
   private activate(e: MouseEvent, uri: string): void {
-    if (linkOpens(e, this.deps.mac, uri)) this.deps.open(uri);
+    if (!linkOpens(e, this.deps.mac, uri)) return;
+    this.linkOpened = true; // #176 part 2: this press opened a link: no click for the pane
+    this.deps.open(uri);
   }
+
+  /** The cell under a point (null: off the grid). xterm's own screen element and cell: no transformed ancestors. */
+  private cellOf(x: number, y: number): { column: number; row: number } | null {
+    const screen = this.term?.element?.querySelector('.xterm-screen')?.getBoundingClientRect();
+    return screen ? cellAt(x, y, screen, this.cell(), this.cols, this.rows) : null;
+  }
+
+  private readonly onCellPress = (e: PointerEvent) => {
+    this.linkOpened = false;
+    this.press = null;
+    if (e.button !== 0 || !e.isPrimary || !this.deps.click || !this.fitting) return;
+    const at = this.cellOf(e.clientX, e.clientY);
+    if (at) this.press = { x: e.clientX, y: e.clientY, ...at };
+  };
+
+  // After xterm's own mouseup (its selection and its links): a press and release on one cell that made nothing else.
+  private readonly onCellClick = (e: MouseEvent) => {
+    const down = this.press;
+    this.press = null;
+    if (!down || e.button !== 0) return;
+    const at = this.cellOf(e.clientX, e.clientY);
+    if (!isClick(down, at && { x: e.clientX, y: e.clientY, ...at }, !!this.term?.hasSelection(), this.linkOpened)) return;
+    this.deps.click?.({ column: down.column, row: down.row, modifiers: wheelModifiers(e) });
+  };
 
   private readonly onPress = () => {
     this.scrollAt = [this.host.scrollLeft, this.host.scrollTop];
@@ -297,6 +331,8 @@ export class SeatTerminal {
     this.px = px;
     this.theme = theme;
     this.host.style.setProperty('--seat-term-bg', `#${(theme.bg & 0xffffff).toString(16).padStart(6, '0')}`);
+    // #176 part 2: the ink of what sits beside it (the history's scrollbar) is the terminal's.
+    (this.host.parentElement ?? this.host).style.setProperty('--seat-term-fg', `#${(theme.fg & 0xffffff).toString(16).padStart(6, '0')}`);
     const term = this.term;
     if (!term) return;
     term.options.theme = xtermTheme(theme);
@@ -319,13 +355,24 @@ export class SeatTerminal {
     const term = this.term;
     if (!term) return false;
     if (!f.full && (f.cols !== term.cols || f.rows !== term.rows)) return false;
+    // #176 part 2: a full frame at the same size (herdr's answer to a resize: a click's or a paste's, a resync) keeps
+    // the selection, which RIS clears (a double click's word, a drag going on).
+    let keep: IBufferRange | undefined;
     if (f.full) {
       if (f.cols !== term.cols || f.rows !== term.rows) term.resize(f.cols, f.rows);
+      else keep = term.getSelectionPosition();
       term.write('\x1bc');
     }
-    term.write(decodeFrame(f.data));
+    term.write(decodeFrame(f.data), keep ? () => this.reselect(term, keep) : undefined);
     this.frames++;
     return true;
+  }
+
+  /** The selection from before a full frame again (xterm's own cells: getSelectionPosition's, 0-based). */
+  private reselect(term: Terminal, sel: IBufferRange): void {
+    if (this.term !== term || term.hasSelection()) return;
+    const length = (sel.end.y - sel.start.y) * term.cols + (sel.end.x - sel.start.x);
+    if (length > 0) term.select(sel.start.x, sel.start.y, length);
   }
 
   /** Forgets the screen (a new watch, a pane that changed). */
@@ -359,6 +406,8 @@ export class SeatTerminal {
     this.host.removeEventListener('paste', this.onPaste, { capture: true });
     this.host.removeEventListener('mousedown', this.onPress, { capture: true });
     this.host.removeEventListener('focus', this.onHostFocus);
+    this.host.removeEventListener('pointerdown', this.onCellPress, { capture: true });
+    this.host.removeEventListener('click', this.onCellClick, { capture: true });
     for (const d of this.offs.splice(0)) d.dispose();
     this.term?.dispose();
     this.term = null;

@@ -367,17 +367,23 @@ parts:
     tab fullscreen; `terminal.watch.fullscreen` is a `*bool` (absent: an old client, never followed).
     #57's `worker.answer_ask` uses these same shapes (digits, arrows, `tab`, `enter`, `esc`, `send-text`, `pane
     read` between steps): no new one.
-    #176's seated laptop adds exactly one: the long-running `terminal session control <pane> --cols <40–300> --rows
+    #176's seated laptop adds two: the long-running `terminal session control <pane> --cols <40–300> --rows
     <10–100>` (`Control.ControlTerminal`; never `--takeover`; its own process group, stopped like an observer), with
     JSONL on its stdin limited to `terminal.resize` (40–300 × 10–100, a cell of 0–256 px), `terminal.scroll` (`up` /
     `down`, 1–1000 lines, `source: "wheel"`, a cell inside 300 × 100, modifiers 0–7), an empty `terminal.input` (no
-    text, no bytes: herdr's reset to the live bottom) and `terminal.release`; each line at most 64 KiB, through a
-    bounded queue the caller never waits on (`internal/herdr/termcontrol.go`). A refusal (`terminal.closed` with
+    text, no bytes: herdr's reset to the live bottom), #176 part 2's paste (one `terminal.input` whose text is
+    `ESC[200~` + at most 16 KiB without NUL or paste markers, line ends as CR + `ESC[201~`), its click
+    (`terminal.mouse` `down` then `up`, `left`/`right`/`middle`, a cell inside the grid, modifiers 0–7, only for a herdr
+    0.9.2+) and `terminal.release`; each line at most 128 KiB, through a
+    bounded queue that never blocks its caller (a paste or a click waits for herdr's full frame answering the same-size
+    resize written with it, so the lane's next keys come after it; `internal/herdr/termcontrol.go`). A refusal (`terminal.closed` with
     "already has an attached client") or a takeover makes the watch a read-only observer
     (`herdr.ControlRefused` / `ControlTakenOver`); `Close` resizes the PTY back to the pane's size before the attach
     (the session's snapshot), then releases, waits up to 1 s and stops it. The hub's part is
     `internal/server/termcontrol.go` (one controller per connection, counted under the observer caps; a new one waits
-    for the worker's released one).
+    for the worker's released one; `seatinput.go`: `worker.paste` and `terminal.mouse` on the worker's input lane).
+    And (#176 part 2) `herdr --version`, the one shape without a session, read once (`Control.Version`,
+    `MouseClicks`) to tell whether the controller takes clicks.
     Typed text is never quoted in an error or the audit log. A herdr CLI call takes about 10 ms, so input goes through
     the CLI (consecutive keys, and texts, batched into one call); the socket's `pane.send_input` is not used.
 
@@ -697,6 +703,14 @@ both providers):
   observes read only (`busy`), standing up (a watch without control) puts the PTY back to its size before (no TUI is
   attached), five sit / stand cycles and closed connections leave no `terminal session control` or observer process
   (a `/proc` scan, `--takeover` never in an argv). About 4 s, no agent.
+- `TestIntegrationSeatPaste` (#176 part 2): a fixture child (`python3`, raw mode) in the owned pane: with DECSET 2004 on
+  it reads `worker.paste`'s text as one bracketed paste between the keys typed before and after it (NUL and an
+  embedded end marker removed, line ends as CR, nothing submitted); with it off the same text without markers; on
+  herdr 0.9.1 `terminal.control` has no `mouse` and a click is refused before it reaches the child.
+- `TestIntegrationSeatMouse` (#176 part 2): the same against the official herdr 0.9.5 binary at
+  `~/.cache/h3d-176/herdr-0.9.5/herdr` (skipped without it), with XDG directories and a config of its own so it never
+  touches the user's herdr state: a click reaches a child with mouse reporting on (1000 + 1006) as SGR
+  `ESC[<0;6;3M ESC[<0;6;3m`, a plain child gets nothing of it.
 - `TestIntegrationFullscreenLaptop` (#74): a two-pane tab watched with `fullscreen` against the real herdr: without it
   nothing is zoomed; headless the flag flips (`headless`, 120 × 40) and is put back on `terminal.unwatch`; with a TUI
   attached (a `python3` pty client at 140 × 50, skipped without python3) the watch is the tab's whole content area,
@@ -1038,7 +1052,16 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   restart for a new fps or grid; a frame gap asks for a full frame with a same-size resize); read only (another
   client owns the pane) it shows the pane at its own size and the #74 chip ("Zoom herdr tab") is back; while the seat
   owns the pane there is no chip and no zoom. The simulator plays the controller (`simcontrol=old|none|busy`,
-  `sim.write` raw text on a screen, `sim.terminal` what a watch has). The simulator plays the zoom with `simzoom=old|single|split|headless`
+  `sim.write` raw text on a screen, `sim.terminal` what a watch has). #176 part 2: on a pane the seat owns a paste
+  (from anywhere in the workspace's terminal view, `SeatBar.pasteIsTerminals`; text fields keep theirs) is
+  `worker.paste`, on the worker's lane (`InputQueue.insert`) after the secrets review (of the text as the bridge scans
+  it: `laptop/pasteStrip.ts`, `herdr.PasteStrip`'s rule, both held to `internal/herdr/testdata/paste-strip.json`) and
+  image markers; a left click
+  on a cell that selected nothing and opened no link is `terminal.mouse` (`seatTerm.ts`, `cellAt` / `isClick`) when
+  `terminal.control` says `mouse`, and the keys footer says "Mouse clicks need herdr 0.9.2 or newer" when it does not;
+  `ui/seatScrollbar.ts` is the history's scrollbar (its math pure and tested; it is in the Tab route after the header,
+  before the terminal, and `SeatBar.owns` it, so its Tab moves the focus on). The simulator plays them
+  (`worker.paste`, `terminal.mouse`, `simcontrol=nomouse|part1`). The simulator plays the zoom with `simzoom=old|single|split|headless`
   (`tools/fixture-screen.ts`; `sim.unzoom` is the human unzooming), and `simscreen=narrow` puts a split pane's 60×40
   screen (`fixtures/screens/narrow.jsonl`) on every laptop. #57: `askCard.ts` is the question card of the transcript view (the one pinned above the
   prompt box while the worker waits, and its timeline entry), styled in `transcript.css`. #59: `paint.ts` draws each

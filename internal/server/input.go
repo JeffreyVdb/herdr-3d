@@ -802,6 +802,8 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 			out.Protect, out.Ignore = &protect, &ignore
 		}
 		return mustJSON(out)
+	case proto.CmdWorkerPaste: // #176 part 2: the paste by its lengths, never its text
+		return auditPaste(cmd)
 	// #108: the scanned text by its lengths, never its text.
 	case proto.CmdPromptSecretsScan:
 		var a proto.PromptSecretsScanArgs

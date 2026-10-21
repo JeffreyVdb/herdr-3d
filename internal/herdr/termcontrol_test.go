@@ -3,6 +3,7 @@ package herdr
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +34,8 @@ type fakeController struct {
 	lines []string
 	once  sync.Once
 	stops int
+	// answer: herdr's full frame for each resize (#176 part 2).
+	answer bool
 }
 
 func newFakeController(stubborn bool) *fakeController {
@@ -44,10 +47,15 @@ func newFakeController(stubborn bool) *fakeController {
 	f := &fakeController{out: out, outW: outW, in: inW, done: make(chan struct{}), stopped: make(chan struct{}), stubborn: stubborn}
 	go func() {
 		s := bufio.NewScanner(inR)
+		s.Buffer(nil, 1<<20) // herdr's own limit: a paste's line is longer than bufio's default
 		for s.Scan() {
 			f.mu.Lock()
 			f.lines = append(f.lines, s.Text())
+			answer := f.answer
 			f.mu.Unlock()
+			if answer && strings.Contains(s.Text(), `"terminal.resize"`) {
+				_, _ = io.WriteString(outW, frameLine(len(f.lines), true, "again"))
+			}
 			if !stubborn && strings.Contains(s.Text(), `"terminal.release"`) {
 				_, _ = io.WriteString(outW, `{"type":"terminal.closed","reason":"detached"}`+"\n")
 				f.exit()
@@ -181,6 +189,158 @@ func TestControlTerminalCommands(t *testing.T) {
 	}
 	if err := ct.Live(); !errors.Is(err, ErrControlClosed) {
 		t.Fatalf("a command after close: %v", err)
+	}
+}
+
+// #176 part 2: a paste is one bracketed terminal.input (markers and NUL in
+// it removed, line ends as CR, the text as it is: no HTML escapes), a click
+// is terminal.mouse down then up; both return once written, in order with
+// the commands before them.
+func TestControlTerminalPasteAndClick(t *testing.T) {
+	fake := newFakeController(false)
+	fake.answer = true
+	c := &Control{Duplex: func([]string) (DuplexProc, error) { return fake, nil }}
+	ct, err := c.ControlTerminal(context.Background(), "h3d-it-1", "w1:p1", 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ct.Close()
+	// The attach's first frame; the pump reads every frame after it.
+	_ = fake.frame(frameLine(1, true, "hello"))
+	fulls := make(chan struct{}, 16)
+	go func() {
+		for {
+			f, err := ct.Next()
+			if err != nil || f.Closed {
+				return
+			}
+			if f.Full {
+				fulls <- struct{}{}
+			}
+		}
+	}()
+	<-fulls
+	start := time.Now()
+	ctx := context.Background()
+	if err := ct.Scroll(true, 2, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := ct.Paste(ctx, "a<b>&\x00c\r\nd\ne\t✓\x1b[201~; rm -rf ~\x1b[20\x1b[200~0~x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ct.Click(ctx, "left", 5, 2, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := ct.Click(ctx, "middle", 79, 23, 7); err != nil {
+		t.Fatal(err)
+	}
+	// Each returned once herdr's full frame for its resize came (not after appliedWait).
+	if took := time.Since(start); took >= appliedWait {
+		t.Fatalf("paste and clicks took %s: they did not see herdr's frames", took)
+	}
+	resize := `{"type":"terminal.resize","cols":80,"rows":24,"cell_width_px":0,"cell_height_px":0}`
+	got := fake.waitLines(t, 9)
+	want := []string{
+		`{"type":"terminal.scroll","direction":"up","lines":2,"source":"wheel","column":0,"row":0,"modifiers":0}`,
+		`{"type":"terminal.input","text":"\u001b[200~a<b>&c\rd\re\t✓; rm -rf ~x\u001b[201~"}`,
+		resize,
+		`{"type":"terminal.mouse","action":"down","button":"left","column":5,"row":2,"modifiers":0}`,
+		`{"type":"terminal.mouse","action":"up","button":"left","column":5,"row":2,"modifiers":0}`,
+		resize,
+		`{"type":"terminal.mouse","action":"down","button":"middle","column":79,"row":23,"modifiers":7}`,
+		`{"type":"terminal.mouse","action":"up","button":"middle","column":79,"row":23,"modifiers":7}`,
+		resize,
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("stdin =\n%q\nwant\n%q", got, want)
+	}
+	// The resize that answers is the last size asked (its cell too).
+	if err := ct.Resize(100, 30, 9, 18); err != nil {
+		t.Fatal(err)
+	}
+	if err := ct.Click(ctx, "left", 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := fake.waitLines(t, 13)[12]; got != `{"type":"terminal.resize","cols":100,"rows":30,"cell_width_px":9,"cell_height_px":18}` {
+		t.Fatalf("after a click: %s", got)
+	}
+
+	// The largest paste, all of it escaped by JSON, is one line under herdr's limit.
+	worst := strings.Repeat("\x01", MaxMessage)
+	if err := ct.Paste(ctx, worst); err != nil {
+		t.Fatalf("a 16 KiB paste of control characters: %v", err)
+	}
+	if l := fake.waitLines(t, 14)[13]; len(l) < 6*MaxMessage || len(l)+1 > maxControlLine {
+		t.Fatalf("worst paste line is %d bytes", len(l))
+	}
+
+	for name, call := range map[string]func() error{
+		"too long":   func() error { return ct.Paste(ctx, strings.Repeat("x", MaxMessage+1)) },
+		"not utf-8":  func() error { return ct.Paste(ctx, "\xff") },
+		"button":     func() error { return ct.Click(ctx, "back", 0, 0, 0) },
+		"no button":  func() error { return ct.Click(ctx, "", 0, 0, 0) },
+		"column":     func() error { return ct.Click(ctx, "left", MaxCols, 0, 0) },
+		"row":        func() error { return ct.Click(ctx, "left", 0, -1, 0) },
+		"modifiers":  func() error { return ct.Click(ctx, "left", 0, 0, 8) },
+		"negative m": func() error { return ct.Click(ctx, "left", 0, 0, -1) },
+	} {
+		if err := call(); !errors.Is(err, ErrNotAllowed) {
+			t.Errorf("%s: err = %v, want ErrNotAllowed", name, err)
+		}
+	}
+	if n := len(fake.written()); n != 15 {
+		t.Fatalf("a refused command reached herdr: %d lines", n)
+	}
+	ct.Close()
+	if err := ct.Paste(ctx, "x"); !errors.Is(err, ErrControlClosed) {
+		t.Fatalf("a paste after close: %v", err)
+	}
+	if err := ct.Click(ctx, "left", 0, 0, 0); !errors.Is(err, ErrControlClosed) {
+		t.Fatalf("a click after close: %v", err)
+	}
+}
+
+func TestPasteClean(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                                   "",
+		"plain":                              "plain",
+		"two\nlines\r\nthree\rfour":          "two\rlines\rthree\rfour",
+		"\x00\x00":                           "",
+		"\x1b[200~inner\x1b[201~":            "inner",
+		"\x1b[20\x1b[201~0~":                 "", // removing one marker joins another
+		"\x1b[2\x00\x00\x00\x0001~x":         "x",
+		"keep \x1b[31mred\x1b[0m and \x1b[2": "keep \x1b[31mred\x1b[0m and \x1b[2",
+		"\x1b[200\x1b[200~~":                 "", // ESC[200 + a marker + ~ is a marker again
+	} {
+		if got := PasteClean(in); got != want {
+			t.Errorf("PasteClean(%q) = %q, want %q", in, got, want)
+		}
+		if got := PasteText(in); got != PasteStart+want+PasteEnd {
+			t.Errorf("PasteText(%q) = %q", in, got)
+		}
+	}
+}
+
+// testdata/paste-strip.json is PasteStrip's vectors: the game strips a
+// paste with its own port of it before the paste's secrets are reviewed
+// (game/src/laptop/pasteStrip.test.ts reads them too), so the text reviewed is the
+// text the bridge scans.
+func TestPasteStripVectors(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "paste-strip.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors [][2]string
+	if err := json.Unmarshal(b, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	if len(vectors) < 10 {
+		t.Fatalf("%d vectors", len(vectors))
+	}
+	for _, v := range vectors {
+		if got := PasteStrip(v[0]); got != v[1] {
+			t.Errorf("PasteStrip(%q) = %q, want %q", v[0], got, v[1])
+		}
 	}
 }
 
@@ -608,4 +768,180 @@ func TestControlTerminalQueueOrderProperty(t *testing.T) {
 		t.Fatalf("the queue never filled (%d wheels refused, %d commands superseded): the test proves nothing", refused, dropped)
 	}
 	t.Logf("%d commands refused, %d superseded", refused, dropped)
+}
+
+// #176 part 2: a paste or a click in a full queue makes room as the reset to
+// the live bottom does (the wheels before it are moot: herdr resets the view
+// before input), and waits until it is written; one dropped at Close says so.
+func TestControlTerminalInputInAFullQueue(t *testing.T) {
+	appliedWait = 10 * time.Millisecond // no frames here
+	t.Cleanup(func() { appliedWait = 2 * time.Second })
+	t.Run("makes room", func(t *testing.T) {
+		p, ct := stalled(t, controlQueue)
+		done := make(chan error, 1)
+		go func() { done <- ct.Paste(context.Background(), "hi") }()
+		select {
+		case err := <-done:
+			t.Fatalf("the paste returned before it was written: %v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+		p.release()
+		if err := <-done; err != nil {
+			t.Fatalf("Paste in a full queue: %v", err)
+		}
+		if err := ct.Click(context.Background(), "left", 1, 1, 0); err != nil {
+			t.Fatal(err)
+		}
+		ct.Close()
+		got := strings.Split(strings.Join(p.written(), "\n"), "\n") // (this fake keeps writes: a paste's is two lines)
+		if len(got) != 7 || got[0] != fmt.Sprintf(scrollLine, 0) || !strings.Contains(got[1], `\u001b[200~hi\u001b[201~`) ||
+			!strings.Contains(got[2], `"terminal.resize"`) || !strings.Contains(got[3], `"action":"down"`) || got[6] != releaseLine {
+			t.Fatalf("stdin = %q", got)
+		}
+	})
+	t.Run("dropped at close", func(t *testing.T) {
+		p, ct := stalled(t, 0)
+		done := make(chan error, 1)
+		go func() { done <- ct.Paste(context.Background(), "late") }()
+		k := ct.(*controller)
+		queued := func() int {
+			k.mu.Lock()
+			defer k.mu.Unlock()
+			return len(k.queue)
+		}
+		for queued() == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		for i := range controlQueue - 1 { // the paste is the oldest queued
+			if err := ct.Scroll(true, 1, i, 0, 0); err != nil {
+				t.Fatal(err)
+			}
+		}
+		time.AfterFunc(20*time.Millisecond, p.release)
+		ct.Close()
+		if err := <-done; !errors.Is(err, ErrControlClosed) {
+			t.Fatalf("a paste dropped at close: %v", err)
+		}
+		for _, l := range p.written() {
+			if strings.Contains(l, "late") {
+				t.Fatalf("the dropped paste reached herdr: %s", l)
+			}
+		}
+	})
+}
+
+// A paste or a click whose wait fails while it is still queued is taken out
+// of the queue and says it was not written: it never reaches herdr later,
+// behind what came after it.
+func TestControlTerminalInputGivenUpIsNotWritten(t *testing.T) {
+	appliedWait = 10 * time.Millisecond // no frames here
+	t.Cleanup(func() { appliedWait = 2 * time.Second })
+	for name, call := range map[string]func(ct ControlStream) error{
+		"write timeout": func(ct ControlStream) error {
+			writeWait = 30 * time.Millisecond
+			defer func() { writeWait = 5 * time.Second }() // this paste's only
+			return ct.Paste(context.Background(), "LATE_PASTE")
+		},
+		"cancelled": func(ct ControlStream) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+			defer cancel()
+			return ct.Click(ctx, "left", 7, 7, 0)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, ct := stalled(t, 2)
+			if err := call(ct); !errors.Is(err, ErrInputUnsent) {
+				t.Fatalf("err = %v, want ErrInputUnsent", err)
+			}
+			k := ct.(*controller)
+			k.mu.Lock()
+			queued := len(k.queue)
+			k.mu.Unlock()
+			if queued != 2 {
+				t.Fatalf("%d commands queued, want the two scrolls", queued)
+			}
+			p.release()
+			if err := ct.Paste(context.Background(), "NEXT"); err != nil {
+				t.Fatal(err)
+			}
+			ct.Close()
+			got := strings.Join(p.written(), "\n")
+			if strings.Contains(got, "LATE_PASTE") || strings.Contains(got, `"column":7`) {
+				t.Fatalf("the input given up reached herdr:\n%s", got)
+			}
+			if !strings.Contains(got, "NEXT") {
+				t.Fatalf("the next paste is missing:\n%s", got)
+			}
+		})
+	}
+}
+
+// Once the writer took a paste, a timeout or a cancel does not give up on
+// it: it may still land, so Paste waits for the write, and says so.
+func TestControlTerminalInputBeingWrittenIsWaitedFor(t *testing.T) {
+	appliedWait = 10 * time.Millisecond
+	writeWait = 20 * time.Millisecond
+	t.Cleanup(func() { appliedWait, writeWait = 2*time.Second, 5*time.Second })
+	p := newStalledController() // its first write (the paste) stalls
+	c := &Control{Duplex: func([]string) (DuplexProc, error) { return p, nil }}
+	ct, err := c.ControlTerminal(context.Background(), "h3d-it-1", "w1:p1", 120, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- ct.Paste(ctx, "IN_FLIGHT") }()
+	<-p.entered
+	select {
+	case err := <-done:
+		t.Fatalf("Paste returned while its line was being written: %v", err)
+	case <-time.After(100 * time.Millisecond): // past writeWait and the cancel
+	}
+	p.release()
+	if err := <-done; err != nil {
+		t.Fatalf("a paste written after its wait ran out: %v", err)
+	}
+	ct.Close()
+	if n := strings.Count(strings.Join(p.written(), "\n"), "IN_FLIGHT"); n != 1 {
+		t.Fatalf("the paste was written %d times", n)
+	}
+}
+
+// The same-size resize that follows a paste is the size current when the
+// paste is queued: a Resize at the same time is either before the paste
+// (and the paste's resize is its size) or after it, never undone.
+func TestControlTerminalBarrierKeepsTheLatestSize(t *testing.T) {
+	sizes := regexp.MustCompile(`"cols":(\d+),"rows":(\d+)`)
+	text := strings.Repeat("x", MaxMessage) // long to encode: the window a race needs
+	for i := range 2000 {
+		ct := &controller{size: [4]int{120, 40, 0, 0}}
+		ct.more = sync.NewCond(&ct.mu)
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { _ = ct.Paste(ctx, text); close(done) }()
+		runtime.Gosched()
+		if err := ct.Resize(150, 45, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			ct.mu.Lock()
+			n := len(ct.queue)
+			ct.mu.Unlock()
+			if n == 2 {
+				break
+			}
+			runtime.Gosched()
+		}
+		ct.mu.Lock()
+		last := ct.queue[len(ct.queue)-1]
+		size := ct.size
+		ct.mu.Unlock()
+		m := sizes.FindAllStringSubmatch(string(last.line), -1)
+		if got := m[len(m)-1][1] + "x" + m[len(m)-1][2]; got != fmt.Sprintf("%dx%d", size[0], size[1]) {
+			t.Fatalf("iteration %d: the last resize queued is %s, the size asked last %dx%d", i, got, size[0], size[1])
+		}
+		cancel()
+		<-done
+	}
 }

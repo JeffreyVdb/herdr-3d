@@ -250,6 +250,8 @@ test('a paste into an agent’s terminal is reviewed first: exact UTF-16 ranges 
   const clean = watchErrors(page);
   await openGame(page, 'demo-m5', '', `${SIM}&simsecretson=1`);
   const id = await sitAt(page, 'Pebble', 'terminal');
+  // #176 part 2: the seat owns the pane: the reviewed paste is inserted (worker.paste), not submitted.
+  await expect.poll(() => page.evaluate(() => window.__h3d.seatTerminal()?.control?.mode)).toBe('control');
   const paste = 'line one\r\nPASSWORD=p😀ss-w0rd\r\nAPI_KEY="k3y😀value"\r\nend';
   await page.evaluate((text) => {
     const dt = new DataTransfer();
@@ -260,14 +262,15 @@ test('a paste into an agent’s terminal is reviewed first: exact UTF-16 ranges 
   await secretReviewReady(page);
   expect(await page.evaluate(() => window.__h3d.seated())).toBe(id);
   expect(await reviewText(page)).toBe(paste);
+  expect(await sent(page, 'worker.paste')).toEqual([]);
   expect(await sent(page, 'worker.prompt')).toEqual([]);
   await dlg.getByRole('button', { name: 'Confirm and send' }).click();
-  await expect.poll(async () => (await sent(page, 'worker.prompt')).length).toBe(1);
-  const { secrets } = (await sent(page, 'worker.prompt'))[0]!.args as { secrets: { decisions: Array<{ start: number; end: number }> } };
+  await expect.poll(async () => (await sent(page, 'worker.paste')).length).toBe(1);
+  const { secrets } = (await sent(page, 'worker.paste'))[0]!.args as { secrets: { decisions: Array<{ start: number; end: number }> } };
   expect(secrets.decisions.map((d) => paste.slice(d.start, d.end))).toEqual(['p😀ss-w0rd', 'k3y😀value']);
   await expect.poll(() => page.evaluate(() => window.__h3d.seat().note)).toMatch(/Pasted into Pebble/);
   // The files hold exactly those bytes (the fixture's files are the whole simulated host's: this paste's by their paths).
-  const ack = (await sent(page, 'worker.prompt'))[0]!.result as { ok: boolean; data?: { sent?: string } };
+  const ack = (await sent(page, 'worker.paste'))[0]!.result as { ok: boolean; data?: { sent?: string } };
   expect(ack.data?.sent).toMatch(/^line one\r\nPASSWORD=\[secret in file [^\]]+\]\r\nAPI_KEY="\[secret in file [^\]]+\]"\r\nend$/);
   const refs = refsOf(ack.data?.sent);
   const files = (await page.evaluate(() => window.__h3d.simSecretFiles())).filter((f) => refs.has(f.path));
@@ -275,6 +278,39 @@ test('a paste into an agent’s terminal is reviewed first: exact UTF-16 ranges 
     [id, 'p😀ss-w0rd'],
     [id, 'k3y😀value'],
   ]);
+  clean();
+});
+
+// #176 part 2 (P1, P2): a paste with bracketed paste markers in it is reviewed as the bridge scans it (NUL and markers
+// out), so one Confirm inserts it; the command log (App.sent) masks what was protected, as for worker.prompt.
+test('a paste with paste markers in it is reviewed once, as the bridge scans it, and its secret is masked in the command log', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m5', '', `${SIM}&simsecretson=1`);
+  const id = await sitAt(page, 'Pebble', 'terminal');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seatTerminal()?.control?.mode)).toBe('control');
+  const secret = 'Rq-Sentinel-93xQ!';
+  const stripped = `deploy PASSWORD=${secret}\nthen check`;
+  await page.evaluate((text) => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', text);
+    document.querySelector('.seat-input')?.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, `\x1b[200~deploy PASSWORD=${secret}\nthen \x1b[20\x1b[201~0~check\x1b[201~\u0000`);
+  const dlg = page.locator('dialog.desk-dlg--secrets');
+  await secretReviewReady(page);
+  expect(await reviewText(page)).toBe(stripped);
+  await dlg.getByRole('button', { name: 'Confirm and send' }).click();
+  await expect.poll(() => page.evaluate(() => window.__h3d.seat().note)).toMatch(/Pasted into Pebble/);
+  await expect(dlg).toBeHidden();
+  const pastes = await sent(page, 'worker.paste');
+  expect(pastes.map((c) => c.result?.ok)).toEqual([true]);
+  expect(await sent(page, 'prompt_secrets.scan')).toHaveLength(1); // reviewed once: never stale
+  const args = pastes[0]!.args as { id: string; text: string };
+  expect(args.text).toBe(`deploy PASSWORD=${'•'.repeat(secret.length)}\nthen check`);
+  expect(JSON.stringify(await page.evaluate(() => window.__h3d.sent()))).not.toContain(secret);
+  const ack = pastes[0]!.result as { data?: { sent?: string } };
+  const files = (await page.evaluate(() => window.__h3d.simSecretFiles())).filter((f) => refsOf(ack.data?.sent).has(f.path));
+  expect(files.map((f) => [f.owner, f.text])).toEqual([[id, secret]]);
   clean();
 });
 
