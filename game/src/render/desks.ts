@@ -7,7 +7,7 @@ import { deskKit } from '../world/deskKit';
 import { CHAIR_IN_OFFSET, DESK_D, DESK_H, DESK_W, SEAT_OFFSET } from '../world/layout';
 import { BAND_COLOR, BAND_WORDS, bandAtlas, stickerAtlas, stickerLogo, STICKER_LOGOS, type BandStatus } from './deskArt';
 import { meshKit, reuse, type FloorPool, type PoolKit } from './floorPool';
-import { OFFICE } from './palette';
+import { OFFICE, type OfficePalette } from './palette';
 
 /**
  * Desks, chairs and what stands on them, instanced per part. Slot space:
@@ -561,11 +561,12 @@ export class DeskSet {
    * `kits`: each desk's things (the office); none: the city's low desks.
    * `plus`: empty desks show their "+".
    * `pool`: the office's desks, their meshes kept from floor to floor (#141); none: their own.
+   * `palette`: the colours of the desks and chairs (the office's UI theme); none: Quiet's.
    */
   constructor(
     readonly capacity: number,
     shadows: boolean,
-    o: { plus: boolean; kits?: readonly DeskKit[]; pool?: FloorPool | undefined },
+    o: { plus: boolean; kits?: readonly DeskKit[]; pool?: FloorPool | undefined; palette?: Readonly<OfficePalette> },
   ) {
     this.withPlus = o.plus;
     this.low = !o.kits;
@@ -577,9 +578,14 @@ export class DeskSet {
     this.kitOf.holder = this;
     this.meshes = this.kitOf.parts;
     this.attrs = this.kitOf.attrs;
+    // A pooled kit outlives a switch of the UI theme: its desks and chairs take this office's colours (a uniform each).
+    const P = o.palette ?? OFFICE;
+    const tones: Partial<Record<Key, number>> = { top: P.deskTop, legs: P.deskLeg, chair: P.chair, chairBase: P.chairBase };
     for (const [k, mesh] of Object.entries(this.meshes) as Array<[Key, THREE.InstancedMesh]>) {
       const d = PARTS[k];
       reuse(mesh, n * d.per);
+      const tone = tones[k];
+      if (tone !== undefined) (mesh.material as THREE.MeshToonMaterial).color.set(tone);
       mesh.name = `desks.${k}`;
       mesh.castShadow = shadows && d.shadow;
       mesh.receiveShadow = k === 'top';

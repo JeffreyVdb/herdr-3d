@@ -16,8 +16,7 @@ import {
   type VisibleRow,
 } from '../world/overview';
 import { lineStatusText } from '../world/digestSettings';
-import { STATUS_CSS, STATUS_CHIP_CSS } from './palette';
-import { FONT } from './cards/atlasCards';
+import { STATUS_CSS, STATUS_CHIP_CSS, WALL, type WallPalette } from './palette';
 import { drawMark, markFor } from './brandMarks';
 import { SPARKLE_D } from '../ui/dom';
 
@@ -57,18 +56,6 @@ const SCROLL_REST_MS = 4000;
 export const WALL_MIN_MS = 1000;
 /** #24: nesting levels the wall's indent follows (the page's NEST_MAX); deeper rows share the last one. */
 export const WALL_NEST_MAX = 4;
-
-/** The departures board's own colours: the page's (overview.css). */
-const INK = '#0b1022';
-const INK_3 = '#1c2540';
-const TEXT = '#eef2fb';
-const TEXT_2 = '#b9c3dc';
-const TEXT_3 = '#7d89ab';
-const ACCENT = '#ffc233';
-// The wall draws with the HUD's face, loaded with the game: the page's condensed Archivo and Departure Mono are fetched
-// only when the page opens (a fresh load fetches the transcript preset's fonts only, #59).
-const DISPLAY = FONT;
-const MONO = FONT;
 
 export interface WallPlan {
   compact: boolean;
@@ -174,7 +161,7 @@ export function pictureMaterial(map: THREE.Texture, transparent: boolean, progra
 }
 
 /** The screen on its wall: `box` is the prop's box, its front at max x, facing +x (into the lounge). */
-export function buildOverviewScreen(box: Box3): OverviewScreenMesh {
+export function buildOverviewScreen(box: Box3, c: Readonly<WallPalette> = WALL): OverviewScreenMesh {
   const group = new THREE.Group();
   group.name = 'screen.overview';
   const [x0, y0, z0] = box.min;
@@ -182,7 +169,7 @@ export function buildOverviewScreen(box: Box3): OverviewScreenMesh {
   const cz = (z0 + z1) / 2;
   const screenW = z1 - z0 - 2 * BEZEL;
   const screenH = y1 - y0 - 2 * BEZEL;
-  const body = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0), new THREE.MeshToonMaterial({ color: 0x141a2b }));
+  const body = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0), new THREE.MeshToonMaterial({ color: c.housing }));
   body.position.set((x0 + x1) / 2, (y0 + y1) / 2, cz);
   body.receiveShadow = true;
   group.add(body);
@@ -276,13 +263,13 @@ export function buildOverviewScreen(box: Box3): OverviewScreenMesh {
     const bg = boardCanvas.getContext('2d');
     const cg = coverCanvas.getContext('2d');
     if (!hg || !bg || !cg) return false;
-    paintHead(hg, W, headH, u, floor, data);
-    const lit = paintBoard(bg, W, boardCanvas.height, u, data, shown, plan.compact, rowH, at);
+    paintHead(hg, c, W, headH, u, floor, data);
+    const lit = paintBoard(bg, c, W, boardCanvas.height, u, data, shown, plan.compact, rowH, at);
     // The cover: the working lights' unlit half of the blink, nothing else.
     cg.clearRect(0, 0, W, coverCanvas.height);
     for (const l of lit) {
       cg.globalAlpha = 1;
-      cg.fillStyle = INK;
+      cg.fillStyle = c.ink;
       cg.beginPath();
       cg.arc(l.x, l.y, l.r * 1.3, 0, Math.PI * 2);
       cg.fill();
@@ -386,9 +373,9 @@ function face(v: VisibleRow, now: number): unknown[] {
 let scanlines: HTMLCanvasElement | null = null;
 
 /** The glass: ink and faint scanlines, in two fills. #65: the departures boards' glass too. */
-export function glass(g: CanvasRenderingContext2D, W: number, H: number): void {
+export function glass(g: CanvasRenderingContext2D, W: number, H: number, c: Readonly<WallPalette>): void {
   g.setTransform(1, 0, 0, 1, 0, 0);
-  g.fillStyle = INK;
+  g.fillStyle = c.ink;
   g.fillRect(0, 0, W, H);
   if (!scanlines) {
     scanlines = document.createElement('canvas');
@@ -408,67 +395,67 @@ export function glass(g: CanvasRenderingContext2D, W: number, H: number): void {
 }
 
 /** The header: the floor's name (the destination), where it is, the counts as flaps. */
-function paintHead(g: CanvasRenderingContext2D, W: number, H: number, u: number, floor: string, data: OverviewData | null): void {
-  glass(g, W, H);
+function paintHead(g: CanvasRenderingContext2D, c: Readonly<WallPalette>, W: number, H: number, u: number, floor: string, data: OverviewData | null): void {
+  glass(g, W, H, c);
   const pad = Math.round(W * 0.035);
   g.textBaseline = 'alphabetic';
   g.textAlign = 'left';
-  g.fillStyle = ACCENT;
-  g.font = `860 ${Math.round(u * 13)}px ${DISPLAY}`;
+  g.fillStyle = c.accent;
+  g.font = `860 ${Math.round(u * 13)}px ${c.font}`;
   fitText(g, floor.toUpperCase(), pad, u * 14, W - pad * 2);
-  g.font = `400 ${Math.round(u * 3.1)}px ${MONO}`;
-  g.fillStyle = TEXT_2;
+  g.font = `400 ${Math.round(u * 3.1)}px ${c.font}`;
+  g.fillStyle = c.text2;
   g.fillText(data ? `${data.where} · Floor overview` : 'Floor overview', pad, u * 19);
   let x = pad;
-  for (const c of data?.counts ?? []) {
+  for (const k of data?.counts ?? []) {
     const fy = u * 20.5;
     const fh = u * 5.2;
     const fw = u * 4;
-    const digits = String(c.n).padStart(2, '0');
+    const digits = String(k.n).padStart(2, '0');
     for (let i = 0; i < digits.length; i++) {
       const fx = x + i * (fw + u * 0.4);
-      g.fillStyle = '#1a2342';
+      g.fillStyle = c.flap;
       roundRect(g, fx, fy, fw, fh, u * 0.5);
-      g.fillStyle = TEXT;
-      g.font = `400 ${Math.round(u * 4)}px ${MONO}`;
+      g.fillStyle = c.text;
+      g.font = `400 ${Math.round(u * 4)}px ${c.font}`;
       g.textAlign = 'center';
       g.fillText(digits[i] as string, fx + fw / 2, fy + fh * 0.78);
       g.textAlign = 'left';
     }
     x += digits.length * (fw + u * 0.4) + u * 1.2;
-    g.fillStyle = STATUS_CSS[c.kind];
+    g.fillStyle = STATUS_CSS[k.kind];
     g.beginPath();
     g.arc(x + u * 0.7, fy + fh / 2, u * 0.7, 0, Math.PI * 2);
     g.fill();
-    g.fillStyle = TEXT_2;
-    g.font = `600 ${Math.round(u * 3)}px ${FONT}`;
-    g.fillText(c.label, x + u * 2, fy + fh * 0.68);
-    x += u * 2.4 + g.measureText(c.label).width + u * 3;
+    g.fillStyle = c.text2;
+    g.font = `600 ${Math.round(u * 3)}px ${c.font}`;
+    g.fillText(k.label, x + u * 2, fy + fh * 0.68);
+    x += u * 2.4 + g.measureText(k.label).width + u * 3;
   }
-  g.fillStyle = INK_3;
+  g.fillStyle = c.ink3;
   g.fillRect(pad, H - Math.max(2, u * 0.3), W - pad * 2, Math.max(2, u * 0.3));
 }
 
 /** The board: a line per row (two in full mode); returns where the working lights are (the cover dims them). */
-function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number, data: OverviewData | null, rows: VisibleRow[], compact: boolean, rowH: number, now: number): Array<{ x: number; y: number; r: number }> {
+function paintBoard(g: CanvasRenderingContext2D, c: Readonly<WallPalette>, W: number, H: number, u: number, data: OverviewData | null, rows: VisibleRow[], compact: boolean, rowH: number, now: number): Array<{ x: number; y: number; r: number }> {
   const lamps: Array<{ x: number; y: number; r: number }> = [];
-  glass(g, W, H);
+  glass(g, W, H, c);
   const pad = Math.round(W * 0.035);
   const top = u * 1.5;
   g.textBaseline = 'alphabetic';
   g.textAlign = 'left';
   if (!data) {
-    g.fillStyle = TEXT_3;
-    g.font = `600 ${Math.round(u * 4)}px ${FONT}`;
+    g.fillStyle = c.text3;
+    g.font = `600 ${Math.round(u * 4)}px ${c.font}`;
     g.fillText('Asleep', pad, top + u * 6);
     return lamps;
   }
   if (!rows.length) {
-    g.fillStyle = TEXT;
-    g.font = `800 ${Math.round(u * 7)}px ${DISPLAY}`;
+    g.fillStyle = c.text;
+    g.font = `800 ${Math.round(u * 7)}px ${c.font}`;
     g.fillText('NOBODY’S HERE YET', pad, top + u * 8);
-    g.fillStyle = TEXT_2;
-    g.font = `400 ${Math.round(u * 3.2)}px ${FONT}`;
+    g.fillStyle = c.text2;
+    g.font = `400 ${Math.round(u * 3.2)}px ${c.font}`;
     g.fillText('Look at a desk’s + and press E to hire someone.', pad, top + u * 13);
     return lamps;
   }
@@ -482,9 +469,9 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
     const nest = Math.min(v.depth, WALL_NEST_MAX);
     const indent = nest * u * 3;
     const lx = pad + u * 1.6 + indent;
-    if (v.depth) wires(g, v.more, pad + u * 1.6, u, y, mid, rowH, lx - u * 1.4, r.kind === 'child' && r.unresolved);
+    if (v.depth) wires(g, c, v.more, pad + u * 1.6, u, y, mid, rowH, lx - u * 1.4, r.kind === 'child' && r.unresolved);
     if (r.kind === 'child') {
-      paintChild(g, r, { y, mid, rowH, compact, u, lx, colWho: colWho + indent, colWhat, sinceRight, now });
+      paintChild(g, c, r, { y, mid, rowH, compact, u, lx, colWho: colWho + indent, colWhat, sinceRight, now });
       return;
     }
     if (r.kind === 'worker') {
@@ -499,7 +486,7 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
       }
     } else ring(g, lx, mid, u * 1.1, STATUS_CSS.idle, u * 0.35);
     const nameSize = Math.round(compact ? u * 3.6 : u * 4.4);
-    g.fillStyle = r.kind === 'worker' ? (r.display === 'asleep' ? TEXT_3 : TEXT) : TEXT_2;
+    g.fillStyle = r.kind === 'worker' ? (r.display === 'asleep' ? c.text3 : c.text) : c.text2;
     const name = r.kind === 'worker' ? r.name : r.kind === 'ghost' ? `Orchestrator ${r.name} · ${r.floor}` : 'Unlinked';
     const base = mid + nameSize * 0.36;
     // #229: the harness's mark before a worker's name, as tall as its capitals, on their baseline; then the role chip
@@ -508,21 +495,21 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
     const nameX = colWho + indent + (mark ? nameSize * 0.92 : 0);
     if (mark) {
       const ink = g.fillStyle;
-      g.fillStyle = r.kind === 'worker' && r.display === 'asleep' ? TEXT_3 : '#ffffff';
+      g.fillStyle = r.kind === 'worker' && r.display === 'asleep' ? c.text3 : '#ffffff';
       drawMark(g, mark, colWho + indent + nameSize * 0.36, base - nameSize * 0.36, nameSize * 0.72);
       g.fillStyle = ink;
     }
     const tag = r.kind === 'worker' ? wallTag(r) : null;
     const cap = r.kind === 'worker' && r.orch?.overCap ? 'OVER CAP' : null;
-    const chipsW = (tag ? chipW(g, tag, u) + u * 1.2 : 0) + (cap ? chipW(g, cap, u) + u * 1.2 : 0);
-    g.font = `800 ${nameSize}px ${DISPLAY}`;
+    const chipsW = (tag ? chipW(g, tag, u, c.font) + u * 1.2 : 0) + (cap ? chipW(g, cap, u, c.font) + u * 1.2 : 0);
+    g.font = `800 ${nameSize}px ${c.font}`;
     const nameW = fitText(g, name.toUpperCase(), nameX, base, colWhat - nameX - Math.max(u * 9, chipsW + u));
     let cx = nameX + nameW + u * 1.2;
-    if (r.kind === 'worker' && tag) cx += chip(g, tag, cx, mid, u, r.runColor !== null ? `#${r.runColor.toString(16).padStart(6, '0')}` : INK_3) + u * 1.2;
-    if (cap) chip(g, cap, cx, mid, u, STATUS_CHIP_CSS.needs_you);
+    if (r.kind === 'worker' && tag) cx += chip(g, tag, cx, mid, u, r.runColor !== null ? `#${r.runColor.toString(16).padStart(6, '0')}` : c.ink3, c.font) + u * 1.2;
+    if (cap) chip(g, cap, cx, mid, u, STATUS_CHIP_CSS.needs_you, c.font);
     if (r.kind !== 'worker') return;
-    g.font = `400 ${Math.round(u * 2.8)}px ${MONO}`;
-    g.fillStyle = TEXT_2;
+    g.font = `400 ${Math.round(u * 2.8)}px ${c.font}`;
+    g.fillStyle = c.text2;
     g.textAlign = 'right';
     const since = sinceText(r.display, r.since, now);
     g.fillText(since, sinceRight, base);
@@ -532,23 +519,23 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
     const [first, second] = whatLines(r, compact, now);
     // The task and now lines under their labels, each with the page's AI sparkle by its label when the LLM wrote it
     // (#118 phase 2, #232) and its words (the now line's age, #198) quiet after its text.
-    const big = `600 ${Math.round(u * 3.2)}px ${FONT}`;
+    const big = `600 ${Math.round(u * 3.2)}px ${c.font}`;
     if (first) {
-      const w = drawLine(g, first, colWhat, base, whatW, u, big, r.ticket ? TEXT : TEXT_2);
+      const w = drawLine(g, c, first, colWhat, base, whatW, u, big, r.ticket ? c.text : c.text2);
       // One line a row: the ticket's key, then what it does now, never dropped for the ticket's title.
       if (compact && second) {
         g.font = big;
-        g.fillStyle = TEXT_2;
+        g.fillStyle = c.text2;
         const sep = fitText(g, ' · ', colWhat + w, base, whatW - w);
-        drawLine(g, second, colWhat + w + sep, base, whatW - w - sep, u, big, TEXT_2);
+        drawLine(g, c, second, colWhat + w + sep, base, whatW - w - sep, u, big, c.text2);
       }
     }
     if (!compact) {
-      if (second) drawLine(g, second, colWhat, base + u * 4.2, whatW, u, `400 ${Math.round(u * 2.9)}px ${FONT}`, TEXT_2);
+      if (second) drawLine(g, c, second, colWhat, base + u * 4.2, whatW, u, `400 ${Math.round(u * 2.9)}px ${c.font}`, c.text2);
       const meta = metaLine(r);
       if (meta) {
-        g.font = `400 ${Math.round(u * 2.5)}px ${MONO}`;
-        g.fillStyle = TEXT_3;
+        g.font = `400 ${Math.round(u * 2.5)}px ${c.font}`;
+        g.fillStyle = c.text3;
         fitText(g, meta, colWho + indent, base + u * 4.2, colWhat - colWho - indent - u * 3);
       }
     }
@@ -556,7 +543,6 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
   return lamps;
 }
 
-const WIRE = 'rgba(185,195,220,0.32)';
 
 /**
  * The tree's wires of a nested row (#24: at any depth, the page's): down each ancestor's level that runs on below it
@@ -564,10 +550,10 @@ const WIRE = 'rgba(185,195,220,0.32)';
  * WALL_NEST_MAX the deeper levels share the last column. An unresolved child's elbow is detached and dashed: under its
  * worker, never drawn as started by it.
  */
-function wires(g: CanvasRenderingContext2D, more: readonly boolean[], x0: number, u: number, y: number, mid: number, rowH: number, to: number, detached: boolean): void {
+function wires(g: CanvasRenderingContext2D, c: Readonly<WallPalette>, more: readonly boolean[], x0: number, u: number, y: number, mid: number, rowH: number, to: number, detached: boolean): void {
   const vis = Math.min(more.length, WALL_NEST_MAX);
   const x = (level: number) => x0 + (level - 1) * u * 3;
-  g.strokeStyle = WIRE;
+  g.strokeStyle = `rgba(${c.rule},0.32)`;
   g.lineWidth = Math.max(1, u * 0.2);
   g.beginPath();
   for (let l = 1; l < vis; l++) {
@@ -596,7 +582,7 @@ function wires(g: CanvasRenderingContext2D, more: readonly boolean[], x0: number
 }
 
 /** #24: a child's pip on the wall: its state's diamond (filled, ringed, half filled, or dashed for `unknown`). */
-function pip(g: CanvasRenderingContext2D, r: OverviewChildRow, x: number, y: number, s: number, u: number): void {
+function pip(g: CanvasRenderingContext2D, c: Readonly<WallPalette>, r: OverviewChildRow, x: number, y: number, s: number, u: number): void {
   const diamond = () => {
     g.beginPath();
     g.moveTo(x, y - s);
@@ -606,7 +592,7 @@ function pip(g: CanvasRenderingContext2D, r: OverviewChildRow, x: number, y: num
     g.closePath();
   };
   const fill = r.state === 'running' ? STATUS_CSS.working : r.state === 'completed' ? STATUS_CSS.done : null;
-  const ink = fill ?? (r.state === 'shut_down' ? STATUS_CSS.asleep : r.state === 'interrupted' ? STATUS_CSS.waiting : r.state === 'unknown' ? TEXT_3 : STATUS_CSS.idle);
+  const ink = fill ?? (r.state === 'shut_down' ? STATUS_CSS.asleep : r.state === 'interrupted' ? STATUS_CSS.waiting : r.state === 'unknown' ? c.text3 : STATUS_CSS.idle);
   diamond();
   if (fill) {
     g.fillStyle = fill;
@@ -635,11 +621,12 @@ function pip(g: CanvasRenderingContext2D, r: OverviewChildRow, x: number, y: num
  */
 function paintChild(
   g: CanvasRenderingContext2D,
+  c: Readonly<WallPalette>,
   r: OverviewChildRow,
   o: { y: number; mid: number; rowH: number; compact: boolean; u: number; lx: number; colWho: number; colWhat: number; sinceRight: number; now: number },
 ): void {
   const { mid, compact, u, colWho, colWhat, sinceRight } = o;
-  pip(g, r, o.lx, mid, u * 0.95, u);
+  pip(g, c, r, o.lx, mid, u * 0.95, u);
   const nameSize = Math.round(compact ? u * 3 : u * 3.6);
   const base = mid + nameSize * 0.36;
   const mark = markFor(r.provider);
@@ -649,26 +636,26 @@ function paintChild(
     drawMark(g, mark, colWho + nameSize * 0.36, base - nameSize * 0.36, nameSize * 0.72);
   }
   const orphan = r.unresolved ? 'PARENT UNKNOWN' : null;
-  const chipsW = orphan ? chipW(g, orphan, u) + u * 1.2 : 0;
-  g.font = `700 ${nameSize}px ${DISPLAY}`;
-  g.fillStyle = TEXT;
+  const chipsW = orphan ? chipW(g, orphan, u, c.font) + u * 1.2 : 0;
+  g.font = `700 ${nameSize}px ${c.font}`;
+  g.fillStyle = c.text;
   const nameW = fitText(g, childShortName(r.name), nameX, base, colWhat - nameX - Math.max(u * 6, chipsW + u));
   if (orphan) {
     // Dashed, like its elbow: a chip that says what is missing, not a role.
     const cx = nameX + nameW + u * 1.2;
-    const w = chipW(g, orphan, u);
-    g.strokeStyle = TEXT_3;
+    const w = chipW(g, orphan, u, c.font);
+    g.strokeStyle = c.text3;
     g.lineWidth = Math.max(1, u * 0.2);
     g.setLineDash([u * 0.5, u * 0.4]);
     g.beginPath();
     g.roundRect(cx, mid - u * 1.5, w, u * 3, u * 0.4);
     g.stroke();
     g.setLineDash([]);
-    g.fillStyle = TEXT_2;
+    g.fillStyle = c.text2;
     g.fillText(orphan, cx + u * 0.8, mid + u * 0.75);
   }
-  g.font = `400 ${Math.round(u * 2.6)}px ${MONO}`;
-  g.fillStyle = r.state === 'unknown' ? TEXT_3 : TEXT_2;
+  g.font = `400 ${Math.round(u * 2.6)}px ${c.font}`;
+  g.fillStyle = r.state === 'unknown' ? c.text3 : c.text2;
   g.textAlign = 'right';
   const since = childSinceText(r, o.now);
   g.fillText(since, sinceRight, base);
@@ -676,19 +663,19 @@ function paintChild(
   g.textAlign = 'left';
   // What it was asked, then its transcript's availability, quiet (that keeps its room; the description gives way).
   const room = sinceRight - sinceW - u * 3 - colWhat;
-  const small = `400 ${Math.round(u * 2.4)}px ${MONO}`;
+  const small = `400 ${Math.round(u * 2.4)}px ${c.font}`;
   const tx = CHILD_TRANSCRIPT_WORD[r.transcript];
   g.font = small;
   const txW = g.measureText(tx).width;
-  g.font = `400 ${Math.round(u * (compact ? 2.8 : 3))}px ${FONT}`;
-  g.fillStyle = r.description ? TEXT_2 : TEXT_3;
+  g.font = `400 ${Math.round(u * (compact ? 2.8 : 3))}px ${c.font}`;
+  g.fillStyle = r.description ? c.text2 : c.text3;
   const w = fitText(g, r.description ?? 'No task description', colWhat, base, room - txW - u * 2);
   g.font = small;
-  g.fillStyle = TEXT_3;
+  g.fillStyle = c.text3;
   fitText(g, tx, colWhat + w + u * 2, base, room - w - u * 2);
   if (compact) return;
-  g.font = `400 ${Math.round(u * 2.4)}px ${MONO}`;
-  g.fillStyle = TEXT_3;
+  g.font = `400 ${Math.round(u * 2.4)}px ${c.font}`;
+  g.fillStyle = c.text3;
   fitText(g, childMeta(r), colWho, base + u * 3.8, colWhat - colWho - u * 3);
 }
 
@@ -809,13 +796,13 @@ export function segPlan(measure: (part: 'label' | 'text' | 'words', s: string) =
 }
 
 /** Draws a wall line from `x` in `max` px (a ticket's line in `font`, or task and now segments); returns the width it takes. */
-function drawLine(g: CanvasRenderingContext2D, line: WallLine, x: number, base: number, max: number, u: number, font: string, ink: string): number {
+function drawLine(g: CanvasRenderingContext2D, c: Readonly<WallPalette>, line: WallLine, x: number, base: number, max: number, u: number, font: string, ink: string): number {
   if (typeof line === 'string') {
     g.font = font;
     g.fillStyle = ink;
     return fitText(g, line, x, base, max);
   }
-  const small = `400 ${Math.round(u * 2.4)}px ${MONO}`;
+  const small = `400 ${Math.round(u * 2.4)}px ${c.font}`;
   const measure = (part: 'label' | 'text' | 'words', s: string) => {
     g.font = part === 'text' ? font : small;
     return g.measureText(s).width;
@@ -827,7 +814,7 @@ function drawLine(g: CanvasRenderingContext2D, line: WallLine, x: number, base: 
   for (const p of segPlan(measure, line, max, u)) {
     let at = x + p.x;
     g.font = small;
-    g.fillStyle = TEXT_3;
+    g.fillStyle = c.text3;
     at += fitText(g, p.seg.label, at, base, max - p.x);
     if (p.sparkle) {
       sparkleAt(g, at + u * GAP_SPARK, base, u, cap);
@@ -839,7 +826,7 @@ function drawLine(g: CanvasRenderingContext2D, line: WallLine, x: number, base: 
     at += fitText(g, p.seg.text, at, base, p.textMax);
     if (p.words) {
       g.font = small;
-      g.fillStyle = TEXT_3;
+      g.fillStyle = c.text3;
       at += u * GAP_WORDS + fitText(g, p.words, at + u * GAP_WORDS, base, Infinity);
     }
     end = at - x;
@@ -853,13 +840,13 @@ let sparkle: Path2D | null = null;
  * #232: the page's AI sparkle (`ICON.sparkle`'s path, centred in its box) from `x`, centred on capitals `cap` px tall on
  * `base` (the line's text's). Exported for its test.
  */
-export function sparkleAt(g: CanvasRenderingContext2D, x: number, base: number, u: number, cap: number): void {
+export function sparkleAt(g: CanvasRenderingContext2D, x: number, base: number, u: number, cap: number, ink = WALL.text2): void {
   const size = u * SPARK;
   sparkle ??= new Path2D(SPARKLE_D);
   g.save();
   g.translate(x, base - cap / 2 - size / 2);
   g.scale(size / 24, size / 24);
-  g.fillStyle = TEXT_2;
+  g.fillStyle = ink;
   g.fill(sparkle);
   g.restore();
 }
@@ -897,14 +884,14 @@ function ring(g: CanvasRenderingContext2D, x: number, y: number, r: number, colo
   g.stroke();
 }
 
-function chipW(g: CanvasRenderingContext2D, text: string, u: number): number {
-  g.font = `400 ${Math.round(u * 2.2)}px ${MONO}`;
+function chipW(g: CanvasRenderingContext2D, text: string, u: number, font: string): number {
+  g.font = `400 ${Math.round(u * 2.2)}px ${font}`;
   return g.measureText(text).width + u * 1.6;
 }
 
 /** A chip of `text` from `x`, centred on `mid`; returns its width. */
-function chip(g: CanvasRenderingContext2D, text: string, x: number, mid: number, u: number, bg: string): number {
-  const w = chipW(g, text, u);
+function chip(g: CanvasRenderingContext2D, text: string, x: number, mid: number, u: number, bg: string, font: string): number {
+  const w = chipW(g, text, u, font);
   g.fillStyle = bg;
   roundRect(g, x, mid - u * 1.5, w, u * 3, u * 0.4);
   g.fillStyle = '#ffffff';
@@ -913,7 +900,4 @@ function chip(g: CanvasRenderingContext2D, text: string, x: number, mid: number,
 }
 
 /** The status colours the wall draws with: the shared palette (exported for the contrast test). */
-export const WALL_STATUS = { light: STATUS_CSS, chip: STATUS_CHIP_CSS, ink: INK };
-
-/** #65: the wall's own colours, which the departures boards share (a flap: the header's count tiles). */
-export const WALL_COLORS = { ink: INK, ink3: INK_3, text: TEXT, text2: TEXT_2, text3: TEXT_3, accent: ACCENT, flap: '#1a2342' } as const;
+export const WALL_STATUS = { light: STATUS_CSS, chip: STATUS_CHIP_CSS, ink: WALL.ink };

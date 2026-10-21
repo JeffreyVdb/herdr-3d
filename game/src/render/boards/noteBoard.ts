@@ -26,6 +26,8 @@ export interface NoteBoardOptions<F> {
   same(a: F | undefined, b: F): boolean;
   /** Gets the backdrop texture to put on the board's front. */
   backdrop(tex: THREE.Texture): void;
+  /** The title strip's colour (the office's UI theme); none: Quiet's navy. */
+  strip?: string | undefined;
   /** #141: the notes' batch and atlas from there, as `key` (one per board); none: its own. */
   pool?: { pool: FloorPool; key: string } | undefined;
 }
@@ -166,7 +168,7 @@ export class NoteBoard<F> {
 
   /** Draws the cork (title, column heads, the reason there is nothing to show). */
   setBackdrop(b: Backdrop): void {
-    drawBackdrop(this.backG, this.o.size, b);
+    drawBackdrop(this.backG, this.o.size, b, this.o.strip);
     this.backTex.needsUpdate = true;
   }
 

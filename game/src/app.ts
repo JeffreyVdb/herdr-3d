@@ -11,7 +11,7 @@ import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMess
 import { CityView } from './render/city';
 import { ACTIVE_WINDOW_MS, shouldRender, targetHz, type Coverage } from './render/framePolicy';
 import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec, type DeskAway } from './render/arrivals';
-import { memberOf, officeLamps, OfficeView, REACH, seatOf, type AwaySeat, type Target } from './render/office';
+import { memberOf, officeLamps, OfficeView, REACH, type OfficeOptions, seatOf, type AwaySeat, type Target } from './render/office';
 import { FloorPool } from './render/floorPool';
 import { holdDisposals } from './render/disposeHold';
 import { probePool, type PoolProbe } from './render/floorPoolProbe';
@@ -94,6 +94,8 @@ import { InboxChip, type InboxEntry } from './ui/inbox';
 import { HirePrefs } from './ui/hirePrefs';
 import { HireCoordinator } from './ui/hireCoordinator';
 import { HireModelPrefs } from './ui/hireModelPrefs';
+import { HirePins } from './ui/hirePins';
+import { pinTab } from './ui/deskTabs';
 import { harnessModelsSection } from './ui/harnessModelsSection';
 import { TaskLevels } from './ui/taskLevels';
 import { taskLevelsSection } from './ui/taskLevelsSection';
@@ -234,6 +236,8 @@ export class App {
   readonly hirePrefs = new HirePrefs(); // #116
   /** #194: the models the Hire dialog shows, per harness (none hidden until the player hides one). */
   readonly hireModelPrefs = new HireModelPrefs();
+  /** Hire presets pinned to the desk dialogs' tab bar, per browser. */
+  readonly hirePins = new HirePins();
   /** #248: Settings → Task levels (per browser). */
   readonly taskLevels = new TaskLevels();
   /** #116: cancels the go-to still waiting for its new hire. */
@@ -594,6 +598,9 @@ export class App {
     // M17: start at the time's light (not eased from noon), and follow the settings live.
     this.readTime(true);
     this.timePrefs.onChange(() => this.readTime(false));
+    this.themes.prefs.onChange((what) => {
+      if (what === 'uiTheme') this.restyleOffice();
+    });
     this.timePrefs.onChange(() => this.sendZone()); // #66
     this.planCam = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 100);
     this.controls = new OrbitControls(this.cityCam, this.r.domElement);
@@ -759,6 +766,11 @@ export class App {
       this.hirePresets.open(s, d);
       this.hirePresets.focusTab();
     };
+    // A preset pinned to the desk dialogs' tab bar: hire with it as Use does; focus on its tab of the hire form.
+    const usePinned = (s: string, d: number, id: string) => {
+      this.hirePresets.usePinned(s, d, id);
+      if (this.hire.isOpen) this.hire.focusTab(pinTab(id));
+    };
     this.hire = new HireDialog(o.host, {
       ...hireHost,
       hirePrefs: this.hirePrefs,
@@ -766,11 +778,15 @@ export class App {
       goTo: (id) => this.goToNewHire(id),
       orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ floor: s, desk: d }, true) },
       presetsAt,
+      pins: this.hirePins,
+      usePinned,
       savePreset: (seed, from) => this.hirePresets.create(seed, from),
     });
     this.hirePresets = new HirePresetsDialog(o.host, {
       ...dialogHost,
       modelPrefs: this.hireModelPrefs,
+      pins: this.hirePins,
+      usePinned,
       hireAt: (s, d) => {
         this.hire.open(s, d);
         this.hire.focusTab();
@@ -806,6 +822,8 @@ export class App {
         this.hire.focusTab();
       },
       presetsAt,
+      pins: this.hirePins,
+      usePinned,
       openPresets: (from) => this.presetsPanel.open(from),
       started: (id, item) => {
         this.followOrch(id);
@@ -1035,6 +1053,8 @@ export class App {
     this.panels.refresh();
     this.palette.refresh(); // #147
     this.dictation.refresh(); // #213
+    // A preset deleted (here, elsewhere or while away) leaves the tab bars' pins too; an older bridge keeps none to check.
+    if (this.store.hirePresets.known) this.hirePins.prune((id) => this.store.hirePresets.get(id) !== null);
     this.hire.refresh();
     this.hireReview.refresh();
     this.sendHome.refresh();
@@ -2109,7 +2129,7 @@ export class App {
       setTimeout(() => {
         const ctx = this.buildingFor(floor);
         const v = this.store.floorView(floor);
-        if (ctx && v && this.transitioning && !this.office) early = new OfficeView(v, { shadows: this.shadows, outline: ctx.outline, owner: this.owner, pool: this.pool });
+        if (ctx && v && this.transitioning && !this.office) early = new OfficeView(v, this.officeOptions(ctx.outline));
       }, 0);
     }
     const swap = async () => {
@@ -2121,7 +2141,7 @@ export class App {
       const ctx = now ? this.buildingFor(floor) : null;
       // The office built early is used when it is still the floor's (same desks and outline) and still holds the pool.
       const pre: OfficeView | null = early;
-      const fresh = pre && now && ctx && pre.holdsPool && pre.apply(now, ctx.outline) ? pre : null;
+      const fresh = pre && now && ctx && pre.holdsPool && pre.theme === this.themes.prefs.uiTheme() && pre.apply(now, ctx.outline) ? pre : null;
       if (pre && pre !== fresh) pre.dispose();
       if (!now || !ctx) {
         this.hud.toast(`${this.store.floorName(floor)} is gone.`);
@@ -2390,7 +2410,7 @@ export class App {
     if (!ctx || !fv) return;
     const old = this.office;
     this.endDeliveries(fv.id); // M6c: the reports on the floor you leave resolve at once
-    this.office = built ?? new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline, owner: this.owner, pool: this.pool });
+    this.office = built ?? new OfficeView(fv, this.officeOptions(ctx.outline));
     this.loaded = storey;
     this.mezzDoor = 0;
     this.fireDoor = 0;
@@ -2487,6 +2507,22 @@ export class App {
     this.cameraMoved = true;
   }
 
+  /** What an office is built with: the building's outline, and the UI theme it is dressed in. */
+  private officeOptions(outline: Outline): OfficeOptions {
+    return { shadows: this.shadows, outline, owner: this.owner, pool: this.pool, theme: this.themes.prefs.uiTheme() };
+  }
+
+  /**
+   * The office wears the UI theme (its walls, furniture and screens, `officePalette`): a switch rebuilds the floor you
+   * are on, once the theme's fonts are in (the screens write with them). The street and the lobby keep their look.
+   */
+  private restyleOffice(): void {
+    const theme = this.themes.prefs.uiTheme();
+    void this.themes.loading.then(() => {
+      if (this.themes.prefs.uiTheme() === theme && this.office && this.office.theme !== theme) this.rebuildOffice();
+    });
+  }
+
   private rebuildOffice(): void {
     const ctx = this.building;
     if (!this.office || this.loaded === null || !ctx) return;
@@ -2494,7 +2530,7 @@ export class App {
     if (!fv) return;
     const old = this.office;
     this.rebuilds++;
-    this.office = new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline, owner: this.owner, pool: this.pool });
+    this.office = new OfficeView(fv, this.officeOptions(ctx.outline));
     this.walk.setOffice(this.office, floorY(this.loaded));
     this.retire(old);
     this.screen.paint(); // M13

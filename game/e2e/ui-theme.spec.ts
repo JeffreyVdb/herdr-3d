@@ -66,10 +66,13 @@ test('keyboard: arrows move the UI theme between Quiet and Ubuntu, the pick appl
 
 // ---- live switching ------------------------------------------------------------------------------------------------
 
-test('a switch restyles the open Settings dialog and the HUD at once: no reload, the focus stays, the 3D scene is not rebuilt, nothing is sent', async ({ page }) => {
+test('a switch restyles the open Settings dialog and the HUD at once: no reload, the focus stays, nothing is sent; the office is rebuilt once in the theme', async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   await boot(page, 'demo-m5', {});
+  await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+  await frames(page, 3);
+  expect(await page.evaluate(() => window.__h3d.officeTheme())).toBe('quiet');
   await page.evaluate(() => performance.mark('before-switch'));
   const rebuilds = await page.evaluate(() => window.__h3d.officeRebuilds());
   const dialog = await openSettings(page);
@@ -88,18 +91,23 @@ test('a switch restyles the open Settings dialog and the HUD at once: no reload,
   expect(await css(page, 'html', 'color-scheme')).toBe('dark');
   expect(await page.evaluate(() => performance.getEntriesByName('before-switch').length)).toBe(1);
   expect(nav).toBeGreaterThan(0);
+  // The office wears the theme: rebuilt once, when the theme's fonts are in (its screens write with them).
+  await expect.poll(() => page.evaluate(() => window.__h3d.officeTheme())).toBe('ubuntu');
   await frames(page, 3);
-  expect(await page.evaluate(() => window.__h3d.officeRebuilds())).toBe(rebuilds);
+  expect(await page.evaluate(() => window.__h3d.officeRebuilds())).toBe(rebuilds + 1);
+  await expect(ubuntu).toBeFocused();
   expect((await page.evaluate(() => window.__h3d.sent())).length).toBe(sentBefore);
   expect(await page.evaluate(() => window.__h3d.error)).toBeNull();
   // And back.
   await page.getByRole('radio', { name: /^Quiet/ }).check();
   expect(await css(page, 'dialog.settings', 'background-color')).not.toBe(ANCHOR.surface);
   expect(await css(page, 'html', 'color-scheme')).toBe('light');
+  await expect.poll(() => page.evaluate(() => window.__h3d.officeTheme())).toBe('quiet');
+  expect(await page.evaluate(() => window.__h3d.officeRebuilds())).toBe(rebuilds + 2);
   clean();
 });
 
-test('a switch with the Hire dialog open keeps its draft, its focus and its model pick; the dialog restyles in place', async ({ page }) => {
+test('a switch with the Hire dialog open keeps its draft, its focus and its model pick through the office’s rebuild; the dialog restyles in place', async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   await boot(page, 'demo-m4', {});
@@ -112,6 +120,9 @@ test('a switch with the Hire dialog open keeps its draft, its focus and its mode
   await task.focus();
   const before = await page.locator('dialog.desk-dlg--hire').evaluate((d) => getComputedStyle(d).backgroundColor);
   await page.evaluate(() => window.__h3d.setUiTheme('ubuntu'));
+  // The office behind it is rebuilt in Ubuntu's colours (once the fonts are in); the dialog is untouched by that.
+  await expect.poll(() => page.evaluate(() => window.__h3d.officeTheme())).toBe('ubuntu');
+  await frames(page, 3);
   await expect(page.locator('dialog.desk-dlg--hire')).toBeVisible();
   await expect(task).toBeFocused();
   await expect(task).toContainText('Rework the header');
@@ -122,7 +133,7 @@ test('a switch with the Hire dialog open keeps its draft, its focus and its mode
   clean();
 });
 
-test('a seated switch leaves the transcript and the terminal exactly as they were: their prefs, fonts and colours', async ({ page }) => {
+test('a seated switch leaves the transcript and the terminal exactly as they were: their prefs, fonts and colours, and the seat through the office’s rebuild', async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
   await boot(page, 'demo-m5', { transcript: 'ubuntu', terminal: 'quiet' }, '&prints=0');
@@ -142,8 +153,13 @@ test('a seated switch leaves the transcript and the terminal exactly as they wer
   const before = await read();
   const prefs = await page.evaluate(() => ({ t: localStorage.getItem('h3d.theme.transcript'), k: localStorage.getItem('h3d.theme.terminal') }));
   const th = await theme(page);
+  const seat = await page.evaluate(() => window.__h3d.seated());
   await page.evaluate(() => window.__h3d.setUiTheme('ubuntu'));
   await page.evaluate(() => window.__h3d.themeLoaded());
+  // The office around the laptop is rebuilt in Ubuntu: you stay seated at the same worker, the screen as it was.
+  await expect.poll(() => page.evaluate(() => window.__h3d.officeTheme())).toBe('ubuntu');
+  await frames(page, 3);
+  expect(await page.evaluate(() => window.__h3d.seated())).toEqual(seat);
   expect(await read()).toEqual(before);
   expect(await page.evaluate(() => ({ t: localStorage.getItem('h3d.theme.transcript'), k: localStorage.getItem('h3d.theme.terminal') }))).toEqual(prefs);
   const after = await theme(page);
@@ -151,6 +167,17 @@ test('a seated switch leaves the transcript and the terminal exactly as they wer
   expect(after.ui).toBe('ubuntu');
   await page.evaluate(() => window.__h3d.setUiTheme('quiet'));
   expect(await read()).toEqual(before);
+  clean();
+});
+
+test('a saved Ubuntu builds the office in Ubuntu from the first entry: no rebuild', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await boot(page, 'demo-m5', { ui: 'ubuntu' });
+  await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+  await frames(page, 3);
+  expect(await page.evaluate(() => window.__h3d.officeTheme())).toBe('ubuntu');
+  expect(await page.evaluate(() => window.__h3d.officeRebuilds())).toBe(0);
   clean();
 });
 

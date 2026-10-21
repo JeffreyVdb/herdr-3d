@@ -620,8 +620,11 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   `/* ubuntu:begin */` and `/* ubuntu:end */`; `tools/ui-quiet-check.mjs` strips those blocks, expands the Quiet tokens
   and diffs each stylesheet against the commit before #216: it prints nothing but deliberate hunks, which is how "Quiet
   looks exactly as it did" is proved. A switch writes one attribute: no DOM is rebuilt, no focus, draft or session moves,
-  the 3D scene is not touched, and the Ubuntu stylesheet and faces (`fonts/ubuntu.css`, one lazy import shared with the
-  seated views) load for a UI pick even when both views stay Quiet. **Ownership:** the shell's fonts and colours are the UI
+  and the Ubuntu stylesheet and faces (`fonts/ubuntu.css`, one lazy import shared with the
+  seated views) load for a UI pick even when both views stay Quiet. **The office** wears the theme too
+  (`render/palette.ts`: `officePalette`, the walls, furniture, wall boards' strips and the two screens; the street, city
+  and lobby stay Quiet): `OfficeView` is built with the theme, and a switch rebuilds the office you are in once
+  `ThemeLoader.loading` settles (decisions, "The office wears the UI theme"). **Ownership:** the shell's fonts and colours are the UI
   theme's alone (`--font`, `--font-mono`); the transcript preset sets only `--tx-*`, `--tx-mono` and `--tx-prose`, and the
   terminal canvas its own. Inside the seated screen the app's widgets (seat tabs, the Conversation / Images bar, zoom and
   theme controls, composer, Send, question answers, tool toggles) read `--ctl-*` and the action tokens, while messages,

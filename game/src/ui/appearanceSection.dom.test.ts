@@ -21,7 +21,7 @@ describe('Settings → Appearance (#216)', () => {
     const group = section.querySelector('fieldset')!;
     expect(group.querySelector('legend')!.textContent).toBe('UI theme');
     expect(group.getAttribute('aria-describedby')).toBe(group.querySelector('.settings-field-hint')!.id);
-    expect(group.querySelector('.settings-field-hint')!.textContent).toBe('Colors and fonts for menus, dialogs, bars, and controls. Transcript and terminal appearance are set separately.');
+    expect(group.querySelector('.settings-field-hint')!.textContent).toBe('Colors and fonts for menus, dialogs, bars, and controls, and the colors of the office. Transcript and terminal appearance are set separately.');
     expect(radios().map((r) => r.value)).toEqual(['quiet', 'ubuntu']);
     // One radio group (one name), each named by its label and described by its description.
     expect(new Set(radios().map((r) => r.name)).size).toBe(1);
