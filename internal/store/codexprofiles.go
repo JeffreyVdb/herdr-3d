@@ -27,6 +27,7 @@ type CodexProfile struct {
 	Name     string `json:"name,omitempty"`
 	Hidden   bool   `json:"hidden,omitempty"`
 	Anything bool   `json:"anything,omitempty"` // #140
+	Share    bool   `json:"share,omitempty"`    // #167: "Share setup with <default>"
 }
 
 // CodexRule is one of the Auto hire's rules (#140): a match (a GitHub

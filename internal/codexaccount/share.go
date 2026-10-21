@@ -418,46 +418,61 @@ func (s *Service) SharePlan(ctx context.Context, key string) ([]Step, error) {
 
 // Share turns sharing on for the profile key (also a Fix): replace are the
 // names the person confirmed to replace. A plan that now replaces anything
-// else is refused with words, nothing written. It returns what was done
-// and the settings with Share on (to store once anything was written).
-func (s *Service) Share(ctx context.Context, key string, replace []string) (ShareResult, Settings, error) {
+// else is refused with words, nothing written. Without an error, the
+// setting is to be turned on (SetShare), also when it stopped half way
+// (what is left is drift, and a Fix finishes it).
+func (s *Service) Share(ctx context.Context, key string, replace []string) (ShareResult, error) {
 	s.files.Lock()
 	defer s.files.Unlock()
 	a, def, err := s.sharable(key)
 	if err != nil {
-		return ShareResult{}, s.Settings(), err
+		return ShareResult{}, err
 	}
 	steps, err := applyShare(def.Home, a.Home, replace, s.clock())
 	if errors.Is(err, errChanged) {
-		return ShareResult{}, s.Settings(), &SettingsError{s.Display(a.Home) + " changed since you looked; look again."}
+		return ShareResult{}, &SettingsError{s.Display(a.Home) + " changed since you looked; look again."}
 	}
 	res := ShareResult{Steps: steps, Report: shareReport(steps, a.Name, def.Name), Hooks: exists(filepath.Join(def.Home, hooksFile))}
 	if err != nil {
 		res.Failed = true
 		res.Report = strings.TrimSpace(res.Report + " Stopped: " + err.Error() + ".")
 	}
-	set := override(s.Settings(), a.Home, func(o *Override) { o.Share = true })
-	return res, set, nil
+	return res, nil
 }
 
 // Unshare turns sharing off for the profile key: each link to the
-// default's entries becomes a copy of its target. It returns what was done
-// and the settings with Share off.
-func (s *Service) Unshare(ctx context.Context, key string) (ShareResult, Settings, error) {
+// default's entries becomes a copy of its target. Without an error and
+// not Failed, the setting is to be turned off (SetShare); a failed one
+// stays on (what is left is drift).
+func (s *Service) Unshare(ctx context.Context, key string) (ShareResult, error) {
 	s.files.Lock()
 	defer s.files.Unlock()
 	a, def, err := s.sharable(key)
 	if err != nil {
-		return ShareResult{}, s.Settings(), err
+		return ShareResult{}, err
 	}
 	steps, err := unshare(def.Home, a.Home)
 	res := ShareResult{Steps: steps, Report: unshareReport(steps, a.Name, def.Name)}
 	if err != nil {
 		res.Failed = true
 		res.Report = "Stopped: " + err.Error() + ". " + res.Report
-		return res, s.Settings(), nil // still shared: what is left is drift
 	}
-	return res, override(s.Settings(), a.Home, func(o *Override) { o.Share = false }), nil
+	return res, nil
+}
+
+// SetShare turns the profile key's "Share setup" setting on or off (the
+// files are Share's and Unshare's): it returns the settings that do it,
+// without applying them. The default has none.
+func (s *Service) SetShare(ctx context.Context, key string, on bool) (Settings, error) {
+	set := s.Settings()
+	a, ok := find(list(s.userHome, s.defaultHome, set), key)
+	switch {
+	case !ok:
+		return set, &NotFoundError{Key: key}
+	case a.Default:
+		return set, &SettingsError{"The default profile is the one the others share from."}
+	}
+	return override(set, a.Home, func(o *Override) { o.Share = on }), nil
 }
 
 // MoveSkill moves the skill name, a real folder in the profile key's

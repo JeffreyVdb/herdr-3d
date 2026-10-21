@@ -207,6 +207,7 @@ func TestProfileHireShared(t *testing.T) {
 				t.Fatalf("host calls = %q", hc)
 			}
 			if l.Profile != "work" || l.ProfileName != "work" || l.Account != store.AccountConfirmed || l.Plan != "team" ||
+				!strings.HasPrefix(l.ProfileNote, "work does not share setup with codex: no herdr hooks. ") || // #167
 				!strings.Contains(l.ProfileNote, "work has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, "+
 					"so the bridge takes its thread from the worker's own Codex server") {
 				t.Fatalf("launch = %+v", l)
@@ -230,6 +231,27 @@ func TestProfileHireShared(t *testing.T) {
 				t.Fatalf("%d prepares", n)
 			}
 		})
+	}
+}
+
+// #167 AC9: a hire on a profile that shares the default's setup says
+// nothing of it while it is in step, and says how it drifted otherwise.
+func TestProfileHireSharedSetup(t *testing.T) {
+	t.Parallel()
+	pb := startProfileBridge(t, true, shellpolicy.Bash)
+	pb.c.mustAck(proto.CmdCodexProfilesShare, proto.CodexShareArgs{Key: "work", Share: ptr(true)})
+	m, _ := pb.hire(t, 2, "work")
+	if l := pb.launches(t)[ackData[proto.HireResult](t, m).ID]; l.ProfileNote != "" {
+		t.Fatalf("in step: %q", l.ProfileNote)
+	}
+	if err := os.WriteFile(filepath.Join(pb.work, "hooks.json"), []byte(`{"hooks":{"Stop":[{"hooks":[{"command":"other"}]}]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = pb.hire(t, 3, "work")
+	res := ackData[proto.HireResult](t, m)
+	want := "work's shared setup has drifted from codex's: hooks.json runs other commands than codex's. work has no hooks.json with herdr's hook"
+	if l := pb.launches(t)[res.ID]; !strings.HasPrefix(l.ProfileNote, want) || res.Codex.ProfileNote != l.ProfileNote {
+		t.Fatalf("drifted: %q", l.ProfileNote)
 	}
 }
 

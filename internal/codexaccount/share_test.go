@@ -163,7 +163,11 @@ func share(t *testing.T, s *Service, key string) ShareResult {
 			confirm = append(confirm, st.Name)
 		}
 	}
-	res, set, err := s.Share(ctx, key, confirm)
+	res, err := s.Share(ctx, key, confirm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := s.SetShare(ctx, key, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,22 +257,20 @@ func TestShareOverExistingFileNeedsConfirm(t *testing.T) {
 	}
 	before := tree(t, u)
 	for _, confirm := range [][]string{nil, {"config.toml"}, {"hooks.json"}} {
-		_, set, err := s.Share(ctx, "work", confirm)
+		_, err := s.Share(ctx, "work", confirm)
 		var se *SettingsError
 		if !errors.As(err, &se) || se.Msg != "~/.codex-work changed since you looked; look again." {
 			t.Fatalf("confirm %v: %v", confirm, err)
-		}
-		if slices.ContainsFunc(set.Overrides, func(o Override) bool { return o.Share }) {
-			t.Fatal("a refusal turns nothing on")
 		}
 	}
 	if !maps(before, tree(t, u)) {
 		t.Fatal("a refused share wrote something")
 	}
-	res, set, err := s.Share(ctx, "work", []string{"config.toml", "hooks.json"})
+	res, err := s.Share(ctx, "work", []string{"config.toml", "hooks.json"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	set, _ := s.SetShare(ctx, "work", true)
 	s.Configure(set)
 	want := "Linked config.toml, AGENTS.md and rules/, wrote hooks.json, backed up the old config.toml to config.toml.before-share-20261021-151002 and the old hooks.json to hooks.json.before-share-20261021-151002."
 	if res.Report != want {
@@ -321,10 +323,11 @@ func TestShareAgainChangesNothing(t *testing.T) {
 func TestUnshareLeavesCopies(t *testing.T) {
 	s, _, def, work := shareHomes(t)
 	share(t, s, "work")
-	res, set, err := s.Unshare(ctx, "work")
+	res, err := s.Unshare(ctx, "work")
 	if err != nil || res.Failed {
 		t.Fatal(err, res)
 	}
+	set, _ := s.SetShare(ctx, "work", false)
 	s.Configure(set)
 	if want := "Copied config.toml, AGENTS.md and rules/ from codex: work keeps them as its own and no longer follows codex. Its hooks.json stays."; res.Report != want {
 		t.Fatalf("report %q", res.Report)
@@ -502,10 +505,10 @@ func TestShareRefusesOutsideTheList(t *testing.T) {
 	os.Remove(gone)
 	before := tree(t, u)
 	for _, key := range []string{"codex", "nobody", hashed("gone", gone), "../.codex"} {
-		if _, _, err := s.Share(ctx, key, nil); err == nil {
+		if _, err := s.Share(ctx, key, nil); err == nil {
 			t.Errorf("%s: shared", key)
 		}
-		if _, _, err := s.Unshare(ctx, key); err == nil {
+		if _, err := s.Unshare(ctx, key); err == nil {
 			t.Errorf("%s: unshared", key)
 		}
 		if _, err := s.SharePlan(ctx, key); err == nil {
@@ -533,7 +536,7 @@ env = { KEY = "`+secret+`" }
 	for _, a := range list {
 		seen = append(seen, SetupNote(list, a))
 	}
-	res, _, _ := s.Unshare(ctx, "work")
+	res, _ := s.Unshare(ctx, "work")
 	seen = append(seen, res.Report)
 	if !strings.Contains(strings.Join(seen, "\n"), "alterlab") {
 		t.Fatal("expected the server names to be named")
@@ -592,5 +595,19 @@ func TestShareSettingKept(t *testing.T) {
 	}
 	if got := Clean(Settings{Overrides: []Override{{Path: work, Share: true}}}); len(got.Overrides) != 1 || !got.Overrides[0].Share {
 		t.Fatalf("clean %+v", got)
+	}
+}
+
+// The poller compares lists with Equal: the same drift twice is no change.
+func TestAccountEqualComparesDrift(t *testing.T) {
+	a := Account{Key: "work", Share: true, Drift: &Drift{Items: []DriftItem{{Kind: DriftHooksMissing, Name: "hooks.json", Text: "x"}}}}
+	b := a
+	b.Drift = &Drift{Items: slices.Clone(a.Drift.Items)}
+	if !a.Equal(b) {
+		t.Fatal("same drift, not equal")
+	}
+	b.Drift.Items[0].Text = "y"
+	if a.Equal(b) || a.Equal(Account{Key: "work", Share: true}) {
+		t.Fatal("other drift, equal")
 	}
 }
