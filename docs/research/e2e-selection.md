@@ -144,7 +144,7 @@ their files.
 | Hand a card to an agent | `m7-actions.spec.ts` "Hand to a worker: …" |
 | Inbox leads to the right worker | `m100-inbox.spec.ts` "the inbox: the chip opens a list of who and where …" |
 | Overview leads to the right worker | `m188-overview-all.spec.ts` "Enter on a worker on another floor sits you at its laptop; …" |
-| Whiteboard edit survives close and reload (#32: known flaky) | `m13-whiteboard.spec.ts` "draw, close, reload: …" |
+| Whiteboard edit survives close and reload | `m13-whiteboard.spec.ts` "draw, close, reload: …" |
 | Screen capture starts and stops cleanly | `m13-screen.spec.ts` "Share → LIVE and the TV plays it; …" |
 | Wrap up / send home does not lose work | `m83-wrapup.spec.ts` "wrap up: delete preselected, …" |
 | File a handoff, then send home | `h223-handoff.spec.ts` "the inline button on the last reply files it as written, …" |
@@ -243,17 +243,6 @@ The issue's further candidates (`m10-limits.spec.ts`' permutations, the editor p
 `h157-async-questions.spec.ts` 290 / 303 / 320 / 340 / 883 px widths and `m16-ask.spec.ts`' three viewports) need a
 scenario-by-scenario check against their bug history. They are out of the smoke run already and stay in `extended`
 unchanged; none was deleted without that check.
-
-### Known failures (#32, #34, #35, #36)
-
-Moving a test does not fix its bug. Where each one is now:
-
-| Issue | Test | Profile |
-| --- | --- | --- |
-| #32 whiteboard save / upload race (load-dependent 422) | `m13-whiteboard.spec.ts` "draw, close, reload: …" | **smoke** (the issue's whiteboard journey): it can fail a smoke run under load until #32 is fixed |
-| #34 Codex 0.163 fallback / version | `h155-codex-server.spec.ts` "a hire that falls back to Codex’s built-in server is a warning, not an error" | extended |
-| #35 stale "shown in Hire" copy | `h194-harness-models.spec.ts` "a model hidden in Settings leaves the Hire dialog, …", "every model of the harness hidden: …" | extended |
-| #36 limits panel at 390x640 | `m10-limits.spec.ts` "at 390x640 an open panel folds away while a dialog is open, and comes back when it closes" | extended |
 
 ## Verification of the migration
 
