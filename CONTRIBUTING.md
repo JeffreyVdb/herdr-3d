@@ -1280,6 +1280,14 @@ used for anything, so a hire's toast says "Account: codex (the only profile that
 fixture folder's origin is `JeffreyVdb/<its name>`: add the rule `github.com/JeffreyVdb/*` → work in Settings → Codex
 profiles → Auto rules and the next Auto hire lands on work by that rule. Same URL as above.
 
+#167 run profiles (docs/protocol.md "Run profiles"). Tests: `go test ./internal/store ./internal/server -run
+'PresetRoleCodexProfile|TeamPrompt|RunPrompt|RunStartOrchProfile|RunStartTeam|PresetRoleProfiles|TaggedFreelancer'`,
+`game/src/world/runProfiles.test.ts`, `ui/startRun.profile.dom.test.ts`, `tools/fixture-start.test.ts` and
+`e2e/h167-orch-profile.spec.ts`. With `simcodexprofiles=2` the list says `runs`: Start a run → Hire orchestrator, switch
+the orchestrator to codex, and the "Codex profile" chips appear under its effort; Presets → Edit shows them under each
+Codex role, and a role on `work` puts "Codex profile work (CODEX_HOME=/home/u/.codex-work, …)" in the run's prompt
+preview. Same URL as above.
+
 M6 on the simulating server: presets and runs on any fixture (herdr-3d of demo-m4 has a suggested repo, pastry none);
 `simfail=no_m6` plays a bridge without them. E.g. `?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simms%3D300`.
 
@@ -1838,6 +1846,9 @@ make e2e-extended             # on request: every functional spec below (the who
                               # #140 Auto (h140-auto-profile.spec.ts, simcodexprofiles=2): the hire dialog's Auto chip and
                               # its toast, Settings' "May be used for anything" and Auto rules (a refusal under its row,
                               # move, save) at 390 and desktop, Quiet and Ubuntu; h140-*.png
+                              # #167 run profiles (h167-orch-profile.spec.ts, simcodexprofiles=2): Hire orchestrator's
+                              # Codex profile chips and run.start's pick, the team preset editor's per-role chips and the
+                              # prompt naming the role's profile, at 390 and desktop, Quiet and Ubuntu; h167-*.png
                               # M7 on demo-m6 with sim=1 (m7-boards.spec.ts, m7-actions.spec.ts, m7-perf.spec.ts): the
                               # corkboard and PR board (columns, paper, pins, holders, CI, verdict stamps), E and the
                               # top bar opening the overlays, no-project / no-repo / older-bridge floors, the watch
