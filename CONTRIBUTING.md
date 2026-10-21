@@ -1810,6 +1810,8 @@ make e2e-extended             # on request: every functional spec below (the who
                               # #74 fullscreen chip (h74-fullscreen.spec.ts, simzoom=): the seated watch asks for fullscreen, the chip
                               # toggles it through terminal.zoom, the human unzooming reaches it, headless, single pane and older
                               # bridges, keyboard, AA contrast at the three presets, the bar's height; h74-*.png
+                              # #175 narrow pane (h175-narrow-fit.spec.ts, simscreen=narrow): a 60×40 pane at 100% shows its 40
+                              # rows, A+ / A− / Ctrl+0, a resize, the glance view, a 120-column control; h175-*.png
                               # M7 on demo-m6 with sim=1 (m7-boards.spec.ts, m7-actions.spec.ts, m7-perf.spec.ts): the
                               # corkboard and PR board (columns, paper, pins, holders, CI, verdict stamps), E and the
                               # top bar opening the overlays, no-project / no-repo / older-bridge floors, the watch
