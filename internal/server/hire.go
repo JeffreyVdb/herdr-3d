@@ -122,8 +122,9 @@ type hireOp struct {
 	cwd, prompt, branch, repo  string
 	worktree                   bool
 	codexPolicy                codexapp.VersionPolicy
-	shared                     bool   // #155: a Codex hire with its own app-server
-	profile                    string // #139: the Codex profile's key ("": none asked for, the default)
+	shared                     bool      // #155: a Codex hire with its own app-server
+	profile                    string    // #139: the Codex profile's key ("": none asked for, the default)
+	auto                       *autoPick // #140: an Auto hire's, until runHire picks its profile
 	hiredAt                    int64
 	client                     *Client
 	cmd                        proto.Command
@@ -690,6 +691,9 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 		prompt: a.Prompt, worktree: a.Worktree, hiredAt: at.UnixMilli(), client: c, cmd: cmd,
 		notify: make(chan struct{}, 1), launched: launched, compose: compose, shared: a.Harness == "codex" && h.cx.enabled, codexPolicy: h.cx.policy,
 		watch: watch, profile: a.CodexProfile}
+	if a.CodexProfile == proto.CodexProfileAuto { // #140: picked in runHire, from what the hub has now
+		op.profile, op.auto = "", h.autoPickOf()
+	}
 	if a.Worktree {
 		op.branch = "h3d/" + op.agent
 	}
@@ -760,9 +764,10 @@ type hireReport struct {
 	Start       string   `json:"start,omitempty"`
 	Trust       string   `json:"trust,omitempty"`
 	Prompt      string   `json:"prompt,omitempty"`
-	Launch      string   `json:"launch,omitempty"`        // run.start's launch id
-	Codex       string   `json:"codex,omitempty"`         // #155: shared, or legacy and why
-	Profile     string   `json:"codex_profile,omitempty"` // #139: the Codex profile's name
+	Launch      string   `json:"launch,omitempty"`               // run.start's launch id
+	Codex       string   `json:"codex,omitempty"`                // #155: shared, or legacy and why
+	Profile     string   `json:"codex_profile,omitempty"`        // #139: the Codex profile's name
+	Reason      string   `json:"codex_profile_reason,omitempty"` // #140: an Auto hire's pick and why
 	Rollback    []string `json:"rollback,omitempty"`
 	Steps       []string `json:"steps"`
 }
@@ -892,6 +897,11 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 		dir = created.CheckoutPath
 	}
 	agent := herdr.Agent{Harness: op.harness, Model: op.model, Effort: op.effort, Label: op.label}
+	// #140: Auto becomes a concrete profile here, once: everything after
+	// (and every wake) runs on that key.
+	if op.auto != nil {
+		h.resolveAuto(ctx, op, rep, &res)
+	}
 	// #139: a Codex profile is prepared, and off the default its home is
 	// exported in the pane's shell, before anything of Codex starts there.
 	var prof *codexProfileRun

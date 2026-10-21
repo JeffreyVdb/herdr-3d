@@ -45,15 +45,21 @@ func (h *Hub) initCodexProfiles(ctx context.Context) error {
 func fromStoredProfiles(set store.CodexProfiles) codexaccount.Settings {
 	out := codexaccount.Settings{Added: set.Added}
 	for _, p := range set.Profiles {
-		out.Overrides = append(out.Overrides, codexaccount.Override{Path: p.Path, Name: p.Name, Hidden: p.Hidden})
+		out.Overrides = append(out.Overrides, codexaccount.Override{Path: p.Path, Name: p.Name, Hidden: p.Hidden, Anything: p.Anything})
+	}
+	for _, r := range set.Rules {
+		out.Rules = append(out.Rules, codexaccount.Rule{Match: r.Match, Profile: r.Profile})
 	}
 	return out
 }
 
 func toStoredProfiles(set codexaccount.Settings) store.CodexProfiles {
-	out := store.CodexProfiles{Profiles: []store.CodexProfile{}, Added: set.Added}
+	out := store.CodexProfiles{Profiles: []store.CodexProfile{}, Added: set.Added, Rules: []store.CodexRule{}}
 	for _, o := range set.Overrides {
-		out.Profiles = append(out.Profiles, store.CodexProfile{Path: o.Path, Name: o.Name, Hidden: o.Hidden})
+		out.Profiles = append(out.Profiles, store.CodexProfile{Path: o.Path, Name: o.Name, Hidden: o.Hidden, Anything: o.Anything})
+	}
+	for _, r := range set.Rules {
+		out.Rules = append(out.Rules, store.CodexRule{Match: r.Match, Profile: r.Profile})
 	}
 	return out
 }
@@ -65,14 +71,20 @@ func (h *Hub) codexProfilesView() *proto.CodexProfiles {
 	if svc == nil {
 		return nil
 	}
-	out := &proto.CodexProfiles{Profiles: make([]proto.CodexProfile, 0, len(h.cp.list)), Hire: true}
+	rules := svc.Settings().Rules
+	out := &proto.CodexProfiles{Profiles: make([]proto.CodexProfile, 0, len(h.cp.list)), Hire: true, Auto: true,
+		Rules: make([]proto.CodexRule, 0, len(rules))}
 	for _, a := range h.cp.list {
 		plan := ""
 		if l, ok := h.limits[limitsKey(proto.LimitsCodex, a.Key)]; ok {
 			plan = l.Plan
 		}
 		out.Profiles = append(out.Profiles, proto.CodexProfile{Key: a.Key, Name: a.Name, Path: a.Home, Display: svc.Display(a.Home),
-			Plan: plan, SignedIn: a.SignedIn || plan != "", Default: a.Default, Hidden: a.Hidden, Added: a.Added, Missing: a.Added && !a.Exists})
+			Plan: plan, SignedIn: a.SignedIn || plan != "", Default: a.Default, Hidden: a.Hidden, Added: a.Added, Missing: a.Added && !a.Exists,
+			Anything: a.Anything})
+	}
+	for _, r := range rules {
+		out.Rules = append(out.Rules, proto.CodexRule{Match: r.Match, Profile: r.Profile})
 	}
 	return out
 }
@@ -184,29 +196,40 @@ func (h *Hub) startCodexProfiles(ctx context.Context, c *Client, cmd proto.Comma
 }
 
 // codexProfilesChange is the settings a codex_profiles.set asks for: add a
-// folder, or rename, hide or show, or remove one profile (one change a
-// command).
+// folder, or rename, hide or show, flag (#140) or remove one profile, or
+// (#140) replace the rules (one change a command).
 func codexProfilesChange(ctx context.Context, svc *codexaccount.Service, a proto.CodexProfilesSetArgs) (codexaccount.Settings, error) {
 	n := 0
-	for _, set := range []bool{a.Add != nil, a.Name != nil, a.Hidden != nil, a.Remove} {
+	for _, set := range []bool{a.Add != nil, a.Name != nil, a.Hidden != nil, a.Anything != nil, a.Rules != nil, a.Remove} {
 		if set {
 			n++
 		}
 	}
 	switch {
 	case n != 1:
-		return codexaccount.Settings{}, bad("exactly one of add, name, hidden and remove is required")
+		return codexaccount.Settings{}, bad("exactly one of add, name, hidden, anything, rules and remove is required")
 	case a.Add != nil:
 		if a.Key != "" {
 			return codexaccount.Settings{}, bad("add takes no key")
 		}
 		return svc.Add(ctx, *a.Add)
+	case a.Rules != nil:
+		if a.Key != "" {
+			return codexaccount.Settings{}, bad("rules takes no key")
+		}
+		rules := make([]codexaccount.Rule, 0, len(*a.Rules))
+		for _, r := range *a.Rules {
+			rules = append(rules, codexaccount.Rule{Match: r.Match, Profile: r.Profile})
+		}
+		return svc.SetRules(ctx, rules)
 	case a.Key == "":
 		return codexaccount.Settings{}, bad("key is required")
 	case a.Name != nil:
 		return svc.Rename(ctx, a.Key, *a.Name)
 	case a.Hidden != nil:
 		return svc.SetHidden(ctx, a.Key, *a.Hidden)
+	case a.Anything != nil:
+		return svc.SetAnything(ctx, a.Key, *a.Anything)
 	}
 	return svc.Remove(ctx, a.Key)
 }

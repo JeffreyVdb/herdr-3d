@@ -22,7 +22,15 @@ func init() { Commands = append(Commands, CmdCodexProfilesGet, CmdCodexProfilesS
 const (
 	CodexProfilesMaxAdded = 16 // folders the user can add
 	CodexProfileMaxName   = 40 // characters of a name
+	CodexRulesMax         = 32 // #140: the Auto hire's rules
 )
+
+// CodexProfileAuto (#140) is worker.hire's and a hire preset's
+// codex_profile that leaves the profile to the bridge: resolved once, at
+// hire, to a concrete key (CodexProfiles.Rules first, then the remaining
+// limits of the profiles that may be used for anything). Never stored on a
+// worker.
+const CodexProfileAuto = "auto"
 
 // CodexProfiles is the list: codex_profiles.get's and .set's ack,
 // World.CodexProfiles, and flat in codex_profiles.update.
@@ -32,6 +40,22 @@ type CodexProfiles struct {
 	Profiles []CodexProfile `json:"profiles"`
 	// Hire (#139): worker.hire and hire presets take codex_profile.
 	Hire bool `json:"hire,omitempty"`
+	// Auto (#140): they also take CodexProfileAuto, and Rules and
+	// CodexProfile.Anything are the settings it follows.
+	Auto bool `json:"auto,omitempty"`
+	// Rules (#140): the Auto hire's, in order (the first that matches
+	// wins). Always present on a bridge with Auto ([] when none).
+	Rules []CodexRule `json:"rules"`
+}
+
+// CodexRule (#140) sends an Auto hire that matches to a profile. Match is
+// github.com/<owner>/* (any repo of that owner on the hire's origin),
+// github.com/<owner>/<repo>, or a folder, absolute or under ~/, that the
+// hire's folder is in (on whole path segments). Profile is a key; one that
+// is gone, hidden or not signed in at hire is passed over, with a note.
+type CodexRule struct {
+	Match   string `json:"match"`
+	Profile string `json:"profile"`
 }
 
 // CodexProfile is one Codex home folder.
@@ -56,6 +80,9 @@ type CodexProfile struct {
 	Added bool `json:"added"`
 	// Missing: an added folder that is not there (not read).
 	Missing bool `json:"missing,omitempty"`
+	// Anything (#140): "May be used for anything": an Auto hire no rule
+	// decides may land on it. Off by default.
+	Anything bool `json:"anything,omitempty"`
 }
 
 // CodexProfilesUpdate is the codex_profiles.update event.
@@ -66,11 +93,16 @@ type CodexProfilesUpdate struct {
 }
 
 // CodexProfilesSetArgs are the args of codex_profiles.set, one change a
-// command: Add alone, or Key with one of Name, Hidden and Remove.
+// command: Add or Rules alone, or Key with one of Name, Hidden, Anything
+// and Remove.
 type CodexProfilesSetArgs struct {
 	Key    string  `json:"key,omitempty"`
 	Name   *string `json:"name,omitempty"`
 	Hidden *bool   `json:"hidden,omitempty"`
+	// Anything (#140) turns "May be used for anything" on or off.
+	Anything *bool `json:"anything,omitempty"`
+	// Rules (#140) replaces the rules, in order ([] clears them).
+	Rules *[]CodexRule `json:"rules,omitempty"`
 	// Remove removes an added folder.
 	Remove bool `json:"remove,omitempty"`
 	// Add is a folder to add: an absolute path or ~/… on the bridge host.

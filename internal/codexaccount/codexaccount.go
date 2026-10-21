@@ -63,6 +63,10 @@ type Account struct {
 	// checked). Codex can keep the sign-in in the keyring instead, so a
 	// reading with a plan also means signed in.
 	SignedIn bool
+	// Anything (#140): "May be used for anything": an Auto hire that no
+	// rule decides may land on it (off by default, the default profile's
+	// too).
+	Anything bool
 }
 
 // Lister lists the Codex profiles, the bridge's own first, then the found
@@ -74,16 +78,19 @@ type Lister interface {
 
 // Override is what the user set for one profile, by its home folder.
 type Override struct {
-	Path   string `json:"path"`
-	Name   string `json:"name,omitempty"`
-	Hidden bool   `json:"hidden,omitempty"`
+	Path     string `json:"path"`
+	Name     string `json:"name,omitempty"`
+	Hidden   bool   `json:"hidden,omitempty"`
+	Anything bool   `json:"anything,omitempty"` // #140
 }
 
-// Settings are the user's: the overrides and the added folders (absolute,
-// cleaned, in the order added).
+// Settings are the user's: the overrides, the added folders (absolute,
+// cleaned, in the order added) and (#140) the Auto hire's rules, in
+// order.
 type Settings struct {
 	Overrides []Override `json:"profiles"`
 	Added     []string   `json:"added"`
+	Rules     []Rule     `json:"rules"`
 }
 
 // SettingsError is a change the service refuses, in words for the person
@@ -117,7 +124,7 @@ type Service struct {
 // home (codex.DefaultHome, so the default profile is the one whose sessions
 // the bridge reads).
 func New(userHome, defaultHome string) *Service {
-	return &Service{userHome: userHome, defaultHome: defaultHome, set: Settings{Added: []string{}}}
+	return &Service{userHome: userHome, defaultHome: defaultHome, set: Settings{Added: []string{}, Rules: []Rule{}}}
 }
 
 // Configure replaces the settings (as stored).
@@ -135,7 +142,7 @@ func (s *Service) Settings() Settings {
 }
 
 func clone(set Settings) Settings {
-	return Settings{Overrides: slices.Clone(set.Overrides), Added: append([]string{}, set.Added...)}
+	return Settings{Overrides: slices.Clone(set.Overrides), Added: append([]string{}, set.Added...), Rules: append([]Rule{}, set.Rules...)}
 }
 
 // Accounts detects the profiles now (a few stat calls and one read of the
@@ -224,6 +231,7 @@ func list(userHome, defaultHome string, set Settings) []Account {
 				a.Name, stored[i] = o.Name, true
 			}
 			a.Hidden = o.Hidden && !f.def
+			a.Anything = o.Anything
 		}
 		out = append(out, a)
 	}
@@ -311,18 +319,26 @@ func keyOf(home string) string {
 // other folder, the name, "-" and the first digits (6, or all 64) hex
 // digits of the SHA-256 of the path. A name that itself ends in "-" and 6
 // or more hex digits is hashed too, so a key with a hash is never another
-// folder's name alone. userDir is the user's home folder, canonical.
+// folder's name alone, and so is "auto" (#140: reservedKey). userDir is the user's home folder, canonical.
 func keyFor(home string, def bool, userDir, defKey string, digits int) string {
 	key := keyOf(home)
-	if !hashEnd.MatchString(key) && (def || userDir != "" && key != defKey && home == filepath.Join(userDir, ".codex-"+key)) {
+	if !hashEnd.MatchString(key) && key != reservedKey && (def || userDir != "" && key != defKey && home == filepath.Join(userDir, ".codex-"+key)) {
 		return key
 	}
 	sum := sha256.Sum256([]byte(home))
 	return key + "-" + hex.EncodeToString(sum[:])[:digits]
 }
 
+// reservedKey is worker.hire's codex_profile for Auto (#140,
+// proto.CodexProfileAuto): a folder whose name would make it its key
+// (~/.codex-auto) gets a hash, so the two never meet.
+const reservedKey = "auto"
+
 // hashEnd is how a key with a path hash ends.
 var hashEnd = regexp.MustCompile(`-[0-9a-f]{6,}$`)
+
+// UserHome is the user's home folder (#140: a rule's ~/ is in it).
+func (s *Service) UserHome() string { return s.userHome }
 
 // Display is path for people: under the user's home folder it starts with
 // ~.
@@ -390,7 +406,7 @@ func override(set Settings, home string, fn func(*Override)) Settings {
 	for i, o := range set.Overrides {
 		if canonical(o.Path) == home {
 			fn(&set.Overrides[i])
-			if set.Overrides[i].Name == "" && !set.Overrides[i].Hidden {
+			if o := set.Overrides[i]; o.Name == "" && !o.Hidden && !o.Anything {
 				set.Overrides = slices.Delete(set.Overrides, i, i+1)
 			}
 			return set
@@ -398,7 +414,7 @@ func override(set Settings, home string, fn func(*Override)) Settings {
 	}
 	o := Override{Path: home}
 	fn(&o)
-	if o.Name != "" || o.Hidden {
+	if o.Name != "" || o.Hidden || o.Anything {
 		set.Overrides = append(set.Overrides, o)
 	}
 	return set
@@ -447,6 +463,17 @@ func (s *Service) SetHidden(ctx context.Context, key string, hidden bool) (Setti
 		return set, &SettingsError{"The bridge's own Codex profile cannot be hidden."}
 	}
 	return override(set, a.Home, func(o *Override) { o.Hidden = hidden }), nil
+}
+
+// SetAnything turns "May be used for anything" on or off for the profile
+// key (#140), the default's too.
+func (s *Service) SetAnything(ctx context.Context, key string, on bool) (Settings, error) {
+	set := s.Settings()
+	a, ok := find(list(s.userHome, s.defaultHome, set), key)
+	if !ok {
+		return set, &NotFoundError{Key: key}
+	}
+	return override(set, a.Home, func(o *Override) { o.Anything = on }), nil
 }
 
 // Add adds a folder: an absolute path or ~/…, an existing directory, not a
@@ -506,14 +533,14 @@ func (s *Service) Remove(ctx context.Context, key string) (Settings, error) {
 		return set, &SettingsError{"A profile the bridge found cannot be removed, only hidden."}
 	}
 	set.Added = slices.DeleteFunc(set.Added, func(p string) bool { return canonical(p) == a.Home })
-	return override(set, a.Home, func(o *Override) { o.Name, o.Hidden = "", false }), nil
+	return override(set, a.Home, func(o *Override) { o.Name, o.Hidden, o.Anything = "", false, false }), nil
 }
 
 // Clean drops what stored settings cannot mean (a relative or empty path,
-// an added folder twice, more than MaxAdded), so settings written by hand
-// do no harm.
+// an added folder twice, more than MaxAdded; a rule that does not parse,
+// more than MaxRules), so settings written by hand do no harm.
 func Clean(set Settings) Settings {
-	out := Settings{Added: []string{}}
+	out := Settings{Added: []string{}, Rules: []Rule{}}
 	seen := map[string]bool{}
 	for _, p := range set.Added {
 		if p == "" || !filepath.IsAbs(p) || len(p) > MaxPath || seen[filepath.Clean(p)] || len(out.Added) >= MaxAdded {
@@ -527,10 +554,17 @@ func Clean(set Settings) Settings {
 		if utf8.RuneCountInString(name) > MaxName {
 			name = ""
 		}
-		if o.Path == "" || !filepath.IsAbs(o.Path) || (name == "" && !o.Hidden) {
+		if o.Path == "" || !filepath.IsAbs(o.Path) || (name == "" && !o.Hidden && !o.Anything) {
 			continue
 		}
-		out.Overrides = append(out.Overrides, Override{Path: filepath.Clean(o.Path), Name: name, Hidden: o.Hidden})
+		out.Overrides = append(out.Overrides, Override{Path: filepath.Clean(o.Path), Name: name, Hidden: o.Hidden, Anything: o.Anything})
+	}
+	for _, r := range set.Rules {
+		m, ok := normMatch(r.Match)
+		if !ok || r.Profile == "" || len(out.Rules) >= MaxRules {
+			continue
+		}
+		out.Rules = append(out.Rules, Rule{Match: m, Profile: r.Profile})
 	}
 	return out
 }

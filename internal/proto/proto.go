@@ -856,7 +856,8 @@ type WorkerHireArgs struct {
 	// #139 (optional, Codex only): the key of the Codex profile the worker
 	// runs on (codex_profiles). Absent: the default profile, exactly as
 	// before. A client sends it only to a bridge whose codex_profiles has
-	// hire (an older one refuses the unknown field).
+	// hire (an older one refuses the unknown field). #140: CodexProfileAuto
+	// leaves it to the bridge (only to one whose codex_profiles has auto).
 	CodexProfile string `json:"codex_profile,omitempty"`
 }
 
@@ -879,6 +880,10 @@ type HireResult struct {
 	// Protected (#108 round 2): how many ranges of the prompt went to
 	// private files (absent: none).
 	Protected int `json:"protected,omitempty"`
+	// CodexProfileReason (#140): an Auto hire's pick and why, in plain
+	// words ("Account: work (rule acme/*)"); absent when the hire named
+	// its profile or none.
+	CodexProfileReason string `json:"codex_profile_reason,omitempty"`
 }
 
 // WorkerArgs are the args of worker.fire.prepare.
