@@ -59,18 +59,28 @@ func (tr *usageTracker) retain(l *txLog, id string, child bool, now time.Time) {
 		items: l.log.Len()})
 }
 
-// reuse hands a kept log to a watch again: false when it no longer indexes
-// its file as it is now (its tail may not have seen the change yet).
-func (tr *usageTracker) reuse(l *txLog, id string, child bool, now time.Time) bool {
+// expired reports whether a kept log has been kept for the TTL.
+func (tr *usageTracker) expired(l *txLog, now time.Time) bool {
+	return now.Sub(l.idle) >= tr.cfg.IdleLogTTL
+}
+
+// reuse hands a kept log to a watch again, or says why not ("": reused):
+// its TTL ran out (a round's eviction comes after its syncs), or it no
+// longer indexes its file as it is now (its tail may not have seen the
+// change yet). The caller drops a log refused.
+func (tr *usageTracker) reuse(l *txLog, id string, child bool, now time.Time) string {
+	if tr.expired(l, now) {
+		return keptTTL
+	}
 	if l.log.Stale() != nil {
-		return false
+		return keptInvalidated
 	}
 	idle := now.Sub(l.idle)
 	l.idle = time.Time{}
 	tr.reused++
 	tr.logEvents = append(tr.logEvents, logEvent{what: "reused", worker: id, child: child, idle: idle, footprint: l.log.Footprint(),
 		items: l.log.Len(), reused: tr.reused, built: tr.built})
-	return true
+	return ""
 }
 
 // noteBuilt counts a watch's log built from its file.
@@ -157,7 +167,7 @@ func (tr *usageTracker) evictLogs(now time.Time) {
 	var total int64
 	live := ks[:0]
 	for _, k := range ks {
-		if now.Sub(k.l.idle) >= tr.cfg.IdleLogTTL {
+		if tr.expired(k.l, now) {
 			drop(k, keptTTL)
 			continue
 		}

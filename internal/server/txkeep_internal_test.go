@@ -544,3 +544,118 @@ func TestKeptChildLogEvicted(t *testing.T) {
 		t.Fatalf("events = %q", ev)
 	}
 }
+
+// A kept log whose TTL ran out is never handed to a watch, even when the
+// watch comes back before a round has evicted it (the round's sync runs
+// before its eviction): it is evicted then, its tap cleared, and the watch
+// gets a log built anew. One a millisecond short of the TTL is reused.
+func TestKeptLogExpiredNotReused(t *testing.T) {
+	t.Parallel()
+	const sess = "0a0b0c0d-1491-4491-8491-149149149171"
+	setup := func(t *testing.T) (*keepRig, usageWorker, *transcript.Log) {
+		r := newKeepRig(t, UsageConfig{IdleLogTTL: time.Minute})
+		keepAppend(t, r.path(sess), 0, 3)
+		w := claudeWorker("w", sess, true)
+		r.at(0, w)
+		first := r.log("w")
+		w.watched = false
+		r.at(time.Second, w)
+		return r, w, first
+	}
+	for _, back := range []time.Duration{
+		time.Second + time.Minute,   // the TTL to the millisecond
+		2*time.Second + time.Minute, // past it, after a round of it idle
+	} {
+		t.Run(back.String(), func(t *testing.T) {
+			t.Parallel()
+			r, w, first := setup(t)
+			if back > time.Second+time.Minute {
+				r.at(time.Minute, w) // idle, not expired yet
+			}
+			w.watched = true
+			r.at(back, w)
+			got := r.log("w")
+			if got == nil || got == first || !errors.Is(first.Err(), transcript.ErrClosed) || got.Len() != 3 {
+				t.Fatalf("expired log reused: %p (first %p), first err %v", got, first, first.Err())
+			}
+			if ev := r.events(); len(ev) != 2 || ev[0] != "evicted w ttl" || ev[1] != "built w" {
+				t.Fatalf("events = %q", ev)
+			}
+			if r.follows[r.path(sess)] != 2 || r.tr.reused != 0 || r.tr.built != 2 || r.tr.sessions["w"].Tap() != got ||
+				r.tr.txOffers["w"].log != got {
+				t.Fatalf("follows %d, reused %d, built %d, tap %p", r.follows[r.path(sess)], r.tr.reused, r.tr.built,
+					r.tr.sessions["w"].Tap())
+			}
+		})
+	}
+	t.Run("short of it", func(t *testing.T) {
+		t.Parallel()
+		r, w, first := setup(t)
+		w.watched = true
+		r.at(time.Second+time.Minute-time.Millisecond, w)
+		if r.log("w") != first || r.follows[r.path(sess)] != 1 || r.tr.reused != 1 {
+			t.Fatalf("not reused: %v, %d follows", r.events(), r.follows[r.path(sess)])
+		}
+	})
+}
+
+// As TestKeptLogExpiredNotReused, for a child's log.
+func TestKeptChildLogExpiredNotReused(t *testing.T) {
+	t.Parallel()
+	const (
+		sess = "0a0b0c0d-1491-4491-8491-149149149181"
+		a    = "a1491000000000031"
+		key  = "w\x00c-a"
+	)
+	kids := []txKid{{key: key, native: a, session: sess, harness: usage.Claude, avail: proto.TranscriptAvailable}}
+	setup := func(t *testing.T) (*keepRig, usageWorker, *transcript.Log) {
+		r := newKeepRig(t, UsageConfig{IdleLogTTL: time.Minute})
+		keepAppend(t, r.path(sess), 0, 2)
+		keepAppend(t, r.kidPath(sess, a), 0, 3)
+		w := claudeWorker("w", sess, false)
+		w.kids = kids
+		r.at(0, w)
+		first := r.tr.kidLogs["w"][key].log
+		ready(t, first)
+		w.kids = nil
+		r.at(time.Second, w)
+		return r, w, first
+	}
+	for _, back := range []time.Duration{time.Second + time.Minute, 2*time.Second + time.Minute} {
+		t.Run(back.String(), func(t *testing.T) {
+			t.Parallel()
+			r, w, first := setup(t)
+			if back > time.Second+time.Minute {
+				r.at(time.Minute, w)
+			}
+			w.kids = kids
+			r.at(back, w)
+			l := r.tr.kidLogs["w"][key]
+			if l == nil || l.log == first || !errors.Is(first.Err(), transcript.ErrClosed) {
+				t.Fatalf("expired child log reused: %v, first err %v", l, first.Err())
+			}
+			ready(t, l.log)
+			if l.log.Len() != 3 {
+				t.Fatalf("rebuilt: %d items", l.log.Len())
+			}
+			if ev := r.events(); len(ev) != 2 || ev[0] != "evicted w ttl" || ev[1] != "built w" || !r.tr.logEvents[0].child {
+				t.Fatalf("events = %q", ev)
+			}
+			s := r.tr.sessions["w"]
+			if r.follows[r.kidPath(sess, a)] != 2 || r.tr.reused != 0 || r.tr.built != 2 || s.ChildTap(a) != l.log ||
+				r.tr.txOffers[key].log != l.log {
+				t.Fatalf("follows %d, reused %d, built %d, tap %v", r.follows[r.kidPath(sess, a)], r.tr.reused, r.tr.built,
+					s.ChildTap(a))
+			}
+		})
+	}
+	t.Run("short of it", func(t *testing.T) {
+		t.Parallel()
+		r, w, first := setup(t)
+		w.kids = kids
+		r.at(time.Second+time.Minute-time.Millisecond, w)
+		if l := r.tr.kidLogs["w"][key]; l == nil || l.log != first || r.follows[r.kidPath(sess, a)] != 1 || r.tr.reused != 1 {
+			t.Fatalf("not reused: %v, %d follows", r.events(), r.follows[r.kidPath(sess, a)])
+		}
+	})
+}

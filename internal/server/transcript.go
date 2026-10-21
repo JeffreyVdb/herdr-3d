@@ -995,8 +995,8 @@ func (tr *usageTracker) syncTranscript(w usageWorker, s *usage.Session, key stri
 		tr.retain(cur, w.id, false, now)
 		return
 	case !cur.idle.IsZero(): // #149: watched again
-		if !tr.reuse(cur, w.id, false, now) {
-			tr.dropLog(w.id, cur, s, keptInvalidated, now)
+		if why := tr.reuse(cur, w.id, false, now); why != "" {
+			tr.dropLog(w.id, cur, s, why, now)
 			cur = nil
 		}
 	}
@@ -1099,8 +1099,10 @@ func (tr *usageTracker) syncKidTranscripts(w usageWorker, s *usage.Session, now 
 		case !watched: // #149: kept, its session's tail still feeding it
 			tr.retain(l, w.id, true, now)
 			natives = append(natives, l.native)
-		case !l.idle.IsZero() && !tr.reuse(l, w.id, true, now): // #149: watched again
-			tr.dropKidLog(w.id, key, l, s, keptInvalidated, now)
+		case !l.idle.IsZero(): // #149: watched again
+			if why := tr.reuse(l, w.id, true, now); why != "" {
+				tr.dropKidLog(w.id, key, l, s, why, now)
+			}
 		}
 	}
 	for _, k := range want {
