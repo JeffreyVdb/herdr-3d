@@ -70,6 +70,12 @@ describe('#139 the seat’s Codex profile line', () => {
     expect(profileNotice({ harness: 'codex', codex: { mode: 'legacy' } }, two)?.text).toBe('Runs on the default profile (codex).');
     expect(profileNotice({ harness: 'claude', agent_kind: 'claude' }, two)).toBeNull();
   });
+  it('#167: names the profile an agent the bridge did not start is tagged with', () => {
+    expect(profileNotice({ agent_kind: 'codex', tokens: { h3d_codex_profile: 'work' } }, two)).toEqual({ tone: 'note', text: 'Work' });
+    expect(profileNotice({ agent_kind: 'codex', tokens: { h3d_codex_profile: 'gone-key' } }, two)?.text).toBe('gone-key');
+    expect(profileNotice({ agent_kind: 'codex', tokens: {} }, two)?.text).toBe('Runs on the default profile (codex).');
+    expect(profileNotice({ harness: 'codex', codex: { mode: 'shared' }, tokens: { h3d_codex_profile: 'work' } }, two)?.text).toBe('Runs on the default profile (codex).');
+  });
 });
 
 describe('#140 Auto and its rules', () => {

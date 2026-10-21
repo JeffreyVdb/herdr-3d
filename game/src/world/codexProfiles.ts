@@ -280,9 +280,10 @@ export function profileName(state: CodexProfilesState | null, key: string): stri
  * #139: what the seat bar says about a Codex worker's profile, with two or more profiles shown (else null, as before
  * profiles, but for a wake on the default because its profile was gone): the one it was hired on by its current name, and what its hire or last wake found (`profile_note`; another
  * account's sign-in needs you). A Codex worker with none (hired before profiles, or not by the bridge: write-code's)
- * runs on the default one.
+ * runs on the default one, but (#167) one the bridge did not start on the profile its workspace's `h3d_codex_profile`
+ * token names.
  */
-export function profileNotice(w: Pick<Worker, 'codex' | 'harness' | 'agent_kind'>, state: CodexProfilesState | null): CodexNotice | null {
+export function profileNotice(w: Pick<Worker, 'codex' | 'harness' | 'agent_kind' | 'tokens'>, state: CodexProfilesState | null): CodexNotice | null {
   const c = w.codex;
   if (usableProfiles(state).length < 2) {
     // A wake on the default because its profile was gone says so also with only the default left (its only note).
@@ -290,13 +291,14 @@ export function profileNotice(w: Pick<Worker, 'codex' | 'harness' | 'agent_kind'
     return c?.profile && c.profile_note && c.profile === def?.key ? { tone: 'note', text: c.profile_note } : null;
   }
   if (w.harness !== 'codex' && w.agent_kind !== 'codex' && !w.codex) return null;
-  if (!c?.profile) {
+  const key = c ? c.profile : w.tokens?.h3d_codex_profile;
+  if (!key) {
     const def = state?.profiles.find((p) => p.default);
     return def ? { tone: 'note', text: `Runs on the default profile (${def.name}).` } : null;
   }
-  const name = profileName(state, c.profile);
-  const text = c.profile_note ? `${name}. ${c.profile_note}` : name;
-  return { tone: c.account === 'mismatch' ? 'down' : 'note', text };
+  const name = profileName(state, key);
+  const text = c?.profile_note ? `${name}. ${c.profile_note}` : name;
+  return { tone: c?.account === 'mismatch' ? 'down' : 'note', text };
 }
 
 /**
