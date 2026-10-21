@@ -141,3 +141,40 @@ describe('the fixture’s Codex profiles on a hire (#139)', () => {
     expect(world().cmd('worker.hire', hire(12, { codex_profile: 'work' }))?.code).toBe('bad_request');
   });
 });
+
+describe('the fixture’s Auto (#140)', () => {
+  it('lists Auto, the seeded rule and the flag; checks and stores rules and the flag as herdr-world', () => {
+    const { run, world } = sim();
+    const v = world.codex_profiles as { auto?: boolean; rules?: unknown[]; profiles: Array<{ key: string; anything?: boolean }> };
+    expect(v.auto).toBe(true);
+    expect(v.rules).toEqual([{ match: 'github.com/acme/*', profile: 'work' }]);
+    expect(v.profiles.filter((p) => p.anything).map((p) => p.key)).toEqual(['codex']);
+    const ack = run('codex_profiles.set', { rules: [{ match: 'GitHub.com/JeffreyVdb/*', profile: 'work' }, { match: '~/scratch/', profile: 'codex' }] }) as unknown as { rules: unknown[] };
+    expect(ack.rules).toEqual([{ match: 'github.com/JeffreyVdb/*', profile: 'work' }, { match: '~/scratch', profile: 'codex' }]);
+    expect(() => run('codex_profiles.set', { rules: [{ match: '/a', profile: 'work' }, { match: 'acme/*', profile: 'work' }] })).toThrow(
+      'Rule 2: use github.com/<owner>/* or github.com/<owner>/<repo>, or a folder starting with / or ~/.',
+    );
+    expect(() => run('codex_profiles.set', { rules: [{ match: '/a', profile: 'nope' }] })).toThrow('Rule 1: there is no Codex profile "nope".');
+    expect(() => run('codex_profiles.set', { key: 'work', rules: [] })).toThrow('rules takes no key');
+    run('codex_profiles.set', { key: 'work', anything: true });
+    expect(run('codex_profiles.get').profiles.filter((p) => (p as { anything?: boolean }).anything).map((p) => p.key)).toEqual(['codex', 'work']);
+  });
+
+  it('picks as the bridge does: a rule, else the flagged profile with a fresh reading, else the default', () => {
+    const { s, run } = sim();
+    const base = readings('ok', NOW)[1];
+    expect(s.pick('/home/u/herdr-3d', base)).toEqual({ key: 'codex', reason: 'Account: codex (the only profile that may be used for anything)' });
+    run('codex_profiles.set', { key: 'work', anything: true });
+    // work's reading is stale, the scenario's has a week only: codex (fresh) has the more known left.
+    expect(s.pick('/home/u/herdr-3d', base)).toEqual({ key: 'codex', reason: 'Account: codex (most left: 81% of the week)' });
+    run('codex_profiles.set', { rules: [{ match: 'github.com/JeffreyVdb/*', profile: 'work' }] });
+    expect(s.pick('/home/u/herdr-3d', base)).toEqual({ key: 'work', reason: 'Account: work (rule JeffreyVdb/*)' });
+    run('codex_profiles.set', { rules: [{ match: 'github.com/JeffreyVdb/herdr-3d', profile: 'old' }] });
+    expect(s.pick('/home/u/herdr-3d', base).reason).toMatch(/; rule JeffreyVdb\/herdr-3d names old, which is hidden\)$/);
+    run('codex_profiles.set', { key: 'codex', anything: false });
+    run('codex_profiles.set', { key: 'work', anything: false });
+    run('codex_profiles.set', { rules: [] });
+    expect(s.pick('/x', base)).toEqual({ key: 'codex', reason: 'Account: codex (no rule matched, no profile may be used for anything: the default)' });
+  });
+});
+

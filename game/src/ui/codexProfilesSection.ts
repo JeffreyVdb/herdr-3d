@@ -1,6 +1,16 @@
-import type { CodexProfile, CodexProfilesState, CommandArgs, CommandName } from '../net/protocol';
+import type { CodexProfile, CodexProfilesState, CodexRule, CommandArgs, CommandName } from '../net/protocol';
 import type { CommandResult } from '../net/client';
-import { codexProfilesFailureText, PROFILE_MAX_NAME, profileNameProblem, profilePathProblem, type CodexProfilesBook } from '../world/codexProfiles';
+import {
+  codexProfilesFailureText,
+  PROFILE_MAX_NAME,
+  profileNameProblem,
+  profilePathProblem,
+  ruleProfileProblem,
+  ruleRefusal,
+  RULES_MAX,
+  rulesProblem,
+  type CodexProfilesBook,
+} from '../world/codexProfiles';
 import { el } from './settings';
 import type { SectionControl, SectionHandle } from './settings';
 
@@ -26,6 +36,10 @@ function badge(text: string, state: string): HTMLElement {
 }
 
 const ADD_HINT = 'A Codex home folder on the bridge host: an absolute path, or one under ~/.';
+const RULES_LEDE =
+  'An Auto hire takes the first rule that matches its repo on GitHub or its folder. With none, it takes the profile with the most left of those that may be used for anything, else the default.';
+const RULES_EMPTY = 'No rules yet.';
+const MATCH_HINT = 'github.com/<owner>/*, github.com/<owner>/<repo>, or a folder: /… or ~/…';
 
 /**
  * #138: the “Codex profiles” section of the Settings window. A profile is a Codex home folder with its own sign-in:
@@ -34,6 +48,9 @@ const ADD_HINT = 'A Codex home folder on the bridge host: an absolute path, or o
  * the default marker, Hide / Show (not the default) and Remove (added folders only); under the list, Add folder with
  * the bridge's refusal under the field. Kept on the bridge, so every client sees the same; a hidden profile's limits
  * are not read. A row is a column (its line, then its folder), so per-profile options can go under it later.
+ * #140, on a bridge with Auto: under each folder, "May be used for anything" (one change, sent at once); under the
+ * list, the Auto rules: an ordered list edited as a draft (each row a match and the profile it hires on; add, move,
+ * remove), saved whole with one `codex_profiles.set` so a new order lands at once, the bridge's refusal under its row.
  */
 export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTMLElement, section: SectionControl) => SectionHandle {
   return (body, section) => {
@@ -75,7 +92,29 @@ export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTM
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
     block.append(head, summary, list, addField, status);
-    body.append(lede, block);
+
+    // #140: the Auto rules.
+    const rulesBlock = el('div', 'settings-role settings-cp settings-cp-auto');
+    rulesBlock.setAttribute('role', 'group');
+    const rulesHead = el('div', 'settings-role-head');
+    const rulesTitle = el('h4', 'settings-role-title', 'Auto rules');
+    rulesTitle.id = `${id}-rh`;
+    rulesBlock.setAttribute('aria-labelledby', rulesTitle.id);
+    rulesHead.append(rulesTitle);
+    const rulesLede = el('p', 'settings-field-hint settings-used', RULES_LEDE);
+    const rulesList = el('ol', 'settings-cp-rules');
+    rulesList.setAttribute('aria-label', 'Auto rules');
+    const rulesEmpty = el('p', 'settings-field-hint settings-cp-rules-empty', RULES_EMPTY);
+    const rulesTools = el('div', 'settings-cp-rules-tools');
+    const addRule = button('Add rule', 'rule-add');
+    const saveRules = button('Save rules', 'rules-save', 'btn btn--sm btn--primary');
+    const discardRules = button('Discard changes', 'rules-discard');
+    rulesTools.append(addRule, saveRules, discardRules);
+    const rulesStatus = el('p', 'settings-status');
+    rulesStatus.setAttribute('role', 'status');
+    rulesStatus.setAttribute('aria-live', 'polite');
+    rulesBlock.append(rulesHead, rulesLede, rulesList, rulesEmpty, rulesTools, rulesStatus);
+    body.append(lede, block, rulesBlock);
 
     /** The profile being renamed, its field and the refusal under it. */
     let rename: { key: string; input: HTMLInputElement; error: string | null } | null = null;
@@ -83,6 +122,11 @@ export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTM
     let adding = false;
     let addError: string | null = null;
     let note: { text: string; error: boolean } | null = null;
+    /** #140: the rules being edited (null: as the bridge has them), what is wrong with one (its row) or all, saving. */
+    let draft: CodexRule[] | null = null;
+    let ruleError: { index: number | null; text: string } | null = null;
+    let rulesNote: { text: string; error: boolean } | null = null;
+    let savingRules = false;
 
     const st = (): CodexProfilesState | null => host.book.state;
 
@@ -132,9 +176,218 @@ export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTM
       if (p.plan) where.append(el('span', 'settings-cp-plan', `${p.plan} plan`));
       where.title = p.path;
       li.append(line, where);
+      if (st()?.auto) li.append(anythingSwitch(p, waiting));
       if (rename?.key === p.key) li.append(renameForm(p, all));
       return li;
     }
+
+    /** #140: "May be used for anything": sent at once, like Hide. */
+    function anythingSwitch(p: CodexProfile, waiting: boolean): HTMLElement {
+      const sw = el('label', 'settings-switch settings-cp-anything');
+      const box = el('input');
+      box.type = 'checkbox';
+      box.checked = p.anything === true;
+      box.disabled = waiting;
+      box.dataset.key = `anything:${p.key}`;
+      box.addEventListener('change', () => {
+        const on = box.checked;
+        void change({ key: p.key, anything: on }, p.key, on ? `Auto may hire on ${p.name} when no rule matches.` : `Auto hires on ${p.name} only by a rule.`, `anything:${p.key}`);
+      });
+      sw.append(box, el('span', '', 'May be used for anything'));
+      sw.title = 'An Auto hire that no rule decides may land on this profile';
+      return sw;
+    }
+
+    const rulesNow = (): CodexRule[] => draft ?? st()?.rules ?? [];
+
+    /** The rules to edit: a copy of the bridge's on the first change. */
+    function editing(): CodexRule[] {
+      if (!draft) draft = rulesNow().map((r) => ({ ...r }));
+      return draft;
+    }
+
+    function ruleRow(r: CodexRule, i: number, n: number, profiles: readonly CodexProfile[]): HTMLLIElement {
+      const li = el('li', 'settings-cp-rule settings-field');
+      li.dataset.rule = String(i);
+      const line = el('div', 'settings-cp-rule-line');
+      const num = el('span', 'settings-cp-rule-n', String(i + 1));
+      num.setAttribute('aria-hidden', 'true');
+      const match = el('input', 'settings-cp-match');
+      match.type = 'text';
+      match.value = r.match;
+      match.placeholder = 'github.com/acme/*';
+      match.spellcheck = false;
+      match.autocomplete = 'off';
+      match.setAttribute('autocapitalize', 'off');
+      match.dataset.key = `rule-match:${i}`;
+      match.setAttribute('aria-label', `Rule ${i + 1}: repo or folder`);
+      match.disabled = savingRules;
+      match.addEventListener('input', () => {
+        editing()[i]!.match = match.value;
+        if (ruleError) ruleError = null;
+        rulesNote = null;
+        syncRuleTools();
+      });
+      match.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        void save();
+      });
+      const pick = el('select', 'settings-cp-rule-profile');
+      pick.dataset.key = `rule-profile:${i}`;
+      pick.setAttribute('aria-label', `Rule ${i + 1}: profile`);
+      pick.disabled = savingRules;
+      if (!r.profile) pick.append(new Option('Choose a profile', '', true, true));
+      for (const p of profiles) pick.append(new Option(p.hidden ? `${p.name} (hidden)` : p.name, p.key, false, p.key === r.profile));
+      if (r.profile && !profiles.some((p) => p.key === r.profile)) pick.append(new Option(`${r.profile} (gone)`, r.profile, false, true));
+      pick.addEventListener('change', () => {
+        editing()[i]!.profile = pick.value;
+        if (ruleError) ruleError = null;
+        rulesNote = null;
+        syncRules();
+      });
+      const tools = el('div', 'settings-cp-tools');
+      const up = button('Up', `rule-up:${i}`);
+      up.setAttribute('aria-label', `Move rule ${i + 1} up`);
+      up.disabled = savingRules || i === 0;
+      up.addEventListener('click', () => move(i, -1));
+      const down = button('Down', `rule-down:${i}`);
+      down.setAttribute('aria-label', `Move rule ${i + 1} down`);
+      down.disabled = savingRules || i === n - 1;
+      down.addEventListener('click', () => move(i, 1));
+      const rm = button('Remove', `rule-remove:${i}`, 'btn btn--sm btn--danger-quiet');
+      rm.setAttribute('aria-label', `Remove rule ${i + 1}`);
+      rm.disabled = savingRules;
+      rm.addEventListener('click', () => {
+        editing().splice(i, 1);
+        ruleError = null;
+        rulesNote = null;
+        syncRules();
+        focusRule(Math.min(i, rulesNow().length - 1), 'rule-remove', 'rule-add');
+      });
+      tools.append(up, down, rm);
+      line.append(num, match, pick, tools);
+      li.append(line);
+      const err = ruleError?.index === i ? ruleError.text : null;
+      const warn = err ? null : r.profile ? ruleProfileProblem(r.profile, profiles) : null;
+      match.setAttribute('aria-invalid', String(!!err));
+      if (err || warn) {
+        const hint = el('p', `settings-field-hint${err ? ' settings-field-error' : ''}`, err ?? warn ?? '');
+        hint.id = `${id}-rule-${i}`;
+        match.setAttribute('aria-describedby', hint.id);
+        li.append(hint);
+      }
+      return li;
+    }
+
+    function move(i: number, by: number): void {
+      const rules = editing();
+      const j = i + by;
+      if (j < 0 || j >= rules.length) return;
+      [rules[i], rules[j]] = [rules[j]!, rules[i]!];
+      ruleError = null;
+      rulesNote = null;
+      syncRules();
+      // The focus follows the rule; at an end it stays on the other button.
+      focusRule(j, by < 0 ? 'rule-up' : 'rule-down', by < 0 ? `rule-down:${j}` : `rule-up:${j}`);
+    }
+
+    /** Focuses row i's `what` button, else `fallback` (a full key). */
+    function focusRule(i: number, what: string, fallback: string): void {
+      const b = rulesList.querySelector<HTMLButtonElement>(`[data-key="${CSS.escape(`${what}:${i}`)}"]`);
+      if (b && !b.disabled) b.focus({ preventScroll: true });
+      else rulesBlock.querySelector<HTMLElement>(`[data-key="${CSS.escape(fallback)}"]`)?.focus({ preventScroll: true });
+    }
+
+    async function save(): Promise<void> {
+      const s = st();
+      if (!s || !draft || savingRules) return;
+      const rules = draft.map((r) => ({ match: r.match.trim(), profile: r.profile }));
+      const problem = rulesProblem(rules, s.profiles);
+      if (problem) {
+        ruleError = problem;
+        rulesNote = null;
+        syncRules();
+        rulesList.querySelector<HTMLElement>(`[data-key="${CSS.escape(`rule-match:${problem.index}`)}"]`)?.focus();
+        return;
+      }
+      savingRules = true;
+      rulesNote = null;
+      syncRules();
+      const res = await host.send('codex_profiles.set', { rules });
+      savingRules = false;
+      if (res.ok) {
+        host.book.upsert(res.data);
+        draft = null;
+        ruleError = null;
+        rulesNote = { text: rules.length ? `Saved ${rules.length === 1 ? 'the rule' : `${rules.length} rules`}.` : 'Saved: no rules.', error: false };
+        syncRules();
+        focusKey('rule-add');
+        return;
+      }
+      const why = codexProfilesFailureText(res.code, res.message);
+      const row = res.code === 'bad_request' ? ruleRefusal(why) : null;
+      if (row) ruleError = row;
+      else rulesNote = { text: why, error: true };
+      syncRules();
+      if (row) rulesList.querySelector<HTMLElement>(`[data-key="${CSS.escape(`rule-match:${row.index}`)}"]`)?.focus();
+    }
+
+    function focusKey(key: string): void {
+      const b = rulesBlock.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`);
+      if (b && !(b as HTMLButtonElement).disabled) b.focus({ preventScroll: true });
+    }
+
+    /** The Add, Save and Discard buttons, as the draft is now (typing does not rebuild the rows). */
+    function syncRuleTools(): void {
+      const n = rulesNow().length;
+      addRule.disabled = savingRules || n >= RULES_MAX;
+      addRule.title = n >= RULES_MAX ? `At most ${RULES_MAX} rules` : '';
+      saveRules.hidden = discardRules.hidden = !draft;
+      saveRules.disabled = discardRules.disabled = savingRules;
+      saveRules.textContent = savingRules ? 'Saving…' : 'Save rules';
+      rulesStatus.textContent = (ruleError?.index === null ? ruleError.text : rulesNote?.text) ?? '';
+      rulesStatus.classList.toggle('settings-field-error', ruleError?.index === null || !!rulesNote?.error);
+      rulesStatus.hidden = !rulesStatus.textContent;
+    }
+
+    function syncRules(): void {
+      const s = st();
+      rulesBlock.hidden = !s?.auto;
+      if (!s?.auto) return;
+      // Rebuilt rows keep the focus and the caret where they were.
+      const active = document.activeElement instanceof HTMLElement && rulesList.contains(document.activeElement) ? document.activeElement : null;
+      const key = active?.dataset.key;
+      const caret = active instanceof HTMLInputElement ? [active.selectionStart, active.selectionEnd] : null;
+      const rules = rulesNow();
+      rulesList.replaceChildren(...rules.map((r, i) => ruleRow(r, i, rules.length, s.profiles)));
+      rulesList.hidden = rules.length === 0;
+      rulesEmpty.hidden = rules.length > 0;
+      syncRuleTools();
+      if (key && !rulesList.contains(document.activeElement)) {
+        const back = rulesList.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`);
+        back?.focus({ preventScroll: true });
+        if (back instanceof HTMLInputElement && caret) back.setSelectionRange(caret[0] ?? null, caret[1] ?? null);
+      }
+    }
+
+    addRule.addEventListener('click', () => {
+      const rules = editing();
+      if (rules.length >= RULES_MAX) return;
+      rules.push({ match: '', profile: '' });
+      ruleError = null;
+      rulesNote = null;
+      syncRules();
+      rulesList.querySelector<HTMLElement>(`[data-key="${CSS.escape(`rule-match:${rules.length - 1}`)}"]`)?.focus();
+    });
+    saveRules.addEventListener('click', () => void save());
+    discardRules.addEventListener('click', () => {
+      draft = null;
+      ruleError = null;
+      rulesNote = { text: 'Back to the saved rules.', error: false };
+      syncRules();
+      focusKey('rule-add');
+    });
 
     function renameForm(p: CodexProfile, all: readonly CodexProfile[]): HTMLElement {
       const r = rename!;
@@ -300,6 +553,7 @@ export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTM
       // The list was rebuilt: focus goes back to the control that had it (the rename field keeps its caret).
       if (typing && rename) rename.input.focus({ preventScroll: true });
       else if (had && !list.contains(document.activeElement)) focusByKey(had);
+      syncRules();
     }
 
     add.addEventListener('input', () => {
@@ -321,6 +575,9 @@ export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTM
         note = null;
         addError = null;
         rename = null;
+        draft = null;
+        ruleError = null;
+        rulesNote = null;
         sync();
       },
       dispose: off,

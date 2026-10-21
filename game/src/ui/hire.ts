@@ -27,7 +27,7 @@ import { effortsFor } from '../world/settings';
 import { isComplete, levelChipText, levelProblem, preselectLevel, type TaskLevelId } from '../world/taskLevels';
 import { exactProblem, instructionsBlocker, nudgeWanted, pickExact, presetChoiceText, type ExactProblem } from '../world/hirePresets';
 import type { WorldStore } from '../world/store';
-import { hireProfiles, loneProfileGone, pickProfile, profileBlocked, profileGoneText } from '../world/codexProfiles';
+import { AUTO_PROFILE, autoOffered, hireProfiles, loneProfileGone, pickProfile, profileBlocked, profileGoneText } from '../world/codexProfiles';
 import { h, icon, ICON } from './dom';
 import { failureText } from './messages';
 import { hiredToast } from './hiredToast';
@@ -244,12 +244,22 @@ export function chips(
   return h('fieldset', { class: 'dd-pick', 'data-pick': name }, h('legend', {}, legend, note), row);
 }
 
+/** #140: what Auto does, under the chips while it is picked. */
+export const AUTO_HINT = 'The bridge picks at hire: the first rule in Settings that matches the repo or folder, else the profile with the most left of those that may be used for anything.';
+
 /**
  * #139: the "Codex profile" chips (the hire dialog's and the preset editor's): the same tape as the other choices, each
- * profile by its name; one that is not signed in is shown, and cannot be picked. `note` goes under the chips.
+ * profile by its name; one that is not signed in is shown, and cannot be picked. `note` goes under the chips. #140:
+ * with `auto` (the bridge takes it), "Auto" comes first, and says what it does while picked.
  */
-export function profileChips(name: string, list: readonly CodexProfile[], value: string, onPick: (key: string) => void, note: string | null = null): HTMLFieldSetElement {
+export function profileChips(name: string, list: readonly CodexProfile[], value: string, onPick: (key: string) => void, note: string | null = null, auto = false): HTMLFieldSetElement {
   const row = h('div', { class: 'dd-chips' });
+  if (auto) {
+    const input = h('input', { type: 'radio', name, value: AUTO_PROFILE, class: 'visually-hidden', 'data-key': `${name}:${AUTO_PROFILE}` });
+    input.checked = value === AUTO_PROFILE;
+    input.addEventListener('change', () => input.checked && onPick(AUTO_PROFILE));
+    row.append(h('label', { class: 'dd-chip', title: 'The bridge picks the profile at hire' }, input, h('span', {}, 'Auto')));
+  }
   for (const p of list) {
     const blocked = profileBlocked(p);
     const input = h('input', { type: 'radio', name, value: p.key, class: 'visually-hidden', 'data-key': `${name}:${p.key}`, disabled: !!blocked });
@@ -264,6 +274,7 @@ export function profileChips(name: string, list: readonly CodexProfile[], value:
     h('legend', {}, 'Codex profile'),
     row,
     note ? h('p', { class: 'field-hint dd-profile-gone', 'data-hook': 'profile-gone' }, note) : null,
+    auto && value === AUTO_PROFILE ? h('p', { class: 'field-hint dd-profile-gone', 'data-hook': 'profile-auto' }, AUTO_HINT) : null,
   );
 }
 
@@ -1195,12 +1206,15 @@ export class HireDialog {
    * the form is as before profiles): the one picked here, else the preset's while it can be picked, else the default.
    * `gone`: the preset's is not offered any more.
    */
-  private profileChoice(): { list: CodexProfile[]; key: string; gone: string | null } | null {
+  private profileChoice(): { list: CodexProfile[]; key: string; gone: string | null; auto: boolean } | null {
     if (this.f.harness !== 'codex') return null;
-    const list = hireProfiles(this.host.store.codexProfiles?.state ?? null);
+    const state = this.host.store.codexProfiles?.state ?? null;
+    const list = hireProfiles(state);
     if (!list) return null;
+    const auto = autoOffered(state); // #140: Auto first, and a new hire's default
+    if (auto && this.profile === AUTO_PROFILE) return { list, key: AUTO_PROFILE, gone: null, auto };
     const cur = this.profile !== null ? list.find((p) => p.key === this.profile && !profileBlocked(p)) : undefined;
-    return cur ? { list, key: cur.key, gone: null } : { list, ...pickProfile(list, this.profileWant) };
+    return cur ? { list, key: cur.key, gone: null, auto } : { list, ...pickProfile(list, this.profileWant, auto), auto };
   }
 
   /** #139: a preset's gone profile, with no picker to say so (`loneProfileGone`). */
@@ -1208,13 +1222,13 @@ export class HireDialog {
     return this.f.harness === 'codex' ? loneProfileGone(this.host.store.codexProfiles?.state ?? null, this.profileWant) : null;
   }
 
-  private profileField(c: { list: CodexProfile[]; key: string; gone: string | null }): HTMLElement {
+  private profileField(c: { list: CodexProfile[]; key: string; gone: string | null; auto: boolean }): HTMLElement {
     const def = c.list.find((p) => p.default)?.name ?? '';
     const note = c.gone ? profileGoneText(this.host.store.codexProfiles?.state ?? null, c.gone, def) : null;
     return profileChips('codex-profile', c.list, c.key, (key) => {
       this.profile = key;
       this.render();
-    }, note);
+    }, note, c.auto);
   }
 
   /**

@@ -56,4 +56,11 @@ describe('#139 the hire’s Codex profile', () => {
     expect(hiredToast(LEAD, { codex: bare }, '')).toEqual({ text: `${LEAD} work has no hooks.json with herdr’s hook.`, kind: 'info' });
     expect(hiredToast(LEAD, { codex: { mode: 'shared', profile: 'work', account: 'confirmed' } }, '')).toEqual({ text: LEAD, kind: 'info' });
   });
+
+  it('#140: an Auto hire says which profile it got and why, after the lead; info by itself', () => {
+    const t = hiredToast(LEAD, { codex: { mode: 'shared', server: 'running', profile: 'work', account: 'confirmed' }, codex_profile_reason: 'Account: work (rule acme/*)' }, '');
+    expect(t).toEqual({ text: `${LEAD} Account: work (rule acme/*).`, kind: 'info' });
+    const f = hiredToast(LEAD, { codex_profile_reason: 'Account: personal (most left: 72% of 5 h)' }, NOT_SENT);
+    expect(f).toEqual({ text: `${LEAD} Account: personal (most left: 72% of 5 h). ${NOT_SENT}`, kind: 'error' });
+  });
 });

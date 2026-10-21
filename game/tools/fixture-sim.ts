@@ -1894,9 +1894,13 @@ export class SimWorld {
       hired_at: now,
     };
     let codex: WorkerCodex | undefined = this.codexServer.hire(harness); // #186
+    let reason = ''; // #140: an Auto hire's pick
     if (typeof a.codex_profile === 'string' && a.codex_profile) {
       if (harness !== 'codex') throw new CmdError('bad_request', `bad args: codex_profile is for a Codex hire, not "${harness}"`);
-      codex = (this.codexProfiles as CodexProfilesSim).hire(a.codex_profile, codex); // #139 (a bridge before it refused the field above)
+      const profiles = this.codexProfiles as CodexProfilesSim; // (a bridge before #139 refused the field above)
+      let key = a.codex_profile;
+      if (key === 'auto') ({ key, reason } = profiles.pick(cwd, this.limits.codexBase()));
+      codex = profiles.hire(key, codex); // #139
     }
     if (codex) w.codex = codex;
     if (branch && root) {
@@ -1928,6 +1932,7 @@ export class SimWorld {
           data.prompt_error = 'the agent did not take the task (simulated)';
         } else if (prompt) data.prompted = true;
         if (codex) data.codex = codex;
+        if (reason) data.codex_profile_reason = reason;
         if (branch) {
           data.branch = branch;
           data.base_sha = git?.base_sha;
