@@ -6,7 +6,7 @@ import { draftBlocker, draftFrom, exactProblem, nudgeWanted, pickExact, presetCh
 import { labelsOf } from '../world/modelLabel';
 import { effortsFor } from '../world/settings';
 import { backdropPolicy } from './dismiss';
-import { deskTabs, PIN_ICON, PRESET_ICON } from './deskTabs';
+import { deskTabs, PIN_ICON, pinIdOf, PRESET_ICON } from './deskTabs';
 import { h, icon, ICON, replaceKeepingFocus } from './dom';
 import { chips, modelField, type DialogHost, type HirePresetSeed } from './hire';
 import type { HireModelPrefs } from './hireModelPrefs';
@@ -42,6 +42,8 @@ export interface HirePresetsHost extends DialogHost {
   modelPrefs?: HireModelPrefs;
   /** The presets pinned to the desk dialogs' tab bar (absent: no Pin buttons and no pinned tabs). */
   pins?: HirePins;
+  /** A pinned tab of this dialog's bar: the app's way, this dialog's `usePinned` and the focus after it (absent: `usePinned` alone). */
+  usePinned?(floor: string, desk: number, id: string): void;
   /** The Worker tab: the hire dialog for the same desk. */
   hireAt(floor: string, desk: number): void;
   /** The Orchestrator tab (absent: none): why it is off, and the start-run dialog for the same desk. */
@@ -336,7 +338,9 @@ export class HirePresetsDialog {
           (t) => {
             const { floor, desk } = this;
             if (desk === null) return;
-            if (t.startsWith('pin:')) return this.usePinned(floor, desk, t.slice('pin:'.length));
+            const pin = pinIdOf(t);
+            // Through the host when it has the app's (the hire form's pinned tab takes the focus, as from the other dialogs).
+            if (pin !== null) return this.host.usePinned ? this.host.usePinned(floor, desk, pin) : this.usePinned(floor, desk, pin);
             this.close();
             if (t === 'orch') orch?.open(floor, desk);
             else this.host.hireAt(floor, desk);
@@ -440,7 +444,7 @@ export class HirePresetsDialog {
                 'data-key': `pin:${p.id}`,
                 'aria-pressed': r.pinned ? 'true' : 'false',
                 'aria-label': `Pin ${p.name} to the tabs`,
-                title: r.pinned ? 'On the tab bar: hire with it in one click. Click to unpin.' : 'Put it on the tab bar, to hire with it in one click',
+                title: r.pinned ? 'On the desk tabs: one click opens its hire form. Click to unpin.' : 'Put it on the desk tabs: one click opens its hire form',
                 onclick: () => (r.pinned ? pins.unpin(p.id) : pins.pin(p.id)),
               },
               icon(PIN_ICON),

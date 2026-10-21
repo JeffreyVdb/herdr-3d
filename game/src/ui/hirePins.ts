@@ -1,7 +1,7 @@
 /**
  * Hire presets pinned to the desk dialogs' tab bar, in the player's order, remembered per browser (like
  * `hireModelPrefs.ts`). A pin is a preset id: a floor's own preset shows only on that floor, and a deleted one is
- * skipped until it is unpinned. Guarded the same way: storage can be missing, throw or hold something malformed, and
+ * unpinned once the world says so (`prune`). Guarded the same way: storage can be missing, throw or hold something malformed, and
  * then nothing is pinned.
  */
 
@@ -90,6 +90,12 @@ export class HirePins {
 
   unpin(id: string): void {
     if (this.has(id)) this.write(this.ids_.filter((x) => x !== id));
+  }
+
+  /** Unpins every preset `exists` says is gone (deleted here, elsewhere or while this browser was away). */
+  prune(exists: (id: string) => boolean): void {
+    const kept = this.ids_.filter(exists);
+    if (kept.length !== this.ids_.length) this.write(kept);
   }
 
   /**

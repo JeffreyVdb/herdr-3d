@@ -95,6 +95,7 @@ import { HirePrefs } from './ui/hirePrefs';
 import { HireCoordinator } from './ui/hireCoordinator';
 import { HireModelPrefs } from './ui/hireModelPrefs';
 import { HirePins } from './ui/hirePins';
+import { pinTab } from './ui/deskTabs';
 import { harnessModelsSection } from './ui/harnessModelsSection';
 import { TaskLevels } from './ui/taskLevels';
 import { taskLevelsSection } from './ui/taskLevelsSection';
@@ -765,7 +766,7 @@ export class App {
     // A preset pinned to the desk dialogs' tab bar: hire with it as Use does; focus on its tab of the hire form.
     const usePinned = (s: string, d: number, id: string) => {
       this.hirePresets.usePinned(s, d, id);
-      if (this.hire.isOpen) this.hire.focusTab(`pin:${id}`);
+      if (this.hire.isOpen) this.hire.focusTab(pinTab(id));
     };
     this.hire = new HireDialog(o.host, {
       ...hireHost,
@@ -782,6 +783,7 @@ export class App {
       ...dialogHost,
       modelPrefs: this.hireModelPrefs,
       pins: this.hirePins,
+      usePinned,
       hireAt: (s, d) => {
         this.hire.open(s, d);
         this.hire.focusTab();
@@ -1048,6 +1050,8 @@ export class App {
     this.panels.refresh();
     this.palette.refresh(); // #147
     this.dictation.refresh(); // #213
+    // A preset deleted (here, elsewhere or while away) leaves the tab bars' pins too; an older bridge keeps none to check.
+    if (this.store.hirePresets.known) this.hirePins.prune((id) => this.store.hirePresets.get(id) !== null);
     this.hire.refresh();
     this.hireReview.refresh();
     this.sendHome.refresh();

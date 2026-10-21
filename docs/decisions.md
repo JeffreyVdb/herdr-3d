@@ -2861,7 +2861,7 @@ the repeat step), `structural.go` (`KindEntropy`'s rank), `review.go` (`scanByte
 
 With many hire presets, hiring one was the Hire preset tab, a search down the list, then Use. A preset can now be
 **pinned**: it gets its own tab in the desk dialogs' tab bar, after Hire worker, Hire orchestrator and Hire preset, and
-one click hires with it. Code: `ui/hirePins.ts` (the pins and `deskPins`, a floor's tab bar), `ui/deskTabs.ts` (the
+one click opens its hire form, ready to Hire. Code: `ui/hirePins.ts` (the pins and `deskPins`, a floor's tab bar), `ui/deskTabs.ts` (the
 pinned tabs, their drag and Shift+← / Shift+→), the Pin button and `usePinned` of `ui/hirePresets.ts`, and the tab bars
 of `ui/hire.ts` and `ui/startRun.ts`. Tests: `ui/hirePins.test.ts`, `ui/deskTabs.dom.test.ts`,
 `ui/hirePresets.dom.test.ts`, `ui/hire.preset.dom.test.ts`, the pins test of `e2e/h93-hire-presets.spec.ts`, and the
@@ -2870,7 +2870,7 @@ of `ui/hire.ts` and `ui/startRun.ts`. Tests: `ui/hirePins.test.ts`, `ui/deskTabs
 | # | Question | Decision |
 |---|---|---|
 | 1 | Where pins live | **Per browser**, in local storage scoped to the bridge (`h3d.hire.pinnedPresets`, like Settings → Harness models): an ordered list of preset ids. Nothing on the bridge, no protocol change. Pins do not follow the player to another device; a later `pin_order` column on `hire_preset` would. |
-| 2 | Which pins a tab bar shows | The pinned presets the floor offers (its own and the global ones), in pin order. Another floor's pin waits for its floor; a deleted preset's id is skipped until it is unpinned. The tabs follow renames and deletions live. |
+| 2 | Which pins a tab bar shows | The pinned presets the floor offers (its own and the global ones), in pin order. Another floor's pin waits for its floor. A preset deleted (here, on another client, or while this browser was away) is unpinned on the next world change once the bridge has sent its presets (`HirePins.prune`). The tabs follow renames and deletions live. |
 | 3 | What a pinned tab does | What Use does: the hire form for the desk with the preset's prompt and exact choice, ready to Hire. A desk with an unsent first task opens the preset list asking first (Keep my task / Replace it). The form shows that pinned tab as selected; Hire worker goes back to the desk's own form. |
 | 4 | Pinning | A Pin toggle (`aria-pressed`) on each row of the preset list; a new pin goes at the end. |
 | 5 | Moving | Only the pins move, never the three fixed tabs: drag a pin before or after another (a bar marks where it lands), or Shift+← / Shift+→ on a focused pin (focus stays on it). Alt+arrows stay the browser's Back and Forward. A move among one floor's pins keeps the places of the pins hidden there. The shortcut is in the pinned tab's tooltip, not the shortcut list: that list allows one binding per chord in dialogs, and the secrets review owns Shift+← / Shift+→. |

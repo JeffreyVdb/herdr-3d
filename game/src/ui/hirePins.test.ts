@@ -120,4 +120,15 @@ describe('hire preset pins', () => {
     expect(pins.ids).toEqual(['o', 'w', 'gone', 'g']);
     expect(deskPins(undefined, book, cat, 'web')).toBeUndefined();
   });
+
+  it('drop the pins of presets the bridge no longer has, keeping the order of the rest, and tell no one when none went', () => {
+    const p = new HirePins(memory());
+    for (const id of ['a', 'gone', 'b']) p.pin(id);
+    const fn = vi.fn();
+    p.onChange(fn);
+    p.prune((id) => id !== 'gone');
+    expect(p.ids).toEqual(['a', 'b']);
+    p.prune(() => true);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
 });

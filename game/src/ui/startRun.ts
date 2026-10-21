@@ -22,7 +22,7 @@ import {
 } from '../world/startRun';
 import { h, icon, ICON } from './dom';
 import './start.css';
-import { deskTabs } from './deskTabs';
+import { deskTabs, pinIdOf } from './deskTabs';
 import { chips, type HireHost } from './hire';
 import { deskPins } from './hirePins';
 import { failureText } from './messages';
@@ -589,8 +589,9 @@ export class StartRunDialog {
           const { floor } = this;
           const { desk } = this.f;
           this.close();
+          const pin = pinIdOf(t);
           if (t === 'preset') this.host.presetsAt?.(floor, desk);
-          else if (t.startsWith('pin:')) this.host.usePinned?.(floor, desk, t.slice('pin:'.length));
+          else if (pin !== null) this.host.usePinned?.(floor, desk, pin);
           else this.host.hireAt(floor, desk);
         },
         null,

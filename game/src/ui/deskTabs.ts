@@ -13,6 +13,11 @@ export const PIN_ICON = '<path d="M9 3.5h6l-1 6 3.5 3.5v1.5h-11V13L10 9.5z"/><pa
 /** A desk tab; `pin:<id>` is a hire preset pinned to the tab bar (ui/hirePins.ts). */
 export type DeskTab = 'worker' | 'orch' | 'preset' | `pin:${string}`;
 
+/** A pinned preset's tab. */
+export const pinTab = (id: string): DeskTab => `pin:${id}`;
+/** The preset id of a pinned preset's tab (null: a fixed tab). */
+export const pinIdOf = (t: DeskTab): string | null => (t.startsWith('pin:') ? t.slice('pin:'.length) : null);
+
 /** A pinned hire preset as its tab shows it: `title` its tooltip (the choice it hires with). */
 export interface PinnedTab {
   id: string;
@@ -43,7 +48,7 @@ const TABS: ReadonlyArray<{ t: DeskTab; text: string; paths: string }> = [
 export function deskTabs(active: DeskTab, pick: (t: DeskTab) => void, orchOff: string | null | false, preset = false, pins?: DeskPins): HTMLElement {
   const fixed = TABS.filter((x) => (x.t !== 'preset' || preset) && (x.t !== 'orch' || orchOff !== false));
   const pinned = preset ? (pins?.list ?? []) : [];
-  const shown: DeskTab[] = [...fixed.map((x) => x.t), ...pinned.map((p): DeskTab => `pin:${p.id}`)];
+  const shown: DeskTab[] = [...fixed.map((x) => x.t), ...pinned.map((p) => pinTab(p.id))];
   const off = (t: DeskTab) => (t === 'orch' && orchOff !== false ? orchOff : null);
   const tab = (t: DeskTab, text: string, paths: string, title: string | null, cls = 'dd-tab') => {
     const on = t === active;
@@ -70,11 +75,11 @@ export function deskTabs(active: DeskTab, pick: (t: DeskTab) => void, orchOff: s
     ...fixed.map((x) => tab(x.t, x.text, x.paths, null)),
     // Between the fixed tabs and the pins: a divider, or on a phone the start of the pins' own row.
     pinned.length ? h('span', { class: 'dd-tabs-break', role: 'presentation' }) : null,
-    ...pinned.map((p) => tab(`pin:${p.id}`, p.name, PIN_ICON, p.title, 'dd-tab dd-tab--pin')),
+    ...pinned.map((p) => tab(pinTab(p.id), p.name, PIN_ICON, p.title, 'dd-tab dd-tab--pin')),
   );
   const ids = pinned.map((p) => p.id);
   const pinOf = (el: EventTarget | null) => (el instanceof Element ? el.closest<HTMLElement>('[data-key^="tab:pin:"]') : null);
-  const idOf = (el: HTMLElement) => (el.dataset.key ?? '').slice('tab:pin:'.length);
+  const idOf = (el: HTMLElement) => pinIdOf((el.dataset.key ?? '').slice('tab:'.length) as DeskTab) ?? '';
   if (pins?.move && ids.length > 1) dragPins(list, ids, pinOf, idOf, pins.move);
   // Nothing selected yet (a pinned preset's tab, then unpinned): the first tab is the one Tab reaches.
   if (!shown.includes(active)) list.querySelector<HTMLElement>('[role="tab"]')?.setAttribute('tabindex', '0');

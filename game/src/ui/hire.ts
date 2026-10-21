@@ -40,7 +40,7 @@ import type { ToastAction, ToastKind } from './hud';
 // M10 limits
 import { planLimits } from './limits';
 // M6 start
-import { deskTabs, type DeskTab } from './deskTabs';
+import { deskTabs, pinIdOf, pinTab, type DeskTab } from './deskTabs';
 // #51 drafts
 import { Drafts } from './drafts';
 import { backdropPolicy } from './dismiss';
@@ -1004,7 +1004,7 @@ export class HireDialog {
     const presets = this.host.presetsAt;
     const usePinned = this.host.usePinned;
     const pins = usePinned ? deskPins(this.host.pins, this.host.store.hirePresets, this.host.store.hireOptions, this.floor) : undefined;
-    const fromPin = this.exact && pins?.list.some((p) => p.id === this.exact?.id) ? (`pin:${this.exact.id}` as const) : null;
+    const fromPin = this.exact && pins?.list.some((p) => p.id === this.exact?.id) ? pinTab(this.exact.id) : null;
     this.tabs.hidden = !orch && !presets;
     if (orch || presets)
       this.tabs.replaceChildren(
@@ -1020,7 +1020,7 @@ export class HireDialog {
               this.focusTab();
             } else if (t === 'orch') orch?.open(floor, desk);
             else if (t === 'preset') presets?.(floor, desk);
-            else usePinned?.(floor, desk, t.slice('pin:'.length));
+            else usePinned?.(floor, desk, pinIdOf(t) ?? '');
           },
           orch ? orch.off() : false,
           !!presets,

@@ -611,6 +611,16 @@ describe('HirePresetsDialog pins', () => {
     expect(host.use).toHaveBeenLastCalledWith('web', 1, expect.objectContaining({ id: 'hp_1' }), false);
   });
 
+  it('a pinned tab of this dialog goes through the app’s hook when it has one (the hire form’s tab takes the focus)', () => {
+    const { dlg, host } = setup([preset('Deploy', 'web')]);
+    host.pins!.pin('hp_1');
+    host.usePinned = vi.fn();
+    dlg.open('web', 3);
+    click('tab:pin:hp_1');
+    expect(host.usePinned).toHaveBeenCalledWith('web', 3, 'hp_1');
+    expect(host.use).not.toHaveBeenCalled();
+  });
+
   it('a pinned tab on a desk with an unsent task asks first, in the list', () => {
     const { dlg, host } = setup([preset('Deploy', 'web')], { text: 'my own task', images: 0 });
     dlg.usePinned('web', 2, 'hp_1');
