@@ -1,0 +1,405 @@
+{
+  "note": "sanitized output of policy_probe.py, 2026-10-21; work=Business seat (wire plan team), personal=Plus-side account (wire plan prolite); work_with_code_intel_override = work home plus -c mcp_servers.code-intel.url=<code-intel URL> (CLI override, nothing written)",
+  "work": {
+    "account/read": {
+      "account": {
+        "email": "<redacted>",
+        "planType": "team",
+        "type": "chatgpt"
+      },
+      "requiresOpenaiAuth": true,
+      "workspaceRouting": {
+        "accountRoutingOverride": "<str>",
+        "backendOrigin": "<redacted>",
+        "chatgptAccountId": "<redacted>"
+      }
+    },
+    "app/list": {
+      "accessible": [
+        "ChatGPT Space",
+        "Pets",
+        "Plugin Management",
+        "Sites"
+      ],
+      "has_next_page": false,
+      "total": 5013
+    },
+    "config/read": {
+      "approval_policy": null,
+      "developer_instructions_set": false,
+      "features.hooks": null,
+      "hook_trust_entries": 0,
+      "layers": [
+        "user",
+        "system"
+      ],
+      "mcp_servers": [],
+      "projects_trusted": 0,
+      "sandbox_mode": null
+    },
+    "configRequirements/read": {
+      "requirements": null,
+      "supportsIndependentSpeedModes": true
+    },
+    "configWarnings": 0,
+    "hooks/list": [
+      {
+        "errors": 0,
+        "hooks": [],
+        "warnings": 0
+      }
+    ],
+    "initialize_ok": true,
+    "mcpServerStatus/list": [
+      {
+        "authStatus": "bearerToken",
+        "name": "codex_apps",
+        "tools": 105
+      }
+    ],
+    "model/list": [
+      "codex-auto-review",
+      "gpt-5.6-luna",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-6-astra",
+      "gpt-6-luna",
+      "gpt-6-sol",
+      "gpt-6.1-sol",
+      "gpt-reserve"
+    ],
+    "plugin/installed": [
+      {
+        "plugins": [
+          {
+            "enabled": true,
+            "installed": true,
+            "name": "openai-templates"
+          },
+          {
+            "enabled": true,
+            "installed": true,
+            "name": "pages"
+          },
+          {
+            "enabled": true,
+            "installed": true,
+            "name": "work-pets"
+          },
+          {
+            "enabled": true,
+            "installed": true,
+            "name": "plugin-management"
+          },
+          {
+            "enabled": true,
+            "installed": true,
+            "name": "sites"
+          }
+        ]
+      }
+    ],
+    "skills/list": {
+      "cwd": {
+        "errors": 0,
+        "names": [
+          "ask-matt",
+          "code-review",
+          "codebase-design",
+          "diagnose-crash",
+          "diagnosing-bugs",
+          "domain-modeling",
+          "frontend-design",
+          "grill-with-docs",
+          "grilling",
+          "handoff",
+          "imagegen",
+          "impeccable",
+          "implement",
+          "implement-spec",
+          "improve-codebase-architecture",
+          "omarchy",
+          "openai-docs",
+          "openai-templates:artifact-template-analytics-dashboard",
+          "openai-templates:artifact-template-business-review",
+          "openai-templates:artifact-template-design-report",
+          "openai-templates:artifact-template-experiment-analysis",
+          "openai-templates:artifact-template-financial-budget",
+          "openai-templates:artifact-template-investment-committee-memo",
+          "openai-templates:artifact-template-legal-memorandum",
+          "openai-templates:artifact-template-market-trends-report",
+          "openai-templates:artifact-template-minimal-letterhead",
+          "openai-templates:artifact-template-operating-calendar",
+          "openai-templates:artifact-template-operating-review",
+          "openai-templates:artifact-template-project-kickoff",
+          "openai-templates:artifact-template-project-tracker",
+          "openai-templates:artifact-template-sales-pipeline",
+          "openai-templates:artifact-template-simple-dark-mode",
+          "openai-templates:artifact-template-simple-light-mode",
+          "openai-templates:artifact-template-strategy-memorandum",
+          "openai-templates:artifact-template-system-design",
+          "openai-templates:artifact-template-team-alignment",
+          "openai-templates:artifact-template-three-statement-forecast",
+          "pages:maintain-space",
+          "pages:manage-schedules",
+          "pages:organize-space",
+          "pages:write-page",
+          "plugin-management:plugin-management",
+          "pr",
+          "prototype",
+          "research",
+          "retro",
+          "review-agent",
+          "setup-matt-pocock-skills",
+          "sites:sites",
+          "sites:sites-remix",
+          "skill-creator",
+          "skill-installer",
+          "tdd",
+          "to-spec",
+          "to-tickets",
+          "triage",
+          "wayfinder",
+          "wizard",
+          "work-pets:create-pet",
+          "work-pets:pets",
+          "work-pets:update-pet",
+          "write-code",
+          "writing-for-agents"
+        ],
+        "scopes": [
+          "system",
+          "user"
+        ]
+      }
+    }
+  },
+  "personal": {
+    "account/read": {
+      "account": {
+        "email": "<redacted>",
+        "planType": "prolite",
+        "type": "chatgpt"
+      },
+      "requiresOpenaiAuth": true,
+      "workspaceRouting": {
+        "accountRoutingOverride": "<str>",
+        "backendOrigin": "<redacted>",
+        "chatgptAccountId": "<redacted>"
+      }
+    },
+    "app/list": {
+      "accessible": [
+        "ChatGPT Space",
+        "Pets",
+        "Plugin Management",
+        "Sites"
+      ],
+      "has_next_page": false,
+      "total": 5010
+    },
+    "config/read": {
+      "approval_policy": "never",
+      "developer_instructions_set": false,
+      "features.hooks": true,
+      "hook_trust_entries": 1,
+      "layers": [
+        "user",
+        "system"
+      ],
+      "mcp_servers": [
+        "alterlab",
+        "code-intel",
+        "kaneo"
+      ],
+      "projects_trusted": 11,
+      "sandbox_mode": "danger-full-access"
+    },
+    "configRequirements/read": {
+      "requirements": null,
+      "supportsIndependentSpeedModes": true
+    },
+    "configWarnings": 0,
+    "hooks/list": [
+      {
+        "errors": 0,
+        "hooks": [
+          {
+            "additionalContextLimit": null,
+            "async": false,
+            "command": "<str>",
+            "currentHash": "<str>",
+            "displayOrder": 0,
+            "enabled": true,
+            "eventName": "sessionStart",
+            "handlerType": "<str>",
+            "isManaged": false,
+            "key": "<str>",
+            "matcher": null,
+            "pluginId": null,
+            "source": "user",
+            "sourcePath": "<str>",
+            "statusMessage": null,
+            "timeoutSec": 10,
+            "trustStatus": "trusted"
+          }
+        ],
+        "warnings": 0
+      }
+    ],
+    "initialize_ok": true,
+    "mcpServerStatus/list": [
+      {
+        "authStatus": "unsupported",
+        "name": "alterlab",
+        "tools": 26
+      },
+      {
+        "authStatus": "oAuth",
+        "name": "code-intel",
+        "tools": 4
+      },
+      {
+        "authStatus": "bearerToken",
+        "name": "codex_apps",
+        "tools": 106
+      },
+      {
+        "authStatus": "unsupported",
+        "name": "kaneo",
+        "tools": 38
+      }
+    ],
+    "model/list": [
+      "codex-auto-review",
+      "gpt-5.6-luna",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-6-astra",
+      "gpt-6-luna",
+      "gpt-6-sol",
+      "gpt-6.1-sol",
+      "gpt-reserve"
+    ],
+    "plugin/installed": [
+      {
+        "plugins": [
+          {
+            "enabled": true,
+            "installed": true,
+            "name": "openai-templates"
+          },
+          {
+            "enabled": true,
+            "installed": true,
+            "name": "pages"
+          },
+          {
+            "enabled": true,
+            "installed": true,
+            "name": "work-pets"
+          },
+          {
+            "enabled": true,
+            "installed": true,
+            "name": "plugin-management"
+          },
+          {
+            "enabled": true,
+            "installed": true,
+            "name": "sites"
+          }
+        ]
+      }
+    ],
+    "skills/list": {
+      "cwd": {
+        "errors": 0,
+        "names": [
+          "ask-matt",
+          "code-review",
+          "codebase-design",
+          "diagnose-crash",
+          "diagnosing-bugs",
+          "domain-modeling",
+          "frontend-design",
+          "grill-with-docs",
+          "grilling",
+          "handoff",
+          "imagegen",
+          "impeccable",
+          "implement",
+          "implement-spec",
+          "improve-codebase-architecture",
+          "infra-manager",
+          "omarchy",
+          "openai-docs",
+          "openai-templates:artifact-template-analytics-dashboard",
+          "openai-templates:artifact-template-business-review",
+          "openai-templates:artifact-template-design-report",
+          "openai-templates:artifact-template-experiment-analysis",
+          "openai-templates:artifact-template-financial-budget",
+          "openai-templates:artifact-template-investment-committee-memo",
+          "openai-templates:artifact-template-legal-memorandum",
+          "openai-templates:artifact-template-market-trends-report",
+          "openai-templates:artifact-template-minimal-letterhead",
+          "openai-templates:artifact-template-operating-calendar",
+          "openai-templates:artifact-template-operating-review",
+          "openai-templates:artifact-template-project-kickoff",
+          "openai-templates:artifact-template-project-tracker",
+          "openai-templates:artifact-template-sales-pipeline",
+          "openai-templates:artifact-template-simple-dark-mode",
+          "openai-templates:artifact-template-simple-light-mode",
+          "openai-templates:artifact-template-strategy-memorandum",
+          "openai-templates:artifact-template-system-design",
+          "openai-templates:artifact-template-team-alignment",
+          "openai-templates:artifact-template-three-statement-forecast",
+          "pages:maintain-space",
+          "pages:manage-schedules",
+          "pages:organize-space",
+          "pages:write-page",
+          "plugin-management:plugin-management",
+          "pr",
+          "prototype",
+          "research",
+          "retro",
+          "review-agent",
+          "setup-matt-pocock-skills",
+          "sites:sites",
+          "sites:sites-remix",
+          "skill-creator",
+          "skill-installer",
+          "tdd",
+          "to-spec",
+          "to-tickets",
+          "triage",
+          "wayfinder",
+          "wizard",
+          "work-pets:create-pet",
+          "work-pets:pets",
+          "work-pets:update-pet",
+          "write-code",
+          "writing-for-agents"
+        ],
+        "scopes": [
+          "system",
+          "user"
+        ]
+      }
+    }
+  },
+  "work_with_code_intel_override": {
+    "mcpServerStatus/list": [
+      {
+        "authStatus": "oAuth",
+        "name": "code-intel",
+        "tools": 4
+      },
+      {
+        "authStatus": "bearerToken",
+        "name": "codex_apps",
+        "tools": 105
+      }
+    ]
+  }
+}
