@@ -5,6 +5,7 @@ import type { Draft } from './composer/draft';
 import { HireDialog, type HireHost, type HirePrefill, type HireSummary } from './hire';
 import { HireModelPrefs } from './hireModelPrefs';
 import { HirePresetBook } from '../world/hirePresets';
+import { HirePins } from './hirePins';
 
 // #93: a form opened from a hire preset holds the preset's exact choice: a hidden model stays offered and picked, a
 // removed model or an effort the model lacks is shown and blocks Hire until the player picks; nothing is resolved to
@@ -39,7 +40,7 @@ const fromPreset = (choice: { harness: string; model: string; effort: string }, 
 });
 
 /** #95: `lines` are hire.prepare's herdr hiring instructions (null: a bridge before #95, which has no marker either). */
-function setup(o: { lines?: string | null } = {}) {
+function setup(o: { lines?: string | null; host?: Partial<HireHost> } = {}) {
   const lines = o.lines === undefined ? null : o.lines;
   const prefs = new HireModelPrefs(memory());
   const hires: unknown[] = [];
@@ -63,6 +64,7 @@ function setup(o: { lines?: string | null } = {}) {
     now: () => Date.now(),
     upload: () => new Promise(() => {}),
     savePreset: vi.fn(),
+    ...o.host,
   } as unknown as HireHost;
   const dlg = new HireDialog(document.body, host);
   return { dlg, prefs, hires, host, inner: dlg as unknown as { hire(): Promise<void>; editor: { draft: Draft } } };
@@ -398,5 +400,41 @@ describe('HireDialog from a hire preset: herdr hiring instructions (#95)', () =>
     expect(box()).toBeNull();
     await old.inner.hire();
     expect(old.hires[0]).not.toHaveProperty('herdr_instructions');
+  });
+
+  it('a form from a pinned preset shows its tab; Worker goes back to a plain form; another pin hires with that one', async () => {
+    const book = new HirePresetBook();
+    const p = (id: string, name: string) => ({ id, name, prompt: `${name}.`, harness: 'codex', model: 'x-1', effort: 'low', created_at: 1, updated_at: 1 });
+    book.reset([p('hp_1', 'Deploy'), p('hp_2', 'Review')]);
+    const pins = new HirePins(memory());
+    pins.pin('hp_2');
+    pins.pin('hp_1');
+    const usePinned = vi.fn();
+    const presetsAt = vi.fn();
+    const { dlg, host } = setup({ host: { pins, usePinned, presetsAt } });
+    (host.store as unknown as { hirePresets: HirePresetBook }).hirePresets = book;
+    dlg.open('floor', 0, fromPreset({ harness: 'codex', model: 'x-1', effort: 'low' }));
+    await tick();
+    const tabs = () => [...document.querySelectorAll<HTMLElement>('[role="tab"]')].map((t) => [t.dataset.key, t.getAttribute('aria-selected')]);
+    expect(tabs()).toEqual([
+      ['tab:worker', 'false'],
+      ['tab:preset', 'false'],
+      ['tab:pin:hp_2', 'false'],
+      ['tab:pin:hp_1', 'true'],
+    ]);
+    // A move redraws the open bar.
+    pins.move('hp_1', 0, ['hp_2', 'hp_1']);
+    expect(tabs().map(([k]) => k)).toEqual(['tab:worker', 'tab:preset', 'tab:pin:hp_1', 'tab:pin:hp_2']);
+    (document.querySelector('[data-key="tab:pin:hp_2"]') as HTMLElement).click();
+    expect(usePinned).toHaveBeenCalledWith('floor', 0, 'hp_2');
+    expect(dlg.isOpen).toBe(false);
+    dlg.open('floor', 0, fromPreset({ harness: 'codex', model: 'x-1', effort: 'low' }));
+    await tick();
+    (document.querySelector('[data-key="tab:worker"]') as HTMLElement).click();
+    await tick();
+    expect(dlg.isOpen).toBe(true);
+    expect(summary(dlg).preset).toBeUndefined();
+    expect(summary(dlg).form.prompt).toBe('');
+    expect(tabs().find(([k]) => k === 'tab:worker')?.[1]).toBe('true');
   });
 });

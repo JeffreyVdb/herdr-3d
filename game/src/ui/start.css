@@ -95,6 +95,39 @@
   outline-offset: -3px;
   border-radius: 8px 8px 0 0;
 }
+/* Hire presets pinned to the bar (ui/hirePins.ts): after a divider, named in short, dragged to another place. */
+.dd-tabs:has(.dd-tab--pin) {
+  flex-wrap: wrap;
+}
+.dd-tabs-break {
+  align-self: center;
+  width: 1px;
+  height: 20px;
+  margin: 0 6px;
+  background: var(--line);
+}
+.dd-tab--pin {
+  max-width: 13rem;
+  padding: 0 10px;
+}
+.dd-tab--pin span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dd-tab--pin svg {
+  width: 15px;
+  height: 15px;
+}
+.dd-tab--pin[draggable='true']:not([aria-selected='true']) {
+  cursor: grab;
+}
+.dd-tab--pin[data-drop='before'] {
+  box-shadow: inset 3px 0 0 var(--accent-text);
+}
+.dd-tab--pin[data-drop='after'] {
+  box-shadow: inset -3px 0 0 var(--accent-text);
+}
 
 /* ---- the ticket and the team ---------------------------------------------------------- */
 
