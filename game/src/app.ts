@@ -134,6 +134,7 @@ import { appearanceSection } from './ui/appearanceSection';
 import { displaySection, timeSection } from './ui/settingsSections';
 import { notifySection } from './ui/notifySection';
 import { ThemeLoader } from './ui/themeLoader';
+import type { UiThemeId } from './ui/uiTheme';
 import { ViewPrefs } from './ui/themePrefs';
 import { can } from './world/boards';
 import { bannerVersion, type BuildInfo } from './version';
@@ -2301,7 +2302,7 @@ export class App {
   }
 
   /** Switches to a building (or a new shape of it): rebuilds the outside only when its shape changed. */
-  private setBuilding(ctx: BuildingCtx): void {
+  private setBuilding(ctx: BuildingCtx, redress = false): void {
     const prev = this.building;
     // Walks belong to their building: in another one they are over.
     if (prev && prev.id !== ctx.id) {
@@ -2310,13 +2311,15 @@ export class App {
     }
     this.building = ctx;
     let o = this.walk.outside;
-    if (!o || !prev || prev.shape !== ctx.shape) {
+    if (!o || !prev || prev.shape !== ctx.shape || redress) {
       this.dropOutside();
       // #141: back in the building you left for the city: its outside as it was (nothing of it built again).
       const kept = this.kept;
       this.kept = null;
-      if (kept && kept.shape !== ctx.shape) kept.view.dispose();
-      o = kept?.shape === ctx.shape ? kept.view : new OutsideView(ctx.plan, ctx.openings, { name: ctx.name, tint: ctx.tint, floors: ctx.floors.map((f) => ({ id: f.id, name: f.name, asleep: f.asleep })) });
+      const theme = this.themes.prefs.uiTheme();
+      const reuse = kept && kept.shape === ctx.shape && kept.view.theme === theme ? kept.view : null;
+      if (kept && kept.view !== reuse) kept.view.dispose();
+      o = reuse ?? new OutsideView(ctx.plan, ctx.openings, { name: ctx.name, tint: ctx.tint, floors: ctx.floors.map((f) => ({ id: f.id, name: f.name, asleep: f.asleep })), theme });
       o.lobby.setReceptionist(this.reception.object);
       this.walk.setOutside(o);
       o.setLoaded(this.loaded);
@@ -2513,14 +2516,24 @@ export class App {
   }
 
   /**
-   * The office wears the UI theme (its walls, furniture and screens, `officePalette`): a switch rebuilds the floor you
-   * are on, once the theme's fonts are in (the screens write with them). The street and the lobby keep their look.
+   * The office and the building's lobby wear the UI theme (walls, furniture, signs and screens, `officePalette`): a
+   * switch rebuilds the floor you are on and the building's outside (the lobby is baked into it), once the theme's
+   * fonts are in (the screens and signs write with them). The street keeps its look; a kept outside in the city is
+   * dropped at its next entry (`setBuilding`).
    */
   private restyleOffice(): void {
     const theme = this.themes.prefs.uiTheme();
     void this.themes.loading.then(() => {
-      if (this.themes.prefs.uiTheme() === theme && this.office && this.office.theme !== theme) this.rebuildOffice();
+      if (this.themes.prefs.uiTheme() !== theme) return;
+      if (this.office && this.office.theme !== theme) this.rebuildOffice();
+      const ctx = this.walk.outside && this.walk.outside.theme !== theme && this.building ? this.buildingById(this.building.id) : null;
+      if (ctx) this.setBuilding(ctx, true);
     });
+  }
+
+  /** The UI theme the building's lobby is dressed in (null: you are not in a building). */
+  lobbyTheme(): UiThemeId | null {
+    return this.walk.outside?.theme ?? null;
   }
 
   private rebuildOffice(): void {

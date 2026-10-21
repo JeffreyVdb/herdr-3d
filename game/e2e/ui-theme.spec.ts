@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, openMenu, settingsSection, watchErrors } from './game';
+import { frames, openGame, openMenu, settingsSection, shot, watchErrors } from './game';
 import { boot, DESKTOP, NARROW, seed, SIM, sitAtTofu, SURFACES, type Themes, type UiTheme } from './ui-surfaces';
 import { strays, targets, textSamples } from './ui-theme-probe';
 
@@ -104,6 +104,35 @@ test('a switch restyles the open Settings dialog and the HUD at once: no reload,
   expect(await css(page, 'html', 'color-scheme')).toBe('light');
   await expect.poll(() => page.evaluate(() => window.__h3d.officeTheme())).toBe('quiet');
   expect(await page.evaluate(() => window.__h3d.officeRebuilds())).toBe(rebuilds + 2);
+  clean();
+});
+
+test('the lobby wears the theme: a switch while you stand in it rebuilds it once, in Ubuntu’s colours, and back', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await boot(page, 'demo-m5', {});
+  await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+  await frames(page, 3);
+  await page.evaluate(() => window.__h3d.enterLobby());
+  await frames(page, 3);
+  expect(await page.evaluate(() => window.__h3d.view())).toMatchObject({ area: 'lobby' });
+  expect(await page.evaluate(() => window.__h3d.lobbyTheme())).toBe('quiet');
+  await page.evaluate(() => window.__h3d.setUiTheme('ubuntu'));
+  await expect.poll(() => page.evaluate(() => window.__h3d.lobbyTheme())).toBe('ubuntu');
+  await frames(page, 3);
+  expect(await page.evaluate(() => window.__h3d.view())).toMatchObject({ area: 'lobby' });
+  await page.waitForTimeout(400);
+  await shot(page, 'ui-theme-lobby-ubuntu');
+  // The departures board, close.
+  const b = (await page.evaluate(() => window.__h3d.departures()))!.lobby!.board;
+  const at = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, b.max[2]] as const;
+  await page.evaluate(([x, y, z]) => window.__h3d.setPose({ x, z: z + 4, yaw: 0, pitch: Math.atan2(y - 1.55, 4) }), at);
+  await frames(page, 3);
+  await page.waitForTimeout(400);
+  await shot(page, 'ui-theme-lobby-board-ubuntu');
+  await page.evaluate(() => window.__h3d.setUiTheme('quiet'));
+  await expect.poll(() => page.evaluate(() => window.__h3d.lobbyTheme())).toBe('quiet');
+  expect(await page.evaluate(() => window.__h3d.error)).toBeNull();
   clean();
 });
 

@@ -5,9 +5,8 @@ import { pickNearest, type V3 } from '../world/collide';
 import { ROOM_HEIGHT, WALL_T, type Box3 } from '../world/layout';
 import type { Baker } from './bake';
 import type { Look } from './daylook';
-import { FONT } from './cards/atlasCards';
 import { GLASS_IN } from './office';
-import { OFFICE } from './palette';
+import { OFFICE, type LobbyPalette, type OfficePalette } from './palette';
 import { LogoSign } from './logoSign';
 import type { LogoEntry } from './logos';
 import { canvasTexture, elevatorMeshes } from './props';
@@ -34,17 +33,8 @@ export type LobbyTarget = 'reception' | 'elevator' | 'departures' | `departures:
 /** #65: the lobby board keeps its countdowns going while it spans this share of the view's height or more. */
 const DEPARTURES_VISIBLE = 0.04;
 
-const C = {
-  floor: 0xece5d7,
-  border: 0xd7cdb8,
-  wall: 0xf4f1ea,
-  ceiling: 0xfbfcff,
-  panel: 0xfff6dd,
-  navy: 0x24406e,
-  ink: 0x1c2540,
-  yellow: 0xffc233,
-  mat: 0x2c3a5e,
-};
+/** The piers' and the transom's ground is the facade's plinth (`STREET.ink` in outside.ts), whatever the theme. */
+const FACADE_INK = 0x1c2540;
 
 export class LobbyView {
   readonly group = new THREE.Group();
@@ -79,21 +69,25 @@ export class LobbyView {
     tint: number,
     /** Ground floor first. */
     floors: Array<{ id: string; name: string }>,
+    /** The UI theme's colours (the room, the signs, the board); none: Quiet's. */
+    P: Readonly<OfficePalette> = OFFICE,
   ) {
     this.group.name = 'lobby';
+    const C = P.reception;
+    const face = P.screens.font;
     const { width: W, depth: D } = plan;
     const L = plan.lobby;
     const T = WALL_T;
     const H = ROOM_HEIGHT;
     const v = (x: number, y: number, z: number) => ({ x, y, z });
     const flat = (x0: number, z0: number, x1: number, z1: number, y: number, hex: number) => inner.quad(v(x0, y, z1), v(x1, y, z1), v(x1, y, z0), v(x0, y, z0), hex);
-    const base = new THREE.Color(tint).lerp(new THREE.Color(C.ink), 0.62).getHex();
+    const base = new THREE.Color(tint).lerp(new THREE.Color(FACADE_INK), 0.62).getHex();
 
     // Floor: pale terrazzo with a border, a mat inside the door and a runner up to the desk.
     flat(0, 0, W, D, 0.002, C.border);
     flat(0.45, 0.45, W - 0.45, D - 0.45, 0.004, C.floor);
     flat(L.front.x0 - 0.2, D - 1.8, L.front.x1 + 0.2, D - 0.05, 0.007, C.mat);
-    flat(L.front.x0 + 0.15, L.desk.z1 + 0.25, L.front.x1 - 0.15, D - 1.8, 0.006, OFFICE.rug);
+    flat(L.front.x0 + 0.15, L.desk.z1 + 0.25, L.front.x1 - 0.15, D - 1.8, 0.006, P.rug);
     // Walls: the room faces (the facade skin is outside.ts), navy skirting, the ceiling and its lights.
     inner.box(-T, 0, -T, W + T, H, 0, C.wall, 'nz');
     inner.box(-T, 0, 0, 0, H, D, C.wall, 'nx');
@@ -173,7 +167,7 @@ export class LobbyView {
     const cx1 = L.front.x1 + 0.8;
     b.box(cx0, 2.64, D + FACE, cx1, 2.8, D + 1.7, C.navy);
     for (const x of [cx0 + 0.1, cx1 - 0.1]) b.box(x - 0.02, 2.8, D + 1.5, x + 0.02, 3.2, D + 1.54, C.navy);
-    const canopyTex = this.tex(nameTexture(name, `${floors.length} ${floors.length === 1 ? 'floor' : 'floors'} · reception`, '#1c2540', '#ffffff', '#ffc233'));
+    const canopyTex = this.tex(nameTexture(name, `${floors.length} ${floors.length === 1 ? 'floor' : 'floors'} · reception`, C.ink, '#ffffff', C.accentText, face));
     const cw = cx1 - cx0;
     const canopySign = new THREE.Mesh(new THREE.PlaneGeometry(cw, cw / 4), new THREE.MeshBasicNodeMaterial({ map: canopyTex }));
     canopySign.position.set((cx0 + cx1) / 2, 2.8 + cw / 8, D + 1.72);
@@ -183,37 +177,37 @@ export class LobbyView {
     // Reception: the feature wall, the desk (navy front, wood top, a yellow stripe), a monitor.
     const bw = L.backWall;
     inner.box(bw.x0, 0, bw.z0, bw.x1, 2.7, bw.z1, C.navy);
-    inner.box(bw.x0, 2.7, bw.z0, bw.x1, 2.76, bw.z1, C.yellow);
-    const wallTex = this.tex(nameTexture(name, 'Welcome · reception', '#24406e', '#ffffff', '#ffc233'));
+    inner.box(bw.x0, 2.7, bw.z0, bw.x1, 2.76, bw.z1, C.accent);
+    const wallTex = this.tex(nameTexture(name, 'Welcome · reception', `#${new THREE.Color(C.navy).getHexString()}`, '#ffffff', C.accentText, face));
     const ww = Math.min(3.2, bw.x1 - bw.x0 - 0.4);
     const wallSign = new THREE.Mesh(new THREE.PlaneGeometry(ww, ww / 4), new THREE.MeshBasicNodeMaterial({ map: wallTex }));
     wallSign.position.set((bw.x0 + bw.x1) / 2, 1.95, bw.z1 + 0.005);
     this.group.add(wallSign);
-    const wallLogo = new LogoSign(wallSign, ww, 0.96, { plate: 0xfff6dd, bezel: C.yellow, pad: 0.1, rim: 0.05, lift: 0.07 });
+    const wallLogo = new LogoSign(wallSign, ww, 0.96, { plate: 0xfff6dd, bezel: C.accent, pad: 0.1, rim: 0.05, lift: 0.07 });
     this.signs = { canopy: canopyLogo, wall: wallLogo };
     const d = L.desk;
     // Counter at 0.98 m: the receptionist (head top ~1.5 m) stands behind it, seen from the chest up.
     inner.box(d.x0, 0, d.z0, d.x1, 0.92, d.z1, C.navy);
-    inner.box(d.x0 - 0.06, 0.92, d.z0 - 0.06, d.x1 + 0.06, 0.98, d.z1 + 0.06, OFFICE.wood);
-    inner.box(d.x0 + 0.02, 0.52, d.z1, d.x1 - 0.02, 0.6, d.z1 + 0.01, C.yellow, 'nz');
-    inner.box(d.x0, 0.74, d.z0 - 0.35, d.x1, 0.78, d.z0, OFFICE.wood);
+    inner.box(d.x0 - 0.06, 0.92, d.z0 - 0.06, d.x1 + 0.06, 0.98, d.z1 + 0.06, P.wood);
+    inner.box(d.x0 + 0.02, 0.52, d.z1, d.x1 - 0.02, 0.6, d.z1 + 0.01, C.accent, 'nz');
+    inner.box(d.x0, 0.74, d.z0 - 0.35, d.x1, 0.78, d.z0, P.wood);
     const mx = L.receptionist.x + 0.55;
     inner.box(mx - 0.26, 0.98, d.z0 + 0.12, mx + 0.26, 1.3, d.z0 + 0.16, 0x1b1f2b);
     inner.quad(v(mx + 0.23, 1.01, d.z0 + 0.119), v(mx - 0.23, 1.01, d.z0 + 0.119), v(mx - 0.23, 1.27, d.z0 + 0.119), v(mx + 0.23, 1.27, d.z0 + 0.119), 0x9fd6ff, true);
-    inner.geo(new THREE.SphereGeometry(0.06, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2).translate(d.x1 - 0.35, 0.98, d.z1 - 0.15), C.yellow);
+    inner.geo(new THREE.SphereGeometry(0.06, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2).translate(d.x1 - 0.35, 0.98, d.z1 - 0.15), C.accent);
 
     // Bench by the glass (facing into the lobby), plants.
     const be = L.bench;
-    for (let i = 0; i < 3; i++) inner.box(be.x0, 0.42, be.z0 + i * 0.18, be.x1, 0.46, be.z0 + i * 0.18 + 0.14, OFFICE.wood);
-    for (const y of [0.62, 0.8]) inner.box(be.x0, y, be.z1 - 0.05, be.x1, y + 0.12, be.z1, OFFICE.wood);
+    for (let i = 0; i < 3; i++) inner.box(be.x0, 0.42, be.z0 + i * 0.18, be.x1, 0.46, be.z0 + i * 0.18 + 0.14, P.wood);
+    for (const y of [0.62, 0.8]) inner.box(be.x0, y, be.z1 - 0.05, be.x1, y + 0.12, be.z1, P.wood);
     for (const x of [be.x0 + 0.12, be.x1 - 0.12]) for (const z of [be.z0 + 0.06, be.z1 - 0.06]) inner.box(x - 0.03, 0, z - 0.03, x + 0.03, 0.42, z + 0.03, C.navy);
     const pot = new THREE.CylinderGeometry(0.24, 0.19, 0.46, 12).translate(0, 0.23, 0);
     const leaves = new THREE.IcosahedronGeometry(0.42, 1).translate(0, 0.9, 0);
     const leaves2 = new THREE.IcosahedronGeometry(0.3, 1).translate(0.16, 1.28, 0.05);
     for (const p of L.plants) {
       const m = new THREE.Matrix4().makeTranslation(p.x, 0, p.z);
-      inner.geo(pot, OFFICE.pot, m);
-      inner.geo(leaves, OFFICE.plant, m);
+      inner.geo(pot, P.pot, m);
+      inner.geo(leaves, P.plant, m);
       inner.geo(leaves2, 0x55b86b, m);
     }
     pot.dispose();
@@ -221,14 +215,14 @@ export class LobbyView {
     leaves2.dispose();
 
     // A floor directory on the east wall, near the elevator.
-    const dirTex = this.tex(directoryTexture(name, floors.map((f) => f.name)));
+    const dirTex = this.tex(directoryTexture(name, floors.map((f) => f.name), C, face));
     const dh = Math.min(1.6, 0.5 + floors.length * 0.22);
     const dir = new THREE.Mesh(new THREE.PlaneGeometry(1.5, dh).rotateY(-Math.PI / 2), new THREE.MeshBasicNodeMaterial({ map: dirTex }));
     dir.position.set(W - 0.01, 1.55, D - 3.2);
     this.group.add(dir);
 
     // The elevator, as on every floor.
-    const lift = elevatorMeshes(L.elevator, 'L', 'lobby · press E');
+    const lift = elevatorMeshes(L.elevator, 'L', 'lobby · press E', P);
     this.textures.push(lift.texture);
     this.group.add(lift.group);
 
@@ -238,7 +232,7 @@ export class LobbyView {
     // #65: the departures board on the north wall; each group's cell is a pick box of its own, a centimetre proud of the
     // board, so a look at a group picks its floor (on the page the board shows) and one anywhere else on the board picks
     // the board (every floor).
-    this.departures = buildLobbyDepartures(L.departures);
+    this.departures = buildLobbyDepartures(L.departures, P.screens);
     this.group.add(this.departures.group);
     const scr = this.departures.screen;
     this.departuresPlan = lobbyBoardPlan(floors.length, scr.max[0] - scr.min[0], scr.max[1] - scr.min[1]);
@@ -367,7 +361,7 @@ function mergeGeometriesSafe(gs: THREE.BufferGeometry[]): THREE.BufferGeometry {
 }
 
 /** A name board: big name, a line under it, a yellow rule. */
-function nameTexture(name: string, sub: string, bg: string, fg: string, accent: string): THREE.CanvasTexture {
+function nameTexture(name: string, sub: string, bg: string, fg: string, accent: string, font: string): THREE.CanvasTexture {
   return canvasTexture(1024, 256, (g) => {
     g.fillStyle = bg;
     g.fillRect(0, 0, 1024, 256);
@@ -376,32 +370,32 @@ function nameTexture(name: string, sub: string, bg: string, fg: string, accent: 
     g.fillStyle = fg;
     g.textAlign = 'center';
     g.textBaseline = 'middle';
-    g.font = `800 112px ${FONT}`;
+    g.font = `800 112px ${font}`;
     g.fillText(name, 512, 104, 960);
     g.globalAlpha = 0.8;
-    g.font = `600 40px ${FONT}`;
+    g.font = `600 40px ${font}`;
     g.fillText(sub, 512, 192, 960);
   });
 }
 
 /** The floor directory: every floor top to bottom, then the lobby. */
-function directoryTexture(name: string, floors: string[]): THREE.CanvasTexture {
+function directoryTexture(name: string, floors: string[], C: Readonly<LobbyPalette>, font: string): THREE.CanvasTexture {
   const rows = [...floors.map((s, i) => [String(i + 1), s] as const).reverse(), ['L', 'Lobby · reception'] as const];
   const h = Math.round(Math.min(1.6, 0.5 + floors.length * 0.22) * 340);
   return canvasTexture(512, h, (g) => {
-    g.fillStyle = '#1c2540';
+    g.fillStyle = C.ink;
     g.fillRect(0, 0, 512, h);
-    g.fillStyle = '#ffc233';
-    g.font = `800 40px ${FONT}`;
+    g.fillStyle = C.accentText;
+    g.font = `800 40px ${font}`;
     g.textBaseline = 'middle';
     g.fillText(name, 28, 48, 456);
     const step = Math.min(56, (h - 110) / rows.length);
     rows.forEach(([n, s], i) => {
       const y = 104 + i * step + step / 2;
-      g.fillStyle = n === 'L' ? '#ffc233' : '#ffffff';
-      g.font = `800 ${Math.round(step * 0.55)}px ${FONT}`;
+      g.fillStyle = n === 'L' ? C.accentText : '#ffffff';
+      g.font = `800 ${Math.round(step * 0.55)}px ${font}`;
       g.fillText(n, 28, y);
-      g.font = `600 ${Math.round(step * 0.5)}px ${FONT}`;
+      g.font = `600 ${Math.round(step * 0.5)}px ${font}`;
       g.fillStyle = 'rgba(255,255,255,0.88)';
       g.fillText(s, 96, y, 390);
     });

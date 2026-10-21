@@ -181,6 +181,9 @@ func (s *Session) resetLines() {
 // none).
 func (s *Session) SetTap(t Tap) { s.tap = t }
 
+// Tap is the main transcript's tap (nil: none).
+func (s *Session) Tap() Tap { return s.tap }
+
 // Main is the main transcript found (path "" until then), the file as last
 // read (nil before) and where the next line the tap gets starts: every
 // line before it was read already.
@@ -194,6 +197,9 @@ func (s *Session) Main() (path string, fi fs.FileInfo, next int64) {
 // SetRescan sets how long a transcript not found waits before it is looked
 // for again (0: MissRescan).
 func (s *Session) SetRescan(d time.Duration) { s.rescan = d }
+
+// Rescan is what SetRescan set.
+func (s *Session) Rescan() time.Duration { return s.rescan }
 
 func (s *Session) void(gone bool) {
 	if s.tap != nil {
@@ -473,6 +479,9 @@ func (s *Session) SetChildTap(id string, t Tap) {
 	}
 	s.taps[id] = t
 }
+
+// ChildTap is child id's tap (nil: none).
+func (s *Session) ChildTap(id string) Tap { return s.taps[id] }
 
 // childPath is the path child id's transcript is read from ("": none).
 func (s *Session) childPath(id string) string {

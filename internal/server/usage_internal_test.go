@@ -410,10 +410,11 @@ func TestUsageCodexProfileChildTranscript(t *testing.T) {
 			if tr.kidLogs["w"]["child-watch"] == nil {
 				t.Fatalf("the child's transcript never opens: reader %q", tr.keys["w"])
 			}
-			// A child of another session of the worker never reaches its log.
+			// A child of another session of the worker never reaches its log
+			// (#149: the first one's is kept for a return visit).
 			w.kids[0].session, w.kids[0].key = "0c0d0e0f-1390-4000-8000-000000000013", "other-watch"
 			tr.poll([]usageWorker{w}, now.Add(3*time.Second))
-			if len(tr.kidLogs["w"]) != 0 {
+			if tr.kidLogs["w"]["other-watch"] != nil {
 				t.Fatalf("another session's child: %v", tr.kidLogs["w"])
 			}
 		})

@@ -15,7 +15,7 @@ import { DESK_H } from '../world/layout';
  *   cap it sweats under a ringing red alarm clock.
  * - CODE: a hoodie's hood. REVIEW: a red bow tie, a clipboard on the desk.
  *   UX: a scarf, a tablet with swatches on the desk. GROUND: an explorer's
- *   backpack, a magnifier on the desk.
+ *   backpack (hung outside the backrest when seated), a magnifier on the desk.
  * - Every crew member with a run wears a chest badge in the run's colour, so
  *   one run reads as a group; freelancers keep their briefcase by the chair.
  * - Lifecycle props: the brief (a scroll) while onboarding, the report folder

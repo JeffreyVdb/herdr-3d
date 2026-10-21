@@ -364,6 +364,34 @@ func (l *Log) Err() error {
 	return l.err
 }
 
+// Stale reports why the log does not index the file at its path as it is
+// now (nil: it does): it ended (Err), the file went (ErrGone), another file
+// is there (ErrReplaced), or the file is shorter than what was read of it
+// (truncated: ErrReplaced). #149: a log kept while nobody watches it is
+// looked at before it is handed out again, whether or not its tail saw the
+// change yet.
+func (l *Log) Stale() error {
+	if err := l.Err(); err != nil {
+		return err
+	}
+	fi, err := os.Lstat(l.path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return ErrGone
+	case err != nil:
+		return err
+	case !os.SameFile(l.fi, fi):
+		return ErrReplaced
+	}
+	l.mu.Lock()
+	read := max(l.built, l.tailEnd)
+	l.mu.Unlock()
+	if fi.Size() < read {
+		return ErrReplaced
+	}
+	return nil
+}
+
 // Path is the transcript's file.
 func (l *Log) Path() string { return l.path }
 
