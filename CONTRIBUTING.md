@@ -1243,6 +1243,19 @@ click on the tab (or Shift+L, anywhere but the terminal's own input, where it ty
 conversation) peeks the panel, and standing up gives back the docked or open plate the saved state says. The #147 command palette is a small
 dialog but gets the same treatment on any view (`dialog.palette[open]` is in `SCREEN`; it keeps a 56 px gutter; the tab is measured against the palette alone, so it shows over the hire sheet and the glass too, and Shift+L there is an L in the palette's field: click the tab). The Changes panel still makes it step left.
 
+#138 Codex profiles: the bridge reads the Codex limits once per Codex home folder (docs/protocol.md "Codex profiles").
+To have a second profile locally, sign a second home in: `CODEX_HOME=~/.codex-work codex login` (the folder must exist
+first: `mkdir -p ~/.codex-work`); the bridge finds every `~/.codex-*` folder with an `auth.json` at its next poll, no
+restart. A folder elsewhere is added in Settings → Codex profiles (Add folder). Tests: `go test ./internal/codexaccount
+./internal/limits ./internal/server -run 'Codex|Profile|Limits'`, `game/src/world/limits.test.ts`,
+`ui/limits.profiles.dom.test.ts`, `ui/codexProfilesSection.dom.test.ts`, `tools/fixture-codex-profiles.test.ts`. On the
+simulating server, `simcodexprofiles=2` plays two visible profiles (`codex`, the default, fresh; `work`, stale from 50
+minutes ago) plus a hidden one (`old`) and an added one not signed in (`spare`); `simcodexprofiles=1` only the default
+(the meter as before profiles); without it the bridge is one from before profiles. For a UX look: `make dev`, then
+`?ws=%2Ffixture%2Fdemo-m5%3Fplay%3Dnone%26sim%3D1%26simusage%3D0%26simcodexprofiles%3D2&floor=herdr-3d`: the meter
+(click it for the panel) and Menu → Settings → Codex profiles (an added path ending in `/nothing` plays the bridge's
+"no folder there").
+
 M6 on the simulating server: presets and runs on any fixture (herdr-3d of demo-m4 has a suggested repo, pastry none);
 `simfail=no_m6` plays a bridge without them. E.g. `?ws=%2Ffixture%2Fdemo-m4%3Fsim%3D1%26simms%3D300`.
 

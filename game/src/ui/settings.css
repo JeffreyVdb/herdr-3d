@@ -1375,6 +1375,14 @@ dialog.settings {
 /* #138: Codex profiles. A ruled list like the scanned folders': each profile a column (its name, state tags and tools
  * on one line, its folder in the code face under it, then room for per-profile options later). The name is the
  * player's own, in the body face; the folder is a path on the bridge host, typed as such. */
+/* The command and the folders are typed text: no ligature may turn "-<" into an arrow. */
+.settings-cp-cmd,
+.settings-cp-path {
+  font-variant-ligatures: none;
+}
+.settings-cp-cmd {
+  white-space: nowrap;
+}
 .settings-cp-list {
   margin: 0;
   padding: 0;
