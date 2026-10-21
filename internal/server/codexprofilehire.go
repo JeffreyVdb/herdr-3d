@@ -383,3 +383,19 @@ func (h *Hub) codexHomeOf(id string) (home string, other bool) {
 	}
 	return a.Home, true
 }
+
+// childRoot is the root session a worker's children are bound to (hub
+// goroutine; #139 N2): the agent session herdr reports, and while it
+// reports none, the thread a shared worker on another Codex profile has
+// (noteCodexThread's rules: its own server named it on a home without
+// herdr's hook), also when that profile is gone: it stays the worker's
+// until a wake clears it. Every other worker's is herdr's alone.
+func (h *Hub) childRoot(id, agentSession string) string {
+	if agentSession != "" || !h.isShared(id) {
+		return agentSession
+	}
+	if _, other := h.codexHomeOf(id); !other {
+		return ""
+	}
+	return h.cx.launches[id].Thread
+}

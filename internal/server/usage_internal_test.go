@@ -368,3 +368,54 @@ func TestUsageThrottleContextOnlyChange(t *testing.T) {
 		t.Fatalf("cleared: %+v %v", u, ok)
 	}
 }
+
+// #139 S1a: a watched Codex child of a worker on another profile gets its
+// transcript from that profile's sessions folder, as one on the default
+// does from --codex-sessions: the child is the reader's session's, though
+// the reader is kept under its home too.
+func TestUsageCodexProfileChildTranscript(t *testing.T) {
+	t.Parallel()
+	const (
+		parent = "0c0d0e0f-1390-4000-8000-000000000011"
+		child  = "0c0d0e0f-1390-4000-8000-000000000012"
+	)
+	for _, other := range []bool{false, true} {
+		t.Run(fmt.Sprintf("profile=%v", other), func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			sessions := filepath.Join(home, "sessions")
+			codexRollout(t, sessions, "2026-09-29T09-00-00", parent, "/repo", 100)
+			body := fmt.Sprintf(`{"type":"session_meta","payload":{"id":%q,"session_id":%q,"cwd":"/repo","thread_source":"subagent",`+
+				`"source":{"subagent":{"thread_spawn":{"parent_thread_id":%q,"depth":1}}}}}`+"\n"+
+				`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"child task"}]}}`+"\n",
+				child, parent, parent)
+			if err := os.WriteFile(filepath.Join(sessions, "2026", "09", "29", "rollout-2026-09-29T09-01-00-"+child+".jsonl"), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			roots := usage.Roots{CodexSessions: sessions}
+			if other {
+				roots.CodexSessions = t.TempDir() // the default's: never read for it
+			}
+			tr := newUsageTracker(UsageConfig{Roots: roots})
+			defer tr.closeLogs()
+			kid := txKid{key: "child-watch", native: child, session: parent, harness: "codex", avail: proto.TranscriptAvailable}
+			w := usageWorker{id: "w", harness: "codex", session: parent, floor: "s", codexOther: other, kids: []txKid{kid}}
+			if other {
+				w.codexHome = home
+			}
+			now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+			for i := range 3 {
+				tr.poll([]usageWorker{w}, now.Add(time.Duration(i)*time.Second))
+			}
+			if tr.kidLogs["w"]["child-watch"] == nil {
+				t.Fatalf("the child's transcript never opens: reader %q", tr.keys["w"])
+			}
+			// A child of another session of the worker never reaches its log.
+			w.kids[0].session, w.kids[0].key = "0c0d0e0f-1390-4000-8000-000000000013", "other-watch"
+			tr.poll([]usageWorker{w}, now.Add(3*time.Second))
+			if len(tr.kidLogs["w"]) != 0 {
+				t.Fatalf("another session's child: %v", tr.kidLogs["w"])
+			}
+		})
+	}
+}

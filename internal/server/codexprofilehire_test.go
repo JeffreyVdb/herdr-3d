@@ -15,9 +15,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/childagents"
+	"github.com/JeffreyVdb/herdr-3d/internal/childagents/childagentstest"
 	"github.com/JeffreyVdb/herdr-3d/internal/codex"
 	"github.com/JeffreyVdb/herdr-3d/internal/codexaccount"
 	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
+	"github.com/JeffreyVdb/herdr-3d/internal/codexchild"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
 	shellpolicy "github.com/JeffreyVdb/herdr-3d/internal/shell"
@@ -60,13 +63,24 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-func startProfileBridge(t *testing.T, on bool, kind shellpolicy.Kind) *profileBridge {
+func startProfileBridge(t *testing.T, on bool, kind shellpolicy.Kind, more ...func(*server.Options)) *profileBridge {
 	t.Helper()
-	user, err := os.MkdirTemp("", "h3dp") // short and plain: the homes are typed into a shell
-	if err != nil {
-		t.Fatal(err)
+	return startProfileBridgeAt(t, "", "", nil, on, kind, more...)
+}
+
+// startProfileBridgeAt is startProfileBridge on the database at db and the
+// user folder user ("": new ones), whose floor has workers, for a test
+// that restarts the bridge.
+func startProfileBridgeAt(t *testing.T, db, user string, workers []world.WorkerObs, on bool, kind shellpolicy.Kind,
+	more ...func(*server.Options)) *profileBridge {
+	t.Helper()
+	if user == "" {
+		var err error
+		if user, err = os.MkdirTemp("", "h3dp"); err != nil { // short and plain: the homes are typed into a shell
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.RemoveAll(user) })
 	}
-	t.Cleanup(func() { os.RemoveAll(user) })
 	pb := &profileBridge{user: user, def: filepath.Join(user, ".codex"), work: filepath.Join(user, ".codex-work"),
 		team: filepath.Join(user, ".codex-team"), log: &syncBuffer{}}
 	for _, home := range []string{pb.def, pb.work, pb.team} {
@@ -83,7 +97,7 @@ func startProfileBridge(t *testing.T, on bool, kind shellpolicy.Kind) *profileBr
 	}
 	host := newFakeCodexHost()
 	svc := codexaccount.New(user, pb.def)
-	pb.sharedBridge = startSharedBridgeWith(t, "", host, on, kind, func(o *server.Options) {
+	pb.sharedBridge = startSharedBridgeWith(t, db, host, on, kind, func(o *server.Options) {
 		o.CodexProfiles = svc
 		// The default home's sessions are --codex-sessions (usage and the sleep backfill).
 		o.Usage.Roots.CodexSessions = filepath.Join(pb.def, "sessions")
@@ -108,7 +122,10 @@ func startProfileBridge(t *testing.T, on bool, kind shellpolicy.Kind) *profileBr
 			env, release, err := svc.Prepare(ctx, key)
 			return env, func() { release(); counted() }, err
 		}
-	})
+		for _, fn := range more {
+			fn(o)
+		}
+	}, workers...)
 	return pb
 }
 
@@ -993,5 +1010,158 @@ func TestProfileUsageOwnHome(t *testing.T) {
 		return it.Kind == proto.ItemUser && len(it.Parts) > 0 && it.Parts[0].Text == "review the team's pull requests"
 	}) {
 		t.Fatalf("transcript.watch = %s", b)
+	}
+}
+
+// childOf is the world's child of native id, if any.
+func childOf(w proto.World, native string) (proto.Child, bool) {
+	i := slices.IndexFunc(w.Children, func(c proto.Child) bool { return c.NativeID == native })
+	if i < 0 {
+		return proto.Child{}, false
+	}
+	return w.Children[i], true
+}
+
+// S1e, N2: the children of a worker on a bare home (herdr reports no
+// session) are bound to the thread its own server named, at once, and
+// stay so: a later refresh while herdr is still silent keeps them and the
+// generation, and so does herdr's report of the same thread.
+func TestProfileBareHomeChildren(t *testing.T) {
+	t.Parallel()
+	const (
+		th  = "01a11172-ac09-7aa0-ab6b-84485199ad01"
+		kid = "01a11172-ac09-7aa0-ab6b-84485199ad02"
+	)
+	src := childagentstest.NewFixtureSource()
+	pb := startProfileBridge(t, true, "", func(o *server.Options) { o.ChildSources = []childagents.Source{src} })
+	pb.host.mu.Lock()
+	pb.host.root = func(string) (string, error) { return th, nil }
+	pb.host.mu.Unlock()
+	_, m := pb.c.command(proto.CmdWorkerHire, "a", profileHire(1, "work"))
+	a := ackData[proto.HireResult](t, m)
+	waitUntil(t, "the thread from its server", func() bool { return pb.launches(t)[a.ID].Thread == th })
+	src.Emit(childagents.Evidence{Session: th, Provider: proto.ChildCodex, NativeID: kid, State: proto.ChildRunning,
+		Source: proto.ChildFromFixture, Parent: &childagents.ParentRef{Kind: proto.ParentRoot}})
+	w := pb.world(func(w proto.World) bool { _, ok := childOf(w, kid); return ok })
+	c, _ := childOf(w, kid)
+	gen := workersOf(w, "s")[a.WorkspaceID].ChildGeneration
+	if c.WorkerID != a.ID || c.AgentSession != th || c.Generation != gen {
+		t.Fatalf("child = %+v, worker's generation %d", c, gen)
+	}
+	pb.fl.update(a.WorkspaceID, func(w *world.WorkerObs) { w.Title = "still no session" })
+	w = pb.world(func(w proto.World) bool { return workersOf(w, "s")[a.WorkspaceID].Title == "still no session" })
+	if _, ok := childOf(w, kid); !ok || workersOf(w, "s")[a.WorkspaceID].ChildGeneration != gen {
+		t.Fatalf("a refresh without herdr's session: %+v", w)
+	}
+	pb.fl.update(a.WorkspaceID, func(w *world.WorkerObs) { w.AgentSession = th })
+	w = pb.world(func(w proto.World) bool { return workersOf(w, "s")[a.WorkspaceID].AgentSession == th })
+	if _, ok := childOf(w, kid); !ok || workersOf(w, "s")[a.WorkspaceID].ChildGeneration != gen {
+		t.Fatalf("herdr's report of the same thread: %+v", w)
+	}
+}
+
+// S1a, S1e, N1, N2 end to end: a worker on a bare home gets its thread
+// from its own server; its subagent's rollout in that home's sessions
+// folder makes its child row, bound to that thread, and the child's
+// transcript opens from there.
+func TestProfileBareHomeChildTranscript(t *testing.T) {
+	t.Parallel()
+	const (
+		th  = "01a11172-ac09-7aa0-ab6b-84485199ad11"
+		kid = "01a11172-ac09-7aa0-ab6b-84485199ad12"
+	)
+	src := codexchild.New(codexchild.Options{})
+	pb := startProfileBridge(t, true, "", func(o *server.Options) {
+		o.Usage.Interval = 20 * time.Millisecond
+		o.Usage.CodexChildren = func(s string) server.ChildReader { return src.Listener(s) }
+		o.ChildSources = []childagents.Source{src}
+	})
+	sessions := filepath.Join(pb.work, "sessions")
+	profileRollout(t, sessions, "2026-10-21T09-00-00", th, "/home/u/repo", 100)
+	// A newer root of the same folder: the lookup by folder would take it, never the thread's own.
+	profileRollout(t, sessions, "2026-10-21T09-30-00", "01a11172-ac09-7aa0-ab6b-84485199ad13", "/home/u/repo", 50)
+	profileRollout(t, sessions, "2026-10-21T09-01-00", kid, "/home/u/repo", 10,
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"the subagent's own task"}]}}`)
+	// Its first line says whose subagent it is.
+	path := filepath.Join(sessions, "2026", "10", "21", "rollout-2026-10-21T09-01-00-"+kid+".jsonl")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := fmt.Sprintf(`{"type":"session_meta","payload":{"id":%q,"session_id":%q,"cwd":"/home/u/repo","thread_source":"subagent",`+
+		`"agent_nickname":"Volta","source":{"subagent":{"thread_spawn":{"parent_thread_id":%q,"depth":1}}}}}`, kid, th, th)
+	b = append([]byte(meta), b[bytes.IndexByte(b, '\n'):]...)
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pb.host.mu.Lock()
+	pb.host.root = func(string) (string, error) { return th, nil }
+	pb.host.mu.Unlock()
+	_, m := pb.c.command(proto.CmdWorkerHire, "a", profileHire(1, "work"))
+	a := ackData[proto.HireResult](t, m)
+	waitUntil(t, "the thread from its server", func() bool { return pb.launches(t)[a.ID].Thread == th })
+	w := pb.world(func(w proto.World) bool { _, ok := childOf(w, kid); return ok })
+	ch, _ := childOf(w, kid)
+	if ch.WorkerID != a.ID || ch.AgentSession != th || ch.Source != proto.ChildFromRollout || workersOf(w, "s")[a.WorkspaceID].AgentSession != "" {
+		t.Fatalf("child = %+v", ch)
+	}
+	c := pb.connect(proto.Hello{Client: "tx"})
+	c.snapshot()
+	target := &proto.TranscriptChild{ID: ch.ID, Generation: ch.Generation, Provider: ch.Provider}
+	_, ack := c.mustAck(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: a.ID, Child: target})
+	res := decode[proto.TranscriptWatchResult](t, ack)
+	head, items := res.TranscriptHead, res.Items
+	for head.Pending { // its log opens on the tracker's next poll: live on the same watch
+		p, cl := c.pushOf(a.ID, target)
+		if cl.Reason != "" {
+			t.Fatalf("the child's watch closed: %+v", cl)
+		}
+		if p.TranscriptHead != nil {
+			head = *p.TranscriptHead
+		}
+		items = append(items, p.Items...)
+	}
+	if head.Session != kid || !slices.ContainsFunc(items, func(it proto.TranscriptItem) bool {
+		return it.Kind == proto.ItemUser && len(it.Parts) > 0 && it.Parts[0].Text == "the subagent's own task"
+	}) {
+		t.Fatalf("the child's transcript = %+v, items %+v", head, items)
+	}
+}
+
+// N2 after a bridge start: the stored thread binds a bare home's worker at
+// its first refresh (it is never asked again), and the source's replay of
+// that thread brings its children back.
+func TestProfileBareHomeChildrenAfterRestart(t *testing.T) {
+	t.Parallel()
+	const (
+		th  = "01a11172-ac09-7aa0-ab6b-84485199ad21"
+		kid = "01a11172-ac09-7aa0-ab6b-84485199ad22"
+	)
+	db := filepath.Join(t.TempDir(), "world.db")
+	src := childagentstest.NewFixtureSource()
+	first := startProfileBridgeAt(t, db, "", nil, true, "", func(o *server.Options) { o.ChildSources = []childagents.Source{src} })
+	first.host.mu.Lock()
+	first.host.root = func(string) (string, error) { return th, nil }
+	first.host.mu.Unlock()
+	_, m := first.c.command(proto.CmdWorkerHire, "a", profileHire(1, "work"))
+	a := ackData[proto.HireResult](t, m)
+	waitUntil(t, "the thread from its server", func() bool { return first.launches(t)[a.ID].Thread == th })
+	src.Emit(childagents.Evidence{Session: th, Provider: proto.ChildCodex, NativeID: kid, State: proto.ChildRunning,
+		Source: proto.ChildFromFixture, Parent: &childagents.ParentRef{Kind: proto.ParentRoot}})
+	first.world(func(w proto.World) bool { _, ok := childOf(w, kid); return ok })
+	first.fl.mu.Lock()
+	workers := slices.Clone(first.fl.workers)
+	first.fl.mu.Unlock()
+	first.stop()
+
+	again := startProfileBridgeAt(t, db, first.user, workers, true, "", func(o *server.Options) {
+		o.ChildSources = []childagents.Source{childagentstest.NewFixtureSource(src.Seen()...)}
+	})
+	w := again.world(func(w proto.World) bool { _, ok := childOf(w, kid); return ok })
+	if c, _ := childOf(w, kid); c.WorkerID != a.ID || c.AgentSession != th || workersOf(w, "s")[a.WorkspaceID].AgentSession != "" {
+		t.Fatalf("child after the restart = %+v", c)
+	}
+	if asked := again.host.Asked(); len(asked) != 0 {
+		t.Fatalf("asked again: %q", asked)
 	}
 }

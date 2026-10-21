@@ -73,7 +73,8 @@ type usageWorker struct {
 	agentHo         *agentWatch // #224: its agent handoff request
 	typed           []typedSum  // #95: the prompts the bridge typed into it lately
 	// #223: the agent session herdr reports (the hub's AgentSession):
-	// session may be one findCodex found instead.
+	// session may be one findCodex found instead, or (#139) the thread a
+	// bare home's own server named (Hub.childRoot).
 	agent string
 	// #26: its children whose transcripts a connection watches.
 	kids []txKid
@@ -600,7 +601,10 @@ func (h *Hub) usageWorkers() []usageWorker {
 			watched: h.tx.watchedOwn(id), cwd: w.Cwd, asking: w.Ask != nil, wrap: h.wrapWatchOf(id), agentHo: h.agentWatchOf(id), typed: h.typedSums(id),
 			status: w.Status, idleAt: h.act.idleAt[id], kids: h.txKids(id)}
 		uw.codexHome, uw.codexOther = h.codexHomeOf(id) // #139
-		if w.AgentSession == "" && w.AgentKind == usage.Codex && w.Cwd != "" && (!uw.codexOther || uw.codexHome != "") {
+		if uw.codexOther && uw.codexHome != "" && w.AgentKind == usage.Codex {
+			uw.session = h.childRoot(id, w.AgentSession) // N2: a bare home's thread, its children's root too
+		}
+		if uw.session == "" && w.AgentKind == usage.Codex && w.Cwd != "" && (!uw.codexOther || uw.codexHome != "") {
 			uw.codexCwd = w.Cwd
 		}
 		ws = append(ws, uw)

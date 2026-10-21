@@ -1063,12 +1063,13 @@ func (h *Hub) txKids(id string) []txKid {
 // drops the others (usage tracker goroutine, before and after the session's
 // Poll). Only children of the session the worker has now: another session's
 // child never reaches its log, nor does a child of another worker in the
-// same directory (its own session).
+// same directory (its own session). #139: the reader is the one of the
+// worker's folder, its key with that folder's home.
 func (tr *usageTracker) syncKidTranscripts(w usageWorker, s *usage.Session) {
 	want := map[string]txKid{}
 	var natives []string
 	for _, k := range w.kids {
-		if k.native != "" && tr.keys[w.id] == k.harness+"/"+k.session {
+		if k.native != "" && tr.keys[w.id] == usageKey(w) && k.harness == w.harness && k.session == w.session {
 			want[k.key] = k
 			natives = append(natives, k.native)
 		}

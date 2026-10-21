@@ -1840,10 +1840,10 @@ func (h *Hub) syncFloorWorkers(ctx context.Context, f *floorState, obs []world.W
 		}
 		next := workerView(id, session, w, metas[i], names[i], desk, h.resume[id])
 		h.reported[id] = modelEffort{metas[i].model, metas[i].effort}
-		next.Model, next.Effort = h.shownModel(id, next.AgentSession) // H3D-2
-		next.ChildGeneration = h.childSession(id, next.AgentSession)  // #22: a replaced session drops its children
-		next.SecretFiles = h.ps.counts[id]                            // #108 round 5
-		h.withRun(next, w, metas[i], links[id])                       // M6 runs
+		next.Model, next.Effort = h.shownModel(id, next.AgentSession)                 // H3D-2
+		next.ChildGeneration = h.childSession(id, h.childRoot(id, next.AgentSession)) // #22: a replaced session drops its children
+		next.SecretFiles = h.ps.counts[id]                                            // #108 round 5
+		h.withRun(next, w, metas[i], links[id])                                       // M6 runs
 		if w.Worktree != nil && w.Worktree.Linked && w.Worktree.CheckoutPath != "" {
 			next.Branch = h.branchOf(w.Worktree.CheckoutPath, at)
 		}

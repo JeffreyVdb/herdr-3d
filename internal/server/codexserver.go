@@ -440,6 +440,7 @@ func (h *Hub) askCodexThread(ctx context.Context, id string, l store.CodexLaunch
 			default:
 				h.log.Info("codex thread learned from its own server", "worker", id, "thread", thread)
 				h.noteCodexThread(ctx, id, thread)
+				h.rebindChildren(id) // N2: its children are the thread's from now, not from herdr's next refresh
 			}
 		})
 	}()

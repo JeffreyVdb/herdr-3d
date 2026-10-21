@@ -2502,6 +2502,7 @@ every Codex process it starts. Nothing is switched: two workers on two profiles 
 - **A bare folder**: a profile whose `hooks.json` (or `config.toml`) does not name herdr's `herdr-agent-state.sh` never
   has herdr report the worker's session. A shared worker's thread is then taken from its own server (its one loaded
   root thread, never a subagent's, never a guess between two), so the bridge joins it (`thread`) and a wake resumes it;
+  its children's `agent_session` is that thread while the worker's `agent_session` stays empty (herdr's);
   its note says "`<name>` has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, so the
   bridge takes its thread from the worker's own Codex server and does not follow a new session started in its terminal
   (/new)." A worker without its own server: "… so the bridge finds it by the worker's folder in `<name>`'s sessions

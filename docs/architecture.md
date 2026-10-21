@@ -222,8 +222,9 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
     (usage, transcript lines, Codex subagents, the lookup by folder, the sleep backfill, generated images), never in
     `--codex-sessions`; that folder's `auth.json` is never read. A bare folder without herdr's session hook
     (`hooks.json` naming `herdr-agent-state.sh`) never reports its thread: the bridge asks the worker's own server for
-    its one root thread (`codexapp.RootThread`, never a subagent's, never a guess between two), so it joins it and a
-    wake resumes it; a `/new` in the terminal is not followed (the hire says so).
+    its one root thread (`codexapp.RootThread`, never a subagent's, never a guess between two), so it joins it, binds
+    the worker's Codex subagents to it (while herdr reports none) and a wake resumes it; a `/new` in the terminal is not
+    followed (the hire says so).
   - **What a worker hired the usual way (legacy) lacks:** its async questions cannot be answered from the transcript
     (no join, no `worker.answer_async`); it answers them in its terminal, as every Codex worker did before #155. The rest
     (prompts, slash commands, approvals, images, sleep, wake, send home) works as for any Codex worker.
