@@ -33,13 +33,14 @@ import { hiredToast } from './hiredToast';
 import { askCallout, delegates, instructionsPanel, INSTRUCTIONS_HINT_OFF, INSTRUCTIONS_HINT_ON } from './hireInstructions';
 import { HireCoordinator, notPromptedText, notSentText, type HireCoordinatorHost, type HireOutcome } from './hireCoordinator';
 import type { HireModelPrefs } from './hireModelPrefs';
+import { deskPins, type HirePins } from './hirePins';
 import type { HirePrefs } from './hirePrefs';
 import type { TaskLevels } from './taskLevels';
 import type { ToastAction, ToastKind } from './hud';
 // M10 limits
 import { planLimits } from './limits';
 // M6 start
-import { deskTabs } from './deskTabs';
+import { deskTabs, type DeskTab } from './deskTabs';
 // #51 drafts
 import { Drafts } from './drafts';
 import { backdropPolicy } from './dismiss';
@@ -105,6 +106,10 @@ export interface HireHost extends DialogHost {
   presetsAt?(floor: string, desk: number): void;
   /** #93: "Save as preset…": the preset editor over this dialog, with the form's prompt and choice (absent: no such button). */
   savePreset?(seed: HirePresetSeed, from: HTMLElement): void;
+  /** The hire presets pinned to the tab bar, after the fixed tabs (absent, or without `usePinned`: none). */
+  pins?: HirePins;
+  /** A pinned preset's tab: hire with it at the desk, as the preset list's Use (ui/hirePresets.ts `usePinned`). */
+  usePinned?(floor: string, desk: number, id: string): void;
 }
 
 /** #93: what "Save as preset…" hands the preset editor: the form's text (images are never saved), choice and floor. */
@@ -550,6 +555,10 @@ export class HireDialog {
     host.secrets?.onChange(() => this.drafts.persistChanged());
     // Settings changed which models show: an open form follows it (a hire on its way keeps what it sent).
     this.host.modelPrefs?.onChange(() => this.visibilityChanged());
+    // A pin added, removed or moved (a drag in this tab bar too): the bar follows.
+    this.host.pins?.onChange(() => {
+      if (this.dialog.open) this.render();
+    });
     // #248: so does a change of the task levels, for a hire that asks for one (a plain hire never looks at them).
     this.host.taskLevels?.onChange(() => {
       if (this.levelMode) this.visibilityChanged();
@@ -610,9 +619,10 @@ export class HireDialog {
     if (this.dialog.open) this.dialog.close();
   }
 
-  /** M6 start: the Orchestrator tab handed over: focus on this dialog's Worker tab, as in one tab list. */
-  focusTab(): void {
-    this.dialog.querySelector<HTMLElement>('[data-key="tab:worker"]')?.focus();
+  /** M6 start: the Orchestrator tab handed over: focus on this dialog's Worker tab (or a pinned preset's), as in one tab list. */
+  focusTab(t: DeskTab = 'worker'): void {
+    const at = (k: DeskTab) => this.dialog.querySelector<HTMLElement>(`[data-key="${CSS.escape(`tab:${k}`)}"]`);
+    (at(t) ?? at('worker'))?.focus();
   }
 
   /**
@@ -973,7 +983,7 @@ export class HireDialog {
     const fv = this.host.store.floorView(this.floor);
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const taken = this.takenBy();
-    const key = JSON.stringify([this.floor, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version, labelsOf(this.host.store.hireOptions, this.f.harness), this.levelMode, this.level, this.levelMode ? this.host.taskLevels?.version : null, this.exact, this.host.store.hirePresets?.known, this.addLines, this.host.store.hirePresets?.instructions]);
+    const key = JSON.stringify([this.floor, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version, labelsOf(this.host.store.hireOptions, this.f.harness), this.levelMode, this.level, this.levelMode ? this.host.taskLevels?.version : null, this.exact, this.host.store.hirePresets?.known, this.addLines, this.host.store.hirePresets?.instructions, this.host.store.hirePresets?.version, this.host.pins?.version]);
     // Typing (task, label, folder) only needs the button; everything else re-renders.
     if (key === this.renderedKey) {
       this.renderActions();
@@ -989,22 +999,32 @@ export class HireDialog {
       h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close)),
     );
     // M6 start: the orchestrator tab opens the start-run dialog for this desk; #93 the preset tab the desk's hire presets.
+    // A pinned preset's tab hires with it; the form that came from it shows that tab, and Worker goes back to a plain form.
     const orch = this.host.orchestrate;
     const presets = this.host.presetsAt;
+    const usePinned = this.host.usePinned;
+    const pins = usePinned ? deskPins(this.host.pins, this.host.store.hirePresets, this.host.store.hireOptions, this.floor) : undefined;
+    const fromPin = this.exact && pins?.list.some((p) => p.id === this.exact?.id) ? (`pin:${this.exact.id}` as const) : null;
     this.tabs.hidden = !orch && !presets;
     if (orch || presets)
       this.tabs.replaceChildren(
         deskTabs(
-          'worker',
+          fromPin ?? 'worker',
           (t) => {
             if (this.state === 'hiring') return;
             const { floor, desk } = this;
             this.close();
-            if (t === 'orch') orch?.open(floor, desk);
+            if (t === 'worker') {
+              // From a pinned preset's form: the desk's own form, as the Worker tab of another dialog opens it.
+              this.open(floor, desk);
+              this.focusTab();
+            } else if (t === 'orch') orch?.open(floor, desk);
             else if (t === 'preset') presets?.(floor, desk);
+            else usePinned?.(floor, desk, t.slice('pin:'.length));
           },
           orch ? orch.off() : false,
           !!presets,
+          pins,
         ),
       );
 

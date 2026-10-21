@@ -282,3 +282,54 @@ test('#95: a ticked global preset adds the herdr hiring instructions for the flo
   expect((await sentOf(page, 'hire_preset.')).map((c) => c.t)).toEqual(['hire_preset.create']);
   clean();
 });
+
+test('pinned presets sit in the desk tabs, hire in one click, move by drag or Shift+arrows, and stay pinned after a reload', async ({ page }) => {
+  test.setTimeout(240_000);
+  const key = keyOf('pins');
+  const clean = watchErrors(page);
+  await boot(page, key, 'pastry');
+
+  let list = await openPresets(page, 14);
+  await createPreset(page, 'Deploy', 'Deploy the release.', 'floor');
+  await createPreset(page, 'Audit', 'Audit the dependencies.', 'global');
+  await createPreset(page, 'Triage', 'Triage the new issues.', 'global');
+  list = (await dialog(page)) as Presets;
+  const id = (name: string) => [...list.groups.floor, ...list.groups.global].find((r) => r.name === name)?.id as string;
+  const [deploy, audit, triage] = [id('Deploy'), id('Audit'), id('Triage')];
+  for (const p of [deploy, audit, triage]) await presetsDlg(page).locator(`[data-key="pin:${p}"]`).click();
+  await expect.poll(async () => ((await dialog(page)) as Presets).pins).toEqual([deploy, audit, triage]);
+  await page.keyboard.press('Escape');
+
+  // From the hire form: Audit's tab hires with it, its tab selected.
+  const pinKeys = (scope: ReturnType<typeof hireDlg>) => scope.locator('.dd-tab--pin').evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.key));
+  await openHire(page, 14);
+  expect(await pinKeys(hireDlg(page))).toEqual([`tab:pin:${deploy}`, `tab:pin:${audit}`, `tab:pin:${triage}`]);
+  await hireDlg(page).locator(`[data-key="tab:pin:${audit}"]`).click();
+  await expect.poll(async () => {
+    const d = (await dialog(page)) as Hire | null;
+    return d?.kind === 'hire' && d.state === 'ready' ? [d.preset?.name, d.form.prompt] : null;
+  }, { timeout: 15_000 }).toEqual(['Audit', 'Audit the dependencies.']);
+  const auditTab = hireDlg(page).locator(`[data-key="tab:pin:${audit}"]`);
+  await expect(auditTab).toHaveAttribute('aria-selected', 'true');
+  await expect(auditTab).toBeFocused();
+
+  // Shift+← moves it before Deploy; a drag puts Triage first.
+  await page.keyboard.press('Shift+ArrowLeft');
+  await expect.poll(() => pinKeys(hireDlg(page))).toEqual([`tab:pin:${audit}`, `tab:pin:${deploy}`, `tab:pin:${triage}`]);
+  await expect(hireDlg(page).locator(`[data-key="tab:pin:${audit}"]`)).toBeFocused();
+  await hireDlg(page).locator(`[data-key="tab:pin:${triage}"]`).dragTo(hireDlg(page).locator(`[data-key="tab:pin:${audit}"]`), { targetPosition: { x: 2, y: 10 } });
+  await expect.poll(() => pinKeys(hireDlg(page))).toEqual([`tab:pin:${triage}`, `tab:pin:${audit}`, `tab:pin:${deploy}`]);
+  await page.keyboard.press('Escape');
+
+  // After a reload, in the same order; on another floor only the global ones.
+  await openGame(page, 'demo-m3', '', sim(key));
+  await goTo(page, 'pastry');
+  await openHire(page, 14);
+  expect(await pinKeys(hireDlg(page))).toEqual([`tab:pin:${triage}`, `tab:pin:${audit}`, `tab:pin:${deploy}`]);
+  await page.keyboard.press('Escape');
+  await goTo(page, 'herdr-3d');
+  await openHire(page, 5);
+  expect(await pinKeys(hireDlg(page))).toEqual([`tab:pin:${triage}`, `tab:pin:${audit}`]);
+  expect(await sentOf(page, 'worker.hire')).toEqual([]);
+  clean();
+});

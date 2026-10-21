@@ -24,6 +24,7 @@ import { h, icon, ICON } from './dom';
 import './start.css';
 import { deskTabs } from './deskTabs';
 import { chips, type HireHost } from './hire';
+import { deskPins } from './hirePins';
 import { failureText } from './messages';
 import { onReviewKey, reviewButton, type FieldText, type GoFields } from './secretsFlow';
 import { hiredToast } from './hiredToast';
@@ -201,6 +202,10 @@ export class StartRunDialog {
     });
     // Settings → Harness models changed what the orchestrator chips offer.
     this.host.modelPrefs?.onChange(() => this.visibilityChanged());
+    // A pin added, removed or moved (a drag in this tab bar too): the tab bar follows.
+    this.host.pins?.onChange(() => {
+      if (this.dialog.open) this.render();
+    });
     this.extraDraft = this.newDraft('run-extra', EXTRA_MAX);
     this.promptDraft = this.newDraft('run-prompt', HIRE_PROMPT_MAX_BYTES);
     this.extraC = mountComposer({
@@ -558,7 +563,7 @@ export class StartRunDialog {
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const book = this.host.store.presets;
     const free = fv ? freeDesks(fv).filter((d) => d === this.f.desk || !this.host.held(this.floor).has(d)) : [];
-    const key = JSON.stringify([this.floor, this.f.desk, this.state, this.f.workItem?.id ?? null, this.prep && { ...this.prep, prompt: '', label: '' }, this.f.preset, this.f.orch, this.f.worktree, where, this.takenBy(), this.statusText, book.version, free, this.ticketError !== null, this.host.store.limits.version, this.host.modelPrefs?.version, this.f.orch && labelsOf(this.host.store.hireOptions, this.f.orch.harness)]);
+    const key = JSON.stringify([this.floor, this.f.desk, this.state, this.f.workItem?.id ?? null, this.prep && { ...this.prep, prompt: '', label: '' }, this.f.preset, this.f.orch, this.f.worktree, where, this.takenBy(), this.statusText, book.version, free, this.ticketError !== null, this.host.store.limits.version, this.host.modelPrefs?.version, this.f.orch && labelsOf(this.host.store.hireOptions, this.f.orch.harness), this.host.store.hirePresets?.version, this.host.pins?.version]);
     if (key === this.renderedKey) {
       this.renderLive();
       return;
@@ -579,14 +584,18 @@ export class StartRunDialog {
         'orch',
         (t) => {
           if (this.state === 'starting') return;
-          // The Worker (or #93 Preset) tab takes over, focus and all; what opened this dialog is that dialog's to restore.
+          // The Worker (or #93 Preset, or a pinned preset's) tab takes over, focus and all; what opened this dialog is that dialog's to restore.
           this.returnTo = null;
+          const { floor } = this;
+          const { desk } = this.f;
           this.close();
-          if (t === 'preset') this.host.presetsAt?.(this.floor, this.f.desk);
-          else this.host.hireAt(this.floor, this.f.desk);
+          if (t === 'preset') this.host.presetsAt?.(floor, desk);
+          else if (t.startsWith('pin:')) this.host.usePinned?.(floor, desk, t.slice('pin:'.length));
+          else this.host.hireAt(floor, desk);
         },
         null,
         !!this.host.presetsAt,
+        this.host.usePinned ? deskPins(this.host.pins, this.host.store.hirePresets, this.host.store.hireOptions, this.floor) : undefined,
       ),
     );
 

@@ -47,6 +47,28 @@ async function onFloor(page: Page, session = 'herdr-3d'): Promise<void> {
   await frames(page, 3);
 }
 
+/** #93: desk 6's "Hire preset" tab with a floor preset and a global one, both pinned to the desk tabs. */
+async function pinnedPresets(page: Page): Promise<void> {
+  await onFloor(page);
+  await page.evaluate(() => window.__h3d.openHire(5));
+  await expect.poll(async () => ((await dialog(page)) as { kind?: string; state?: string } | null)?.state).toBe('ready');
+  await page.locator('dialog.desk-dlg--hire [data-key="tab:preset"]').click();
+  const dlg = page.locator('dialog.desk-dlg--hire-presets');
+  for (const [name, global] of [
+    ['Deploy release', false],
+    ['Nightly dependency audit', true],
+  ] as const) {
+    await dlg.locator('[data-key="new"]').click();
+    await dlg.locator('#hp-name').fill(name);
+    await dlg.locator('#hp-prompt').fill(`${name}: deploy the release to staging, then production, and report each step with its logs.`);
+    if (global) await dlg.locator('label:has(> [data-key="preset-scope:global"])').click();
+    await dlg.locator('[data-key="save"]').click();
+    await expect(dlg.locator('[data-key="new"]')).toBeVisible();
+  }
+  for (const pin of await dlg.locator('.hp-pin').all()) await pin.click();
+  await expect(dlg.locator('.dd-tab--pin')).toHaveCount(2);
+}
+
 /** Sits at Tofu (or another worker of demo-m5) and leaves its conversation or terminal up. Tofu waits on a question: its composer is off. */
 export async function sitAtTofu(page: Page, mode: 'transcript' | 'terminal' = 'transcript', name = 'Tofu', minItems = 10): Promise<string> {
   await onFloor(page);
@@ -556,31 +578,28 @@ export const SURFACES: Surface[] = [
   },
   {
     // #93: an empty desk's "Hire preset" tab with one of the floor's own presets and one global (a key of its own: the
-    // fixture server shares a key's presets between connections).
+    // fixture server shares a key's presets between connections), both pinned to the tab bar.
     name: 'hire-presets',
     fixture: 'demo-m4',
     get wsQuery() {
       return `${SIM}&simhirepresets=ui${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     },
-    open: async (page) => {
-      await onFloor(page);
-      await page.evaluate(() => window.__h3d.openHire(5));
-      await expect.poll(async () => ((await dialog(page)) as { kind?: string; state?: string } | null)?.state).toBe('ready');
-      await page.locator('dialog.desk-dlg--hire [data-key="tab:preset"]').click();
-      const dlg = page.locator('dialog.desk-dlg--hire-presets');
-      for (const [name, global] of [
-        ['Deploy release', false],
-        ['Nightly dependency audit', true],
-      ] as const) {
-        await dlg.locator('[data-key="new"]').click();
-        await dlg.locator('#hp-name').fill(name);
-        await dlg.locator('#hp-prompt').fill(`${name}: deploy the release to staging, then production, and report each step with its logs.`);
-        if (global) await dlg.locator('label:has(> [data-key="preset-scope:global"])').click();
-        await dlg.locator('[data-key="save"]').click();
-        await expect(dlg.locator('[data-key="new"]')).toBeVisible();
-      }
-    },
+    open: (page) => pinnedPresets(page),
     root: 'dialog.desk-dlg--hire-presets',
+  },
+  {
+    // The hire form from a pinned preset's tab: that tab selected, after the fixed ones.
+    name: 'hire-pinned',
+    fixture: 'demo-m4',
+    get wsQuery() {
+      return `${SIM}&simhirepresets=ui${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}p`;
+    },
+    open: async (page) => {
+      await pinnedPresets(page);
+      await page.locator('dialog.desk-dlg--hire-presets .dd-tab--pin').last().click();
+      await expect.poll(async () => ((await dialog(page)) as { kind?: string; state?: string } | null)?.state).toBe('ready');
+    },
+    root: 'dialog.desk-dlg--hire',
   },
   {
     // #93: the hire preset editor, as "New preset" opens it.

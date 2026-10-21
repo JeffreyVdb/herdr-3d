@@ -6,10 +6,11 @@ import { draftBlocker, draftFrom, exactProblem, nudgeWanted, pickExact, presetCh
 import { labelsOf } from '../world/modelLabel';
 import { effortsFor } from '../world/settings';
 import { backdropPolicy } from './dismiss';
-import { deskTabs, PRESET_ICON } from './deskTabs';
+import { deskTabs, PIN_ICON, PRESET_ICON } from './deskTabs';
 import { h, icon, ICON, replaceKeepingFocus } from './dom';
 import { chips, modelField, type DialogHost, type HirePresetSeed } from './hire';
 import type { HireModelPrefs } from './hireModelPrefs';
+import { deskPins, type HirePins } from './hirePins';
 import { failureText } from './messages';
 import { onReviewKey, reviewButton, type Go } from './secretsFlow';
 
@@ -24,6 +25,10 @@ import { onReviewKey, reviewButton, type Go } from './secretsFlow';
  * With the box off, Save first asks the classifier (`hire_preset.check`; Use never does, and Hire worker asks on a plain form only, #117) whether the prompt hands
  * work to other agents; when it does, the editor asks in place (Turn on and save / Save as is; Esc back to the editor).
  * The box is only ever ticked by a click, and anything but a "yes" in time saves the preset as it is.
+ *
+ * Pins: a row's Pin puts the preset on the desk dialogs' tab bar, after the fixed tabs, in this browser (ui/hirePins.ts);
+ * its tab hires with it as Use does (`usePinned`, asking before a desk's unsent task goes). The pins are dragged, or moved
+ * by Shift+← / Shift+→, to another place in the bar.
  */
 
 /** #95: the copy of the editor's box, its hint, and what an older bridge says instead. */
@@ -35,6 +40,8 @@ export const NUDGE_TEXT = 'This task starts other agents (workers or subagents).
 export interface HirePresetsHost extends DialogHost {
   /** Settings → Harness models: the editor offers the models it leaves shown, plus the preset's own (absent: every model). */
   modelPrefs?: HireModelPrefs;
+  /** The presets pinned to the desk dialogs' tab bar (absent: no Pin buttons and no pinned tabs). */
+  pins?: HirePins;
   /** The Worker tab: the hire dialog for the same desk. */
   hireAt(floor: string, desk: number): void;
   /** The Orchestrator tab (absent: none): why it is off, and the start-run dialog for the same desk. */
@@ -71,6 +78,8 @@ export interface HirePresetRow {
   choice: string;
   preview: string;
   problem: ExactProblem | null;
+  /** On the desk dialogs' tab bar. */
+  pinned: boolean;
 }
 
 /** What the dialog shows (test hook). */
@@ -85,6 +94,8 @@ export interface HirePresetsSummary {
   /** Why hire presets cannot be used on this bridge, null when they can. */
   off: string | null;
   groups: { floor: HirePresetRow[]; global: HirePresetRow[] };
+  /** The ids of the pinned tabs this floor's tab bar shows, in order. */
+  pins: string[];
   confirm: string | null;
   replacing: string | null;
   editing: { id: string | null; draft: HirePresetDraft; error: EditView['error']; saving: boolean; stale: 'changed' | 'deleted' | null; problem: ExactProblem | null; nudge: boolean } | null;
@@ -170,6 +181,9 @@ export class HirePresetsDialog {
     this.host.modelPrefs?.onChange(() => {
       if (this.dialog.open) this.render();
     });
+    this.host.pins?.onChange(() => {
+      if (this.dialog.open) this.render();
+    });
     parent.append(this.dialog);
   }
 
@@ -212,6 +226,25 @@ export class HirePresetsDialog {
     this.edit(null, { name: '', prompt: seed.prompt, harness: seed.harness, model: seed.model, effort: seed.effort, scope: 'floor', instructions: seed.instructions === true }, note);
     if (!this.dialog.open) this.dialog.showModal();
     this.focusEditor();
+  }
+
+  /**
+   * A pinned preset's tab: the hire form for the desk with its prompt and exact choice, as Use. A desk with an unsent
+   * first task opens the list instead, asking before it goes (Keep my task / Replace it).
+   */
+  usePinned(floor: string, desk: number, id: string): void {
+    const p = this.host.store.hirePresets.get(id);
+    if (!p) {
+      this.host.toast('That hire preset is gone.', 'info');
+      return;
+    }
+    if (!this.host.unsent(floor, desk)) {
+      this.close();
+      this.host.use(floor, desk, structuredClone(p), false);
+      return;
+    }
+    this.open(floor, desk);
+    this.use(p, false);
   }
 
   private off(): string | null {
@@ -258,7 +291,7 @@ export class HirePresetsDialog {
   /** A preset as the list shows it. */
   private row(p: HirePreset): HirePresetRow {
     const cat = this.host.store.hireOptions;
-    return { id: p.id, name: p.name, choice: presetChoiceText(cat, p), preview: promptPreview(p.prompt), problem: exactProblem(cat, p) };
+    return { id: p.id, name: p.name, choice: presetChoiceText(cat, p), preview: promptPreview(p.prompt), problem: exactProblem(cat, p), pinned: this.host.pins?.has(p.id) === true };
   }
 
   /** An editor's preset changed or went elsewhere since it was opened. */
@@ -303,12 +336,14 @@ export class HirePresetsDialog {
           (t) => {
             const { floor, desk } = this;
             if (desk === null) return;
+            if (t.startsWith('pin:')) return this.usePinned(floor, desk, t.slice('pin:'.length));
             this.close();
             if (t === 'orch') orch?.open(floor, desk);
             else this.host.hireAt(floor, desk);
           },
           orch ? orch.off() : false,
           true,
+          deskPins(this.host.pins, this.host.store.hirePresets, this.host.store.hireOptions, this.floor),
         ),
       ]);
     }
@@ -390,14 +425,32 @@ export class HirePresetsDialog {
           h('button', { type: 'button', class: 'btn btn--sm btn--primary', 'data-key': `replace:${p.id}`, onclick: () => this.use(p, true) }, 'Replace it'),
         ),
       );
-    } else
+    } else {
+      const pins = this.host.pins;
       tail = h(
         'div',
         { class: 'pp-tools' },
         h('button', { type: 'button', class: 'btn btn--sm btn--primary', 'data-key': `use:${p.id}`, 'aria-label': `Use ${p.name}`, onclick: () => this.use(p, false) }, 'Use'),
+        pins
+          ? h(
+              'button',
+              {
+                type: 'button',
+                class: 'btn btn--sm hp-pin',
+                'data-key': `pin:${p.id}`,
+                'aria-pressed': r.pinned ? 'true' : 'false',
+                'aria-label': `Pin ${p.name} to the tabs`,
+                title: r.pinned ? 'On the tab bar: hire with it in one click. Click to unpin.' : 'Put it on the tab bar, to hire with it in one click',
+                onclick: () => (r.pinned ? pins.unpin(p.id) : pins.pin(p.id)),
+              },
+              icon(PIN_ICON),
+              h('span', {}, 'Pin'),
+            )
+          : null,
         h('button', { type: 'button', class: 'btn btn--sm', 'data-key': `edit:${p.id}`, 'aria-label': `Edit ${p.name}`, onclick: () => this.edit(p) }, icon(ICON.pencil), h('span', {}, 'Edit')),
         h('button', { type: 'button', class: 'btn btn--sm btn--danger-quiet', 'data-key': `delete:${p.id}`, 'aria-label': `Delete ${p.name}`, onclick: () => this.ask(p.id) }, icon(ICON.trash), h('span', {}, 'Delete')),
       );
+    }
     return h(
       'li',
       { class: 'pp-row hp-row', 'data-id': p.id, 'data-confirm': deleting || replacing ? 'true' : null },
@@ -797,6 +850,7 @@ export class HirePresetsDialog {
       desk: this.desk,
       off: this.off(),
       groups: { floor: floor.map((p) => this.row(p)), global: global.map((p) => this.row(p)) },
+      pins: deskPins(this.host.pins, this.host.store.hirePresets, this.host.store.hireOptions, this.floor)?.list.map((t) => t.id) ?? [],
       confirm: v.kind === 'list' ? v.confirm : null,
       replacing: v.kind === 'list' ? v.replacing : null,
       editing: v.kind === 'edit' ? { id: v.id, draft: { ...v.draft }, error: v.error, saving: v.saving, stale: this.stale(v), problem: exactProblem(this.host.store.hireOptions, v.draft), nudge: v.nudge } : null,
