@@ -405,6 +405,15 @@
     background 180ms var(--ov-ease),
     transform 180ms var(--ov-ease),
     box-shadow 180ms var(--ov-ease);
+  /* #145: a row off the board's view is skipped: no style, layout, paint or animation until it scrolls near (or takes
+     the focus). Its height is the one it last had, until it was ever drawn its kind's in this layout and theme (the
+     content box's: its padding and rule come on top; each the mean measured on perf-city240's every-floor page, so
+     the scrollbar holds still; the phone layouts' and Ubuntu's below, each kind's set again after `.ov-row`).
+     Its paint is clipped: the lamp's glow and the needs-you ring stay inside its padding box, and its wires may cross its
+     rule (the stub runs over it into the next row's). */
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 43px;
+  overflow-clip-margin: border-box;
 }
 .ov-row:hover,
 .ov-row:focus-visible {
@@ -428,6 +437,7 @@
 .ov-row--child {
   padding-top: 7px;
   padding-bottom: 7px;
+  contain-intrinsic-block-size: auto 20px;
 }
 .ov-row--child .ov-fold {
   top: 5px;
@@ -553,6 +563,7 @@
   border-bottom-color: transparent;
   border-radius: 0 0 6px 6px;
   background: linear-gradient(to bottom, var(--ov-band-tint), transparent 85%);
+  contain-intrinsic-block-size: auto 28.5px;
 }
 .ov-board > .ov-row--floor:first-child {
   margin-top: 0;
@@ -690,8 +701,28 @@
 .ov-light--ghost {
   box-shadow: inset 0 0 0 2px var(--idle);
 }
+/*
+ * #145: a working lamp blinks: its body dimmed to 32 % underneath, and over it the lit lamp with its halo and glow, drawn
+ * once, whose opacity alone animates (lit → out → lit). The body reads as one lamp at 1 → 0.32 → 1 and the glow goes out
+ * with it, as when the lamp's own opacity and shadow animated; now the blink is composited, never repainted, on one
+ * layer per lamp. Calm: the lit lamp, steady, without its glow.
+ */
 .ov-row[data-display='working'] .ov-light {
+  background: color-mix(in srgb, var(--lamp) 32%, transparent);
+}
+.ov-row[data-display='working'] .ov-light::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--lamp);
+  box-shadow:
+    0 0 0 3px var(--working-halo),
+    0 0 14px 2px var(--working-glow);
   animation: ov-blink var(--ov-blink) ease-in-out infinite;
+}
+.ov[data-calm] .ov-row[data-display='working'] .ov-light::before {
+  box-shadow: none;
 }
 .ov-row[data-display='needs_you'] .ov-light::after {
   content: '';
@@ -702,14 +733,8 @@
   animation: ov-ring 1.6s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
 }
 @keyframes ov-blink {
-  0%,
-  100% {
-    opacity: 1;
-    box-shadow: 0 0 0 3px var(--working-halo), 0 0 14px 2px var(--working-glow);
-  }
   50% {
-    opacity: 0.32;
-    box-shadow: 0 0 0 0 transparent;
+    opacity: 0;
   }
 }
 @keyframes ov-ring {
@@ -1483,6 +1508,13 @@
       'light who since'
       'light what what';
     row-gap: 6px;
+    contain-intrinsic-block-size: auto 87px; /* #145: the estimates of the phone grid (see .ov-row) */
+  }
+  .ov-row--child {
+    contain-intrinsic-block-size: auto 46px;
+  }
+  .ov-row--floor {
+    contain-intrinsic-block-size: auto 55px;
   }
   .ov-row > .ov-light {
     grid-area: light;
@@ -1556,6 +1588,13 @@
   .ov-doing:has(> .ov-state--act) > .ov-sep,
   .ov-detail {
     display: none;
+  }
+  /* #145: a child's task and a floor's chips wrap to another line about here (a floor's at some 400px, by its chips). */
+  .ov-row--child {
+    contain-intrinsic-block-size: auto 64px;
+  }
+  .ov-row--floor {
+    contain-intrinsic-block-size: auto 65px;
   }
 }
 
@@ -1778,6 +1817,35 @@
 @media (max-width: 760px) {
   :root[data-ui-theme='ubuntu'] .ov-tools .ov-btn--floors {
     width: var(--ctl-h);
+  }
+}
+/* #145: Ubuntu's rows are taller (its faces): their estimates (see .ov-row), each kind's after the worker's. */
+:root[data-ui-theme='ubuntu'] .ov-row {
+  contain-intrinsic-block-size: auto 46px;
+}
+:root[data-ui-theme='ubuntu'] .ov-row--child {
+  contain-intrinsic-block-size: auto 24px;
+}
+:root[data-ui-theme='ubuntu'] .ov-row--floor {
+  contain-intrinsic-block-size: auto 30px;
+}
+@media (max-width: 760px) {
+  :root[data-ui-theme='ubuntu'] .ov-row {
+    contain-intrinsic-block-size: auto 90px;
+  }
+  :root[data-ui-theme='ubuntu'] .ov-row--child {
+    contain-intrinsic-block-size: auto 50px;
+  }
+  :root[data-ui-theme='ubuntu'] .ov-row--floor {
+    contain-intrinsic-block-size: auto 58px;
+  }
+}
+@media (max-width: 480px) {
+  :root[data-ui-theme='ubuntu'] .ov-row--child {
+    contain-intrinsic-block-size: auto 69px;
+  }
+  :root[data-ui-theme='ubuntu'] .ov-row--floor {
+    contain-intrinsic-block-size: auto 69px;
   }
 }
 @media (pointer: coarse) {

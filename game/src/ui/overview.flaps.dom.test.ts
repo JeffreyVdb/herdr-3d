@@ -191,6 +191,22 @@ describe('the overview’s now line while the model writes it (#119)', () => {
     expect(line.classList.contains('ov-flip-in')).toBe(true);
   });
 
+  it('#145: the page opened again keeps the line, and its skeleton turns again (the close stopped it)', () => {
+    const { ov, row } = setup([worker('a', { title: 'Reading hub.go', digest: titleNow() })]);
+    ov.open('top');
+    const line = row('a').querySelector<HTMLElement>('.ov-now') as HTMLElement;
+    ov.closeNow();
+    const cells = [...line.querySelectorAll<HTMLElement>('.ov-fc')];
+    const still = cells.map((c) => c.dataset.g);
+    vi.advanceTimersByTime(400);
+    expect(cells.map((c) => c.dataset.g)).toEqual(still);
+    ov.open('top');
+    expect(row('a').querySelector('.ov-now')).toBe(line);
+    expect([...line.querySelectorAll('.ov-fc')]).toEqual(cells);
+    vi.advanceTimersByTime(400);
+    expect(cells.map((c) => c.dataset.g)).not.toEqual(still);
+  });
+
   it('calm: a still bar that says it, no job and no frame; the model’s line shows at once', () => {
     const { ov, upsert, row, state } = setup([worker('a', { title: 'Reading hub.go', digest: titleNow() })], true);
     const raf = vi.spyOn(globalThis, 'requestAnimationFrame');
@@ -204,7 +220,8 @@ describe('the overview’s now line while the model writes it (#119)', () => {
     expect(line.querySelector('.ov-ch')).toBeNull();
     expect(line.querySelector('.ov-now-text')?.textContent).toBe(LINE);
     expect(line.classList.contains('ov-flip-in')).toBe(false);
-    expect(raf).not.toHaveBeenCalled();
+    // One frame only: the open's, for its focus (#145); none of the clock's.
+    expect(raf).toHaveBeenCalledTimes(1);
     // Battery saver off again: a skeleton turns.
     state.calm = false;
     upsert('a', { digest: titleNow() });

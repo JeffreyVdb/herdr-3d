@@ -1044,7 +1044,9 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   both follow (`corner.ts`: what makes them step aside), what it remembers (`inboxPrefs.ts`, `h3d.inbox`), Settings →
   Notifications (`notifySection.ts`: desktop notifications and their permission, the chime and its Test) and its pings; #118:
   the floor overview page (`overview.ts`, `overview.css`: the `inset: 0` layer over everything, its grow out of the
-  wall screen, the tree's keys, live rows) and its collapsed groups (`overviewPrefs.ts`, `h3d.overview.collapsed`), and
+  wall screen, the tree's keys, live rows; #145: the rows kept when the same view opens again, a row off the board's
+  view skipped by `content-visibility`, endless motion on opacity and transform only: `e2e/h145-overview-rows.spec.ts`,
+  and the page's own cost traced by the opt-in `e2e/h145-overview-perf.spec.ts`, `H3D_PERF=1`) and its collapsed groups (`overviewPrefs.ts`, `h3d.overview.collapsed`), and
   Settings → Floor overview summaries (`digestSection.ts`, its state in `world/digestSettings.ts`); #64 schedules: the scheduled agents
   dialog (`schedules.ts`: Upcoming, Needs attention, Scheduled successfully, All floors; `openSchedules({floor?, allFloors?,
   focus?})` in `app.ts` is every entry point's) and its create / edit form (`scheduleForm.ts`, shared by "New", Edit and the

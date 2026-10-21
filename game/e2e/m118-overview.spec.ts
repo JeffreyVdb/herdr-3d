@@ -218,6 +218,12 @@ test('reduced motion: no blink, cascade or flap; steady lights on the page', asy
   await expect.poll(async () => (await page_(page))?.calm).toBe(true);
   const anim = await page.locator('.ov-row[data-display="working"] .ov-light').first().evaluate((e) => getComputedStyle(e).animationName);
   expect(anim).toBe('none');
+  // #145: the blink is the lamp's lit layer: steady, full, without its glow.
+  const lit = await page.locator('.ov-row[data-display="working"] .ov-light').first().evaluate((e) => {
+    const s = getComputedStyle(e, '::before');
+    return { animation: s.animationName, opacity: s.opacity, glow: s.boxShadow };
+  });
+  expect(lit).toEqual({ animation: 'none', opacity: '1', glow: 'none' });
   expect((await info(page))?.wall?.blinking).toBe(false);
 });
 
