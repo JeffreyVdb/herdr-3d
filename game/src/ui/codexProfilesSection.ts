@@ -330,8 +330,7 @@ export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTM
       const res = await host.send('codex_profiles.share', { key: p.key, share: true, dry_run: true });
       busy.delete(p.key);
       if (!res.ok) {
-        shares.set(p.key, { kind: 'report', text: codexProfilesFailureText(res.code, res.message), error: true });
-        sync();
+        reported(p, res);
         focusByKey(fix ? `fix:${p.key}` : `share:${p.key}`);
         return;
       }

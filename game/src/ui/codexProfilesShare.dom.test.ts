@@ -145,6 +145,47 @@ describe('sharing a Codex profile’s setup (#167)', () => {
     expect([live.getAttribute('role'), live.textContent]).toEqual(['status', 'work: ~/.codex-work changed since you looked; look again.']);
   });
 
+  it('says a refused plan in the status region, over the outcome before it (UX-R1)', async () => {
+    let refusing = false;
+    const no = { ok: false, code: 'bad_request', message: 'bad args: The default Codex home (~/.codex) is not there to share from.' } as const;
+    const m = mount(state({ share: true }), [], (a) => (refusing && a.dry_run ? no : null));
+    const live = () => document.querySelector('[data-hook="share-live"]')?.textContent;
+    const sw = m.key('share:work') as HTMLInputElement;
+    sw.checked = false;
+    sw.dispatchEvent(new Event('change'));
+    await m.flush();
+    expect(live()).toBe('work: Copied config.toml from personal.');
+    refusing = true;
+    const again = m.key('share:work') as HTMLInputElement; // the rows are rebuilt
+    again.checked = true;
+    again.dispatchEvent(new Event('change'));
+    await m.flush();
+    expect(m.sent.at(-1)!.args).toEqual({ key: 'work', share: true, dry_run: true });
+    const r = m.row('work').querySelector('[data-hook="share-report"]')!;
+    expect([r.textContent, r.classList.contains('settings-field-error')]).toEqual(['The default Codex home (~/.codex) is not there to share from.', true]);
+    expect(live()).toBe('work: The default Codex home (~/.codex) is not there to share from.');
+    expect((m.key('share:work') as HTMLInputElement).checked).toBe(false);
+    expect(document.activeElement).toBe(m.key('share:work'));
+  });
+
+  it('says a refused Fix plan in the status region, and looks again when the profile is gone (UX-R1)', async () => {
+    let refusing = false;
+    const m = mount(state({ share: true, drift: DRIFT }), REPLACE, (a) => (refusing && a.dry_run ? { ok: false, code: 'not_found', message: 'not found: work' } : null));
+    const live = () => document.querySelector('[data-hook="share-live"]')?.textContent;
+    (m.key('move:work:infra') as HTMLButtonElement).click();
+    (m.key('move-confirm:work') as HTMLButtonElement).click();
+    await m.flush();
+    expect(live()).toBe('work: Moved the skill infra to ~/.agents/skills/infra.');
+    refusing = true;
+    (m.key('fix:work') as HTMLButtonElement).click();
+    await m.flush();
+    expect(m.sent.slice(-2).map((x) => x.t)).toEqual(['codex_profiles.share', 'codex_profiles.get']);
+    const text = 'That profile is gone from the bridge. The list is up to date again.';
+    expect(m.row('work').querySelector('[data-hook="share-report"]')?.textContent).toBe(text);
+    expect(live()).toBe(`work: ${text}`);
+    expect(document.activeElement).toBe(m.key('fix:work'));
+  });
+
   it('turns sharing off at once, with its report', async () => {
     const m = mount(state({ share: true }));
     const sw = m.key('share:work') as HTMLInputElement;
