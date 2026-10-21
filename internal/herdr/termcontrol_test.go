@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -434,7 +436,9 @@ func TestControlTerminalSupersedesInAFullQueue(t *testing.T) {
 		if err := ct.Resize(110, 35, 0, 0); err != nil {
 			t.Fatalf("Resize in a full queue: %v", err)
 		}
-		p.release()
+		// herdr reads again only once Close has made room for the release
+		// (the oldest wheel), or the count would depend on who goes first.
+		time.AfterFunc(20*time.Millisecond, p.release)
 		ct.Close()
 		got := p.written()
 		if n := len(got); n != controlQueue+1 || got[n-3] != liveLine || !strings.Contains(got[n-2], `"cols":110`) || got[n-1] != releaseLine {
@@ -454,4 +458,154 @@ func TestControlTerminalSupersedesInAFullQueue(t *testing.T) {
 		p.release()
 		ct.Close()
 	})
+}
+
+// busyController is a stalledController that yields before every write, as
+// a herdr that reads again while commands are sent, and exits once it has
+// read the release (so Close does not wait out the grace). With an rng (the
+// writer's own), it also pauses now and then, so the queue fills and drains.
+type busyController struct {
+	*stalledController
+	rng *rand.Rand
+}
+
+func newBusyController(rng *rand.Rand) *busyController {
+	return &busyController{newStalledController(), rng}
+}
+
+func (p *busyController) Stdin() io.WriteCloser { return p }
+func (p *busyController) Write(b []byte) (int, error) {
+	runtime.Gosched()
+	if p.rng != nil && p.rng.IntN(16) == 0 {
+		time.Sleep(time.Duration(p.rng.IntN(200)) * time.Microsecond)
+	}
+	n, err := p.stalledController.Write(b)
+	if strings.Contains(string(b), `"terminal.release"`) {
+		p.exited.Do(func() { close(p.done) })
+	}
+	return n, err
+}
+
+func controlOn(t *testing.T, p DuplexProc) ControlStream {
+	t.Helper()
+	c := &Control{Duplex: func([]string) (DuplexProc, error) { return p, nil }}
+	ct, err := c.ControlTerminal(context.Background(), "h3d-it-1", "w1:p1", 120, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ct
+}
+
+// A size that supersedes in a full queue while herdr reads again keeps the
+// order of what it keeps: no wheel queued before the reset to the live
+// bottom reaches herdr after it (the wheels would scroll the view back up).
+func TestControlTerminalSupersedeKeepsTheOrder(t *testing.T) {
+	for trial := range 10000 {
+		p := newBusyController(nil)
+		ct := controlOn(t, p)
+		if err := ct.Scroll(true, 1, 0, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+		<-p.entered
+		for i := range controlQueue - 2 {
+			if err := ct.Scroll(true, 1, i, 0, 0); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := ct.Resize(100, 30, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+		if err := ct.Live(); err != nil {
+			t.Fatal(err)
+		}
+		p.release()
+		if err := ct.Resize(110, 35, 0, 0); err != nil {
+			t.Fatalf("trial %d: Resize in a full queue: %v", trial, err)
+		}
+		ct.Close()
+		got := p.written()
+		live := slices.Index(got, liveLine)
+		if live < 0 {
+			t.Fatalf("trial %d: the reset never reached herdr: %q", trial, got)
+		}
+		if want := []string{`{"type":"terminal.resize","cols":110,"rows":35,"cell_width_px":0,"cell_height_px":0}`, releaseLine}; !slices.Equal(got[live+1:], want) {
+			t.Fatalf("trial %d: after the reset %d lines, the first %s; want %q", trial, len(got)-live-1, got[min(live+1, len(got)-1)], want)
+		}
+	}
+}
+
+// The queue's order over many interleavings: one sender queues wheels, sizes
+// and resets while herdr reads at an uneven pace, then closes. What reaches
+// herdr is the accepted commands in the order they were sent, less the ones
+// superseded: (a) a subsequence of that order, so (b) nothing queued before a
+// reset is written after it; (c) the restore and the release come last.
+func TestControlTerminalQueueOrderProperty(t *testing.T) {
+	refused, dropped := 0, 0
+	for seed := range 300 {
+		rng := rand.New(rand.NewPCG(uint64(seed), 1))
+		p := newBusyController(rand.New(rand.NewPCG(uint64(seed), 2)))
+		p.release()
+		ct := controlOn(t, p)
+		var accepted []string // the lines, in the order they were queued
+		for k := range 400 {
+			var err error
+			var line string
+			switch r := rng.IntN(20); {
+			case r < 12: // a wheel, told apart by its cell
+				err = ct.Scroll(true, 1, k%MaxCols, k/MaxCols, 0)
+				line = fmt.Sprintf(`{"type":"terminal.scroll","direction":"up","lines":1,"source":"wheel","column":%d,"row":%d,"modifiers":0}`, k%MaxCols, k/MaxCols)
+			case r < 16: // a size (never the restore's 80×24)
+				err = ct.Resize(200+k%100, MinRows+k/100, 0, 0)
+				line = fmt.Sprintf(`{"type":"terminal.resize","cols":%d,"rows":%d,"cell_width_px":0,"cell_height_px":0}`, 200+k%100, MinRows+k/100)
+			case r < 19: // a reset, told apart by a seq herdr ignores
+				err = ct.(*controller).send(kindLive, struct {
+					Type string `json:"type"`
+					Seq  int    `json:"seq"`
+				}{"terminal.input", k})
+				line = fmt.Sprintf(`{"type":"terminal.input","seq":%d}`, k)
+				if err != nil {
+					t.Fatalf("seed %d: a reset was refused: %v", seed, err)
+				}
+			default:
+				runtime.Gosched()
+				continue
+			}
+			if err != nil {
+				refused++
+				continue
+			}
+			accepted = append(accepted, line)
+		}
+		ct.RestoreOnRelease(80, 24)
+		if err := ct.Close(); err != nil {
+			t.Fatalf("seed %d: Close: %v", seed, err)
+		}
+		got := p.written()
+		n := len(got)
+		if n < 2 || !slices.Equal(got[n-2:], []string{restoreLine, releaseLine}) {
+			t.Fatalf("seed %d: stdin ends %q, want the restore then the release", seed, got[max(0, n-3):])
+		}
+		at := make(map[string]int, len(accepted))
+		for i, l := range accepted {
+			at[l] = i
+		}
+		last := -1
+		for _, l := range got[:n-2] {
+			i, ok := at[l]
+			switch {
+			case !ok:
+				t.Fatalf("seed %d: %s reached herdr but was not queued before the close", seed, l)
+			case i <= last && strings.Contains(accepted[last], `"terminal.input"`):
+				t.Fatalf("seed %d: %s, queued before the reset %s, reached herdr after it", seed, l, accepted[last])
+			case i <= last:
+				t.Fatalf("seed %d: %s reached herdr after %s, queued later", seed, l, accepted[last])
+			}
+			last = i
+		}
+		dropped += len(accepted) - (n - 2)
+	}
+	if refused == 0 || dropped == 0 {
+		t.Fatalf("the queue never filled (%d wheels refused, %d commands superseded): the test proves nothing", refused, dropped)
+	}
+	t.Logf("%d commands refused, %d superseded", refused, dropped)
 }

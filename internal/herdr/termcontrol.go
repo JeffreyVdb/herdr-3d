@@ -116,8 +116,8 @@ func (c *Control) ControlTerminal(ctx context.Context, session, pane string, col
 	if err != nil {
 		return nil, fmt.Errorf("herdr control %s: %w", opControl, err)
 	}
-	ct := &controller{observer: observer{p: p, r: bufio.NewReaderSize(p.Stdout(), 64<<10)}, p: p,
-		queue: make(chan ctlCmd, controlQueue), wrote: make(chan struct{})}
+	ct := &controller{observer: observer{p: p, r: bufio.NewReaderSize(p.Stdout(), 64<<10)}, p: p, wrote: make(chan struct{})}
+	ct.more = sync.NewCond(&ct.mu)
 	go ct.write()
 	return ct, nil
 }
@@ -126,9 +126,13 @@ type controller struct {
 	observer
 	p DuplexProc
 
+	// The queue is only read or changed under mu, by the senders and by the
+	// writer taking its head, so dropping the commands one makes moot never
+	// lets a later command overtake one that is kept.
 	mu       sync.Mutex
-	closed   bool
-	queue    chan ctlCmd   // the commands for stdin, in order (closed by Close)
+	more     *sync.Cond    // signalled when the queue grows or closes
+	closed   bool          // no more commands; the writer stops once the queue is empty
+	queue    []ctlCmd      // the commands for stdin, in order (at most controlQueue)
 	wrote    chan struct{} // closed when the writer has stopped
 	released bool          // the writer wrote terminal.release
 	restore  [2]int
@@ -151,16 +155,25 @@ type ctlCmd struct {
 }
 
 // write writes the queued commands to the controller's stdin, in order,
-// until the queue is closed; then it closes stdin (EOF also detaches).
+// until the queue is closed and empty; then it closes stdin (EOF also
+// detaches). It writes without holding mu, so a wedged herdr blocks no
+// sender.
 func (ct *controller) write() {
 	defer close(ct.wrote)
 	stdin := ct.p.Stdin()
 	defer stdin.Close()
-	for c := range ct.queue {
-		if _, err := stdin.Write(c.line); err != nil {
-			for range ct.queue { // drain: nothing more reaches herdr
-			}
+	broken := false
+	for {
+		c, ok := ct.next()
+		if !ok {
 			return
+		}
+		if broken {
+			continue // drain: nothing more reaches herdr
+		}
+		if _, err := stdin.Write(c.line); err != nil {
+			broken = true
+			continue
 		}
 		if c.kind == kindRelease {
 			ct.mu.Lock()
@@ -168,6 +181,22 @@ func (ct *controller) write() {
 			ct.mu.Unlock()
 		}
 	}
+}
+
+// next waits for a queued command and takes the oldest; false once the
+// queue is closed and empty.
+func (ct *controller) next() (ctlCmd, bool) {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	for len(ct.queue) == 0 {
+		if ct.closed {
+			return ctlCmd{}, false
+		}
+		ct.more.Wait()
+	}
+	c := ct.queue[0]
+	ct.queue = ct.queue[1:]
+	return c, true
 }
 
 // command is one JSONL command for the controller's stdin.
@@ -194,55 +223,42 @@ func (ct *controller) send(kind ctlKind, cmd any) error {
 	if ct.closed {
 		return ErrControlClosed
 	}
-	if len(ct.queue) == cap(ct.queue) {
+	if len(ct.queue) == controlQueue {
 		ct.supersede(kind)
 	}
-	select {
-	case ct.queue <- c:
-		return nil
-	default:
+	if len(ct.queue) == controlQueue {
 		return errors.New("herdr: the terminal controller is not reading its commands")
 	}
+	ct.queue = append(ct.queue, c)
+	ct.more.Signal()
+	return nil
 }
 
-// unqueue takes the oldest queued command (under mu), unless the writer took
-// them all.
-func (ct *controller) unqueue() (ctlCmd, bool) {
-	select {
-	case c := <-ct.queue:
-		return c, true
-	default:
-		return ctlCmd{}, false
-	}
-}
-
-// supersede drops the queued commands a new one of kind makes moot (under
-// mu; the writer may take commands meanwhile, never after the ones kept): a
-// size makes the sizes before it moot, the reset to the live bottom the
-// wheels and resets before it and all sizes but the last. A wheel drops
-// nothing.
+// supersede drops the queued commands a new one of kind makes moot, keeping
+// the rest in order (under mu, so the writer takes none meanwhile): a size
+// makes the sizes before it moot, the reset to the live bottom the wheels and
+// resets before it and all sizes but the last. A wheel drops nothing.
 func (ct *controller) supersede(kind ctlKind) {
 	if kind != kindResize && kind != kindLive {
 		return
 	}
-	var queued []ctlCmd
-	for c, ok := ct.unqueue(); ok; c, ok = ct.unqueue() {
-		queued = append(queued, c)
-	}
 	last := -1
-	for i, c := range queued {
+	for i, c := range ct.queue {
 		if c.kind == kindResize {
 			last = i
 		}
 	}
-	for i, c := range queued {
+	kept := ct.queue[:0]
+	for i, c := range ct.queue {
 		switch {
 		case c.kind == kindResize && (kind == kindResize || i != last):
 		case kind == kindLive && (c.kind == kindScroll || c.kind == kindLive):
 		default:
-			ct.queue <- c
+			kept = append(kept, c)
 		}
 	}
+	clear(ct.queue[len(kept):])
+	ct.queue = kept
 }
 
 func (ct *controller) Resize(cols, rows, cellW, cellH int) error {
@@ -318,15 +334,11 @@ func (ct *controller) Close() error {
 			final = []ctlCmd{restore, release}
 		}
 		ct.closed = true
-		for cap(ct.queue)-len(ct.queue) < len(final) {
-			if _, ok := ct.unqueue(); !ok {
-				break
-			}
+		if over := len(ct.queue) + len(final) - controlQueue; over > 0 {
+			ct.queue = ct.queue[over:]
 		}
-		for _, c := range final {
-			ct.queue <- c
-		}
-		close(ct.queue)
+		ct.queue = append(ct.queue, final...)
+		ct.more.Signal()
 		ct.mu.Unlock()
 		timer := time.NewTimer(ReleaseGrace)
 		defer timer.Stop()
