@@ -23,7 +23,7 @@ import { effectiveStatus } from '../world/codexQuestions';
 import type { WorldStore } from '../world/store';
 import { DESK_H, SEAT_OFFSET } from '../world/layout';
 import { DEFAULT_SCREENS, screensParam, WatchPlanner, type Candidate, type ScreenConfig } from '../world/screens';
-import { InputLanes, InputQueue, MAX_PROMPT, seatedKey, textItems, type ZoomAction } from './keys';
+import { InputLanes, InputQueue, MAX_PROMPT, seatedKey, textItems, type InputKind, type SeatClick, type ZoomAction } from './keys';
 import type { PromptSecretsFlow } from '../ui/secretsFlow';
 import { fullscreenChip, type FullscreenChip } from './fullscreen';
 import { pasteImages } from './pasteImages';
@@ -116,8 +116,10 @@ export interface SeatView {
   workerStatus?(display: Display | null): void;
   /** #176: the terminal is watched read only, and why (null: the seat owns it). */
   readOnly?(note: { text: string; title?: string } | null): void;
-  /** #176: how far up herdr's history the terminal shows (null or 0: live). */
-  history?(h: { offset: number; max: number } | null): void;
+  /** #176: how far up herdr's history the terminal shows (null or 0: live); #176 part 2: its rows place the scrollbar's thumb. */
+  history?(h: { offset: number; max: number; rows?: number } | null): void;
+  /** #176 part 2: whether a click in the terminal reaches its app (`old`: herdr before 0.9.2; null: nothing to say). */
+  mouse?(state: 'on' | 'old' | 'readonly' | null): void;
   status(kind: 'ok' | 'busy' | 'error' | 'offline', text: string | null): void;
   focus(): void;
   /** M16: the terminal or the conversation is up. */
@@ -282,6 +284,8 @@ export class Laptops {
         {
           keys: (input) => this.host.send('worker.keys', { id, input }),
           prompt: (text) => this.host.send('worker.prompt', { id, text }),
+          paste: (text) => this.host.send('worker.paste', { id, text }), // #176 part 2
+          click: (c) => this.host.send('terminal.mouse', { id, button: c.button, column: c.column, row: c.row, ...(c.modifiers ? { modifiers: c.modifiers } : {}) }),
           done: (kind, r) => {
             this.inputDone(id, kind, r);
             settled();
@@ -597,6 +601,7 @@ export class Laptops {
       open: (url) => this.host.external?.(url),
       paste: (text, files) => this.paste(text, files),
       keyboard: () => this.host.seat.focus(),
+      click: (c) => this.seatClick({ button: 'left', ...c }), // #176 part 2
     });
     this.lookSeatTerm();
     return this.seatTerm;
@@ -621,13 +626,34 @@ export class Laptops {
     this.seatTerm?.setFitting(c ? mode === 'control' || mode === 'pending' : !this.watches.noControl);
     const note = mode === 'observe' ? readOnlyNote(c?.reason ?? 'busy') : null;
     const h = mode === 'control' ? c?.history ?? null : null;
-    const key = `${mode}\u0000${note?.text ?? ''}\u0000${h ? `${h.offset}/${h.max}` : ''}`;
+    // #176 part 2: a bridge that takes pastes says whether clicks go in (one before it says nothing of them).
+    const clicks = mode === 'observe' ? 'readonly' : mode === 'control' && c?.paste ? (c.mouse ? 'on' : 'old') : null;
+    const key = `${mode}\u0000${note?.text ?? ''}\u0000${h ? `${h.offset}/${h.max}/${h.rows}` : ''}\u0000${clicks ?? ''}`;
     if (key !== this.controlShown) {
       this.controlShown = key;
       this.host.seat.readOnly?.(note);
       this.host.seat.history?.(h);
+      this.host.seat.mouse?.(clicks);
     }
     this.syncChip(s.id);
+  }
+
+  /**
+   * #176 part 2: a click on the seated terminal goes in, on the worker's lane after what was typed, when the seat owns
+   * the pane and its herdr takes clicks; not while you read the history (it would bring the view back to live first).
+   */
+  private seatClick(c: SeatClick): void {
+    const s = this.seat;
+    const ctl = s ? this.watches.controlOf(s.id) : null;
+    if (!s || s.away || !this.input || this.transcript.shown || ctl?.mode !== 'control' || !ctl.mouse) return;
+    if (ctl.history && ctl.history.offset > 0) return;
+    this.input.click(c);
+  }
+
+  /** #176 part 2: the history scrollbar's lines (positive: up), as a wheel over the terminal's corner. */
+  historyScroll(lines: number): void {
+    const s = this.seat;
+    if (s) void this.watches.scroll(s.id, { lines });
   }
 
   /** #176: "Back to live": the seated terminal's view to the live bottom of herdr's history. */
@@ -1043,7 +1069,12 @@ export class Laptops {
     return { pos, quat };
   }
 
-  private inputDone(id: string, kind: 'keys' | 'prompt', r: CommandResult): void {
+  private inputDone(id: string, kind: InputKind, r: CommandResult): void {
+    // #176 part 2: a click that did not land is a word on the bar while seated; after standing up, nothing.
+    if (kind === 'click') {
+      if (!r.ok && this.seat?.id === id && !this.seat.away) this.host.seat.status('error', `The click didn’t reach ${this.seat.name}: ${r.message.replace(/^(input_failed|bad args|bad_request|invalid state):\s*/, '') || r.code}`);
+      return;
+    }
     if (this.seat?.id !== id) {
       // Sent after you stood up: only a failure is worth a word.
       if (r.ok) return;
@@ -1057,6 +1088,8 @@ export class Laptops {
     if (this.seat.away) return this.restStatus(this.seat);
     if (r.ok) {
       if (kind === 'prompt') this.host.seat.status('ok', `Pasted into ${name}’s terminal`);
+      // #176 part 2 (#38): inserted, not sent: Enter is yours.
+      else if (kind === 'paste') this.host.seat.status('ok', `Pasted into ${name}’s terminal: Enter sends it`);
       else this.host.seat.status('ok', null);
       return;
     }
@@ -1237,7 +1270,9 @@ export class Laptops {
    */
   private pasteInto(lane: InputQueue, id: string, name: string, text: string): boolean {
     const flow = this.host.secrets;
-    if (!flow?.on || !this.host.store.workers.get(id)?.agent_kind) return lane.paste(text);
+    // #176 part 2: the seat owns the pane: the paste is inserted (`worker.paste`), never submitted (#38).
+    const insert = this.pastesInPlace(id);
+    if (!flow?.on || !this.host.store.workers.get(id)?.agent_kind) return insert ? lane.insert(text) : lane.paste(text);
     const t = text.replace(/\u0000/g, '');
     if (!t) return true;
     if (new TextEncoder().encode(t).length > MAX_PROMPT) return false;
@@ -1248,11 +1283,19 @@ export class Laptops {
     };
     void flow.review(req).then((go) => {
       if (go.kind === 'kept') return say(go.why === 'failed' ? 'error' : 'ok', go.why === 'cancel' ? 'Not pasted: the review was cancelled.' : go.message);
-      lane.pasteReviewed(() =>
-        flow.deliver(req, go, (g) => this.host.send('worker.prompt', { id, text: t, ...(g.secrets ? { secrets: g.secrets } : {}) })).then((d): CommandResult => (d.kind === 'kept' ? { ok: false, code: d.why === 'failed' ? 'secrets_unavailable' : 'not_sent', message: d.message } : d.result)),
+      lane.pasteReviewed(
+        () =>
+          flow.deliver(req, go, (g) => this.host.send(insert ? 'worker.paste' : 'worker.prompt', { id, text: t, ...(g.secrets ? { secrets: g.secrets } : {}) })).then((d): CommandResult => (d.kind === 'kept' ? { ok: false, code: d.why === 'failed' ? 'secrets_unavailable' : 'not_sent', message: d.message } : d.result)),
+        insert ? 'paste' : 'prompt',
       );
     });
     return true;
+  }
+
+  /** #176 part 2: a paste to worker `id` is inserted through the seat's controller (it owns the pane, the bridge takes `worker.paste`). */
+  private pastesInPlace(id: string): boolean {
+    const c = this.watches.controlOf(id);
+    return this.seat?.id === id && c?.mode === 'control' && c.paste;
   }
 
   /** #64: the pasted images become markers in one paste (see `pasteImages`); standing up does not cancel it, only a failure is then a toast. */

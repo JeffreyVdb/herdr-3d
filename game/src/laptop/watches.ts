@@ -59,6 +59,9 @@ export interface ControlState {
   rows: number;
   cell: { width: number; height: number } | null;
   history: { offset: number; max: number; rows: number } | null;
+  /** #176 part 2: the owned pane takes `worker.paste` and (herdr 0.9.2+) `terminal.mouse` clicks. */
+  paste: boolean;
+  mouse: boolean;
 }
 
 /** A grid the seat asks for: the PTY's size, and a cell's size in CSS px. */
@@ -139,7 +142,7 @@ export class Watches {
     // A watch that replaces another (a new fps, fullscreen on or off) keeps what the last one knew until its ack: the
     // seat bar's chip does not blink out and back in.
     const prev = this.on.get(id);
-    const control: ControlState | null = grid ? { mode: 'pending', reason: null, cols: grid.cols, rows: grid.rows, cell: grid.cell ?? null, history: null } : null;
+    const control: ControlState | null = grid ? { mode: 'pending', reason: null, cols: grid.cols, rows: grid.rows, cell: grid.cell ?? null, history: null, paste: false, mouse: false } : null;
     this.on.set(id, { fps, gen, full: false, n: 0, resyncAt: this.host.now() + RESYNC_MS, fullscreen, zoom: prev?.zoom ?? null, size: prev?.size ?? null, control });
     // No cols / rows: the bridge observes at the pane's own size (herdr's observer clips a smaller one, it does not
     // reflow), and each frame says the size the screen is drawn at. #176: a control watch's are the PTY's.
@@ -184,6 +187,8 @@ export class Watches {
     if (!c) return;
     c.mode = m.mode;
     c.reason = m.mode === 'observe' ? (m.reason ?? 'busy') : null;
+    c.paste = m.mode === 'control' && m.paste === true;
+    c.mouse = m.mode === 'control' && m.mouse === true;
     if (m.mode === 'observe') c.history = null;
     this.host.controlChanged?.(m.id);
   }

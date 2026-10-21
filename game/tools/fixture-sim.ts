@@ -121,8 +121,8 @@ export interface SimOptions {
   zoom?: 'old' | 'single' | 'split' | 'headless';
   /** #175: every worker's laptop replays this recording (`simscreen=narrow`: a split pane's 60×40; absent: agent or shell). */
   screen?: 'narrow';
-  /** #176: how the bridge owns the seated pane (`simcontrol=old|none|busy`, tools/fixture-screen.ts; absent: it does). */
-  control?: 'old' | 'none' | 'busy';
+  /** #176: how the bridge owns the seated pane (`simcontrol=old|none|busy|nomouse|part1`, tools/fixture-screen.ts; absent: it does). */
+  control?: 'old' | 'none' | 'busy' | 'nomouse' | 'part1';
   /** #58: a prompt's `user` item goes to its worker's transcript watch this long after the agent took it (`simecho=<ms>`; absent: never). */
   echoMs?: number;
   /** #98: seeds the workers' activities on start (`simactivity=demo|all`, tools/fixture-activity.ts). */

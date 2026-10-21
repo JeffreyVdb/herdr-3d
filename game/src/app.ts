@@ -878,6 +878,7 @@ export class App {
       fullscreen: (a) => this.laptops.fullscreen(a),
       mode: (m) => this.laptops.pickMode(m), // #176
       live: () => this.laptops.toLive(),
+      historyScroll: (lines) => this.laptops.historyScroll(lines), // #176 part 2
       selection: () => this.laptops.selection(),
       // #108 round 4: the seated worker's "protected files" chip: the confirmation that removes them.
       revoke: (from) => {

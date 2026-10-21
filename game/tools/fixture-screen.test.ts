@@ -8,7 +8,7 @@ import { SimWorld } from './fixture-sim';
 type Msg = Record<string, unknown>;
 
 /** A sim on demo-m4 with a fake clock: `advance(ms)` runs what is due, in order. */
-function rig(fail?: string, zoom?: 'old' | 'single' | 'split' | 'headless', screen?: 'narrow', control?: 'old' | 'none' | 'busy') {
+function rig(fail?: string, zoom?: 'old' | 'single' | 'split' | 'headless', screen?: 'narrow', control?: 'old' | 'none' | 'busy' | 'nomouse' | 'part1') {
   let now = 0;
   let id = 0;
   const timers = new Map<number, { at: number; fn: () => void }>();
@@ -346,5 +346,50 @@ describe('SimScreens: control (#176)', () => {
     const old = rig(undefined, undefined, undefined, 'old');
     expect(old.cmd('terminal.watch', { id: shell, control: true }).reply()).toMatchObject({ code: 'bad_request' });
     expect(old.cmd('terminal.resize', { id: shell, cols: 100, rows: 30 }).reply()).toMatchObject({ code: 'unknown_command' });
+  });
+});
+
+// #176 part 2: a paste and a click through the seat's controller.
+describe('SimScreens: paste and clicks (#176 part 2)', () => {
+  it('an owned pane says it takes both; a paste shows where the cursor is, a click inside the grid is kept', () => {
+    const r = rig();
+    const c = r.cmd('terminal.watch', { id: shell, fps: 10, cols: 100, rows: 30, control: true });
+    expect(c.got()[1]).toMatchObject({ t: 'terminal.control', mode: 'control', paste: true, mouse: true });
+    r.cmd('terminal.scroll', { id: shell, direction: 'up', lines: 5 });
+    const p = r.cmd('worker.paste', { id: shell, text: 'echo one\necho two\u0000\x1b[201~' });
+    expect(p.reply()).toMatchObject({ t: 'ack' });
+    expect(p.got().find((m) => m.t === 'terminal.history')).toMatchObject({ offset: 0 }); // input: back to live
+    r.advance(500);
+    expect(Buffer.from(String(r.frames(shell).at(-1)?.data), 'base64').toString()).toContain('echo one\r\necho two');
+    expect(r.cmd('terminal.mouse', { id: shell, column: 5, row: 2 }).reply()).toMatchObject({ t: 'ack' });
+    expect(r.cmd('terminal.mouse', { id: shell, column: 100, row: 2 }).reply()).toMatchObject({ code: 'bad_request' });
+    expect(r.cmd('terminal.mouse', { id: shell, button: 'back', column: 1, row: 1 }).reply()).toMatchObject({ code: 'bad_request' });
+    expect(r.cmd('worker.paste', { id: shell, text: 'x'.repeat(16385) }).reply()).toMatchObject({ code: 'bad_request' });
+    const st = r.cmd('sim.terminal', { id: shell }).reply()?.data as { control: { pastes: string[]; clicks: string[] } };
+    expect(st.control).toMatchObject({ pastes: ['echo one\necho two'], clicks: ['left 5,2'] });
+    // New output while the view is up the history: it is further up, and the history longer.
+    r.cmd('terminal.scroll', { id: shell, direction: 'up', lines: 10 });
+    const w = r.cmd('sim.write', { id: shell, data: 'a\nb\nc\n' });
+    expect(w.got().find((m) => m.t === 'terminal.history')).toMatchObject({ offset: 13, max: 203 });
+    // Without a control watch: refused.
+    r.cmd('terminal.watch', { id: shell, fps: 4 });
+    expect(r.cmd('worker.paste', { id: shell, text: 'x' }).reply()).toMatchObject({ code: 'bad_request' });
+  });
+
+  it('nomouse: pastes, no clicks; part1: neither said nor known; busy: read only', () => {
+    const nm = rig(undefined, undefined, undefined, 'nomouse');
+    const c = nm.cmd('terminal.watch', { id: shell, cols: 100, rows: 30, control: true });
+    expect(c.got()[1]).toMatchObject({ paste: true });
+    expect((c.got()[1] as Msg).mouse).toBeUndefined();
+    expect(nm.cmd('terminal.mouse', { id: shell, column: 1, row: 1 }).reply()).toMatchObject({ code: 'invalid_state' });
+    expect(nm.cmd('worker.paste', { id: shell, text: 'x' }).reply()).toMatchObject({ t: 'ack' });
+    const p1 = rig(undefined, undefined, undefined, 'part1');
+    const d = p1.cmd('terminal.watch', { id: shell, cols: 100, rows: 30, control: true });
+    expect([(d.got()[1] as Msg).paste, (d.got()[1] as Msg).mouse]).toEqual([undefined, undefined]);
+    expect(p1.cmd('worker.paste', { id: shell, text: 'x' }).reply()).toMatchObject({ code: 'unknown_command' });
+    const busy = rig(undefined, undefined, undefined, 'busy');
+    const b = busy.cmd('terminal.watch', { id: shell, cols: 100, rows: 30, control: true });
+    expect((b.got()[1] as Msg).paste).toBeUndefined();
+    expect(busy.cmd('worker.paste', { id: shell, text: 'x' }).reply()).toMatchObject({ code: 'invalid_state' });
   });
 });

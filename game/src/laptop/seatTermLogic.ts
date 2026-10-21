@@ -46,6 +46,26 @@ export class WheelLines {
   }
 }
 
+/** #176 part 2: how far (CSS px) a press may move and still be a click (beyond it, it is a drag: a selection). */
+export const CLICK_SLOP_PX = 4;
+
+/** The cell (0-based) under a point of the terminal's screen element, or null off its grid (its padding, outside). */
+export function cellAt(x: number, y: number, screen: { left: number; top: number }, cell: { width: number; height: number }, cols: number, rows: number): { column: number; row: number } | null {
+  if (!(cell.width > 0) || !(cell.height > 0)) return null;
+  const column = Math.floor((x - screen.left) / cell.width);
+  const row = Math.floor((y - screen.top) / cell.height);
+  return column >= 0 && column < cols && row >= 0 && row < rows ? { column, row } : null;
+}
+
+/**
+ * #176 part 2: a press and its release are a click for the pane when they are on the same cell and within
+ * CLICK_SLOP_PX of each other, no selection came of them (a drag, a double-click's word) and no link opened.
+ */
+export function isClick(down: { x: number; y: number; column: number; row: number }, up: { x: number; y: number; column: number; row: number } | null, selected: boolean, linkOpened: boolean): boolean {
+  if (!up || selected || linkOpened) return false;
+  return up.column === down.column && up.row === down.row && Math.hypot(up.x - down.x, up.y - down.y) <= CLICK_SLOP_PX;
+}
+
 /** Herdr's modifier bits for a wheel over the pane (Shift 1, Ctrl 2, Alt 4). */
 export function wheelModifiers(e: { shiftKey: boolean; ctrlKey: boolean; altKey: boolean }): number {
   return (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.altKey ? 4 : 0);

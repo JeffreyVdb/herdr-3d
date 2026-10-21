@@ -1042,6 +1042,10 @@ export interface CommandArgs {
   'terminal.resize': { id: string; cols: number; rows: number; cell_width_px?: number; cell_height_px?: number };
   /** #176: a wheel over the controlled pane (herdr decides: its history or the app), or back to the live bottom. */
   'terminal.scroll': { id: string; direction: 'up' | 'down'; lines: number; column?: number; row?: number; modifiers?: number } | { id: string; bottom: true };
+  /** #176 part 2: a click on a cell (0-based) of the controlled pane, herdr 0.9.2+ (`terminal.control`'s `mouse`). */
+  'terminal.mouse': { id: string; button?: 'left' | 'right' | 'middle'; column: number; row: number; modifiers?: number };
+  /** #176 part 2: a paste into the controlled pane: inserted (one bracketed paste), never submitted. Ack `PasteResult`. */
+  'worker.paste': { id: string; text: string; secrets?: SecretsReview };
   'terminal.unwatch': { id: string };
   /** #74: the seat bar's fullscreen toggle; `on: false` goes back to the split view. Needs a watch of the worker. */
   'terminal.zoom': { id: string; on: boolean };
@@ -2025,6 +2029,10 @@ export interface TerminalControl {
   /** The size frames come at from now on. */
   cols: number;
   rows: number;
+  /** #176 part 2: the pane is owned and takes `worker.paste` (absent: a bridge before it). */
+  paste?: boolean;
+  /** #176 part 2: the pane is owned and takes `terminal.mouse` clicks (herdr 0.9.2+). */
+  mouse?: boolean;
 }
 
 /** #176: where a controlled pane's view is in herdr's history: `offset` lines above the live bottom (0: live), at most `max`. */
@@ -2039,7 +2047,7 @@ export interface TerminalHistory {
 
 export function isTerminalControl(m: ServerMessage): m is TerminalControl {
   const o = m as unknown as Obj;
-  return m.t === 'terminal.control' && isStr(o.id) && (o.mode === 'control' || o.mode === 'observe') && isInt(o.cols) && isInt(o.rows) && (o.reason === undefined || isStr(o.reason));
+  return m.t === 'terminal.control' && isStr(o.id) && (o.mode === 'control' || o.mode === 'observe') && isInt(o.cols) && isInt(o.rows) && (o.reason === undefined || isStr(o.reason)) && (o.paste === undefined || typeof o.paste === 'boolean') && (o.mouse === undefined || typeof o.mouse === 'boolean');
 }
 
 export function isTerminalHistory(m: ServerMessage): m is TerminalHistory {

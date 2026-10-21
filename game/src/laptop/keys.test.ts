@@ -212,6 +212,8 @@ describe('InputQueue', () => {
       {
         keys: (items) => new Promise((resolve) => calls.push({ t: 'keys', v: items, resolve })),
         prompt: (text) => new Promise((resolve) => calls.push({ t: 'prompt', v: text, resolve })),
+        paste: (text) => new Promise((resolve) => calls.push({ t: 'paste', v: text, resolve })),
+        click: (c) => new Promise((resolve) => calls.push({ t: 'click', v: c, resolve })),
         done: (k, r) => done.push([k, r]),
       },
       () => shell,
@@ -259,6 +261,36 @@ describe('InputQueue', () => {
     const a = harness(false);
     expect(a.q.paste('x'.repeat(16 * 1024 + 1))).toBe(false);
     expect(a.calls).toEqual([]);
+  });
+
+  it('#176 part 2: an inserted paste and a click keep their place between keys, for an agent and a shell alike', async () => {
+    for (const shell of [false, true]) {
+      const h = harness(shell);
+      h.q.keys([{ text: 'a' }]);
+      expect(h.q.insert('one\ntwo ✓\u0000')).toBe(true);
+      h.q.click({ button: 'left', column: 5, row: 2, modifiers: 0 });
+      h.q.keys([{ key: 'enter' }]);
+      for (let i = 0; i < 4; i++) await h.ok(i);
+      expect(h.calls.map((c) => [c.t, c.v])).toEqual([
+        ['keys', [{ text: 'a' }]],
+        ['paste', 'one\ntwo ✓'],
+        ['click', { button: 'left', column: 5, row: 2, modifiers: 0 }],
+        ['keys', [{ key: 'enter' }]],
+      ]);
+      expect(h.done.map((d) => d[0])).toEqual(['keys', 'paste', 'click', 'keys']);
+    }
+    const h = harness();
+    expect(h.q.insert('x'.repeat(16 * 1024 + 1))).toBe(false);
+    expect(h.q.insert('\u0000')).toBe(true);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('#176 part 2: a reviewed paste that is inserted answers as a paste', async () => {
+    const h = harness();
+    h.q.pasteReviewed(() => Promise.resolve({ ok: true, data: {} }), 'paste');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.done.map((d) => d[0])).toEqual(['paste']);
   });
 
   it('clear drops what is not sent yet', async () => {

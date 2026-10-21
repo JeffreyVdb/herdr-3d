@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { clampGrid, Debounce, GRID, linkHint, linkOpens, terminalPx, WheelLines, wheelModifiers, xtermTheme } from './seatTermLogic';
+import { cellAt, clampGrid, CLICK_SLOP_PX, Debounce, GRID, isClick, linkHint, linkOpens, terminalPx, WheelLines, wheelModifiers, xtermTheme } from './seatTermLogic';
 import { SCREEN_THEME } from './paint';
 
 describe('the seated terminal’s rules (#176)', () => {
@@ -73,5 +73,26 @@ describe('the seated terminal’s rules (#176)', () => {
     vi.advanceTimersByTime(500);
     expect(calls).toEqual([2, 3]);
     vi.useRealTimers();
+  });
+});
+
+describe('#176 part 2: clicks', () => {
+  const cell = { width: 8, height: 16 };
+  const screen = { left: 100, top: 50 };
+  it('the cell under a point, 0-based, none off the grid', () => {
+    expect(cellAt(100, 50, screen, cell, 80, 24)).toEqual({ column: 0, row: 0 });
+    expect(cellAt(147.9, 85, screen, cell, 80, 24)).toEqual({ column: 5, row: 2 });
+    expect(cellAt(100 + 80 * 8 - 0.1, 50 + 24 * 16 - 0.1, screen, cell, 80, 24)).toEqual({ column: 79, row: 23 });
+    for (const [x, y] of [[99, 60], [100 + 80 * 8, 60], [120, 49], [120, 50 + 24 * 16]] as const) expect(cellAt(x, y, screen, cell, 80, 24)).toBeNull();
+    expect(cellAt(120, 60, screen, { width: 0, height: 16 }, 80, 24)).toBeNull();
+  });
+  it('a click is a press and release on one cell, a few px apart, that selected nothing and opened no link', () => {
+    const down = { x: 10, y: 10, column: 1, row: 0 };
+    expect(isClick(down, { x: 12, y: 13, column: 1, row: 0 }, false, false)).toBe(true);
+    expect(isClick(down, { x: 10 + CLICK_SLOP_PX + 1, y: 10, column: 1, row: 0 }, false, false)).toBe(false); // a drag
+    expect(isClick(down, { x: 11, y: 10, column: 2, row: 0 }, false, false)).toBe(false); // the next cell
+    expect(isClick(down, { x: 10, y: 10, column: 1, row: 0 }, true, false)).toBe(false); // a selection (a double click's word)
+    expect(isClick(down, { x: 10, y: 10, column: 1, row: 0 }, false, true)).toBe(false); // Ctrl/⌘+click opened a link
+    expect(isClick(down, null, false, false)).toBe(false); // released off the grid
   });
 });
