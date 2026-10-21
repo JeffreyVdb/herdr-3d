@@ -568,7 +568,12 @@ export class Crowd {
     const worn = c ? WORN[c.role] : null;
     const desk = c && seated ? (DESK_ITEM[c.role] ?? null) : null;
     for (const key of ['headset', 'hood', 'bowtie', 'scarf', 'backpack'] as const) {
-      if (key === worn) this.crewPut(key, i, this.body, null);
+      if (key === worn && key === 'backpack' && seated) {
+        // Hang it outside the chair: leaning and turning must not pull it through the backrest.
+        this.q.setFromAxisAngle(this.v.set(0, 1, 0), m.yaw);
+        this.tmp2.compose(this.v.set(m.x, m.y, m.z), this.q, this.s.set(m.scale, m.scale, m.scale));
+        this.crewPut(key, i, this.tmp2, this.tmp3.makeTranslation(0, 0, -0.26));
+      } else if (key === worn) this.crewPut(key, i, this.body, null);
       else this.crewHide(key, i);
     }
     if (c?.run != null) this.crewPut('badge', i, this.body, null);
