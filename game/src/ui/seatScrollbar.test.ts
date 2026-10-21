@@ -104,6 +104,12 @@ describe('#176 part 2: the history scrollbar', () => {
     tick(SETTLE_MS);
     bar.update({ offset: 45, max: 106, rows: 30 }); // new output while up there: further up
     expect(bar.shown).toEqual({ offset: 45, max: 106 });
+    // A reading during a move of its own is taken once that settled, without another reading.
+    bar.el.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageDown', bubbles: true }));
+    bar.update({ offset: 50, max: 109, rows: 30 });
+    expect(bar.shown?.offset).toBe(16);
+    tick(SETTLE_MS + SCROLL_FLUSH_MS);
+    expect(bar.shown).toEqual({ offset: 50, max: 109 });
   });
 
   it('a drag of the thumb sends the lines it moved; the track pages; the focus stays where it was', () => {

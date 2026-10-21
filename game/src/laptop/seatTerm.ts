@@ -11,7 +11,7 @@ import { decodeFrame } from './terminal';
 /**
  * The replies xterm's parser makes to a frame's query bytes (device attributes and status, mode and setting requests,
  * window reports, OSC colour queries) are swallowed where they start, so none can become input, whatever reads
- * `onData` later (#176 part 2's mouse). Colour sets (OSC 4/10/11/12 without `?`) still apply.
+ * `onData` later (part 2's clicks go through the bridge, never `onData`). Colour sets (OSC 4/10/11/12 without `?`) still apply.
  */
 export function swallowReplies(term: Terminal): IDisposable[] {
   const swallow = () => true;

@@ -95,6 +95,8 @@ export class HistoryBar {
   private pending = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private quietUntil = 0;
+  /** A reading that came while a move of its own was settling: taken once it has. */
+  private settle: ReturnType<typeof setTimeout> | null = null;
   private drag: { y: number; top: number; pointer: number } | null = null;
   private readonly wheel = new WheelLines();
 
@@ -115,6 +117,8 @@ export class HistoryBar {
     this.el.setAttribute('aria-valuemin', '0');
     this.el.title = 'The terminal’s history: drag, or PageUp, PageDown, Home and End while it has the focus';
     this.el.addEventListener('pointerdown', this.onDown);
+    // A press never takes the focus (the browser gives it on mousedown, whatever pointerdown did).
+    this.el.addEventListener('mousedown', (e) => e.preventDefault());
     this.el.addEventListener('pointermove', this.onMove);
     this.el.addEventListener('pointerup', this.onUp);
     this.el.addEventListener('pointercancel', this.onUp);
@@ -137,8 +141,26 @@ export class HistoryBar {
     if (!this.h) {
       this.cancel();
       this.view = 0;
-    } else if (!this.drag && !this.pending && this.now() >= this.quietUntil) this.view = Math.min(this.h.max, this.h.offset);
+    } else this.adopt();
     this.render();
+  }
+
+  /** The bridge's last reading is what the thumb shows, unless a move of its own is on its way (then once it settled). */
+  private adopt(): void {
+    const h = this.h;
+    if (!h) return;
+    if (this.settle) clearTimeout(this.settle);
+    this.settle = null;
+    const wait = this.quietUntil - this.now();
+    if (!this.drag && !this.pending && wait <= 0) {
+      this.view = Math.min(h.max, h.offset);
+      return;
+    }
+    this.settle = setTimeout(() => {
+      this.settle = null;
+      this.adopt();
+      this.render();
+    }, Math.max(wait, SCROLL_FLUSH_MS));
   }
 
   /** Where the thumb shows the view (tests). */
@@ -197,6 +219,8 @@ export class HistoryBar {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.pending = 0;
+    if (this.settle) clearTimeout(this.settle);
+    this.settle = null;
   }
 
   private readonly onDown = (e: PointerEvent) => {
