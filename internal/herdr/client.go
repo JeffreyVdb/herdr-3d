@@ -2,7 +2,8 @@
 // allowlisted at a single choke point:
 //
 //   - Client reads: the socket methods it may call are readOnlyMethods
-//     (ping, session.snapshot, events.subscribe) and its one CLI call is
+//     (ping, session.snapshot, events.subscribe, and #176's pane.get for a
+//     pane's history offset) and its one CLI call is
 //     `herdr session list --json` (TestReadOnlyAllowlist).
 //   - Control is the narrow write path for waking and sleeping floors:
 //     exactly the commands in controlShapes (start a session with
@@ -43,6 +44,8 @@ var readOnlyMethods = map[string]bool{
 	"ping":             true,
 	"session.snapshot": true,
 	"events.subscribe": true,
+	// #176: a pane's history offset (the seated laptop's scroll indicator).
+	"pane.get": true,
 }
 
 // listArgs is the only herdr CLI invocation the bridge makes.
@@ -140,6 +143,26 @@ func (c *Client) Snapshot(ctx context.Context, socket string) (*Snapshot, error)
 		return nil, fmt.Errorf("herdr: session.snapshot: result.snapshot missing (type %q)", res.Type)
 	}
 	return res.Snapshot, nil
+}
+
+// PaneScroll reads a pane's history offset (`pane.get`, #176); ok false when herdr
+// has none for it (the field is absent when the pane's metrics are not
+// available).
+func (c *Client) PaneScroll(ctx context.Context, socket, pane string) (PaneScroll, bool, error) {
+	var res struct {
+		Pane *struct {
+			Scroll *PaneScroll `json:"scroll"`
+		} `json:"pane"`
+	}
+	if err := c.call(ctx, socket, "pane.get", struct {
+		PaneID string `json:"pane_id"`
+	}{pane}, &res); err != nil {
+		return PaneScroll{}, false, err
+	}
+	if res.Pane == nil || res.Pane.Scroll == nil {
+		return PaneScroll{}, false, nil
+	}
+	return *res.Pane.Scroll, true, nil
 }
 
 // Stream is a live `events.subscribe` connection.

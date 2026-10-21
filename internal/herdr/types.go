@@ -193,9 +193,13 @@ type PaneInfo struct {
 	Scroll *PaneScroll `json:"scroll,omitempty"`
 }
 
-// PaneScroll is the part of a pane's scroll state the bridge reads.
+// PaneScroll is the part of a pane's scroll state the bridge reads: its
+// rows, and (#176) where its view is in herdr's history: Offset lines above
+// the live bottom (0: live), at most Max.
 type PaneScroll struct {
 	ViewportRows int `json:"viewport_rows"`
+	Offset       int `json:"offset_from_bottom"`
+	Max          int `json:"max_offset_from_bottom"`
 }
 
 // AgentInfo mirrors the schema's AgentInfo.
