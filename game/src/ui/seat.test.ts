@@ -94,14 +94,14 @@ describe('seat bar: the fullscreen chip (#74)', () => {
 
     bar.setFullscreen(fullscreenChip({ state: 'split', applied: false }, { cols: 60, rows: 40 }));
     expect(chip.hidden).toBe(false);
-    expect(bar.summary().fullscreen).toEqual({ label: 'Split pane 60×40', pressed: false, unavailable: false });
+    expect(bar.summary().fullscreen).toEqual({ label: 'Zoom herdr tab (split 60×40)', pressed: false, unavailable: false });
     expect(chip.getAttribute('aria-pressed')).toBe('false');
-    expect(chip.getAttribute('aria-label')).toBe('Fullscreen, off. Split pane 60 by 40');
+    expect(chip.getAttribute('aria-label')).toBe('Zoom herdr tab, off. Split pane 60 by 40');
     chip.click();
 
     bar.setFullscreen(fullscreenChip({ state: 'zoomed', applied: true }, { cols: 131, rows: 47 }));
     expect(chip.getAttribute('aria-pressed')).toBe('true');
-    expect(bar.summary().fullscreen?.label).toBe('Fullscreen');
+    expect(bar.summary().fullscreen?.label).toBe('herdr tab zoomed');
     chip.click();
     expect(asked).toEqual(['zoom', 'unzoom']);
 
@@ -109,7 +109,7 @@ describe('seat bar: the fullscreen chip (#74)', () => {
     bar.setFullscreen(fullscreenChip({ state: 'zoomed', applied: true, headless: true }, { cols: 120, rows: 40 }));
     expect(chip.getAttribute('aria-disabled')).toBe('true');
     expect(chip.disabled).toBe(false);
-    expect(bar.summary().fullscreen).toEqual({ label: 'Fullscreen unavailable', pressed: false, unavailable: true });
+    expect(bar.summary().fullscreen).toEqual({ label: 'Zoom unavailable', pressed: false, unavailable: true });
     chip.click();
     expect(asked).toHaveLength(2);
 
@@ -173,5 +173,115 @@ describe('seat bar: the worker’s Codex profile (#139)', () => {
     bar.profileNote(null);
     expect(profile.hidden).toBe(true);
     expect(seat.hasAttribute('data-codex')).toBe(false);
+  });
+});
+
+describe('the seated workspace (#176)', () => {
+  const setup = (extra: Record<string, unknown> = {}) => {
+    document.body.replaceChildren();
+    const canvas = document.createElement('canvas');
+    const overlay = document.createElement('div'); // a body-level overlay (the overview): never made inert by the seat
+    const hud = document.createElement('div');
+    const topbar = document.createElement('button');
+    topbar.textContent = 'Menu';
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    const plate = document.createElement('aside');
+    plate.setAttribute('popover', 'manual');
+    hud.append(topbar, toast, plate);
+    const dialog = document.createElement('dialog');
+    document.body.append(canvas, hud, overlay, dialog);
+    const calls: string[] = [];
+    const bar = new SeatBar(hud, { ...noop, mode: (m: string) => calls.push(`mode ${m}`), live: () => calls.push('live'), ...extra }, new ViewPrefs(null));
+    return { bar, hud, canvas, overlay, topbar, toast, plate, dialog, calls };
+  };
+
+  it('the read-only terminal has its own arrows (they scroll it); the owned one gives every key to the pane', () => {
+    const { bar } = setup();
+    expect(bar.owns(bar.termHost)).toBe(false);
+    bar.termHost.setAttribute('data-readonly', '');
+    expect(bar.owns(bar.termHost)).toBe(true);
+    const cell = document.createElement('div');
+    bar.termHost.append(cell);
+    expect(bar.owns(cell)).toBe(false); // xterm's own parts: a press there gives the keyboard back to the seat
+  });
+
+  it('covers the game: what is behind it is inert (never the toasts, a popover or a dialog), and the focus goes back after', () => {
+    const { bar, canvas, overlay, topbar, toast, plate, dialog } = setup();
+    topbar.focus();
+    bar.show('Tofu', false);
+    bar.focus();
+    expect(bar.summary().shown).toBe(true);
+    // (jsdom does not reflect `inert` until it is set: !! reads it.)
+    expect([canvas.inert, topbar.inert]).toEqual([true, true]);
+    expect([toast, plate, dialog, overlay, bar.el].map((e) => !!e.inert)).toEqual([false, false, false, false, false]);
+    expect(document.activeElement).toBe(bar.input);
+    bar.hide();
+    expect(bar.summary().shown).toBe(false);
+    expect([!!canvas.inert, !!topbar.inert]).toEqual([false, false]);
+    expect(document.activeElement).toBe(topbar);
+    // The element the workspace grows in holds the terminal's host and the content.
+    expect(bar.content.contains(bar.termHost)).toBe(true);
+  });
+
+  it('the view switch is three buttons, the one up pressed; a pick goes to the host', () => {
+    const { bar, hud, calls } = setup();
+    bar.show('Tofu', false);
+    const buttons = [...hud.querySelectorAll<HTMLButtonElement>('.seat-mode button')];
+    expect(buttons.map((b) => [b.textContent, b.getAttribute('aria-pressed')])).toEqual([
+      ['Terminal', 'true'],
+      ['Conversation', 'false'],
+      ['Images', 'false'],
+    ]);
+    buttons[1]!.click();
+    buttons[2]!.click();
+    buttons[0]!.click(); // the one up: nothing to do
+    expect(calls).toEqual(['mode transcript', 'mode images']);
+    bar.setMode('transcript');
+    expect(buttons.map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'true', 'false']);
+    expect(bar.content.dataset.mode).toBe('transcript');
+  });
+
+  it('the worker’s status, the read-only line and the history indicator; Back to live goes to the host', () => {
+    const { bar, hud, calls } = setup();
+    bar.show('Tofu', false);
+    bar.workerStatus('needs_you');
+    expect(bar.summary().status).toBe('Needs you');
+    bar.workerStatus(null);
+    expect(bar.summary().status).toBeNull();
+    bar.readOnly({ text: 'Another client controls this terminal' });
+    expect(bar.summary().readOnly).toContain('Another client controls this terminal');
+    expect(bar.el.hasAttribute('data-readonly')).toBe(true);
+    bar.readOnly(null);
+    expect(bar.summary().readOnly).toBeNull();
+    bar.history({ offset: 0, max: 80 });
+    expect(bar.summary().history).toBeNull();
+    bar.history({ offset: 1, max: 80 });
+    expect(bar.summary().history).toContain('1 line up');
+    bar.history({ offset: 42, max: 80 });
+    const pill = hud.querySelector<HTMLButtonElement>('.seat-history')!;
+    expect(pill.getAttribute('aria-label')).toBe('42 lines up in the history. Back to live');
+    pill.click();
+    expect(calls).toEqual(['live']);
+    // Sitting again starts clean.
+    bar.hide();
+    bar.show('Mochi', false);
+    expect([bar.summary().history, bar.summary().readOnly]).toEqual([null, null]);
+  });
+
+  it('a copy event while seated takes the terminal’s selection; without one it is the browser’s', () => {
+    let selection = 'ls -la';
+    const { bar } = setup({ selection: () => selection });
+    bar.show('Tofu', false);
+    const copy = () => {
+      const data = new Map<string, string>();
+      const e = new Event('copy', { bubbles: true, cancelable: true }) as Event & { clipboardData: { setData(t: string, v: string): void } };
+      Object.defineProperty(e, 'clipboardData', { value: { setData: (t: string, v: string) => data.set(t, v) } });
+      bar.input.dispatchEvent(e);
+      return { prevented: e.defaultPrevented, text: data.get('text/plain') ?? null };
+    };
+    expect(copy()).toEqual({ prevented: true, text: 'ls -la' });
+    selection = '';
+    expect(copy()).toEqual({ prevented: false, text: null });
   });
 });

@@ -807,14 +807,15 @@ async function glassBox(page: Page): Promise<Box> {
   return { x: b.left, y: b.top, width: b.width, height: b.height };
 }
 
-// The tab never covers the glass, and it stays: in the gutter right of the monitor it is the full tab where that has room
-// (1600x700), else a snug one fitted to the thin gutter (1280x900, 1024x768 and 800x600 leave 39, 30 and 27 px). Clickable
-// in both views, peeking without touching the saved state, and a peeked plate hands back to the tab.
+// The tab never covers the glass, and it stays: in the gutter right of the monitor it is the full tab where that has room,
+// else a snug one fitted to the thin gutter. #176: the "glass" is the seated workspace's content area, which leaves the
+// snug tab a 36 px gutter at every size (seat.css). Clickable in both views, peeking without touching the saved state,
+// and a peeked plate hands back to the tab.
 for (const [w, h, want] of [
   [1024, 768, 'snug'],
   [1280, 900, 'snug'],
-  [800, 600, null], // the gutter depends on the seat's camera: snug or full, never away
-  [1600, 700, 'full'],
+  [800, 600, null],
+  [1600, 700, 'snug'],
 ] as const) {
   test(`seated at ${w}x${h} the limits tab sits clear of the glass${want ? ` (${want})` : ''}, in the terminal and in the conversation`, async ({ page }) => {
     test.setTimeout(120_000);

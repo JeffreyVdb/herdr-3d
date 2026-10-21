@@ -58,6 +58,7 @@ type Server struct {
 	subs     map[*sub]struct{}
 	changed  chan struct{} // closed and replaced whenever subs changes
 	failing  map[string]string
+	scrolls  map[string]json.RawMessage // #176: pane id → pane.get's scroll
 }
 
 type sub struct {
@@ -77,6 +78,7 @@ func Start(t testing.TB, dir string) *Server {
 		subs:     map[*sub]struct{}{},
 		changed:  make(chan struct{}),
 		failing:  map[string]string{},
+		scrolls:  map[string]json.RawMessage{},
 	}
 	ln, err := net.Listen("unix", s.Socket)
 	if err != nil {
@@ -93,6 +95,19 @@ func (s *Server) SetSnapshot(snap json.RawMessage) {
 	s.mu.Lock()
 	s.snapshot = snap
 	s.mu.Unlock()
+}
+
+// SetPaneScroll sets what `pane.get` says of a pane's history (#176):
+// offset, max and rows, or no scroll field at all when rows < 0. A pane
+// never set is not found.
+func (s *Server) SetPaneScroll(pane string, offset, max, rows int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rows < 0 {
+		s.scrolls[pane] = json.RawMessage(`null`)
+		return
+	}
+	s.scrolls[pane] = mustLine(map[string]int{"offset_from_bottom": offset, "max_offset_from_bottom": max, "viewport_rows": rows})
 }
 
 // Fail makes method answer with an error of this code ("" to stop).
@@ -237,6 +252,11 @@ func (s *Server) handle(conn net.Conn) {
 	s.mu.Lock()
 	s.methods = append(s.methods, req.Method)
 	snap, failCode := s.snapshot, s.failing[req.Method]
+	var pane struct {
+		PaneID string `json:"pane_id"`
+	}
+	_ = json.Unmarshal(req.Params, &pane)
+	scroll, paneKnown := s.scrolls[pane.PaneID]
 	s.mu.Unlock()
 	if failCode != "" {
 		_, _ = conn.Write(mustLine(map[string]any{"id": req.ID, "error": map[string]any{"code": failCode, "message": "herdrtest: failing on purpose"}}))
@@ -250,6 +270,16 @@ func (s *Server) handle(conn net.Conn) {
 		reply(map[string]any{"type": "pong", "version": "0.9.0", "protocol": 22})
 	case "session.snapshot":
 		reply(map[string]any{"type": "session_snapshot", "snapshot": snap})
+	case "pane.get":
+		if !paneKnown {
+			_, _ = conn.Write(mustLine(map[string]any{"id": req.ID, "error": map[string]any{"code": "pane_not_found", "message": "herdrtest: no such pane"}}))
+			break
+		}
+		p := map[string]any{"pane_id": pane.PaneID, "revision": 1}
+		if string(scroll) != "null" {
+			p["scroll"] = json.RawMessage(scroll)
+		}
+		reply(map[string]any{"type": "pane_info", "pane": p})
 	case "events.subscribe":
 		var p struct {
 			Subscriptions []struct {

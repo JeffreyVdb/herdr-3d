@@ -492,7 +492,7 @@ test('a seated resize from a phone to a short laptop keeps the tabs clickable an
   await note.fill('resize draft');
   await expect(note).toBeFocused();
 
-  await page.setViewportSize({ width: 1024, height: 586 });
+  await page.setViewportSize({ width: 1024, height: 440 }); // #176: the workspace's content area, about 85 px less
   await frames(page, 6);
   const height = await tx.evaluate((e) => e.clientHeight);
   expect(height, 'a short laptop’s screen, just above a phone’s').toBeGreaterThan(300);
@@ -523,19 +523,20 @@ test('a seated resize from a phone to a short laptop keeps the tabs clickable an
   clean();
 });
 
-// #157 (review round 2): fresh loads across a phone's height and just above it (the screen's height for a 1024-wide
-// window is its height less about 183 px: the slim top bar (#top-bar redesign) gave back 14 px). Wherever the open card does not fit beside the conversation it takes its
-// room; the tabs, the card's questions and the prompt box hold at every height, for either card.
+// #157 (review round 2): fresh loads across a phone's height and just above it (#176: the screen's height is the seated
+// workspace's content area, the window's height less about 85 px: its header and keys, one row each, and margins; it was
+// 183 px with the monitor between the top bar and the seat bar). Wherever the open card does not fit beside the
+// conversation it takes its room; the tabs, the card's questions and the prompt box hold at every height, for either card.
 for (const [vh, want, tight] of [
-  [473, 290, true],
-  [486, 303, true],
-  [503, 320, true],
-  [523, 340, true],
-  [1066, 883, false],
+  [375, 290, true],
+  [388, 303, true],
+  [405, 320, true],
+  [425, 340, true],
+  [968, 883, false],
 ] as const) {
   test(`both cards on a ${want} px screen: the tabs, the questions and the prompt box hold`, async ({ page }) => {
     const clean = watchErrors(page);
-    await page.setViewportSize({ width: vh > 1000 ? 1920 : 1024, height: vh });
+    await page.setViewportSize({ width: want > 800 ? 1920 : 1024, height: vh });
     const w = pixel();
     await openGame(page, 'demo-m5', '', SIM);
     const tx = await sitAtTranscript(page, w);

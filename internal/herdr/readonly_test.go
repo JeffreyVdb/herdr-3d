@@ -14,7 +14,7 @@ import (
 // read-only; the write path is Control (TestControlAllowlist).
 func TestReadOnlyAllowlist(t *testing.T) {
 	got := slices.Sorted(maps.Keys(readOnlyMethods))
-	if want := []string{"events.subscribe", "ping", "session.snapshot"}; !slices.Equal(got, want) {
+	if want := []string{"events.subscribe", "pane.get", "ping", "session.snapshot"}; !slices.Equal(got, want) {
 		t.Fatalf("readOnlyMethods = %v, want %v", got, want)
 	}
 	if !slices.Equal(listArgs, []string{"session", "list", "--json"}) {

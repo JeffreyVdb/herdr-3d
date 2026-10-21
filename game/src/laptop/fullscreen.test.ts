@@ -10,9 +10,9 @@ describe('fullscreenChip (#74)', () => {
     expect(fullscreenChip({ state: 'single', applied: false }, size)).toBeNull();
   });
 
-  it('a zoomed pane is a pressed Fullscreen that goes back on a click', () => {
+  it('a zoomed pane is a pressed zoom that goes back on a click', () => {
     expect(fullscreenChip({ state: 'zoomed', applied: true }, { cols: 131, rows: 47 })).toMatchObject({
-      label: 'Fullscreen',
+      label: 'herdr tab zoomed',
       pressed: true,
       disabled: false,
       action: 'unzoom',
@@ -21,16 +21,16 @@ describe('fullscreenChip (#74)', () => {
     expect(fullscreenChip({ state: 'zoomed', applied: false }, size)?.pressed).toBe(true);
   });
 
-  it('a split pane states its size as a fact and offers Fullscreen', () => {
+  it('a split pane states its size as a fact and offers the zoom', () => {
     const c = fullscreenChip({ state: 'split', applied: false }, size);
-    expect(c).toMatchObject({ label: 'Split pane 60×40', pressed: false, disabled: false, action: 'zoom' });
-    expect(c?.aria).toBe('Fullscreen, off. Split pane 60 by 40');
-    expect(fullscreenChip({ state: 'split', applied: false }, null)?.label).toBe('Split pane');
+    expect(c).toMatchObject({ label: 'Zoom herdr tab (split 60×40)', pressed: false, disabled: false, action: 'zoom' });
+    expect(c?.aria).toBe('Zoom herdr tab, off. Split pane 60 by 40');
+    expect(fullscreenChip({ state: 'split', applied: false }, null)?.label).toBe('Zoom herdr tab (split)');
   });
 
   it('a zoom that did not widen a headless pane is unavailable, and does nothing', () => {
     const c = fullscreenChip({ state: 'zoomed', applied: true, headless: true }, { cols: 120, rows: 40 });
-    expect(c).toMatchObject({ label: 'Fullscreen unavailable', pressed: false, disabled: true, action: null });
+    expect(c).toMatchObject({ label: 'Zoom unavailable', pressed: false, disabled: true, action: null });
     expect(c?.title).toMatch(/no herdr screen/);
   });
 });

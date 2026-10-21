@@ -1074,7 +1074,12 @@ export interface CommandArgs {
   /** #39: `worker.repos` for a hire on `session` with no worker yet (ack `WorkerRepos`). */
   'hire.repos': { floor: string };
   /** #74: `fullscreen` asks the bridge to zoom the pane's herdr tab while the watch lasts (absent / false: as before). */
-  'terminal.watch': { id: string; fps?: number; cols?: number; rows?: number; fullscreen?: boolean };
+  /** #176: `control` owns the pane (the seated laptop): herdr's controller, the real PTY at `cols` × `rows`. */
+  'terminal.watch': { id: string; fps?: number; cols?: number; rows?: number; fullscreen?: boolean; control?: boolean };
+  /** #176: the controlled pane's PTY to `cols` × `rows` (40–300 × 10–100), a cell's size in px (0–256). Ack `{cols, rows}`. */
+  'terminal.resize': { id: string; cols: number; rows: number; cell_width_px?: number; cell_height_px?: number };
+  /** #176: a wheel over the controlled pane (herdr decides: its history or the app), or back to the live bottom. */
+  'terminal.scroll': { id: string; direction: 'up' | 'down'; lines: number; column?: number; row?: number; modifiers?: number } | { id: string; bottom: true };
   'terminal.unwatch': { id: string };
   /** #74: the seat bar's fullscreen toggle; `on: false` goes back to the split view. Needs a watch of the worker. */
   'terminal.zoom': { id: string; on: boolean };
@@ -1726,12 +1731,13 @@ export interface ZoomInfo {
   headless?: boolean;
 }
 
-/** `terminal.watch` ack; `zoom` is absent from a bridge before #74. */
+/** `terminal.watch` ack; `zoom` is absent from a bridge before #74, `control` (#176) true when the bridge will own the pane. */
 export interface WatchAck {
   pane: string;
   cols: number;
   rows: number;
   zoom?: ZoomInfo;
+  control?: boolean;
 }
 
 /** `terminal.zoom` ack: the watch's new size and zoom state. */
@@ -2049,7 +2055,39 @@ export function isTranscriptClosed(m: ServerMessage): m is TranscriptClosed {
 }
 
 /** Connection-scoped messages (no `seq`): screens and transcripts of watched laptops. */
-export type ConnMessage = TerminalFrame | TerminalClosed | TerminalState | TranscriptItems | TranscriptClosed;
+export type ConnMessage = TerminalFrame | TerminalClosed | TerminalState | TerminalControl | TerminalHistory | TranscriptItems | TranscriptClosed;
+
+/** #176: who owns a control watch's pane: `control` (this watch), or `observe` read only (`busy`, `taken_over`, `failed`). */
+export interface TerminalControl {
+  t: 'terminal.control';
+  id: string;
+  pane: string;
+  mode: 'control' | 'observe';
+  reason?: 'busy' | 'taken_over' | 'failed' | string;
+  /** The size frames come at from now on. */
+  cols: number;
+  rows: number;
+}
+
+/** #176: where a controlled pane's view is in herdr's history: `offset` lines above the live bottom (0: live), at most `max`. */
+export interface TerminalHistory {
+  t: 'terminal.history';
+  id: string;
+  pane: string;
+  offset: number;
+  max: number;
+  rows: number;
+}
+
+export function isTerminalControl(m: ServerMessage): m is TerminalControl {
+  const o = m as unknown as Obj;
+  return m.t === 'terminal.control' && isStr(o.id) && (o.mode === 'control' || o.mode === 'observe') && isInt(o.cols) && isInt(o.rows) && (o.reason === undefined || isStr(o.reason));
+}
+
+export function isTerminalHistory(m: ServerMessage): m is TerminalHistory {
+  const o = m as unknown as Obj;
+  return m.t === 'terminal.history' && isStr(o.id) && isInt(o.offset) && isInt(o.max) && isInt(o.rows) && (o.offset as number) >= 0;
+}
 
 export function isTerminalFrame(m: ServerMessage): m is TerminalFrame {
   const o = m as unknown as Obj;

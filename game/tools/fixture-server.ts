@@ -27,7 +27,8 @@
 // itself (tools/fixture-crew.ts; `sim.crew` steps it on demand). M10: `simlimits=ok|hot|reached|old|transcript|noplan|none` picks the
 // plan limits' readings (tools/fixture-limits.ts), `simfail=no_m10` plays a bridge without them. #155: `simfail=no_codex_run` a bridge that cannot start Codex workers' own servers, #186: `simfail=codex_unverified` one whose Codex hires fall back to the built-in server while the switch is on (tools/fixture-codex-server.ts), #116: `simfail=codex_direnv` the same fall back with direnv's mise shim having no version selected. #51: `simmodels=<n>` adds n
 // Claude models to the hire options (a long model list). #74: `simzoom=old|single|split|headless` plays the bridge's pane zoom
-// (tools/fixture-screen.ts); #175: `simscreen=narrow` shows a split pane's 60×40 screen on every laptop. #58: `simecho=<ms>` writes a prompt's `user` item to its
+// (tools/fixture-screen.ts); #175: `simscreen=narrow` shows a split pane's 60×40 screen on every laptop; #176: `simcontrol=old|none|busy`
+// plays a bridge before seated control, one whose herdr cannot own panes, and a pane another client owns (read only). #58: `simecho=<ms>` writes a prompt's `user` item to its
 // worker's transcript watch that long after the turn takes it (tools/fixture-panels.ts; absent: never).
 // #74: `simhost=ok|hot|noupdates|busy` scripts the server rack's host stats and `simhostms=<ms>` their period (default 5000;
 // tools/fixture-host.ts), `simfail=no_host` plays a bridge before them.
@@ -241,6 +242,7 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             ...(['old', 'single', 'split', 'headless'].includes(q.get('simzoom') ?? '') ? { zoom: q.get('simzoom') as 'old' | 'single' | 'split' | 'headless' } : {}),
             // #175: a split pane's narrow screen on every laptop.
             ...(q.get('simscreen') === 'narrow' ? { screen: 'narrow' as const } : {}),
+            ...(['old', 'none', 'busy'].includes(q.get('simcontrol') ?? '') ? { control: q.get('simcontrol') as 'old' | 'none' | 'busy' } : {}),
             ...(q.get('simecho') !== null ? { echoMs: Math.max(0, Number(q.get('simecho')) || 0) } : {}),
             // #98: the agents' activities on the desk monitors (tools/fixture-activity.ts).
             ...(q.get('simactivity') ? { activity: q.get('simactivity') as string } : {}),

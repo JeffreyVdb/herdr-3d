@@ -256,3 +256,21 @@ func TestErrorResponses(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// #176: a pane's history offset, read with pane.get.
+func TestPaneScroll(t *testing.T) {
+	srv := herdrtest.Start(t, shortDir(t))
+	c := &herdr.Client{}
+	srv.SetPaneScroll("w1:p1", 12, 79, 31)
+	got, ok, err := c.PaneScroll(ctx(t), srv.Socket, "w1:p1")
+	if err != nil || !ok || got != (herdr.PaneScroll{ViewportRows: 31, Offset: 12, Max: 79}) {
+		t.Fatalf("PaneScroll = %+v, %v, %v", got, ok, err)
+	}
+	srv.SetPaneScroll("w1:p2", 0, 0, -1) // no metrics: no scroll field
+	if _, ok, err := c.PaneScroll(ctx(t), srv.Socket, "w1:p2"); err != nil || ok {
+		t.Fatalf("without metrics: %v, %v", ok, err)
+	}
+	if _, _, err := c.PaneScroll(ctx(t), srv.Socket, "w9:p9"); err == nil {
+		t.Fatal("an unknown pane")
+	}
+}

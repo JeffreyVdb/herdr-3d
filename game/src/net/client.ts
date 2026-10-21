@@ -6,7 +6,9 @@ import {
   isWelcome,
   isWorldEvent,
   isTerminalClosed,
+  isTerminalControl,
   isTerminalFrame,
+  isTerminalHistory,
   isTerminalState,
   isTranscriptClosed,
   isTranscriptItems,
@@ -430,7 +432,7 @@ export class BridgeClient {
       }
     }
     // M5: laptop screens of this connection's watches (no seq, never replayed).
-    if (isTerminalFrame(m) || isTerminalClosed(m) || isTerminalState(m)) {
+    if (isTerminalFrame(m) || isTerminalClosed(m) || isTerminalState(m) || isTerminalControl(m) || isTerminalHistory(m)) {
       this.o.handlers.onConn?.(m);
       return;
     }

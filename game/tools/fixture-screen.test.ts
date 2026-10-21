@@ -8,7 +8,7 @@ import { SimWorld } from './fixture-sim';
 type Msg = Record<string, unknown>;
 
 /** A sim on demo-m4 with a fake clock: `advance(ms)` runs what is due, in order. */
-function rig(fail?: string, zoom?: 'old' | 'single' | 'split' | 'headless', screen?: 'narrow') {
+function rig(fail?: string, zoom?: 'old' | 'single' | 'split' | 'headless', screen?: 'narrow', control?: 'old' | 'none' | 'busy') {
   let now = 0;
   let id = 0;
   const timers = new Map<number, { at: number; fn: () => void }>();
@@ -17,6 +17,7 @@ function rig(fail?: string, zoom?: 'old' | 'single' | 'split' | 'headless', scre
     fail,
     ...(zoom ? { zoom } : {}),
     ...(screen ? { screen } : {}),
+    ...(control ? { control } : {}),
     stepMs: 100,
     now: () => now,
     setTimeout: (fn, ms) => {
@@ -301,3 +302,49 @@ describe('SimScreens: pane zoom (#74)', () => {
   });
 });
 
+
+// #176: the seated watch that owns its pane.
+describe('SimScreens: control (#176)', () => {
+  it('a control watch is owned at its grid; resize, scroll and typing as the bridge does them', () => {
+    const r = rig();
+    const c = r.cmd('terminal.watch', { id: shell, fps: 10, cols: 150, rows: 40, control: true });
+    expect(c.got().map((m) => m.t)).toEqual(['ack', 'terminal.control', 'terminal.frame']);
+    expect(c.got()[0]).toMatchObject({ data: { cols: 150, rows: 40, control: true } });
+    expect(c.got()[1]).toMatchObject({ mode: 'control', cols: 150, rows: 40 });
+    expect(c.got()[2]).toMatchObject({ full: true, cols: 150, rows: 40 });
+    // One per connection.
+    expect(r.cmd('terminal.watch', { id: agent, control: true, cols: 80, rows: 24 }).reply()).toMatchObject({ t: 'error', code: 'capacity' });
+    const z = r.cmd('terminal.resize', { id: shell, cols: 100, rows: 30, cell_width_px: 9, cell_height_px: 18 });
+    expect(z.reply()).toMatchObject({ t: 'ack', data: { cols: 100, rows: 30 } });
+    r.advance(500);
+    expect(r.frames(shell).at(-1)).toMatchObject({ full: true, cols: 100, rows: 30 });
+    expect(r.cmd('terminal.resize', { id: shell, cols: 39, rows: 30 }).reply()).toMatchObject({ code: 'bad_request' });
+    const up = r.cmd('terminal.scroll', { id: shell, direction: 'up', lines: 12 });
+    expect(up.got().find((m) => m.t === 'terminal.history')).toMatchObject({ offset: 12, max: 200, rows: 30 });
+    expect(r.cmd('terminal.scroll', { id: shell, bottom: true, lines: 1 }).reply()).toMatchObject({ code: 'bad_request' });
+    r.cmd('terminal.scroll', { id: shell, direction: 'up', lines: 3 });
+    const keys = r.cmd('worker.keys', { id: shell, input: [{ text: 'ls' }] });
+    expect(keys.got().find((m) => m.t === 'terminal.history')).toMatchObject({ offset: 0 });
+    const st = r.cmd('sim.terminal', { id: shell }).reply()?.data as { control: { resizes: unknown[]; scrolls: string[]; offset: number } };
+    expect(st.control).toMatchObject({ resizes: [[100, 30]], scrolls: ['up 12', 'up 3'], offset: 0 });
+    // A watch without control: no grid, no commands.
+    r.cmd('terminal.watch', { id: shell, fps: 4 });
+    expect(r.cmd('terminal.resize', { id: shell, cols: 100, rows: 30 }).reply()).toMatchObject({ code: 'bad_request' });
+  });
+
+  it('busy: read only at the recording’s size; none: acked without control; old: the argument refused', () => {
+    const busy = rig(undefined, undefined, undefined, 'busy');
+    const c = busy.cmd('terminal.watch', { id: shell, cols: 150, rows: 40, control: true });
+    expect(c.got()[1]).toMatchObject({ t: 'terminal.control', mode: 'observe', reason: 'busy', cols: 120, rows: 36 });
+    expect(c.got()[2]).toMatchObject({ t: 'terminal.frame', cols: 120, rows: 36 });
+    expect(busy.cmd('terminal.resize', { id: shell, cols: 100, rows: 30 }).reply()).toMatchObject({ code: 'invalid_state' });
+    expect(busy.cmd('terminal.scroll', { id: shell, bottom: true }).reply()).toMatchObject({ code: 'invalid_state' });
+    const none = rig(undefined, undefined, undefined, 'none');
+    const n = none.cmd('terminal.watch', { id: shell, cols: 150, rows: 40, control: true });
+    expect((n.reply()?.data as Msg).control).toBeUndefined();
+    expect(n.got().some((m) => m.t === 'terminal.control')).toBe(false);
+    const old = rig(undefined, undefined, undefined, 'old');
+    expect(old.cmd('terminal.watch', { id: shell, control: true }).reply()).toMatchObject({ code: 'bad_request' });
+    expect(old.cmd('terminal.resize', { id: shell, cols: 100, rows: 30 }).reply()).toMatchObject({ code: 'unknown_command' });
+  });
+});

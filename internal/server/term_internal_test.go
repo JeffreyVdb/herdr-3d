@@ -81,7 +81,7 @@ func TestObserverIsReadWhileSendingWaits(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		h.term.mu.Lock() // the first send waits
 		done := make(chan error, 1)
-		go func() { done <- h.pump(ctx, w, obs) }()
+		go func() { done <- h.pump(ctx, w, obs, nil) }()
 		deadline := time.Now().Add(5 * time.Second)
 		for obs.reads.Load() < 256 { // 16 MiB
 			if time.Now().After(deadline) {

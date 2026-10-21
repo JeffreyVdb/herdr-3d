@@ -65,6 +65,9 @@ func TestControlAllowlist(t *testing.T) {
 		// M5 term
 		"observe": {"{herdr}", "--session", "{session}", "terminal", "session", "observe", "{pane}",
 			"--cols", "{cols}", "--rows", "{rows}"},
+		// #176: the seated laptop's controller, never --takeover.
+		"control": {"{herdr}", "--session", "{session}", "terminal", "session", "control", "{pane}",
+			"--cols", "{cols}", "--rows", "{rows}"},
 		"send-keys":     {"{herdr}", "--session", "{session}", "pane", "send-keys", "{pane}", "{keys}"},
 		"send-text":     {"{herdr}", "--session", "{session}", "pane", "send-text", "{pane}", "{input}"},
 		"send-sequence": {"{herdr}", "--session", "{session}", "pane", "send-text", "{pane}", "{seq}"},
@@ -103,7 +106,7 @@ func TestControlAllowlist(t *testing.T) {
 	for i := range typ.NumMethod() {
 		methods = append(methods, typ.Method(i).Name)
 	}
-	if w := []string{"CloseWorkspace", "CreateSession", "CreateWorkspace", "CreateWorktree", "EraseTyped", "ExportCodexHome", "MarkPane", "Observe", "PaneProcesses", "Prompt",
+	if w := []string{"CloseWorkspace", "ControlTerminal", "CreateSession", "CreateWorkspace", "CreateWorktree", "EraseTyped", "ExportCodexHome", "MarkPane", "Observe", "PaneProcesses", "Prompt",
 		"QueuePrompt", "ReadPane", "RemoveWorktree", "ReportCodexSession", "ResumeAgent", "ResumeCodexEmbedded", "ResumeCodexRemote", "SendKey", "SendKeys",
 		"SendSequence", "SendText", "SetZoom", "StartAgent", "StartCodexRemote", "StartCodexServer", "StartSession", "StopSession",
 		"SubmitPrompt", "TypeExit", "TypePrompt"}; !slices.Equal(methods, w) {
@@ -175,6 +178,10 @@ func checkAllowlistArgv(t *testing.T, pol shellPolicy) {
 		Stream: func(argv []string) (Proc, error) {
 			got = append(got, argv)
 			return fakeProc{strings.NewReader("")}, nil
+		},
+		Duplex: func(argv []string) (DuplexProc, error) {
+			got = append(got, argv)
+			return newFakeController(false), nil
 		}}
 	ctx := context.Background()
 	id := "01a0663b-61cd-73a0-a3a0-034ca9fc6c48"
@@ -214,6 +221,9 @@ func checkAllowlistArgv(t *testing.T, pol shellPolicy) {
 	obs, err := c.Observe(ctx, "h3d-it-1", "w7:p1", 120, 40)
 	must(err)
 	must(obs.Close())
+	ctl, err := c.ControlTerminal(ctx, "h3d-it-1", "w7:p1", 300, 100) // #176
+	must(err)
+	must(ctl.Close())
 	must(c.SendKeys(ctx, "h3d-it-1", "w7:p1", "ctrl+c", "up", "enter"))
 	must(c.SendKeys(ctx, "h3d-it-1", "w7:p1", "2"))
 	must(c.SendText(ctx, "h3d-it-1", "w7:p1", "--help; rm -rf ~ $(id) ✓"))
@@ -274,6 +284,7 @@ func checkAllowlistArgv(t *testing.T, pol shellPolicy) {
 		{"/opt/herdr", "--session", "h3d-it-1", "workspace", "close", "w7"},
 		{"/opt/herdr", "--session", "h3d-it-1", "worktree", "remove", "--workspace", "w7"},
 		{"/opt/herdr", "--session", "h3d-it-1", "terminal", "session", "observe", "w7:p1", "--cols", "120", "--rows", "40"},
+		{"/opt/herdr", "--session", "h3d-it-1", "terminal", "session", "control", "w7:p1", "--cols", "300", "--rows", "100"},
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-keys", "w7:p1", "ctrl+c", "up", "enter"},
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-keys", "w7:p1", "2"},
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-text", "w7:p1", "--help; rm -rf ~ $(id) ✓"},

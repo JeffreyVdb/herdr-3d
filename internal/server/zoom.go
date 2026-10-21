@@ -445,11 +445,12 @@ func (h *Hub) zoomChanged(ctx context.Context, w *watch, st herdr.PaneState) {
 func (h *Hub) observerSize(w *watch, st herdr.PaneState) (cols, rows int) {
 	h.zoom.mu.Lock()
 	cols, rows = w.zoom.cols, w.zoom.rows
+	autoCols, autoRows := w.autoCols, w.autoRows // #176: a control watch's fallback turns them on
 	h.zoom.mu.Unlock()
-	if w.autoCols && st.Cols > 0 {
+	if autoCols && st.Cols > 0 {
 		cols = min(max(st.Cols, herdr.MinCols), herdr.MaxCols)
 	}
-	if w.autoRows && st.Rows > 0 {
+	if autoRows && st.Rows > 0 {
 		rows = min(max(st.Rows, herdr.MinRows), herdr.MaxRows)
 	}
 	return cols, rows

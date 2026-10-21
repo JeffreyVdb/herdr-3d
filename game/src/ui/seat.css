@@ -1,37 +1,54 @@
 /*
- * M5: sitting at a worker's laptop. The laptop fills the view; this bar sits
- * under it on the HUD's navy, with whose terminal it is on sun-yellow
- * label-maker tape (the status chips' material) stuck to the bar.
+ * M5: sitting at a worker's laptop. #176: the seated workspace, a surface over the whole window (the floor overview's
+ * pattern, inside the HUD so the toasts stay above it): a compact header on the HUD's chrome with whose terminal it is
+ * on sun-yellow label-maker tape (the status chips' material), a line of notices when there is one, the content (the
+ * terminal on its preset's screen colour, the conversation, the images) and a footer with the keys.
  */
 
 .seat {
-  position: absolute;
-  left: 50%;
-  bottom: 18px;
-  transform: translateX(-50%);
-  width: min(780px, calc(100vw - 32px));
+  position: fixed;
+  inset: 0;
+  z-index: 5;
   box-sizing: border-box;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  grid-template-areas:
-    'line mode stand'
-    'keys keys keys';
-  align-items: center;
-  gap: 8px 14px;
-  padding: 10px 12px 10px 14px;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   background: var(--chrome);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  color: var(--text);
+  pointer-events: auto;
+}
+.seat[hidden] {
+  display: none;
+}
+.seat-head {
+  grid-row: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  min-width: 0;
+  padding: 8px 12px 8px 14px;
 }
 .seat-line {
-  grid-area: line;
+  flex: 1 1 180px;
   display: flex;
   align-items: center;
   gap: 12px;
   min-width: 0;
 }
-.seat-tape {
+/* #176: the worker's status, on its own tape beside whose laptop it is. */
+.seat-status {
   flex: none;
+}
+.seat-status[hidden] {
+  display: none;
+}
+/* Whose laptop it is gives way last: the note goes first, then the name ends in an ellipsis, so the line never runs
+   under the controls beside it. */
+.seat-tape {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 3px 9px 2px;
   font-size: 12px;
   font-weight: 800;
@@ -66,6 +83,7 @@
   display: none;
 }
 .seat-note {
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -107,8 +125,7 @@
   background: var(--idle);
 }
 .seat-stand {
-  grid-area: stand;
-  justify-self: end;
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -147,13 +164,13 @@
   font-family: var(--font-mono);
 }
 .seat-keys {
-  grid-area: keys;
+  grid-row: 4;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 16px;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
+  min-width: 0;
+  padding: 6px 14px 8px;
   font-size: 12.5px;
 }
 .seat-keys .key kbd + kbd {
@@ -169,23 +186,20 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* M16: which view the laptop shows; the lit half is the one up. */
+/* M16, #176: the view switch: Terminal, Conversation, Images, the one up lit; Ctrl+Esc swaps (its keys lead it). */
 .seat-mode {
-  grid-area: mode;
+  flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 4px 4px 6px;
+  gap: 2px;
+  padding: 3px;
   border: 1px solid var(--border-chip);
-  border-radius: 9px;
+  border-radius: 10px;
   background: var(--raised);
-  font-weight: 700;
-  cursor: pointer;
-  pointer-events: auto;
-  transition: background 140ms var(--ease);
 }
-.seat-mode:hover {
-  background: var(--raised-hover);
+.seat-mode-key {
+  display: inline-flex;
+  padding: 0 4px 0 3px;
 }
 .seat-mode kbd {
   display: inline-grid;
@@ -201,24 +215,159 @@
   font: 700 11px/1 var(--font);
   font-family: var(--font-mono);
 }
-.seat-mode-opts {
-  display: inline-flex;
-  margin-left: 4px;
-  border-radius: 6px;
-  background: var(--chrome);
+.seat-mode-key kbd + kbd {
+  margin-left: -2px;
 }
 .seat-mode-opt {
-  padding: 2px 8px;
-  border-radius: 6px;
-  font-size: 12px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
   color: var(--text-2);
+  font: 700 12.5px/1.2 var(--font);
+  cursor: pointer;
+  transition: background 140ms var(--ease), color 140ms var(--ease);
+}
+.seat-mode-opt:hover:not([data-on]) {
+  background: var(--raised-hover);
+  color: var(--text);
 }
 .seat-mode-opt[data-on] {
   color: var(--on-action);
   background: var(--action);
 }
+.seat-mode-opt:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
 
-/* M16: the conversation, drawn over the monitor's glass while you read it (placed each frame, in viewport px). */
+/* #176: the notices under the header (a question, the Codex launch, a read-only terminal), only while one shows. */
+.seat-notes {
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 14px 8px;
+}
+.seat:not([data-asking]):not([data-codex]):not([data-readonly]) .seat-notes {
+  display: none;
+}
+.seat-readonly {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: 13px;
+  font-weight: 650;
+}
+.seat-readonly[hidden] {
+  display: none;
+}
+.seat-readonly .seat-codex-tag {
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--line);
+  transform: none;
+}
+
+/* #176: the content: the terminal edge to edge on its screen colour, the conversation and the images over it. */
+.seat-content {
+  grid-row: 3;
+  position: relative;
+  min-height: 0;
+  margin: 0 8px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--seat-term-bg, #10162a);
+  box-shadow: 0 0 0 1px var(--line);
+}
+/* #53: the plan-limits plate is an edge tab while seated: the content leaves it a gutter at the right (its snug tab's
+   room in either UI theme, limits.ts), below the header. */
+:root:has(.limits:not([hidden])) .seat-content {
+  margin-right: 36px;
+}
+.seat-term {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--seat-term-bg, #10162a);
+}
+/* Fit measures the host's box less the widget's own padding: the gap around the cells is the widget's. */
+.seat-term .xterm {
+  height: 100%;
+  padding: 8px 10px;
+  box-sizing: border-box;
+}
+.seat-term .xterm-viewport {
+  background-color: transparent !important;
+  scrollbar-width: none;
+}
+/* Read only (another client owns the pane): the pane at its own size, never stretched, centred at the top; a pane bigger
+   than the area scrolls inside it (wheel, scrollbars, the arrow keys once tabbed to). */
+.seat-term[data-readonly] {
+  display: flex;
+  justify-content: safe center;
+  align-items: safe flex-start;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+.seat-term[data-readonly]:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.seat-term[data-readonly] .xterm {
+  height: auto;
+  width: fit-content;
+}
+.seat-content:not([data-mode='terminal']) .seat-term,
+.seat-content:not([data-mode='terminal']) .seat-history {
+  visibility: hidden;
+  pointer-events: none;
+}
+/* Over the terminal (xterm's own layers have z-indexes of their own). */
+.seat-content > .seat-transcript {
+  z-index: 10;
+  border-radius: inherit;
+}
+/* #176: the view is up the history: how far, and the way back. It sits over the terminal's bottom right. */
+.seat-history {
+  position: absolute;
+  right: 16px;
+  bottom: 14px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 9px;
+  border: 1px solid var(--border-chip);
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--text);
+  font: 700 12.5px/1.2 var(--font);
+  font-variant-numeric: tabular-nums;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+.seat-history[hidden] {
+  display: none;
+}
+.seat-history svg {
+  width: 16px;
+  height: 16px;
+}
+.seat-history-act {
+  color: var(--accent-text);
+}
+.seat-history:hover {
+  background: var(--raised-hover);
+}
+.seat-history:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* M16: the conversation; #176: over the whole content area (placed at its size). */
 .seat-transcript {
   position: absolute;
   box-sizing: border-box;
@@ -246,6 +395,11 @@
   pointer-events: none;
 }
 
+/* #176: the toasts stay over the seated workspace (it is in the HUD too). */
+.hud[data-seated] .toast {
+  z-index: 6;
+}
+
 /* Sitting: the laptop is the view; no reticle, look-at bar or walking hint. */
 .hud[data-seated] .reticle,
 .hud[data-seated] .prompt,
@@ -259,23 +413,12 @@
   }
 }
 
-/* #57: the agent asks a question while you look at its terminal: how to answer it in the transcript view (a row of
-   its own only then: an empty row would still take its gap). */
-.seat[data-asking] {
-  grid-template-areas:
-    'ask ask ask'
-    'line mode stand'
-    'keys keys keys';
-}
+/* #57: the agent asks a question while you look at its terminal: how to answer it in the transcript view. */
 .seat-ask {
-  grid-area: ask;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 10px;
-  margin: -2px 0 0;
-  padding: 0 0 8px;
-  border-bottom: 1px solid var(--line);
   font-size: 13px;
   font-weight: 650;
 }
@@ -301,15 +444,8 @@
 
 /* #155: the worker's own Codex server stopped (or it runs without one): a line in the question's place, while no
    question shows. */
-.seat[data-codex]:not([data-asking]) {
-  grid-template-areas:
-    'ask ask ask'
-    'line mode stand'
-    'keys keys keys';
-}
 /* #139: the server's line and the profile's, one under the other. */
 .seat-codex-box {
-  grid-area: ask;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -317,14 +453,10 @@
 }
 .seat-codex,
 .seat-profile {
-  grid-area: ask;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 10px;
-  margin: -2px 0 0;
-  padding: 0 0 8px;
-  border-bottom: 1px solid var(--line);
   font-size: 13px;
   font-weight: 650;
 }
@@ -359,10 +491,8 @@
   font-weight: 500;
 }
 
-/* #59: the terminal's preset (three tiny screens in its colours) and zoom, at the keys row's end. */
+/* #59: the terminal's preset (tiny screens in its colours) and zoom; #176: in the header. */
 .seat-look {
-  /* It shrinks to the row and wraps (the fullscreen chip, #74, made it wider than a phone): at a wide bar it is as
-     wide as its controls, as before. */
   flex: 0 1 auto;
   min-width: 0;
   max-width: 100%;
@@ -371,15 +501,13 @@
   justify-content: flex-end;
   align-items: center;
   gap: 4px 8px;
-  margin-left: auto;
 }
 .seat-look-label {
   color: var(--text-2);
   font-size: 12px;
   font-weight: 700;
 }
-/* In terminal mode the screen says whose controls these are: the key alone, so the keys row stays one line (a taller
-   bar would shrink the laptop's screen). */
+/* In terminal mode the screen says whose controls these are: the key alone. */
 .seat[data-mode='terminal'] .seat-look-label {
   font-size: 0;
 }
@@ -443,13 +571,7 @@
   outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
-/* #74: the chip is one more control on the keys row, which the bar's usual width has no room left for (the keys' hint
-   gives way first, then the row would wrap and the bar grow, taking the laptop's height): while it shows, the bar is
-   as much wider as it needs. A narrow window wraps as it always did. */
-.seat[data-fs] {
-  width: min(980px, calc(100vw - 32px));
-}
-/* #74: the fullscreen chip: the fact that a pane is split ("Split pane 60×40") and herdr's zoom for it.
+/* #74: the zoom chip (#176: read only only): the fact that a pane is split ("Split pane 60×40") and herdr's zoom for it.
    A dot says the state (filled: the pane fills its tab); a pane that cannot be widened keeps its words at full
    contrast and gets a dashed edge instead of fading, since the words are the information. */
 .seat-fs {
@@ -506,30 +628,60 @@
   outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
-/* #59: a phone's width: whose laptop it is and Stand up share the first row, the switch (its keys on it) takes the
-   next (side by side they ran off the screen), and the keys row drops the switch's key it would repeat; the terminal's
-   controls keep their key (Ctrl+,) without the word. */
+/* A laptop's width keeps the header one row: the switch's keys and the controls' word go (their keys stay). */
+@media (max-width: 1180px) {
+  .seat-mode-key {
+    display: none;
+  }
+  .seat .seat-look-label {
+    font-size: 0;
+  }
+}
+
+/* A phone's width: whose laptop it is and Stand up share the first row (the name gives way, never Stand up), the switch
+   and the terminal's controls the next (an empty full-width item breaks the row; the rows' gap is their margin, so it
+   adds none); the keys row drops the switch's key it would repeat and the hint. */
 @media (max-width: 560px) {
-  .seat {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      'line stand'
-      'mode mode'
-      'keys keys';
+  .seat-head {
+    padding: 6px 8px;
+    gap: 0 10px;
   }
-  /* #155: a Codex notice takes the question's row here too (its selector, not the bare .seat, sets the wide map). */
-  .seat[data-asking],
-  .seat[data-codex]:not([data-asking]) {
-    grid-template-areas:
-      'ask ask'
-      'line stand'
-      'mode mode'
-      'keys keys';
+  .seat-head::after {
+    content: '';
+    order: 1;
+    flex: 0 0 100%;
   }
-  .seat-mode {
-    justify-self: start;
+  .seat-line {
+    flex: 1 1 0;
+    order: 0;
   }
-  .seat-keys .seat-key-mode {
+  .seat-stand {
+    order: 1;
+  }
+  .seat-mode,
+  .seat-look {
+    order: 2;
+    margin-top: 6px;
+  }
+  .seat-look {
+    margin-left: auto;
+  }
+  .seat-note {
+    display: none;
+  }
+  .seat[data-state='error'] .seat-note,
+  .seat[data-state='offline'] .seat-note {
+    display: -webkit-box;
+  }
+  .seat-mode-opt {
+    padding: 4px 8px;
+  }
+  .seat-content,
+  :root:has(.limits:not([hidden])) .seat-content {
+    margin: 0 4px;
+  }
+  .seat-keys .seat-key-mode,
+  .seat-mode-key {
     display: none;
   }
   .seat-look-label {
@@ -538,8 +690,7 @@
   .seat-fs {
     max-width: 170px;
   }
-  /* #108 round 4: the protected-files chip keeps its count (its name says the rest): beside the tape it would run into
-     Stand up. */
+  /* #108 round 4: the protected-files chip keeps its count (its name says the rest). */
   .seat .seat-secrets-word {
     display: none;
   }

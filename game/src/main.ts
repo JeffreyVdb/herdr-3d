@@ -158,6 +158,8 @@ export interface H3DDebug {
   sitAt(workerId: string): boolean;
   /** M5: a live laptop's screen text from its xterm buffer, one string per row (null when not live). */
   screenText(workerId: string): string[] | null;
+  /** #176: the seated workspace's terminal: its grid, font, text, and what the seat's watch says of the pane (null: not seated). */
+  seatTerminal(): ReturnType<import('./laptop').Laptops['seatTerminalState']>;
   /** M5: how much of a worker's frozen laptop screen is not black (0–1), null when it is not frozen. */
   frozenInk(workerId: string): number | null;
   /** M5: the seat bar (shown, its tape, its note, ok / busy / error / offline); M16: which mode it shows. */
@@ -352,6 +354,8 @@ export interface H3DDebug {
   simTelegram(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #74: the fixture simulator's `sim.host` (script the host's numbers) and `sim.host_log` (the commands and frames of this connection). */
   simHost(t: 'sim.host' | 'sim.host_log', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  /** #176: the fixture simulator's `sim.write` (raw text on a worker's screen) and `sim.terminal` (what its watch has). */
+  simTerm(t: 'sim.write' | 'sim.terminal', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** M17: the light as shown (`daylight`, eased) and its `target`, the zone and where it comes from, the latitude, whether the time is pinned, the office lamps and what the wall clock's face shows. */
   daylight(): ReturnType<import('./app').App['daylightInfo']> | null;
   /** M13: the screen share (phase, surface, paused, video size), what this floor's TV shows, the frames answered and who looked. */
@@ -495,6 +499,7 @@ const h3d: H3DDebug = {
   lobbyTheme: () => app?.lobbyTheme() ?? null,
   sitAt: (id) => app?.sitAt(id) ?? false,
   screenText: (id) => app?.laptops.text(id) ?? null,
+  seatTerminal: () => app?.laptops.seatTerminalState() ?? null,
   frozenInk: (id) => app?.laptops.frozenInk(id) ?? null,
   seat: () => app?.seatBar.summary() ?? { shown: false, tape: '', note: '', state: '' },
   theme: () => {
@@ -700,6 +705,11 @@ const h3d: H3DDebug = {
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
   simHost: async (t, args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    const r = await app.client.request(t as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
+  simTerm: async (t, args) => {
     if (!app) return { ok: false, code: 'not_started' };
     const r = await app.client.request(t as CommandName, args as never);
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };

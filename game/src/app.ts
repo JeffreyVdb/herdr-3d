@@ -877,6 +877,9 @@ export class App {
       stand: () => this.laptops.stand(),
       toggle: () => this.laptops.toggleTranscript(),
       fullscreen: (a) => this.laptops.fullscreen(a),
+      mode: (m) => this.laptops.pickMode(m), // #176
+      live: () => this.laptops.toLive(),
+      selection: () => this.laptops.selection(),
       // #108 round 4: the seated worker's "protected files" chip: the confirmation that removes them.
       revoke: (from) => {
         const id = this.laptops.seated;
@@ -892,7 +895,9 @@ export class App {
         toast: (m, kind) => this.hud.toast(m, kind === 'error' ? 5200 : 3200, kind),
         upload,
         seat: this.seatBar,
-        insets: () => ({ top: parseFloat(this.hud.root.style.getPropertyValue('--topbar-bottom')) || 70, bottom: this.seatBar.el.getBoundingClientRect().height + 18 }),
+        // #176: the seated workspace covers the window (no bar over the scene): the monitor's glass is placed between the top bar and the edge.
+        insets: () => ({ top: parseFloat(this.hud.root.style.getPropertyValue('--topbar-bottom')) || 70, bottom: 18 }),
+        external: (url) => this.external(url), // #176: the seated terminal's links
         layer: this.hud.root,
         themes: this.themes,
         monitors: this.monitorPrefs,
@@ -3785,7 +3790,8 @@ export class App {
     // #143: the overview page (once grown) hides the scene, the whiteboard's scrim nearly does: a few frames a second
     // keep step() going under them. Uncovered, the scene counts as just moved: the next vsync draws the world as it is
     // now, at the full rate, while the page shrinks away.
-    const covered: Coverage = this.overview.covering ? 'opaque' : this.whiteboard.isOpen ? 'scrim' : 'none';
+    // #176: so does the seated workspace.
+    const covered: Coverage = this.overview.covering || this.laptops.covering ? 'opaque' : this.whiteboard.isOpen ? 'scrim' : 'none';
     if (covered !== this.covered && (this.covered === 'opaque' || covered === 'none')) this.activity(false);
     this.covered = covered;
     const walker = this.walker.moving;

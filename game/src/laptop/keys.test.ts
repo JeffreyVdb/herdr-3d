@@ -121,6 +121,12 @@ describe('seatedKey', () => {
     }
   });
 
+  it('#176: Ctrl+Shift+C copies off a Mac (kept from the browser); Ctrl+C is ^C; a Mac’s ⌘C is the browser’s copy', () => {
+    expect(seatedKey(kd('C', { ctrlKey: true, shiftKey: true, code: 'KeyC' }), false)).toEqual({ items: [], action: 'copy', prevent: true });
+    expect(seatedKey(kd('c', { ctrlKey: true, code: 'KeyC' }), false).items).toEqual([{ key: 'ctrl+c' }]);
+    expect(seatedKey(kd('c', { metaKey: true, code: 'KeyC' }), true)).toEqual({ items: [], prevent: false });
+  });
+
   it('Ctrl+letter is a ctrl chord by physical key; Ctrl+other is swallowed', () => {
     expect(seatedKey(kd('c', { ctrlKey: true }), true).items).toEqual([{ key: 'ctrl+c' }]);
     expect(seatedKey(kd('C', { ctrlKey: true, shiftKey: true, code: 'KeyC' }), true).items).toEqual([{ key: 'ctrl+c' }]);

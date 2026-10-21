@@ -320,8 +320,8 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
 Protocol: [`docs/protocol.md`](docs/protocol.md). Every herdr call goes through `internal/herdr`, in two allowlisted
 parts:
 
-- **Reads** (`herdr.Client`): the socket methods `ping`, `session.snapshot` and `events.subscribe`, plus `herdr session
-  list --json`. `TestReadOnlyAllowlist` is the tripwire.
+- **Reads** (`herdr.Client`): the socket methods `ping`, `session.snapshot`, `events.subscribe` and (#176, the seated
+  laptop's history offset) `pane.get`, plus `herdr session list --json`. `TestReadOnlyAllowlist` is the tripwire.
 - **Writes** (`herdr.Control`), for `floor.wake` / `floor.sleep`, `session.create` (#58), `worker.hire` /
   `worker.fire` and the laptops (M5) only: exactly the command shapes in `controlShapes`.
   - Wake and sleep: `systemd-run --user --unit=herdr-s-<name> … <shell> -l -c "exec herdr --session '<name>'
@@ -367,6 +367,17 @@ parts:
     tab fullscreen; `terminal.watch.fullscreen` is a `*bool` (absent: an old client, never followed).
     #57's `worker.answer_ask` uses these same shapes (digits, arrows, `tab`, `enter`, `esc`, `send-text`, `pane
     read` between steps): no new one.
+    #176's seated laptop adds exactly one: the long-running `terminal session control <pane> --cols <40–300> --rows
+    <10–100>` (`Control.ControlTerminal`; never `--takeover`; its own process group, stopped like an observer), with
+    JSONL on its stdin limited to `terminal.resize` (40–300 × 10–100, a cell of 0–256 px), `terminal.scroll` (`up` /
+    `down`, 1–1000 lines, `source: "wheel"`, a cell inside 300 × 100, modifiers 0–7), an empty `terminal.input` (no
+    text, no bytes: herdr's reset to the live bottom) and `terminal.release`; each line at most 64 KiB, through a
+    bounded queue the caller never waits on (`internal/herdr/termcontrol.go`). A refusal (`terminal.closed` with
+    "already has an attached client") or a takeover makes the watch a read-only observer
+    (`herdr.ControlRefused` / `ControlTakenOver`); `Close` resizes the PTY back to the pane's size before the attach
+    (the session's snapshot), then releases, waits up to 1 s and stops it. The hub's part is
+    `internal/server/termcontrol.go` (one controller per connection, counted under the observer caps; a new one waits
+    for the worker's released one).
     Typed text is never quoted in an error or the audit log. A herdr CLI call takes about 10 ms, so input goes through
     the CLI (consecutive keys, and texts, batched into one call); the socket's `pane.send_input` is not used.
 
@@ -679,6 +690,13 @@ both providers):
   permission prompt is a `permission` question that choice 1 approves (the command ran). About 30 s, a few haiku turns.
   The agent remembers the trust of the test's temporary directory.
 
+- `TestIntegrationSeatControl` (#176): a plain shell's pane owned through `terminal.watch` with `control`: the PTY
+  takes the client's 100 × 30 and a `terminal.resize` to 120 × 35 (`stty size` in the pane), `seq 1 300` then a wheel
+  of 20 lines up moves herdr's view (`terminal.history`, `pane.get` agrees), output while scrolled up grows the offset,
+  `terminal.scroll` `bottom` and a `worker.keys` both bring it back to 0, a second connection is refused control and
+  observes read only (`busy`), standing up (a watch without control) puts the PTY back to its size before (no TUI is
+  attached), five sit / stand cycles and closed connections leave no `terminal session control` or observer process
+  (a `/proc` scan, `--takeover` never in an argv). About 4 s, no agent.
 - `TestIntegrationFullscreenLaptop` (#74): a two-pane tab watched with `fullscreen` against the real herdr: without it
   nothing is zoomed; headless the flag flips (`headless`, 120 × 40) and is put back on `terminal.unwatch`; with a TUI
   attached (a `python3` pty client at 140 × 50, skipped without python3) the watch is the tab's whole content area,
@@ -1009,7 +1027,18 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   `fullscreen.ts` (pure) turns it into the seat bar's chip (`Fullscreen` / `Split pane 60×40` / `Fullscreen unavailable`),
   the preference is `h3d.term.fullscreen` (`themePrefs.ts`; off is sent as `fullscreen: false`, which only follows the
   pane, and the ambient laptops send no field); #175: a narrow (split) pane at 100% is its whole grid, letterboxed
-  (`paint.ts` `viewport`: only the user's zoom grows the cells). The simulator plays the zoom with `simzoom=old|single|split|headless`
+  (`paint.ts` `viewport`: only the user's zoom grows the cells). #176: sitting opens the full-window seated workspace
+  (`ui/seat.ts`, the seat bar grown into it: header, notices, content area, keys; the game behind it inert and drawn at
+  the covered rate) and its terminal is a real, opened xterm 6 (`seatTerm.ts`, with fit 0.11.0, web-links 0.12.0 and
+  unicode11 0.9.0; its pure rules in `seatTermLogic.ts`): it fits its area at a fixed font size (the preset's mono × 1.2
+  × the zoom), and that grid is the seated watch's `control` grid and its debounced `terminal.resize`; the wheel goes
+  to `terminal.scroll` and `terminal.history` drives the "N lines up · Back to live" button; Ctrl/⌘+click opens an
+  https link through `App.external`; Ctrl+Shift+C (⌘C) copies its selection. It never types (`disableStdin`, no
+  `onData`, `swallowReplies`): every key is still `seatedKey` and the lanes. A control watch keeps its process (no
+  restart for a new fps or grid; a frame gap asks for a full frame with a same-size resize); read only (another
+  client owns the pane) it shows the pane at its own size and the #74 chip ("Zoom herdr tab") is back; while the seat
+  owns the pane there is no chip and no zoom. The simulator plays the controller (`simcontrol=old|none|busy`,
+  `sim.write` raw text on a screen, `sim.terminal` what a watch has). The simulator plays the zoom with `simzoom=old|single|split|headless`
   (`tools/fixture-screen.ts`; `sim.unzoom` is the human unzooming), and `simscreen=narrow` puts a split pane's 60×40
   screen (`fixtures/screens/narrow.jsonl`) on every laptop. #57: `askCard.ts` is the question card of the transcript view (the one pinned above the
   prompt box while the worker waits, and its timeline entry), styled in `transcript.css`. #59: `paint.ts` draws each
@@ -1851,8 +1880,15 @@ make e2e-extended             # on request: every functional spec below (the who
                               # #74 fullscreen chip (h74-fullscreen.spec.ts, simzoom=): the seated watch asks for fullscreen, the chip
                               # toggles it through terminal.zoom, the human unzooming reaches it, headless, single pane and older
                               # bridges, keyboard, AA contrast at the three presets, the bar's height; h74-*.png
-                              # #175 narrow pane (h175-narrow-fit.spec.ts, simscreen=narrow): a 60×40 pane at 100% shows its 40
-                              # rows, A+ / A− / Ctrl+0, a resize, the glance view, a 120-column control; h175-*.png
+                              # (#176: on a bridge before it, simcontrol=old; a seat that owns its pane has no chip, a read-only one
+                              # offers "Zoom herdr tab")
+                              # #175 narrow pane (h175-narrow-fit.spec.ts, simscreen=narrow): an owned 60×40 pane takes the window's
+                              # grid at 100%, A+ / Ctrl+0 change the cells, a resize; read only it shows at its own 60×40; h175-*.png
+                              # #176 seated workspace (h176-seat-workspace.spec.ts): at 1280×800 the content area is >85% × >75%,
+                              # the game inert, the PTY at the fitted grid, a narrower window fewer columns at the same font,
+                              # standing up restores the focus; Ctrl+click links (plain, soft-wrapped, OSC 8; http not), the wheel
+                              # and Back to live, typing back to live, drag + Ctrl+Shift+C, read only (simcontrol=busy) and an
+                              # older bridge; h176-*.png
                               # #140 Auto (h140-auto-profile.spec.ts, simcodexprofiles=2): the hire dialog's Auto chip and
                               # its toast, Settings' "May be used for anything" and Auto rules (a refusal under its row,
                               # move, save) at 390 and desktop, Quiet and Ubuntu; h140-*.png

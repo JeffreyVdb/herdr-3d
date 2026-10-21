@@ -31,7 +31,9 @@ import (
 // agent name after hook review, types into a pane only a
 // resume command, a hire's first prompt, the agents' exit commands, a
 // fixed set of keys and (M5) what the player types or prompts at a laptop,
-// never focuses anything and never uses systemctl.
+// owns (#176) only the seated laptop's terminal, through `terminal session
+// control` without --takeover (resize, history scroll, release), never
+// focuses anything and never uses systemctl.
 type Control struct {
 	// Herdr is the herdr executable (default "herdr").
 	Herdr string
@@ -53,6 +55,9 @@ type Control struct {
 	// its stdout (default: exec in its own process group with
 	// CleanEnv(os.Environ())). Tests inject a fake.
 	Stream Streamer
+	// #176: Duplex starts the terminal controller, a long-running command
+	// with a stdin (default: as Stream, with a stdin pipe). Tests inject a fake.
+	Duplex DuplexStreamer
 
 	// #95: TypeGap is the pause after each chunk of a typed prompt
 	// (default DefaultTypeGap).
@@ -130,6 +135,8 @@ const (
 	opPromptQueued = "prompt-queued"
 	// #95: one chunk of a prompt typed into Claude Code.
 	opTypeText = "type-text"
+	// #176: the seated laptop's terminal controller.
+	opControl = "control"
 )
 
 // #155: control operations of a shared-server Codex worker.
@@ -225,6 +232,12 @@ var controlShapes = map[string][]string{
 	// M5 term. Read only, long-running: a pane's screen as NDJSON frames (a
 	// full frame, then diffs; read-only, no input, resize or takeover).
 	opObserve: {"{herdr}", "--session", "{session}", "terminal", "session", "observe", "{pane}",
+		"--cols", "{cols}", "--rows", "{rows}"},
+	// #176. Long-running: the seated laptop's terminal as its owner (the
+	// same frames as observe; on stdin only resize, scroll, an empty input
+	// that returns to the live bottom, and release). Never --takeover: herdr
+	// refuses a second owner, and the bridge falls back to observe.
+	opControl: {"{herdr}", "--session", "{session}", "terminal", "session", "control", "{pane}",
 		"--cols", "{cols}", "--rows", "{rows}"},
 	// Laptop input: herdr key names ({keys} is one argv element per key),
 	// literal text without control characters, and the fixed xterm

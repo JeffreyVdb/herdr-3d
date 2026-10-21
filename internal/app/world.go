@@ -871,6 +871,7 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	opts.Fresh = freshWorkers(cfg.Herdr)
 	opts.MaxWatches, opts.MaxObservers, opts.PaneSize = cfg.MaxWatches, cfg.MaxObservers, paneSize(cfg.Herdr) // M5 term
 	opts.PaneState = paneState(cfg.Herdr)                                                                     // #74
+	opts.PaneScroll = paneScroll(cfg.Herdr)                                                                   // #176
 	opts.MaxTranscriptWatches = cfg.MaxTranscriptWatches                                                      // M16 transcript
 	if cfg.Git != nil {
 		opts.Git = cfg.Git
@@ -1063,6 +1064,24 @@ func paneState(read watch.Herdr) func(ctx context.Context, socket, pane string) 
 			return herdr.PaneState{}, false
 		}
 		return snap.PaneState(pane)
+	}
+}
+
+// paneScroll reads where a pane's view is in herdr's history (pane.get,
+// read only, #176); nil when the read side cannot.
+func paneScroll(read watch.Herdr) func(ctx context.Context, socket, pane string) (herdr.PaneScroll, bool) {
+	r, ok := read.(interface {
+		PaneScroll(ctx context.Context, socket, pane string) (herdr.PaneScroll, bool, error)
+	})
+	if !ok {
+		return nil
+	}
+	return func(ctx context.Context, socket, pane string) (herdr.PaneScroll, bool) {
+		if socket == "" {
+			return herdr.PaneScroll{}, false
+		}
+		s, ok, err := r.PaneScroll(ctx, socket, pane)
+		return s, ok && err == nil
 	}
 }
 
