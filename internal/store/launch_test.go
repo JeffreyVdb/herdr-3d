@@ -114,6 +114,48 @@ func TestPresetCRUD(t *testing.T) {
 	}
 }
 
+// #167: a role's Codex profile (a key or "auto") is kept, and survives a
+// reopen and an update; a role without one stays without (the seed's old
+// JSON has none and loads as before: TestPresetSeedOnce).
+func TestPresetRoleCodexProfile(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "w.db")
+	st := open(t, path)
+	team := buildTeam
+	team.Orch = store.Hire{Harness: "codex", Model: "gpt-6-sol", Effort: "high", CodexProfile: "work"}
+	team.Reviewer.CodexProfile = "auto"
+	p, err := st.CreatePreset(ctx, "p_000000000001", "Work team", team)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Roles != team {
+		t.Fatalf("created = %+v", p.Roles)
+	}
+	p.Roles.Reviewer.CodexProfile = ""
+	p.Roles.UX.CodexProfile = "work"
+	if err := st.UpdatePreset(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	st = open(t, path)
+	ps, err := st.Presets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, x := range ps {
+		switch x.ID {
+		case p.ID:
+			if x.Roles != p.Roles {
+				t.Fatalf("reopened = %+v, want %+v", x.Roles, p.Roles)
+			}
+		default:
+			if x.Roles != buildTeam {
+				t.Fatalf("the seed = %+v", x.Roles)
+			}
+		}
+	}
+}
+
 // A floor's last preset goes with the preset.
 func TestLastPreset(t *testing.T) {
 	ctx := context.Background()

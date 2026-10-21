@@ -183,3 +183,53 @@ describe('the fixture’s Auto (#140)', () => {
   });
 });
 
+
+describe('the fixture’s shared setup (#167)', () => {
+  type View = { profiles: Array<{ key: string; share?: boolean; drift?: Array<{ kind: string; name: string }> }>; share?: boolean; steps?: Array<{ name: string; action: string; backup?: string }>; report?: string };
+  const run = (s: ReturnType<typeof sim>, t: string, a: Record<string, unknown>) => s.run(t, a) as unknown as View;
+  const fails = (s: ReturnType<typeof sim>, t: string, a: Record<string, unknown>) => {
+    try {
+      s.run(t, a);
+    } catch (e) {
+      return (e as CmdError).message;
+    }
+    return 'acked';
+  };
+  const drift = (v: View, key: string) => v.profiles.find((p) => p.key === key)?.drift?.map((d) => `${d.kind}:${d.name}`) ?? [];
+
+  it('says the bridge shares; work shares and drifted, old shares hidden (none), spare does not share', () => {
+    const { world } = sim();
+    const v = world.codex_profiles as View;
+    expect(v.share).toBe(true);
+    expect(v.profiles.map((p) => [p.key, p.share ?? false])).toEqual([
+      ['codex', false],
+      ['work', true],
+      ['old', true],
+      ['spare', false],
+    ]);
+    expect(drift(v, 'work')).toEqual(['link_replaced:config.toml', 'skill_only_default:infra']);
+    expect(drift(v, 'old')).toEqual([]);
+  });
+
+  it('plans, refuses an unconfirmed replace, applies with its report, fixes, moves the skill, and shares off', () => {
+    const s = sim();
+    const plan = run(s, 'codex_profiles.share', { key: 'spare', share: true, dry_run: true });
+    expect(plan.steps?.map((x) => `${x.name}:${x.action}`)).toEqual(['config.toml:replace', 'AGENTS.md:link', 'AGENTS.override.md:skip', 'rules/:skip', 'hooks.json:write']);
+    expect(plan.steps?.[0]?.backup).toBe('config.toml.before-share-20261021-090000');
+    expect(fails(s, 'codex_profiles.share', { key: 'spare', share: true })).toBe('bad args: /srv/codex-spare changed since you looked; look again.');
+    expect(fails(s, 'codex_profiles.share', { key: 'codex', share: true })).toBe('bad args: The default profile is the one the others share from.');
+    expect(fails(s, 'codex_profiles.share', { key: 'work' })).toBe('bad args: share is required');
+    const on = run(s, 'codex_profiles.share', { key: 'spare', share: true, replace: ['config.toml'] });
+    expect(on.report).toBe('Linked config.toml and AGENTS.md, wrote hooks.json, backed up the old config.toml to config.toml.before-share-20261021-090000. Codex will ask once to review the hooks of spare.');
+    expect(drift(on, 'spare')).toEqual(['skill_only_default:infra']);
+    expect(s.sent.at(-1)?.t).toBe('codex_profiles.update');
+    const fix = run(s, 'codex_profiles.share', { key: 'work', share: true, replace: ['config.toml'] });
+    expect(drift(fix, 'work')).toEqual(['skill_only_default:infra']);
+    const moved = run(s, 'codex_profiles.move_skill', { key: 'codex', skill: 'infra' });
+    expect(moved.report).toBe("Moved the skill infra to ~/.agents/skills/infra and left a link in codex's skills/: every Codex home sees it now.");
+    expect(drift(moved, 'work')).toEqual([]);
+    const off = run(s, 'codex_profiles.share', { key: 'work', share: false });
+    expect(off.report).toBe('Copied config.toml and AGENTS.md from codex: work keeps them as its own and no longer follows codex. Its hooks.json stays.');
+    expect(off.profiles.find((p) => p.key === 'work')?.share).toBe(false);
+  });
+});

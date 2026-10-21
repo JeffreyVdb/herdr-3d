@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 )
 
@@ -67,6 +68,11 @@ type Account struct {
 	// rule decides may land on it (off by default, the default profile's
 	// too).
 	Anything bool
+	// Share (#167): "Share setup with <default>" is on (never on the
+	// default). Drift is how its setup differs from the default's now
+	// (Service.Accounts checks a visible shared profile; nil: nothing).
+	Share bool
+	Drift *Drift
 }
 
 // Lister lists the Codex profiles, the bridge's own first, then the found
@@ -82,6 +88,7 @@ type Override struct {
 	Name     string `json:"name,omitempty"`
 	Hidden   bool   `json:"hidden,omitempty"`
 	Anything bool   `json:"anything,omitempty"` // #140
+	Share    bool   `json:"share,omitempty"`    // #167
 }
 
 // Settings are the user's: the overrides, the added folders (absolute,
@@ -118,6 +125,11 @@ type Service struct {
 
 	mu  sync.Mutex
 	set Settings
+
+	// files serializes the share steps (#167); now names their backups
+	// (nil: time.Now).
+	files sync.Mutex
+	now   func() time.Time
 }
 
 // New makes a service for the user's home folder and the bridge's own Codex
@@ -145,10 +157,77 @@ func clone(set Settings) Settings {
 	return Settings{Overrides: slices.Clone(set.Overrides), Added: append([]string{}, set.Added...), Rules: append([]Rule{}, set.Rules...)}
 }
 
-// Accounts detects the profiles now (a few stat calls and one read of the
-// user's home folder) and applies the settings.
-func (s *Service) Accounts(context.Context) ([]Account, error) {
-	return list(s.userHome, s.defaultHome, s.Settings()), nil
+// List detects the profiles now (a few stat calls and one read of the
+// user's home folder) and applies the settings, without their drift
+// (#167: Accounts reads it; the hub, which lists here, keeps the drift
+// read off its goroutine: WithDrift).
+func (s *Service) List(context.Context) []Account {
+	return list(s.userHome, s.defaultHome, s.Settings())
+}
+
+// Accounts is List with the drift of each profile checksDrift names
+// (#167: read only, a few files of each).
+func (s *Service) Accounts(ctx context.Context) ([]Account, error) {
+	all := s.List(ctx)
+	def := defaultOf(all)
+	for i, a := range all {
+		if !checksDrift(def, a) {
+			continue
+		}
+		if items := driftOf(def.Home, def.Name, a.Home, a.Name); len(items) > 0 {
+			all[i].Drift = &Drift{Items: items}
+		}
+	}
+	return all, nil
+}
+
+// defaultOf is the default profile of a list (zero: none).
+func defaultOf(all []Account) Account {
+	for _, a := range all {
+		if a.Default {
+			return a
+		}
+	}
+	return Account{}
+}
+
+// checksDrift reports whether a's drift is checked: a visible profile
+// that shares the default's setup, its folder and the default's there.
+func checksDrift(def, a Account) bool {
+	return a.Share && !a.Hidden && a.Exists && !a.Default && def.Exists
+}
+
+// DriftCheck is a profile's drift as Accounts read it: the home it read
+// (nil Drift: in step).
+type DriftCheck struct {
+	Home  string
+	Drift *Drift
+}
+
+// DriftChecks are the checks of a list from Accounts, by key: each profile
+// whose drift it read.
+func DriftChecks(all []Account) map[string]DriftCheck {
+	def := defaultOf(all)
+	out := map[string]DriftCheck{}
+	for _, a := range all {
+		if checksDrift(def, a) {
+			out[a.Key] = DriftCheck{Home: a.Home, Drift: a.Drift}
+		}
+	}
+	return out
+}
+
+// WithDrift is a list from List with the drift of each profile checked
+// now from checks (read earlier, off the hub goroutine), where its key
+// still names the same home.
+func WithDrift(all []Account, checks map[string]DriftCheck) []Account {
+	def := defaultOf(all)
+	for i, a := range all {
+		if c, ok := checks[a.Key]; ok && c.Home == a.Home && checksDrift(def, a) {
+			all[i].Drift = c.Drift
+		}
+	}
+	return all
 }
 
 // found is a home before the settings apply.
@@ -232,6 +311,7 @@ func list(userHome, defaultHome string, set Settings) []Account {
 			}
 			a.Hidden = o.Hidden && !f.def
 			a.Anything = o.Anything
+			a.Share = o.Share && !f.def
 		}
 		out = append(out, a)
 	}
@@ -406,7 +486,7 @@ func override(set Settings, home string, fn func(*Override)) Settings {
 	for i, o := range set.Overrides {
 		if canonical(o.Path) == home {
 			fn(&set.Overrides[i])
-			if o := set.Overrides[i]; o.Name == "" && !o.Hidden && !o.Anything {
+			if o := set.Overrides[i]; o.Name == "" && !o.Hidden && !o.Anything && !o.Share {
 				set.Overrides = slices.Delete(set.Overrides, i, i+1)
 			}
 			return set
@@ -414,7 +494,7 @@ func override(set Settings, home string, fn func(*Override)) Settings {
 	}
 	o := Override{Path: home}
 	fn(&o)
-	if o.Name != "" || o.Hidden || o.Anything {
+	if o.Name != "" || o.Hidden || o.Anything || o.Share {
 		set.Overrides = append(set.Overrides, o)
 	}
 	return set
@@ -533,7 +613,7 @@ func (s *Service) Remove(ctx context.Context, key string) (Settings, error) {
 		return set, &SettingsError{"A profile the bridge found cannot be removed, only hidden."}
 	}
 	set.Added = slices.DeleteFunc(set.Added, func(p string) bool { return canonical(p) == a.Home })
-	return override(set, a.Home, func(o *Override) { o.Name, o.Hidden, o.Anything = "", false, false }), nil
+	return override(set, a.Home, func(o *Override) { o.Name, o.Hidden, o.Anything, o.Share = "", false, false, false }), nil
 }
 
 // Clean drops what stored settings cannot mean (a relative or empty path,
@@ -554,10 +634,10 @@ func Clean(set Settings) Settings {
 		if utf8.RuneCountInString(name) > MaxName {
 			name = ""
 		}
-		if o.Path == "" || !filepath.IsAbs(o.Path) || (name == "" && !o.Hidden && !o.Anything) {
+		if o.Path == "" || !filepath.IsAbs(o.Path) || (name == "" && !o.Hidden && !o.Anything && !o.Share) {
 			continue
 		}
-		out.Overrides = append(out.Overrides, Override{Path: filepath.Clean(o.Path), Name: name, Hidden: o.Hidden, Anything: o.Anything})
+		out.Overrides = append(out.Overrides, Override{Path: filepath.Clean(o.Path), Name: name, Hidden: o.Hidden, Anything: o.Anything, Share: o.Share})
 	}
 	for _, r := range set.Rules {
 		m, ok := normMatch(r.Match)

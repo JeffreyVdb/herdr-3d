@@ -128,6 +128,9 @@ func null(v string) sql.NullString { return sql.NullString{String: v, Valid: v !
 // Hire is a harness, model and effort.
 type Hire struct {
 	Harness, Model, Effort string
+	// CodexProfile (#167) is a team preset role's Codex profile (a key or
+	// "auto"; "": the default); never a floor's last hire's.
+	CodexProfile string
 }
 
 // LastHires returns the last choice hired on each floor, by session.

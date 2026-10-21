@@ -153,6 +153,8 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'repo_discovery.refresh': 'scan for repositories',
   'codex_profiles.get': 'list Codex profiles', // #138
   'codex_profiles.set': 'change Codex profiles',
+  'codex_profiles.share': "share a Codex profile's setup", // #167
+  'codex_profiles.move_skill': 'move a Codex skill',
   'worker.answer_async': "answer a Codex worker's question", // #156
   'worker.dismiss_async': "dismiss a Codex worker's question",
   // #11

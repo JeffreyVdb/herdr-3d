@@ -36,6 +36,10 @@ type codexProfileRun struct {
 	env []string
 	// noHook: the home runs no herdr hook (a bare profile home).
 	noHook bool
+	// setup (#167): what the hire says of its setup: a profile that does
+	// not share the default's, or whose shared setup drifted
+	// (codexaccount.SetupNote; "" otherwise).
+	setup string
 }
 
 // profileRefusedError is a profile that keeps the worker from starting:
@@ -68,7 +72,8 @@ func (h *Hub) prepareProfile(ctx context.Context, key string) (codexProfileRun, 
 	if err != nil {
 		return p, release, err
 	}
-	if a, ok := h.listedProfile(ctx, key); ok {
+	list, a, ok := h.listedProfiles(ctx, key)
+	if ok {
 		p.name, p.home, p.def = a.Name, a.Home, a.Default
 	}
 	if p.def {
@@ -81,21 +86,31 @@ func (h *Hub) prepareProfile(ctx context.Context, key string) (codexProfileRun, 
 		}
 	}
 	p.noHook = !codexaccount.RunsHerdrHook(p.home)
+	if ok {
+		p.setup = codexaccount.SetupNote(list, a)
+	}
 	return p, release, nil
 }
 
 // listedProfile is the profile key as listed now ("": the default).
 func (h *Hub) listedProfile(ctx context.Context, key string) (codexaccount.Account, bool) {
+	_, a, ok := h.listedProfiles(ctx, key)
+	return a, ok
+}
+
+// listedProfiles are the profiles as listed now (with their drift, #167)
+// and the one with key ("": the default).
+func (h *Hub) listedProfiles(ctx context.Context, key string) ([]codexaccount.Account, codexaccount.Account, bool) {
 	if h.opts.CodexProfiles == nil {
-		return codexaccount.Account{}, false
+		return nil, codexaccount.Account{}, false
 	}
 	list, _ := h.opts.CodexProfiles.Accounts(ctx)
 	for _, a := range list {
 		if a.Key == key || key == "" && a.Default {
-			return a, true
+			return list, a, true
 		}
 	}
-	return codexaccount.Account{}, false
+	return list, codexaccount.Account{}, false
 }
 
 // checkProfileKey refuses a hire's or a preset's profile that cannot be
@@ -236,18 +251,32 @@ func noHookNote(name, mode string) string {
 		"by the worker's folder in " + name + "'s sessions (for its usage, and at sleep, so a wake resumes it)."
 }
 
-// profileChecked writes a check's outcome into rec, with the bare home's
-// note after it.
+// profileChecked writes a check's outcome into rec, with the setup's note
+// (#167) and the bare home's after it.
 func profileChecked(p *codexProfileRun, rec *store.CodexLaunch, account, plan, note string) {
 	rec.Account, rec.Plan = account, plan
 	var notes []string
 	if note != "" {
 		notes = append(notes, note)
 	}
-	if p.noHook {
-		notes = append(notes, noHookNote(p.name, rec.Mode))
+	rec.ProfileNote = strings.Join(append(notes, setupNotes(p, rec.Mode)...), " ")
+}
+
+// setupNotes are what a start on a profile other than the default says of
+// its home: whether it shares the default's setup (#167), and the bare
+// home's note (#139).
+func setupNotes(p *codexProfileRun, mode string) []string {
+	var out []string
+	if p.def {
+		return nil
 	}
-	rec.ProfileNote = strings.Join(notes, " ")
+	if p.setup != "" {
+		out = append(out, p.setup)
+	}
+	if p.noHook {
+		out = append(out, noHookNote(p.name, mode))
+	}
+	return out
 }
 
 // profileOnRecord sets rec's profile for a start on p: its key and name,
@@ -257,9 +286,7 @@ func profileOnRecord(p *codexProfileRun, rec *store.CodexLaunch) {
 		return
 	}
 	rec.Profile, rec.ProfileName, rec.Account, rec.Plan, rec.ProfileNote = p.key, p.name, "", "", ""
-	if !p.def && p.noHook {
-		rec.ProfileNote = noHookNote(p.name, rec.Mode)
-	}
+	rec.ProfileNote = strings.Join(setupNotes(p, rec.Mode), " ")
 }
 
 // profileView adds a launch's profile to a worker's Codex view.
@@ -373,13 +400,19 @@ func (h *Hub) startLegacy(ctx context.Context, session, pane string, rec store.C
 // the default profile, a worker hired before profiles, any other worker);
 // on another profile home is its folder, "" when that profile is gone (no
 // longer listed, or its folder gone): its sessions are read nowhere then,
-// never in the default's folder.
+// never in the default's folder. #167: a worker the bridge did not start
+// (an agent an orchestrator started) is on the profile its workspace's
+// h3d_codex_profile token names.
 func (h *Hub) codexHomeOf(id string) (home string, other bool) {
 	l, ok := h.cx.launches[id]
-	if !ok || l.Profile == "" {
+	key := l.Profile
+	if !ok {
+		key = tokenProfile(h.workers[id])
+	}
+	if key == "" {
 		return "", false
 	}
-	a, listed := h.codexAccount(l.Profile)
+	a, listed := h.codexAccount(key)
 	switch {
 	case listed && a.Default:
 		return "", false

@@ -263,6 +263,17 @@
   font-size: 10px;
   line-height: 1.35;
 }
+/* #167: a profile whose shared setup drifted: the "default" mark's shape in the warn colour; the panel says what. */
+.lm-acct-drift {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  color: var(--lm-warn, var(--warn));
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.35;
+}
 .lm-plan {
   min-width: 7ch;
   color: var(--text-2);

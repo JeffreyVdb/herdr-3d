@@ -21,19 +21,18 @@ import (
 // profiles the poller found changed is not taken as it is: the poller took
 // it outside the hub goroutine, maybe from settings older than the ones a
 // codex_profiles.set has since applied and published, so the hub lists
-// them again on its goroutine, where the settings change.
+// them again on its goroutine, where the settings change. Only the drift
+// the poller read (#167: files, off the hub goroutine) is kept, for the
+// profiles whose key still names the same home.
 func (h *Hub) trackLimits(ctx context.Context) {
 	defer h.wg.Done()
 	h.limitsPoller.Run(ctx, func() bool { return h.nclients.Load() > 0 }, func(l proto.Limits) {
 		_ = h.doWait(ctx, func() { h.setLimits(l) })
 	}, func(list []codexaccount.Account) {
 		_ = h.doWait(ctx, func() {
-			if svc := h.opts.CodexProfiles; svc != nil {
-				fresh, err := svc.Accounts(ctx)
-				if err != nil {
-					return
-				}
-				list = fresh
+			if h.opts.CodexProfiles != nil {
+				h.keepDrift(list)
+				list = h.listCodexProfiles(ctx)
 			}
 			h.applyCodexAccounts(list)
 		})
