@@ -57,14 +57,35 @@ function windowChip(w: WindowView): HTMLElement {
 
 const providerTape = (v: ProviderView) => h('span', { class: `tape lm-tape lm-tape--${v.provider}` }, v.name);
 
+/** #138: with two or more Codex profiles, the row's profile name; the bridge's own home is marked "default". */
+const profileTag = (v: ProviderView): HTMLElement | null =>
+  v.profile === null
+    ? null
+    : h(
+        'span',
+        { class: 'lm-acct', 'data-default': v.isDefault ? 'true' : null, title: v.isDefault ? `${v.profile}: the bridge’s own Codex home` : `Codex profile ${v.profile}` },
+        h('span', { class: 'lm-acct-name' }, v.profile),
+        v.isDefault ? h('span', { class: 'lm-acct-def' }, 'default') : null,
+      );
+
+/** The attributes a row carries: its provider (and with profiles its profile's key), stale, reached. */
+const rowAttrs = (v: ProviderView, cls: string) => ({
+  class: cls,
+  'data-provider': v.provider,
+  'data-account': v.profile !== null ? v.account : null,
+  'data-stale': v.stale ? 'true' : null,
+  'data-reached': v.reached ? 'true' : null,
+});
+
 /** The collapsed line of one provider; a dialog's line (`models`) adds the per-model windows that count for it. */
 function providerLine(v: ProviderView, models = false): HTMLElement {
   const shown = models ? [...v.windows, ...v.models] : v.windows;
   const wins = shown.length ? shown.map(windowChip) : [h('span', { class: 'lm-none' }, v.problem ?? 'No reading yet')];
   return h(
     'div',
-    { class: 'lm-line', 'data-provider': v.provider, 'data-stale': v.stale ? 'true' : null, 'data-reached': v.reached ? 'true' : null },
+    rowAttrs(v, 'lm-line'),
     providerTape(v),
+    profileTag(v),
     v.plan ? h('span', { class: 'lm-plan' }, v.plan) : null,
     h('span', { class: 'lm-wins' }, ...wins),
     v.asOf ? h('em', { class: 'lm-asof' }, v.asOf) : null,
@@ -79,8 +100,8 @@ function windowRow(w: WindowView): HTMLElement {
 function providerSection(v: ProviderView): HTMLElement {
   return h(
     'section',
-    { class: 'lm-sec', 'data-provider': v.provider, 'data-stale': v.stale ? 'true' : null, 'data-reached': v.reached ? 'true' : null },
-    h('header', {}, providerTape(v), v.plan ? h('span', { class: 'lm-plan' }, v.plan) : null, v.reached ? h('strong', { class: 'lm-hit' }, 'Limit reached') : null),
+    rowAttrs(v, 'lm-sec'),
+    h('header', {}, providerTape(v), profileTag(v), v.plan ? h('span', { class: 'lm-plan' }, v.plan) : null, v.reached ? h('strong', { class: 'lm-hit' }, 'Limit reached') : null),
     v.windows.length || v.models.length ? h('ul', { class: 'lm-rows' }, ...v.windows.map(windowRow), ...v.models.map(windowRow)) : null,
     v.credits !== null ? h('p', { class: 'lm-meta' }, h('span', {}, 'Credits'), h('b', {}, v.credits)) : null,
     v.problem ? h('p', { class: 'lm-problem' }, v.problem) : null,
@@ -89,7 +110,7 @@ function providerSection(v: ProviderView): HTMLElement {
 }
 
 const summary = (views: ProviderView[]): string =>
-  views.length ? views.map((v) => `${v.name}${v.plan ? ` ${v.plan}` : ''}: ${v.windows.map((w) => `${w.label} ${w.pctText}`).join(', ') || v.problem || 'no reading'}${v.stale ? ' (old reading)' : ''}`).join('; ') : 'reading';
+  views.length ? views.map((v) => `${v.name}${v.profile !== null ? ` ${v.profile}${v.isDefault ? ' (default)' : ''}` : ''}${v.plan ? ` ${v.plan}` : ''}: ${v.windows.map((w) => `${w.label} ${w.pctText}`).join(', ') || v.problem || 'no reading'}${v.stale ? ' (old reading)' : ''}`).join('; ') : 'reading';
 
 export class LimitsWidget {
   readonly root: HTMLElement;
@@ -336,12 +357,13 @@ export class LimitsWidget {
   }
 
   /** What the widget shows (test hook). */
-  summary(): { hidden: boolean; open: boolean; lines: Array<{ provider: string; stale: boolean; reached: boolean; windows: Array<{ label: string; pct: string; sev: string }> }> } {
+  summary(): { hidden: boolean; open: boolean; lines: Array<{ provider: string; account?: string; stale: boolean; reached: boolean; windows: Array<{ label: string; pct: string; sev: string }> }> } {
     return {
       hidden: this.root.hidden === true,
       open: this.isOpen,
       lines: [...this.lines.querySelectorAll<HTMLElement>('.lm-line[data-provider]')].map((l) => ({
         provider: l.dataset.provider ?? '',
+        ...(l.dataset.account ? { account: l.dataset.account } : {}),
         stale: l.dataset.stale === 'true',
         reached: l.dataset.reached === 'true',
         windows: [...l.querySelectorAll<HTMLElement>('.lm-win')].map((w) => ({ label: w.querySelector('.lm-lab')?.textContent ?? '', pct: w.querySelector('.lm-pct')?.textContent ?? '', sev: w.dataset.sev ?? '' })),
@@ -355,7 +377,7 @@ export class LimitsWidget {
     const views = limitsView(this.book, now);
     const open = this.isOpen;
     // Everything that shows, and nothing else: no reading changing, no re-render.
-    const key = JSON.stringify([views.map((v) => [v.provider, v.plan, v.windows, v.models, v.stale, v.reached, v.asOf, v.problem, v.credits, open ? v.readNote : '']), open, this.refreshing]);
+    const key = JSON.stringify([views.map((v) => [v.key, v.profile, v.isDefault, v.plan, v.windows, v.models, v.stale, v.reached, v.asOf, v.problem, v.credits, open ? v.readNote : '']), open, this.refreshing]);
     if (key === this.key) return;
     this.key = key;
     this.root.dataset.reached = views.some((v) => v.reached) ? 'true' : 'false';

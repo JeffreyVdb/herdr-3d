@@ -238,6 +238,31 @@
 .lm-tape--codex {
   --c: var(--working);
 }
+/* #138: a Codex profile's name beside the tape when there are several; the bridge's own home says "default". */
+.lm-acct {
+  display: inline-flex;
+  flex: none;
+  align-items: baseline;
+  gap: 5px;
+  max-width: 16ch;
+  min-width: 0;
+}
+.lm-acct-name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lm-acct-def {
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text-2);
+  font-size: 10px;
+  line-height: 1.35;
+}
 .lm-plan {
   min-width: 7ch;
   color: var(--text-2);

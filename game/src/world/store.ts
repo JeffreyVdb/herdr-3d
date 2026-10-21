@@ -36,6 +36,7 @@ import { HandoffLLMBook } from './handoffLlm';
 // #155: the shared Codex server switch
 import { CodexServerBook } from './codexServer';
 import { RepoDiscoveryBook } from './repoDiscovery';
+import { CodexProfilesBook } from './codexProfiles';
 import { RepoRefsBook } from './repoRefs';
 import { PromptSecretsBook } from './promptSecrets';
 import { KaneoBook } from './kaneo';
@@ -249,6 +250,7 @@ export class WorldStore {
   readonly repoRefs = new RepoRefsBook(); // #247
   readonly promptSecrets = new PromptSecretsBook(); // #108
   readonly repoDiscovery = new RepoDiscoveryBook(); // #54
+  readonly codexProfiles = new CodexProfilesBook(); // #138
   readonly kaneo = new KaneoBook(); // #184
   readonly notifySettings = new NotifyBook(); // #11
   readonly handoffs = new HandoffBook(); // #223
@@ -309,6 +311,8 @@ export class WorldStore {
     this.repoRefs.reset(s.world.repo_refs); // #247
     this.promptSecrets.reset(s.world.prompt_secrets); // #108
     this.repoDiscovery.reset(s.world.repo_discovery); // #54
+    this.codexProfiles.reset(s.world.codex_profiles); // #138
+    this.retainProfiles();
     this.kaneo.reset(s.world.kaneo); // #184
     this.handoffs.reset(s.world.handoffs); // #223
     this.schedules.reset(s.world.schedules, s.world.schedule_herdr_instructions); // #64 schedules (a bridge before #62 sends none), #127
@@ -480,6 +484,9 @@ export class WorldStore {
       case 'repo_discovery.update': // #54 repository discovery
         this.repoDiscovery.upsert(e);
         break;
+      case 'codex_profiles.update': // #138 Codex profiles: a hidden or removed profile's row leaves the meter at once
+        if (this.codexProfiles.upsert(e)) this.retainProfiles();
+        break;
       case 'kaneo.update': // #184 the Kaneo connection
         this.kaneo.upsert(e);
         break;
@@ -528,6 +535,12 @@ export class WorldStore {
     if (c.structure) this.structureVersion++;
     if (c.structure || c.workers.size) this.floorList.refresh();
     return c;
+  }
+
+  /** #138: the meter keeps the Codex profiles the bridge reads (a hidden or removed one's row goes). */
+  private retainProfiles(): void {
+    const keys = this.codexProfiles.visibleKeys();
+    if (keys) this.limits.retainProfiles(keys);
   }
 
   private dropWorker(id: string): void {

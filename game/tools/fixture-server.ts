@@ -224,6 +224,8 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             // M6 crew: the scripted freelancer plays by itself (tools/fixture-crew.ts).
             // M10: the plan limits' readings (tools/fixture-limits.ts).
             ...(q.get('simlimits') ? { limits: q.get('simlimits') as string } : {}),
+            // #138: Codex profiles (tools/fixture-codex-profiles.ts).
+            ...(Number(q.get('simcodexprofiles')) > 0 ? { codexProfiles: Math.min(2, Number(q.get('simcodexprofiles'))) } : {}),
             // #74: the server rack's host stats: the scripted numbers and their period (tools/fixture-host.ts).
             ...(q.get('simhost') ? { host: q.get('simhost') as string } : {}),
             ...(q.get('simhostms') ? { hostMs: Math.max(100, Number(q.get('simhostms')) || 5000) } : {}),

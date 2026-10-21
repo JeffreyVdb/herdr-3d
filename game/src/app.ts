@@ -114,6 +114,7 @@ import { digestFailureText } from './world/digestSettings';
 import { packupApplies } from './world/packup';
 import { packupCheck, type PackupCheck } from './ui/packupSend';
 import { activitySection } from './ui/activitySection';
+import { codexProfilesSection } from './ui/codexProfilesSection';
 import { codexServerSection } from './ui/codexServerSection';
 import { repoDiscoverySection } from './ui/repoDiscoverySection';
 import { floorsSection } from './ui/floorsSection';
@@ -540,6 +541,11 @@ export class App {
     );
     // #155: whether new Codex workers get a Codex server of their own (the bridge's switch, off by default).
     settings.addSection('codex', 'Codex workers', codexServerSection({ book: this.store.codexServer, send: (t, args) => this.send(t, args) }), { store: 'bridge', group: 'workers' });
+    // #138: the Codex home folders the limits are read for, one per account: name, hide, add and remove them.
+    settings.addSection('codex-profiles', 'Codex profiles', codexProfilesSection({ book: this.store.codexProfiles, send: (t, args) => this.send(t, args) }), {
+      store: 'bridge',
+      group: 'workers',
+    });
     // #108: whether a prompt is scanned for passwords and tokens, and reviewed, before it goes (the bridge's switch, off by default).
     settings.addSection('prompt-secrets', 'Prompt secrets', promptSecretsSection({ book: this.store.promptSecrets, send: (t, args) => this.send(t, args) }), { store: 'bridge', group: 'workers' });
     // #247: whether a conversation's `@r:` lists every building's floors (the bridge's switch, off by default).

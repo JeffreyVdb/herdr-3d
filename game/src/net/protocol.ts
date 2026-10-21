@@ -442,6 +442,40 @@ export interface RepoDiscoveryRoot {
   last_success_at: number | null;
 }
 
+/** #138: one Codex profile: a Codex home folder with its own sign-in (`codex_profiles` in the snapshot). */
+export interface CodexProfile {
+  /** Names it for good (from the folder's name: ~/.codex-work is `work`); a rename does not change it. `Limits.account.key`. */
+  key: string;
+  name: string;
+  /** The folder on the bridge host, absolute; `display` with `~` for the bridge user's home. */
+  path: string;
+  display: string;
+  /** The plan of its last limits reading ("" unknown). */
+  plan: string;
+  /** It has an auth.json, or a reading had a plan. */
+  signed_in: boolean;
+  /** The bridge's own home ($CODEX_HOME, else ~/.codex): cannot be hidden. */
+  default: boolean;
+  /** Not read, no limits. */
+  hidden: boolean;
+  /** A folder the user added: can be removed. */
+  added: boolean;
+  /** An added folder that is not there (not read). */
+  missing?: boolean;
+}
+
+/** #138: the Codex profiles (`codex_profiles` in the snapshot, `codex_profiles.get`/`.set`'s ack, flat in `codex_profiles.update`). */
+export interface CodexProfilesState {
+  /** The bridge's own first, then the found folders, then the added ones; hidden ones included. */
+  profiles: CodexProfile[];
+}
+
+/** #138: `codex_profiles.update`: the list, flat. */
+export interface CodexProfilesUpdate extends CodexProfilesState {
+  t: 'codex_profiles.update';
+  seq: number;
+}
+
 /** #54: `repo_discovery.update`: the state, flat. */
 export interface RepoDiscoveryUpdate extends RepoDiscoveryState {
   t: 'repo_discovery.update';
@@ -538,6 +572,8 @@ export interface World {
   prompt_secrets?: PromptSecretsState;
   /** #54 repository discovery's settings and status (absent from an older bridge, or one that cannot scan). */
   repo_discovery?: RepoDiscoveryState;
+  /** #138 the Codex profiles (absent from an older bridge). */
+  codex_profiles?: CodexProfilesState;
   /** #184 the Kaneo connection (absent from an older bridge). Never a key. */
   kaneo?: KaneoState;
   /** #223 the filing cabinet: each floor's handoff count (absent from an older bridge, or one without a handoff directory). */
@@ -690,6 +726,7 @@ export type WorldEvent =
   | PromptSecretsUpdate
   // #54 repository discovery
   | RepoDiscoveryUpdate
+  | CodexProfilesUpdate
   // #184 the Kaneo connection
   | KaneoUpdate
   // #62 scheduled agents
@@ -1071,6 +1108,9 @@ export interface CommandArgs {
   'repo_discovery.get': Record<string, never>;
   'repo_discovery.set': { roots?: string[]; interval_minutes?: number };
   'repo_discovery.refresh': Record<string, never>;
+  'codex_profiles.get': Record<string, never>;
+  /** One change a command: `add` alone, or `key` with one of `name`, `hidden`, `remove`. */
+  'codex_profiles.set': { key: string; name: string } | { key: string; hidden: boolean } | { key: string; remove: true } | { add: string };
   // #156 Codex async questions. `worker.answer_async` acks `AsyncAnswerAck`.
   'worker.answer_async': { id: string; thread: string; batch: string; answers: { index: number; answer: string }[]; /** #108 round 2: `answers[N].answer`. */ secrets?: SecretsReviews };
   'worker.dismiss_async': { id: string; thread: string; batch: string; indexes?: number[] };
@@ -1431,6 +1471,7 @@ const EVENT_TYPES = new Set([
   'repo_refs.update', // #247 the "Repositories from other buildings" switch
   'prompt_secrets.update', // #108 the "Review prompt secrets before sending" switch
   'repo_discovery.update', // #54 repository discovery
+  'codex_profiles.update', // #138 Codex profiles
   'kaneo.update', // #184 the Kaneo connection
   'schedule.upsert', // #62 scheduled agents
   'schedule.removed',
@@ -1541,6 +1582,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     // #54: repository discovery, flat (the book checks the rest).
     case 'repo_discovery.update':
       return Array.isArray(o.roots) && isObj(o.status);
+    // #138: the Codex profiles, flat (the book checks the rest).
+    case 'codex_profiles.update':
+      return Array.isArray(o.profiles);
     // #184: the Kaneo connection, flat.
     case 'kaneo.update':
       return typeof o.state === 'string' && typeof o.key_set === 'boolean';
@@ -2366,6 +2410,17 @@ export interface Limits {
   /** Codex's rateLimitReachedType while a limit is reached. */
   reached?: string;
   credits?: LimitCredits;
+  /** #138: the Codex profile read (Codex only; absent from an older bridge: the bridge's own home). */
+  account?: LimitsAccount;
+}
+
+/** #138: the Codex profile a reading is of. Never an email. */
+export interface LimitsAccount {
+  key: string;
+  name: string;
+  plan: string;
+  /** The bridge's own Codex home. */
+  default: boolean;
 }
 
 /** `limits.update`: a provider's new reading, flat. */
