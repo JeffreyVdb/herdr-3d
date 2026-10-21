@@ -973,7 +973,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `floor.delete` | `{"floor": string, "move_workers"?: bool}`: a virtual floor; refused while it has workers unless `move_workers` is `true`, which moves them to its base session's real floor first | — | `floor.removed` (with `floor_id`), `building.upsert` when it was in a building, #93 `hire_preset.removed` for each of its own hire presets; with moved workers, their `worker.upsert` on the real floor (new `floor`, `desk_index`, maybe `name`) after the `floor.removed` |
 | `floor.hide` | `{"floor": string, "hidden": bool}`: #58 decision 2, a floor's stored hidden setting (any floor; see [Virtual floors](#virtual-floors)) | — | `floor.upsert` with `hidden`, to every client; none when it was already so |
 | `hire.prepare` | `{"floor"|"session": string, "cwd"?: string, "preview"?: bool}` (#134 `preview` only to a bridge whose snapshot says `prepare_preview`) | what the hire dialog shows: `{"cwd", "choice", "choice_source", "label", "git", "capacity", "herdr_instructions"}` (see [Hire and send home](#hire-and-send-home)) | — |
-| `worker.hire` | `{"floor"|"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?, "herdr_instructions"?: bool, "secrets"?: SecretsReview, "secrets_pending"?: string, "codex_profile"?: string}` (#108: see [Prompt secrets](#prompt-secrets); #139 `codex_profile`, Codex only, only to a bridge whose `codex_profiles` says `hire`: see [Hiring on a Codex profile](#hiring-on-a-codex-profile)) | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?, "protected"?: int}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent). #58 decision 3: on a virtual floor whose base session is asleep, `floor.wake`'s events for every floor of the session come first (see [Virtual floors](#virtual-floors)) |
+| `worker.hire` | `{"floor"|"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?, "herdr_instructions"?: bool, "secrets"?: SecretsReview, "secrets_pending"?: string, "codex_profile"?: string}` (#108: see [Prompt secrets](#prompt-secrets); #139 `codex_profile`, Codex only, only to a bridge whose `codex_profiles` says `hire`: see [Hiring on a Codex profile](#hiring-on-a-codex-profile); #140 `"auto"`, only when it says `auto`: see [Auto](#auto-the-bridge-picks-the-codex-profile)) | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?, "protected"?: int, "codex_profile_reason"?: string}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent). #58 decision 3: on a virtual floor whose base session is asleep, `floor.wake`'s events for every floor of the session come first (see [Virtual floors](#virtual-floors)) |
 | `worker.fire.prepare` | `{"id": string}` | `{"name", "label", "branch"?, "worktree", "dirty", "unpushed", "can_delete", "can_delete_branch", "reason"?, "can_fire", "fire_blocked"?}` | — |
 | `worker.fire` | `{"id": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"worktree": "kept" \| "deleted" \| "deleted_branch", "released": bool, "note"?}` | `worker.removed` with `reason: "sent_home"`, then `floor.upsert` when `desks` changes |
 | `worker.wrapup` | `{"id": string, "prompt": string, "worktree"?: "keep" \| "delete" \| "delete_branch", "secrets"?: SecretsReview, "secrets_pending"?: string}` (default `keep`; #108 round 5 `secrets_pending`: packup.detect's hand-over, see [Prompt secrets](#prompt-secrets)) | `{"queued"?: true}` | the worker's upsert with `wrapup` `armed` (before the ack); later, on CLEAN, `worker.removed` with `reason: "sent_home"` (see [Wrap up](#wrap-up)) |
@@ -1047,7 +1047,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `prompt_secrets.scan` | `{"text": string}` (at most 32 KiB) | `{"revision", "candidates": [{"id", "start", "end", "kinds", "encoded"?}…]}`; `secrets_review_off` while the switch is off | — |
 | `prompt_secrets.revoke` | `{"worker": string}` (round 5) | `{"removed": int}`: every protected file the worker held (its own and those it held by a lease) is gone, for every holder; the worker keeps running; with the switch on or off; `not_found` (a worker the bridge does not show and that holds no file: one it does not show that holds files is revoked the same way), `secrets_unavailable` (no private runtime directory) | the worker's `worker.upsert` without `secret_files` (before the ack), and of every other holder that lost a file |
 | `codex_profiles.get` | `{}` | `{"profiles"}` (see [Codex profiles](#codex-profiles)), listed afresh | `codex_profiles.update` when the list changed |
-| `codex_profiles.set` | one change: `{"add": path}`, or `{"key", "name": string}`, `{"key", "hidden": bool}`, `{"key", "remove": true}` | the list | `codex_profiles.update` (and `limits.update` for a renamed profile's reading) before the ack |
+| `codex_profiles.set` | one change: `{"add": path}`, or `{"key", "name": string}`, `{"key", "hidden": bool}`, `{"key", "remove": true}`; #140 `{"key", "anything": bool}`, `{"rules": [{"match", "profile"}]}` | the list | `codex_profiles.update` (and `limits.update` for a renamed profile's reading) before the ack |
 | `repo_discovery.get` | `{}` | `{"roots", "interval_minutes", "status"}` (see [Repository discovery](#repository-discovery)) | — |
 | `repo_discovery.set` | `{"roots"?: [absolute path…], "interval_minutes"?: 1–1440}` (at least one) | the state; a change of roots scans at once | `repo_discovery.update` (before the ack) when it changes |
 | `repo_discovery.refresh` | `{}` | the state; a scan starts (after the one in flight) | `repo_discovery.update` (before the ack) |
@@ -2447,8 +2447,10 @@ an account, never reads a token and never runs codex-auth: it only looks at fold
   whose 6 digits are the same both take all 64, whichever is listed first: no key depends on the listing order. The
   default name is the folder's name without the hash when no other profile's folder has that name and no other
   profile has it as its key, else the key.
-- **Settings** (SQLite `codex_profiles_settings`, one row, a JSON object: per folder a `name` and `hidden`, and the
-  added folders). `codex_profiles.set` takes **one** change and answers the list:
+- **Settings** (SQLite `codex_profiles_settings`, one row, a JSON object: per folder a `name`, `hidden` and (#140)
+  `anything`, the added folders, and (#140) the Auto `rules`; a row stored before #140 reads with no rules and nothing
+  flagged, no migration). Settings only: no flag or environment variable sets them. `codex_profiles.set` takes **one**
+  change and answers the list:
   - `{"key", "name"}`: trimmed, 1–40 characters, no control characters, no other profile's name or key in any case
     (`bad_request` with the reason); the key itself as name clears it.
   - `{"key", "hidden": bool}`: a hidden profile is not read and has no reading in `limits`; the default cannot be
@@ -2456,21 +2458,35 @@ an account, never reads a token and never runs codex-auth: it only looks at fold
   - `{"add": path}`: an absolute path or `~/…` on the bridge host, an existing folder, not a profile already (found or
     added), at most 16 added folders.
   - `{"key", "remove": true}`: an added folder only (a found one can only be hidden); what was set for it goes too.
-  - An unknown key is `not_found`; anything else (no change, two changes, `add` with a `key`) is `bad_request`.
+  - #140 `{"key", "anything": bool}`: "May be used for anything" (off by default, the default profile's too): an
+    [Auto](#auto-the-bridge-picks-the-codex-profile) hire that no rule decides may land on it.
+  - #140 `{"rules": [{"match", "profile"}, …]}` (no `key`): replaces the rules, in order (`[]` clears them), so a new
+    order lands in one change. At most 32; each `match` one of `github.com/<owner>/*`, `github.com/<owner>/<repo>`
+    (owner and repo as GitHub allows them) or a folder (`/…` or `~/…`), no match twice (ignoring case), each `profile`
+    a key listed now (a hidden or signed-out one is allowed: Auto passes it over). Stored trimmed, `github.com` in
+    lower case, a folder cleaned (`~/work/` → `~/work`). A refusal (`bad_request`) starts with the rule's number:
+    `Rule 2: there is no Codex profile "gone".`
+  - An unknown key is `not_found`; anything else (no change, two changes, `add` or `rules` with a `key`) is
+    `bad_request`.
 - **View** (`codex_profiles.get`'s and `.set`'s ack, the snapshot's `codex_profiles`, flat in `codex_profiles.update`):
 
 ```json
 {"t":"codex_profiles.update","seq":2301,"profiles":[
   {"key":"codex","name":"codex","path":"/home/me/.codex","display":"~/.codex","plan":"prolite","signed_in":true,"default":true,"hidden":false,"added":false},
   {"key":"work","name":"Work seat","path":"/home/me/.codex-work","display":"~/.codex-work","plan":"team","signed_in":true,"default":false,"hidden":false,"added":false},
-  {"key":"spare-306ceb","name":"spare","path":"/srv/codex-spare","display":"/srv/codex-spare","plan":"","signed_in":false,"default":false,"hidden":true,"added":true,"missing":true}]}
+  {"key":"spare-306ceb","name":"spare","path":"/srv/codex-spare","display":"/srv/codex-spare","plan":"","signed_in":false,"default":false,"hidden":true,"added":true,"missing":true}],
+ "hire":true,"auto":true,"rules":[{"match":"github.com/acme/*","profile":"work"}]}
 ```
 
   `display` is `path` with `~` for the bridge user's home; `plan` is the profile's latest reading's (`""` unknown);
   `missing` marks an added folder that is not there (not read). The list is published again when a setting changes,
   when listing finds a folder appeared or went, and when a profile's plan changes. #139: `"hire": true` says the
   bridge hires on a profile (`worker.hire`'s and the presets' `codex_profile`); a bridge from before #139 leaves it
-  out and refuses the field as unknown.
+  out and refuses the field as unknown. #140: `"auto": true` says it also takes `codex_profile: "auto"`; then
+  `rules` is always there (`[]` when none) and a profile flagged "may be used for anything" has `"anything": true`
+  (absent: off). A bridge from before #140 leaves all three out and refuses `"auto"` as an unknown profile
+  (`not_found`), so a client offers Auto only where `auto` is set. No folder is keyed `auto` (`~/.codex-auto` is
+  `auto-<hash>`).
 
 #### Hiring on a Codex profile
 
@@ -2532,6 +2548,51 @@ every Codex process it starts. Nothing is switched: two workers on two profiles 
 {"t":"worker.hire","req_id":"h7","args":{"floor":"herdr-3d","desk_index":5,"harness":"codex","model":"gpt-6-sol","effort":"high","codex_profile":"work"}}
 {"t":"ack","req_id":"h7","data":{"id":"…","workspace_id":"w12","trust":"none","codex":{"mode":"shared","server":"running","profile":"work","account":"confirmed","plan":"team"}}}
 ```
+
+#### Auto: the bridge picks the Codex profile
+
+#140 (`docs/decisions.md` "#140"). `worker.hire`'s (and a hire preset's) `codex_profile: "auto"`, Codex only and only
+on a bridge whose `codex_profiles` says `auto` (else the same refusals as any other key: `bad_request` for another
+harness, `unsupported` without profiles), leaves the profile to the bridge. It is picked **once, at hire**, before
+anything of [Hiring on a Codex profile](#hiring-on-a-codex-profile) happens, and the worker keeps that concrete key for
+good: its launch and `codex.profile` never hold `auto`, and a wake (or a resume) never picks again. Nothing ever moves
+a worker to another profile because its quota ran out.
+
+1. **Rules first, in order** (`codex_profiles.rules`): the first whose `match` fits the hire wins, whatever the limits
+   say. A GitHub match is compared (ignoring case) with the `origin` remote of the folder the hire was asked for (a
+   worktree hire's source folder, not its new checkout); a folder match with that folder, on whole path segments
+   (`~/work` matches `~/work/api`, not `~/workshop`). A rule whose profile is gone (not listed, or its folder removed),
+   hidden or not signed in is passed over, with a note in the reason, and the next rule is tried.
+2. **Else the profiles that may be used for anything** (`anything`, listed, there, signed in, not hidden), by what their
+   latest plan reading has left (100 − `pct` of the plan's own window, `model` absent; a reading with `reached` has
+   nothing left): more in `5h` wins, a tie goes to `week`. A reading that is `stale`, has an `error`, or is older than
+   10 minutes is unknown, and a known value beats an unknown one. Still tied, or nothing known: the default profile if
+   it is one of them, else the first listed.
+3. **Else the default profile.**
+
+The ack's `codex_profile_reason` (absent on any other hire) says the pick and why, in plain words, never an email or
+account id; the hire's audit result has it too. The client shows it in the hire's toast:
+
+| Reason | When |
+|---|---|
+| `Account: work (rule acme/*)` | a rule decided (`acme/*` for `github.com/acme/*`, a folder as stored) |
+| `Account: personal (most left: 72% of 5 h)` | the 5-hour window decided |
+| `Account: personal (most left: 40% of the week)` | the 5-hour window was a tie (or unknown on both), the week decided |
+| `Account: personal (the only profile that may be used for anything)` | one flagged profile |
+| `Account: codex (no fresh limits reading: the default)` / `…: first listed)` | flagged ones, nothing known |
+| `Account: codex (same limits left: the default)` / `…: first listed)` | flagged ones, the same left |
+| `Account: codex (no rule matched, no profile may be used for anything: the default)` | nothing to pick from |
+| `…; rule acme/* names work, which is gone)` | appended for each rule passed over (`gone`, `hidden`, `not signed in`) |
+
+```json
+{"t":"worker.hire","req_id":"h8","args":{"floor":"herdr-3d","desk_index":6,"harness":"codex","model":"gpt-6-sol","effort":"high","codex_profile":"auto"}}
+{"t":"ack","req_id":"h8","data":{"id":"…","workspace_id":"w13","trust":"none","codex":{"mode":"shared","server":"running","profile":"work","account":"confirmed","plan":"team"},"codex_profile_reason":"Account: work (rule acme/*)"}}
+```
+
+A hire without `codex_profile` (an older client, `run.start`, a schedule, write-code's launches) is the hire from
+before #140: the default profile. In the game, Auto is the hire dialog's and the preset editor's first "Codex profile"
+chip and a new Codex hire's default; a preset keeps the profile it has (one with none keeps meaning the default, one
+saved with Auto stores `"auto"`); with fewer than two usable profiles there is no picker and nothing is sent.
 
 ### AI integration
 
@@ -5582,7 +5643,7 @@ levels (a named choice without a prompt, kept in the browser). Nothing here hire
 
 **The spec**, checked on create and on every update (`bad_request` unless said otherwise; #139 `codex_profile`, a
 Codex preset's profile, as `worker.hire`'s, kept by an update when its profile has gone since: the game hires it on the
-default then and says so):
+default then and says so; #140 `"auto"` is stored as it is and picked at each hire from it):
 
 - `name`: trimmed, 1–40 bytes of UTF-8 without control characters (the team presets' rule), unique ignoring case
   (the bridge compares names with full Unicode case folding: `Équipe` and `équipe`, `ΟΣ` and `ος` are one name, and so

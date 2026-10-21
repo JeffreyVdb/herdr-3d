@@ -216,6 +216,7 @@ export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTM
       match.type = 'text';
       match.value = r.match;
       match.placeholder = 'github.com/acme/*';
+      match.title = MATCH_HINT;
       match.spellcheck = false;
       match.autocomplete = 'off';
       match.setAttribute('autocapitalize', 'off');

@@ -8,7 +8,8 @@ import { frames, openGame, shot, watchErrors } from './game';
 // seeded preset on a gone profile (old-work): its hire form and its editor say it hires on the default, the note under
 // the chips (not in the legend's column). With one profile (`simcodexprofiles=1`) the dialog is as before, but for that
 // preset's note. At 390 × 844 and desktop width, in both UI themes, Quiet and
-// Ubuntu (Settings → UI theme; the game's UI has no light theme and does not follow prefers-color-scheme).
+// Ubuntu (Settings → UI theme; the game's UI has no light theme and does not follow prefers-color-scheme). #140: the
+// fixture's bridge takes Auto, so Auto comes first and is picked (e2e/h140-auto-profile.spec.ts covers it).
 
 const SIM = 'play=none&sim=1&simms=150&simusage=0';
 const PIXEL = 'fc018d58-4789-46c2-afac-c062bc9fff9e';
@@ -59,8 +60,8 @@ test(`the hire dialog’s Codex profile: listed with two, the default first; a h
   const field = hireDlg(page).locator('[data-pick="codex-profile"]');
   await expect(field).toBeVisible();
   await expect(field.locator('legend')).toHaveText('Codex profile');
-  await expect(field.locator('.dd-chip')).toHaveText(['codex', 'work', 'sparenot signed in']);
-  await expect(field.locator('[data-key="codex-profile:codex"]')).toBeChecked();
+  await expect(field.locator('.dd-chip')).toHaveText(['Auto', 'codex', 'work', 'sparenot signed in']);
+  await expect(field.locator('[data-key="codex-profile:auto"]')).toBeChecked();
   await expect(field.locator('[data-key="codex-profile:spare"]')).toBeDisabled();
   await expect(field.locator('[data-key="codex-profile:old"]')).toHaveCount(0);
   if (theme === 'ubuntu') await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'ubuntu');
