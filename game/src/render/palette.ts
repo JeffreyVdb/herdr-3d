@@ -122,6 +122,8 @@ export interface OfficePalette {
   /** The fire-escape sign (and the drop zone's, in white): its ground and its words; the elevator's floor panel. */
   sign: { readonly ground: string; readonly text: string };
   liftSign: { readonly ground: string; readonly text: string };
+  /** The wall boards' title strips (Issues, Pull requests, Services): the notes and the cork are the boards' own. */
+  boardStrip: string;
   /** Its screens: the floor overview on the lounge wall, the departures board on the partition. */
   screens: Readonly<WallPalette>;
 }
@@ -149,6 +151,7 @@ export const OFFICE: Readonly<OfficePalette> = {
   frame: 0x1c2540,
   sign: { ground: '#1c2540', text: '#ffc233' },
   liftSign: { ground: '#101626', text: '#ffc233' },
+  boardStrip: '#1c2540',
   screens: WALL,
 };
 
@@ -177,6 +180,7 @@ export const OFFICE_UBUNTU: Readonly<OfficePalette> = {
   frame: 0x2c001e,
   sign: { ground: '#2c001e', text: '#ff9b76' },
   liftSign: { ground: '#2c001e', text: '#ff9b76' },
+  boardStrip: '#2c001e',
   screens: WALL_UBUNTU,
 };
 

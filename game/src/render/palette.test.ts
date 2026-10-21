@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { INK as BOARD_INK } from './boards/paint';
 import { OFFICE, OFFICE_UBUNTU, STATUS_CHIP_CSS, STATUS_CSS, WALL, WALL_UBUNTU } from './palette';
 
 /** WCAG 2 contrast ratio of two #rrggbb colours. */
@@ -56,6 +57,8 @@ describe('the office in Ubuntu', () => {
     expect(hex(OFFICE_UBUNTU.rug)).toBe(tok('action'));
     expect(OFFICE_UBUNTU.sign).toEqual({ ground: tok('chrome'), text: tok('accent-text') });
     expect(contrast(OFFICE_UBUNTU.sign.text, OFFICE_UBUNTU.sign.ground)).toBeGreaterThanOrEqual(4.5);
+    expect(OFFICE_UBUNTU.boardStrip).toBe(tok('chrome'));
+    expect(OFFICE.boardStrip).toBe(BOARD_INK);
     expect(OFFICE_UBUNTU.screens).toBe(WALL_UBUNTU);
     expect(OFFICE.screens).toBe(WALL);
   });

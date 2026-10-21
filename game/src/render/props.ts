@@ -35,7 +35,7 @@ function boxAt(b: Box3, mat: THREE.Material): THREE.Mesh {
 }
 
 /** A cork board with a title and placeholder sticky notes. */
-function boardTexture(title: string, note: string, tint: string): THREE.CanvasTexture {
+function boardTexture(title: string, note: string, tint: string, strip: string): THREE.CanvasTexture {
   return canvasTexture(1024, 512, (g) => {
     g.fillStyle = '#c99d6b';
     g.fillRect(0, 0, 1024, 512);
@@ -43,7 +43,7 @@ function boardTexture(title: string, note: string, tint: string): THREE.CanvasTe
       g.fillStyle = i % 2 ? 'rgba(90,55,20,0.10)' : 'rgba(255,240,210,0.10)';
       g.fillRect((i * 97) % 1024, (i * 53) % 512, 3, 3);
     }
-    g.fillStyle = '#1c2540';
+    g.fillStyle = strip;
     g.fillRect(0, 0, 1024, 96);
     g.fillStyle = '#ffffff';
     g.font = `800 58px ${FONT}`;
@@ -211,7 +211,7 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
     const p = byId.get(id);
     if (!p) continue;
     const m = boxAt(p.box, toon(0x7a5230));
-    faceTexture(m, tex(boardTexture(title, note, tint)), 0x7a5230);
+    faceTexture(m, tex(boardTexture(title, note, tint, P.boardStrip)), 0x7a5230);
     add(m);
     boardMeshes.set(id, m);
   }

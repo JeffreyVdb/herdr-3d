@@ -387,7 +387,7 @@ export class OfficeView {
 
     this.props = buildProps(L.props, L, view.level ? `${view.level.number}` : '·', this.pool ?? undefined, P);
     this.root.add(this.props.group);
-    this.boards = new BoardsView(L.props, L.height, (id, tex) => this.props.swapBoard(id, tex), this.pool ?? undefined);
+    this.boards = new BoardsView(L.props, L.height, (id, tex) => this.props.swapBoard(id, tex), this.pool ?? undefined, P.boardStrip);
     this.root.add(this.boards.group);
 
     this.kits = L.slots.map((s) => deskKit(s));
