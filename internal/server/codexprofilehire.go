@@ -101,7 +101,9 @@ func (h *Hub) listedProfile(ctx context.Context, key string) (codexaccount.Accou
 // checkProfileKey refuses a hire's or a preset's profile that cannot be
 // hired on (hub goroutine): only a Codex hire takes one, it must be listed
 // with its folder there, and (not the default) a home typed into the
-// pane's shell must be a plain path. keep is a key already stored (a
+// pane's shell must be a plain path. #140: Auto is taken on the same terms
+// (a Codex hire, a bridge with profiles); what it picks is checked when
+// it is prepared. keep is a key already stored (a
 // preset's): kept as it is, even when gone.
 func (h *Hub) checkProfileKey(harness, key, keep string) error {
 	if key == "" || key == keep {
@@ -112,6 +114,9 @@ func (h *Hub) checkProfileKey(harness, key, keep string) error {
 	}
 	if h.opts.CodexProfiles == nil {
 		return fmt.Errorf("%w: the bridge does not list Codex profiles", errUnsupported)
+	}
+	if key == proto.CodexProfileAuto { // #140: picked at hire
+		return nil
 	}
 	a, ok := h.codexAccount(key)
 	switch {

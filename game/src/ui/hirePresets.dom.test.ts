@@ -634,6 +634,44 @@ describe('HirePresetsDialog: Codex profile (#139)', () => {
     await submit();
     expect(sent.at(-1)?.[1]).not.toHaveProperty('codex_profile');
   });
+
+  // #140: Auto, first; a new Codex preset starts on it and stores "auto"; one with none keeps meaning the default.
+  it('a new Codex preset starts on Auto and stores "auto"; an Auto preset keeps it; one with none stays on the default', async () => {
+    const AUTO: CodexProfilesState = { ...TWO, auto: true, rules: [] };
+    const none = preset('Plain', 'web');
+    const auto = preset('Auto', 'web', { codex_profile: 'auto' });
+    const { dlg, sent } = setup([none, auto], null, { profiles: AUTO });
+    dlg.open('web', 0);
+    click('new');
+    expect([...document.querySelectorAll('[data-pick="preset-profile"] .dd-chip')].map((c) => c.textContent)).toEqual(['Auto', 'codex', 'work']);
+    expect((document.querySelector('[data-key="preset-profile:auto"]') as HTMLInputElement).checked).toBe(true);
+    type('#hp-name', 'Fresh');
+    type('#hp-prompt', 'Ship it.');
+    await submit();
+    expect(sent.at(-1)).toEqual(['hire_preset.create', expect.objectContaining({ name: 'Fresh', codex_profile: 'auto' })]);
+    click(`edit:${auto.id}`);
+    expect((document.querySelector('[data-key="preset-profile:auto"]') as HTMLInputElement).checked).toBe(true);
+    await submit();
+    expect(sent.at(-1)).toEqual(['hire_preset.update', expect.objectContaining({ codex_profile: 'auto' })]);
+    click(`edit:${none.id}`);
+    expect((document.querySelector('[data-key="preset-profile:codex"]') as HTMLInputElement).checked).toBe(true);
+    pick('preset-profile:auto');
+    await submit();
+    expect(sent.at(-1)).toEqual(['hire_preset.update', expect.objectContaining({ codex_profile: 'auto' })]);
+  });
+
+  it('an old preset with no profile, edited and saved again untouched, is never saved as Auto', async () => {
+    const none = preset('Plain', 'web');
+    const { dlg, sent } = setup([none], null, { profiles: { ...TWO, auto: true, rules: [] } });
+    dlg.open('web', 0);
+    click(`edit:${none.id}`);
+    expect((document.querySelector('[data-key="preset-profile:auto"]') as HTMLInputElement).checked).toBe(false);
+    type('#hp-prompt', 'Review it again.');
+    await submit();
+    expect(sent.at(-1)?.[0]).toBe('hire_preset.update');
+    expect(sent.at(-1)?.[1]).not.toMatchObject({ codex_profile: 'auto' });
+    expect(sent.at(-1)?.[1]).toMatchObject({ codex_profile: 'codex' });
+  });
 });
 
 describe('HirePresetsDialog pins', () => {

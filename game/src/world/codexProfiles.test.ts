@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CodexProfile, CodexProfilesState } from '../net/protocol';
-import { codexProfilesOf, hireProfiles, pickProfile, profileGoneText, profileNotice } from './codexProfiles';
+import { codexProfilesOf, hireProfiles, loneProfileGone, pickProfile, profileGoneText, profileNotice, ruleMatchProblem, ruleProfileProblem, ruleRefusal, rulesProblem } from './codexProfiles';
 
 const prof = (key: string, more: Partial<CodexProfile> = {}): CodexProfile => ({
   key,
@@ -69,5 +69,61 @@ describe('#139 the seat’s Codex profile line', () => {
     expect(profileNotice({ agent_kind: 'codex' }, two)).toEqual({ tone: 'note', text: 'Runs on the default profile (codex).' });
     expect(profileNotice({ harness: 'codex', codex: { mode: 'legacy' } }, two)?.text).toBe('Runs on the default profile (codex).');
     expect(profileNotice({ harness: 'claude', agent_kind: 'claude' }, two)).toBeNull();
+  });
+});
+
+describe('#140 Auto and its rules', () => {
+  it('reads Auto, the rules (well-formed ones only) and the flag; an older bridge has neither', () => {
+    const v = codexProfilesOf({ hire: true, auto: true, rules: [{ match: '/a', profile: 'work' }, { match: 1 }], profiles: [{ ...prof('work'), anything: true }] });
+    expect(v?.auto).toBe(true);
+    expect(v?.rules).toEqual([{ match: '/a', profile: 'work' }]);
+    expect(v?.profiles[0]?.anything).toBe(true);
+    const old = codexProfilesOf({ hire: true, profiles: [prof('work')] });
+    expect(old?.auto).toBeUndefined();
+    expect(old?.rules).toBeUndefined();
+    expect(old?.profiles[0]?.anything).toBeUndefined();
+  });
+
+  it('a new form and an Auto preset start on Auto where it is offered; a preset with none or a profile keeps it', () => {
+    const list = two.profiles;
+    expect(pickProfile(list, undefined, true)).toEqual({ key: 'auto', gone: null });
+    expect(pickProfile(list, 'auto', true)).toEqual({ key: 'auto', gone: null });
+    expect(pickProfile(list, '', true)).toEqual({ key: 'codex', gone: null });
+    expect(pickProfile(list, 'work', true)).toEqual({ key: 'work', gone: null });
+    // An older bridge: the default, and Auto is not "gone".
+    expect(pickProfile(list, 'auto')).toEqual({ key: 'codex', gone: null });
+    expect(loneProfileGone({ hire: true, auto: true, profiles: [list[0]!] }, 'auto')).toBeNull();
+  });
+
+  it('checks a rule’s match in the bridge’s words', () => {
+    for (const ok of ['github.com/acme/*', 'GitHub.com/acme/widgets', '~/work', '~', '/srv/x']) expect(ruleMatchProblem(ok)).toBeNull();
+    expect(ruleMatchProblem(' ')).toBe('Type a repo (github.com/<owner>/* or github.com/<owner>/<repo>) or a folder (/… or ~/…).');
+    expect(ruleMatchProblem('github.com/bad_owner/*')).toBe('“bad_owner” is not a GitHub owner: use github.com/<owner>/* or github.com/<owner>/<repo>.');
+    expect(ruleMatchProblem('github.com/acme')).toBe('“” is not a GitHub repo: use github.com/<owner>/* or github.com/<owner>/<repo>.');
+    expect(ruleMatchProblem('acme/*')).toBe('Use github.com/<owner>/* or github.com/<owner>/<repo>, or a folder starting with / or ~/.');
+    expect(ruleMatchProblem('/a\tb')).toBe('A match cannot have a line break or a tab in it.');
+  });
+
+  it('finds the first rule the editor can tell is wrong, and reads the bridge’s refusal of one', () => {
+    const list = two.profiles;
+    expect(rulesProblem([{ match: '/a', profile: 'work' }], list)).toBeNull();
+    expect(rulesProblem([{ match: '/a', profile: 'work' }, { match: '/a/', profile: 'codex' }], list)).toEqual({ index: 1, text: 'Rule 1 already matches this.' });
+    // A folder keeps its case (the bridge's picker compares it so); GitHub matches are one rule ignoring case.
+    expect(rulesProblem([{ match: '/work/A', profile: 'work' }, { match: '/work/a/', profile: 'codex' }, { match: '~/Work', profile: 'work' }, { match: '~/work', profile: 'codex' }], list)).toBeNull();
+    expect(rulesProblem([{ match: 'github.com/acme/*', profile: 'work' }, { match: 'GitHub.com/ACME/*', profile: 'codex' }], list)).toEqual({ index: 1, text: 'Rule 1 already matches this.' });
+    expect(rulesProblem([{ match: 'github.com/acme/widgets', profile: 'work' }, { match: 'github.com/Acme/Widgets', profile: 'codex' }], list)).toEqual({ index: 1, text: 'Rule 1 already matches this.' });
+    expect(rulesProblem([{ match: '/a', profile: '' }], list)).toEqual({ index: 0, text: 'Choose the profile it hires on.' });
+    expect(rulesProblem([{ match: '/a', profile: 'nope' }], list)).toEqual({ index: 0, text: 'There is no Codex profile “nope”.' });
+    expect(ruleRefusal('Rule 3: there is no Codex profile "x".')).toEqual({ index: 2, text: 'There is no Codex profile "x".' });
+    expect(ruleRefusal('At most 32 rules; remove one first.')).toBeNull();
+  });
+
+  it('says when Auto passes a rule over', () => {
+    const list = [...two.profiles, prof('shy', { hidden: true }), prof('out', { signed_in: false }), prof('lost', { added: true, missing: true })];
+    expect(ruleProfileProblem('work', list)).toBeNull();
+    expect(ruleProfileProblem('shy', list)).toBe('shy is hidden: Auto passes this rule over.');
+    expect(ruleProfileProblem('out', list)).toBe('out is not signed in: Auto passes this rule over.');
+    expect(ruleProfileProblem('lost', list)).toBe('lost is gone: Auto passes this rule over.');
+    expect(ruleProfileProblem('nope', list)).toBe('nope is gone: Auto passes this rule over.');
   });
 });

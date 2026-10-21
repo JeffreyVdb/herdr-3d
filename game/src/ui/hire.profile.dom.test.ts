@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CodexProfile, CodexProfilesState, HireOptions, HirePrepare, Limits } from '../net/protocol';
-import { HireDialog, type HireHost, type HirePrefill } from './hire';
+import { HireDialog, presetPrefill, type HireHost, type HirePrefill } from './hire';
 import { HireModelPrefs } from './hireModelPrefs';
 import { LimitBook } from '../world/limits';
 
@@ -99,11 +99,20 @@ const pick = (name: string, value: string) => {
   c.checked = true;
   c.dispatchEvent(new Event('change'));
 };
-const fromPreset = (profile: string): HirePrefill => ({
-  prompt: 'Review it.',
-  choice: { harness: 'codex', model: 'x-1', effort: 'low' },
-  preset: { id: 'hp_1', name: 'Review', scope: 'floor', profile },
-});
+// A stored preset as the bridge sends it (no `codex_profile` key when it has none), opened as the app opens it.
+const fromPreset = (profile: string): HirePrefill =>
+  presetPrefill({
+    id: 'hp_1',
+    name: 'Review',
+    floor: 'floor',
+    prompt: 'Review it.',
+    harness: 'codex',
+    model: 'x-1',
+    effort: 'low',
+    ...(profile ? { codex_profile: profile } : {}),
+    created_at: 1,
+    updated_at: 1,
+  });
 
 describe('HireDialog: Codex profile (#139)', () => {
   beforeEach(() => {
@@ -229,5 +238,107 @@ describe('HireDialog: Codex profile (#139)', () => {
     pick('codex-profile', 'work');
     expect(limits()).toContain('77%');
     expect(limits()).not.toContain('41%');
+  });
+});
+
+// #140: Auto: the first chip and a new Codex hire's default on a bridge that takes it; it sends "auto". A preset with
+// Auto starts on it, one with a profile keeps it (manual wins), one with none keeps meaning the default. With one usable
+// profile the dialog is as before: no picker, nothing sent.
+describe('HireDialog: Auto (#140)', () => {
+  const AUTO: CodexProfilesState = { ...TWO, auto: true, rules: [] };
+  beforeEach(() => {
+    localStorage.clear();
+    HTMLDialogElement.prototype.showModal = function () {
+      this.setAttribute('open', '');
+    };
+    HTMLDialogElement.prototype.close = function () {
+      this.removeAttribute('open');
+      this.dispatchEvent(new Event('close'));
+    };
+    vi.stubGlobal('CSS', { escape: (s: string) => s });
+  });
+  afterEach(() => {
+    document.body.replaceChildren();
+    vi.unstubAllGlobals();
+  });
+
+  it('comes first and is picked for a new Codex hire, says what it does, and sends "auto"', async () => {
+    const { dlg, hires, inner } = setup(AUTO, [reading('codex', 41)]);
+    dlg.open('floor', 0);
+    await tick();
+    expect([...(field()?.querySelectorAll('.dd-chip') ?? [])].map((c) => c.textContent)).toEqual(['Auto', 'codex', 'Work seat']);
+    expect(chip('auto')?.checked).toBe(true);
+    expect(document.querySelector('[data-hook="profile-auto"]')?.textContent).toContain('The bridge picks at hire');
+    // No preview of the pick: no Codex limits line while Auto is picked.
+    expect(document.querySelector('[data-hook="plan-limits"]')?.textContent ?? '').not.toContain('41%');
+    await inner.hire();
+    expect(hires[0]).toMatchObject({ harness: 'codex', codex_profile: 'auto' });
+  });
+
+  it('a profile picked by hand is sent as it is, and the hint goes', async () => {
+    const { dlg, hires, inner } = setup(AUTO);
+    dlg.open('floor', 0);
+    await tick();
+    pick('codex-profile', 'codex');
+    expect(document.querySelector('[data-hook="profile-auto"]')).toBeNull();
+    await inner.hire();
+    expect(hires[0]).toMatchObject({ codex_profile: 'codex' });
+  });
+
+  it('a preset: Auto starts on Auto, a profile on that profile, none on the default', async () => {
+    for (const [want, checked] of [['auto', 'auto'], ['work', 'work'], ['', 'codex']] as const) {
+      const { dlg, hires, inner } = setup(AUTO);
+      dlg.open('floor', 0, fromPreset(want));
+      await tick();
+      expect(chip(checked)?.checked).toBe(true);
+      expect(document.querySelector('[data-hook="profile-gone"]')).toBeNull();
+      await inner.hire();
+      expect(hires.at(-1)).toMatchObject({ codex_profile: checked });
+      dlg.close();
+      document.body.replaceChildren();
+    }
+  });
+
+  it('a preset with no profile opens on the default also when the prefill leaves the key out (never Auto)', async () => {
+    const { dlg, hires, inner } = setup(AUTO);
+    dlg.open('floor', 0, { prompt: 'Review it.', choice: { harness: 'codex', model: 'x-1', effort: 'low' }, preset: { id: 'hp_1', name: 'Review', scope: 'floor' } });
+    await tick();
+    expect(chip('codex')?.checked).toBe(true);
+    expect(chip('auto')?.checked).toBe(false);
+    await inner.hire();
+    expect(hires[0]).toMatchObject({ codex_profile: 'codex' });
+  });
+
+  it('with one usable profile there is no picker and nothing is sent, also from an Auto preset', async () => {
+    const one: CodexProfilesState = { hire: true, auto: true, rules: [], profiles: [own, prof('shy', { hidden: true })] };
+    for (const prefill of [undefined, fromPreset('auto')]) {
+      const { dlg, hires, inner } = setup(one);
+      dlg.open('floor', 0, prefill);
+      await tick();
+      expect(field()).toBeNull();
+      expect(document.querySelector('[data-hook="profile-gone"]')).toBeNull();
+      await inner.hire();
+      expect(hires.at(-1)).not.toHaveProperty('codex_profile');
+      dlg.close();
+      document.body.replaceChildren();
+    }
+  });
+
+  it('a bridge without Auto: no Auto chip, the default picked, an Auto preset hires on the default', async () => {
+    const { dlg, hires, inner } = setup(TWO);
+    dlg.open('floor', 0, fromPreset('auto'));
+    await tick();
+    expect(chip('auto')).toBeNull();
+    expect(chip('codex')?.checked).toBe(true);
+    await inner.hire();
+    expect(hires[0]).toMatchObject({ codex_profile: 'codex' });
+  });
+
+  it('“Save as preset…” hands Auto to the preset editor', async () => {
+    const { dlg, savePreset } = setup(AUTO);
+    dlg.open('floor', 0);
+    await tick();
+    document.querySelector<HTMLButtonElement>('[data-key="save-preset"]')?.click();
+    expect(savePreset.mock.calls[0]?.[0]).toMatchObject({ harness: 'codex', profile: 'auto' });
   });
 });

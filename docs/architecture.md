@@ -225,6 +225,11 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
     its one root thread (`codexapp.RootThread`, never a subagent's, never a guess between two), so it joins it, binds
     the worker's Codex subagents to it (while herdr reports none) and a wake resumes it; a `/new` in the terminal is not
     followed (the hire says so).
+    **Auto (#140; protocol "Auto: the bridge picks the Codex profile", decisions "#140"):** a hire's
+    `codex_profile: "auto"` is turned into a concrete key at the start of `runHire`, before the prepare above:
+    `beginHire` (hub goroutine) copies the profiles, each one's latest Codex reading and the rules; `runHire` reads the
+    source folder's origin (`cachedOrigin`, off the hub) and calls the pure `codexaccount.Pick` (rules first, then the
+    flagged profiles by what they have left, then the default). Everything after, and every wake, runs on that key.
   - **What a worker hired the usual way (legacy) lacks:** its async questions cannot be answered from the transcript
     (no join, no `worker.answer_async`); it answers them in its terminal, as every Codex worker did before #155. The rest
     (prompts, slash commands, approvals, images, sleep, wake, send home) works as for any Codex worker.

@@ -9,7 +9,7 @@ import { backdropPolicy } from './dismiss';
 import { deskTabs, PIN_ICON, pinIdOf, PRESET_ICON } from './deskTabs';
 import { h, icon, ICON, replaceKeepingFocus } from './dom';
 import { chips, modelField, profileChips, profileGoneNote, type DialogHost, type HirePresetSeed } from './hire';
-import { hireProfiles, loneProfileGone, pickProfile, profileGoneText } from '../world/codexProfiles';
+import { AUTO_PROFILE, autoOffered, hireProfiles, loneProfileGone, pickProfile, profileGoneText } from '../world/codexProfiles';
 import type { HireModelPrefs } from './hireModelPrefs';
 import { deskPins, type HirePins } from './hirePins';
 import { failureText } from './messages';
@@ -497,16 +497,19 @@ export class HirePresetsDialog {
       choice.push(chips('preset-effort', 'Effort', effortsFor(options, d.harness, d.model), d.effort, (x) => set({ effort: x })));
     }
     // #139: a Codex preset's profile, as the hire dialog picks it; a stored one that is gone shows the default and says so.
-    const profiles = d.harness === 'codex' ? hireProfiles((this.host.store.codexProfiles?.state ?? null)) : null;
+    // #140: Auto first, kept as "auto"; a preset with none keeps meaning the default.
+    const state = this.host.store.codexProfiles?.state ?? null;
+    const profiles = d.harness === 'codex' ? hireProfiles(state) : null;
     if (profiles) {
-      const c = pickProfile(profiles, d.profile || undefined);
+      const auto = autoOffered(state);
+      const c = pickProfile(profiles, d.profile || undefined, auto && d.profile === AUTO_PROFILE);
       const def = profiles.find((p) => p.default)?.name ?? '';
-      const note = c.gone ? profileGoneText((this.host.store.codexProfiles?.state ?? null), c.gone, def) : null;
+      const note = c.gone ? profileGoneText(state, c.gone, def) : null;
       choice.push(
         profileChips('preset-profile', profiles, c.key, (key) => {
           d.profile = key;
           this.render();
-        }, note),
+        }, note, auto),
       );
     } else if (d.harness === 'codex') {
       const lone = loneProfileGone(this.host.store.codexProfiles?.state ?? null, d.profile || undefined);
@@ -691,18 +694,24 @@ export class HirePresetsDialog {
    * #139: the profile a save stores: what the editor shows when it offers a choice (a gone one fell back to the default);
    * without a choice to make, the one it had; nothing to a bridge that does not take one.
    */
+  /** #140: a new preset's profile: Auto where the editor offers it (a Codex preset with two or more to pick from), else none. */
+  private newProfile(): string {
+    const state = this.host.store.codexProfiles?.state ?? null;
+    return autoOffered(state) && hireProfiles(state) ? AUTO_PROFILE : '';
+  }
+
   private profileToSave(d: HirePresetDraft): string {
     const state = (this.host.store.codexProfiles?.state ?? null);
     if (!state?.hire || d.harness !== 'codex') return '';
     const list = hireProfiles(state);
-    return list ? pickProfile(list, d.profile || undefined).key : d.profile;
+    return list ? pickProfile(list, d.profile || undefined, autoOffered(state) && d.profile === AUTO_PROFILE).key : d.profile;
   }
 
   private edit(p: HirePreset | null, seed?: HirePresetDraft, note: string | null = null): void {
     const options = this.options(p);
     const draft: HirePresetDraft = p
       ? draftFrom(p, this.floor)
-      : (seed ?? { name: '', prompt: '', ...resolveVisibleChoice(options, null), scope: 'floor', instructions: false, profile: '' });
+      : (seed ?? { name: '', prompt: '', ...resolveVisibleChoice(options, null), scope: 'floor', instructions: false, profile: this.newProfile() });
     this.view = { kind: 'edit', id: p?.id ?? null, draft, error: null, saving: false, seen: p ? structuredClone(p) : null, note, nudge: false, dismissed: p ? (this.declined.get(p.id) ?? null) : null };
     this.modelQuery = '';
     this.setStatus('');

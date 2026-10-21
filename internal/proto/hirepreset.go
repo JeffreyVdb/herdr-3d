@@ -64,6 +64,7 @@ type HirePresetSpec struct {
 	Secrets *SecretsReview `json:"secrets,omitempty"`
 	// CodexProfile (#139, optional, Codex only): worker.hire's
 	// codex_profile; sent only to a bridge whose codex_profiles has hire.
+	// #140: CodexProfileAuto (stored as it is) only to one that has auto.
 	CodexProfile string `json:"codex_profile,omitempty"`
 }
 

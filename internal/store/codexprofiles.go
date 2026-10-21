@@ -1,8 +1,10 @@
 package store
 
 // #138 Codex profiles: what the user set for the Codex home folders (a
-// name, hidden) and the folders they added (bridge-wide). One row; none is
-// nothing set. The settings are one JSON object.
+// name, hidden; #140 "may be used for anything"), the folders they added
+// and (#140) the Auto hire's rules (bridge-wide). One row; none is nothing
+// set. The settings are one JSON object; a field it lacks (one stored
+// before #140) is its zero value.
 
 import (
 	"context"
@@ -21,9 +23,17 @@ const migrationCodexProfiles = `CREATE TABLE codex_profiles_settings (
 
 // CodexProfile is what the user set for one profile, by its folder.
 type CodexProfile struct {
-	Path   string `json:"path"`
-	Name   string `json:"name,omitempty"`
-	Hidden bool   `json:"hidden,omitempty"`
+	Path     string `json:"path"`
+	Name     string `json:"name,omitempty"`
+	Hidden   bool   `json:"hidden,omitempty"`
+	Anything bool   `json:"anything,omitempty"` // #140
+}
+
+// CodexRule is one of the Auto hire's rules (#140): a match (a GitHub
+// owner or repo, or a folder) and the profile key it hires on.
+type CodexRule struct {
+	Match   string `json:"match"`
+	Profile string `json:"profile"`
 }
 
 // CodexProfiles are the stored settings.
@@ -31,11 +41,13 @@ type CodexProfiles struct {
 	Profiles []CodexProfile `json:"profiles"`
 	// Added are the folders the user added, in the order added.
 	Added []string `json:"added"`
+	// Rules (#140), in order.
+	Rules []CodexRule `json:"rules"`
 }
 
 // LoadCodexProfiles returns the settings (never set: none).
 func (s *Store) LoadCodexProfiles(ctx context.Context) (CodexProfiles, error) {
-	out := CodexProfiles{Profiles: []CodexProfile{}, Added: []string{}}
+	out := CodexProfiles{Profiles: []CodexProfile{}, Added: []string{}, Rules: []CodexRule{}}
 	var raw string
 	err := s.db.QueryRowContext(ctx, `SELECT settings FROM codex_profiles_settings WHERE id = 1`).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -53,6 +65,9 @@ func (s *Store) LoadCodexProfiles(ctx context.Context) (CodexProfiles, error) {
 	if out.Added == nil {
 		out.Added = []string{}
 	}
+	if out.Rules == nil {
+		out.Rules = []CodexRule{}
+	}
 	return out, nil
 }
 
@@ -63,6 +78,9 @@ func (s *Store) SaveCodexProfiles(ctx context.Context, set CodexProfiles) error 
 	}
 	if set.Added == nil {
 		set.Added = []string{}
+	}
+	if set.Rules == nil {
+		set.Rules = []CodexRule{}
 	}
 	b, err := json.Marshal(set)
 	if err != nil {

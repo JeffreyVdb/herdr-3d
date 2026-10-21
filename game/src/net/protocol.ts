@@ -472,6 +472,14 @@ export interface CodexProfile {
   added: boolean;
   /** An added folder that is not there (not read). */
   missing?: boolean;
+  /** #140: "May be used for anything": an Auto hire no rule decides may land on it (absent: off). */
+  anything?: boolean;
+}
+
+/** #140: one of the Auto hire's rules: `github.com/<owner>/*`, `github.com/<owner>/<repo>`, or a folder (`/…`, `~/…`), and the profile key it hires on. */
+export interface CodexRule {
+  match: string;
+  profile: string;
 }
 
 /** #138: the Codex profiles (`codex_profiles` in the snapshot, `codex_profiles.get`/`.set`'s ack, flat in `codex_profiles.update`). */
@@ -480,6 +488,10 @@ export interface CodexProfilesState {
   profiles: CodexProfile[];
   /** #139: `worker.hire` and hire presets take `codex_profile` (absent: an older bridge, which refuses the field). */
   hire?: boolean;
+  /** #140: they also take `codex_profile: "auto"`, and `rules` and `anything` are what it follows (absent: an older bridge). */
+  auto?: boolean;
+  /** #140: the Auto hire's rules, in order (the first that matches wins). */
+  rules?: CodexRule[];
 }
 
 /** #138: `codex_profiles.update`: the list, flat. */
@@ -834,6 +846,8 @@ export interface HireAck {
   codex?: WorkerCodex;
   /** #108 round 2: how many ranges of the prompt went to files (absent: none). */
   protected?: number;
+  /** #140: an Auto hire's profile and why ("Account: work (rule acme/*)"; absent: the hire named its profile, or none). */
+  codex_profile_reason?: string;
 }
 
 /**
@@ -981,7 +995,7 @@ export interface CommandArgs {
     /** #108 round 2: the review of `prompt` (as sent, before the herdr instructions), and `hire.interpret`'s hand-over when `prompt` is its task. */
     secrets?: SecretsReview;
     secrets_pending?: string;
-    /** #139 (Codex only): the Codex profile's key; only to a bridge whose `codex_profiles` says `hire`. Absent: the default. */
+    /** #139 (Codex only): the Codex profile's key; only to a bridge whose `codex_profiles` says `hire`. Absent: the default. #140: `"auto"` (only when it says `auto`) leaves it to the bridge. */
     codex_profile?: string;
   };
   'worker.fire.prepare': { id: string };
@@ -1123,8 +1137,14 @@ export interface CommandArgs {
   'repo_discovery.set': { roots?: string[]; interval_minutes?: number };
   'repo_discovery.refresh': Record<string, never>;
   'codex_profiles.get': Record<string, never>;
-  /** One change a command: `add` alone, or `key` with one of `name`, `hidden`, `remove`. */
-  'codex_profiles.set': { key: string; name: string } | { key: string; hidden: boolean } | { key: string; remove: true } | { add: string };
+  /** One change a command: `add` or (#140) `rules` alone, or `key` with one of `name`, `hidden`, `anything` (#140), `remove`. */
+  'codex_profiles.set':
+    | { key: string; name: string }
+    | { key: string; hidden: boolean }
+    | { key: string; anything: boolean }
+    | { key: string; remove: true }
+    | { add: string }
+    | { rules: CodexRule[] };
   // #156 Codex async questions. `worker.answer_async` acks `AsyncAnswerAck`.
   'worker.answer_async': { id: string; thread: string; batch: string; answers: { index: number; answer: string }[]; /** #108 round 2: `answers[N].answer`. */ secrets?: SecretsReviews };
   'worker.dismiss_async': { id: string; thread: string; batch: string; indexes?: number[] };
@@ -3565,7 +3585,7 @@ export interface HirePreset {
   effort: string;
   /** #95 "Add herdr hiring instructions" (absent: off): a hire from it gets the lines for the floor it is used on. */
   herdr_instructions?: boolean;
-  /** #139: the Codex profile a hire from it runs on (absent: the default). */
+  /** #139: the Codex profile a hire from it runs on (absent: the default; #140: `"auto"`: the bridge picks at hire). */
   codex_profile?: string;
   /** Unix ms. */
   created_at: number;

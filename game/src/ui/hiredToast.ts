@@ -8,11 +8,13 @@ import type { ToastKind } from './hud';
  * yourself; '' when none) is an error; a Codex hire that asked for its own server and runs on Codex's built-in one
  * (#155) is a warning: it works, without the transcript's async answers. #139: what the hire found about its Codex
  * profile follows (`profile_note`): a warning unless its account was confirmed. The more severe wins; all are said.
+ * #140: an Auto hire's pick and why (`codex_profile_reason`) comes right after the lead, as the bridge says it.
  */
-export function hiredToast(lead: string, ack: Pick<HireAck, 'codex'> | undefined, failure: string): { text: string; kind: ToastKind } {
+export function hiredToast(lead: string, ack: Pick<HireAck, 'codex' | 'codex_profile_reason'> | undefined, failure: string): { text: string; kind: ToastKind } {
   const fallback = codexNotice({ codex: ack?.codex });
   const profile = ack?.codex?.profile_note ?? '';
-  const text = [lead, failure, fallback?.text ?? '', profile].filter(Boolean).join(' ');
+  const reason = ack?.codex_profile_reason ? `${ack.codex_profile_reason}.` : '';
+  const text = [lead, reason, failure, fallback?.text ?? '', profile].filter(Boolean).join(' ');
   const warn = !!fallback || (!!profile && ack?.codex?.account !== 'confirmed');
   return { text, kind: failure ? 'error' : warn ? 'warn' : 'info' };
 }

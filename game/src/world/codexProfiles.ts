@@ -5,7 +5,7 @@
  * seat says about its profile. Pure.
  */
 
-import type { CodexProfile, CodexProfilesState, Worker } from '../net/protocol';
+import type { CodexProfile, CodexProfilesState, CodexRule, Worker } from '../net/protocol';
 import type { CodexNotice } from './codexServer';
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -13,6 +13,10 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 /** The limits of the settings (the bridge's: `codexaccount.Max*`). */
 export const PROFILE_MAX_NAME = 40;
 export const PROFILES_MAX_ADDED = 16;
+export const RULES_MAX = 32;
+
+/** #140: `codex_profile` for Auto: the bridge picks the profile at hire (no profile is ever keyed so). */
+export const AUTO_PROFILE = 'auto';
 
 function profileOf(v: unknown): CodexProfile | null {
   if (!isObj(v) || typeof v.key !== 'string' || !v.key || typeof v.path !== 'string') return null;
@@ -28,7 +32,12 @@ function profileOf(v: unknown): CodexProfile | null {
     added: v.added === true,
   };
   if (v.missing === true) p.missing = true;
+  if (v.anything === true) p.anything = true;
   return p;
+}
+
+function ruleOf(v: unknown): CodexRule | null {
+  return isObj(v) && typeof v.match === 'string' && typeof v.profile === 'string' ? { match: v.match, profile: v.profile } : null;
 }
 
 /** A well-formed list (malformed profiles left out), else null. */
@@ -36,6 +45,10 @@ export function codexProfilesOf(v: unknown): CodexProfilesState | null {
   if (!isObj(v) || !Array.isArray(v.profiles)) return null;
   const out: CodexProfilesState = { profiles: v.profiles.map(profileOf).filter((p): p is CodexProfile => p !== null) };
   if (v.hire === true) out.hire = true;
+  if (v.auto === true) {
+    out.auto = true;
+    out.rules = Array.isArray(v.rules) ? v.rules.map(ruleOf).filter((r): r is CodexRule => r !== null) : [];
+  }
   return out;
 }
 
@@ -97,6 +110,81 @@ export function profilePathProblem(path: string, profiles: readonly CodexProfile
   return null;
 }
 
+const OWNER = /^[A-Za-z0-9-]{1,39}$/;
+const REPO = /^[A-Za-z0-9._-]{1,100}$/;
+const FORMS = 'github.com/<owner>/* or github.com/<owner>/<repo>';
+
+/**
+ * #140: why `match` is none of a rule's forms (the bridge's words, without its "Rule N: "), or null: a GitHub owner
+ * (`github.com/<owner>/*`), a repo (`github.com/<owner>/<repo>`), or a folder (`/…`, `~/…`).
+ */
+export function ruleMatchProblem(match: string): string | null {
+  const m = match.trim();
+  if (!m) return `Type a repo (${FORMS}) or a folder (/… or ~/…).`;
+  if (/[\u0000-\u001f\u007f]/.test(m)) return 'A match cannot have a line break or a tab in it.';
+  if (m.slice(0, 11).toLowerCase() === 'github.com/') {
+    const rest = m.slice(11);
+    const slash = rest.indexOf('/');
+    const owner = slash < 0 ? rest : rest.slice(0, slash);
+    const repo = slash < 0 ? '' : rest.slice(slash + 1);
+    if (!OWNER.test(owner)) return `“${owner}” is not a GitHub owner: use ${FORMS}.`;
+    if (repo !== '*' && (!REPO.test(repo) || repo === '.' || repo === '..')) return `“${repo}” is not a GitHub repo: use ${FORMS}.`;
+    return null;
+  }
+  if (m === '~' || m.startsWith('~/') || m.startsWith('/')) return null;
+  return `Use ${FORMS}, or a folder starting with / or ~/.`;
+}
+
+/**
+ * #140: the first problem of `rules` the editor can see before it sends them (the bridge checks them too): which rule
+ * (its index) and why, or null.
+ */
+export function rulesProblem(rules: readonly CodexRule[], profiles: readonly CodexProfile[]): { index: number; text: string } | null {
+  if (rules.length > RULES_MAX) return { index: rules.length - 1, text: `At most ${RULES_MAX} rules; remove one first.` };
+  const seen = new Map<string, number>();
+  for (const [i, r] of rules.entries()) {
+    const why = ruleMatchProblem(r.match);
+    if (why) return { index: i, text: why };
+    const norm = dupKey(r.match);
+    const j = seen.get(norm);
+    if (j !== undefined) return { index: i, text: `Rule ${j + 1} already matches this.` };
+    seen.set(norm, i);
+    if (!r.profile) return { index: i, text: 'Choose the profile it hires on.' };
+    if (!profiles.some((p) => p.key === r.profile)) return { index: i, text: `There is no Codex profile “${r.profile}”.` };
+  }
+  return null;
+}
+
+/** Two matches with the same key are one rule, as the bridge says: a GitHub match ignoring case (GitHub does), a folder exactly (the picker compares it so). */
+function dupKey(m: string): string {
+  const n = normRule(m);
+  return n.startsWith('github.com/') ? n.toLowerCase() : n;
+}
+
+/** A match as the bridge stores it, near enough to tell two of them apart (github.com in lower case, a folder without a trailing /). */
+function normRule(m: string): string {
+  const t = m.trim();
+  if (t.slice(0, 11).toLowerCase() === 'github.com/') return 'github.com/' + t.slice(11);
+  return t.length > 1 ? t.replace(/\/+$/, '') : t;
+}
+
+/** #140: a refusal of `codex_profiles.set`'s rules ("Rule 2: …"): the row (0-based) and the words without the number, or null. */
+export function ruleRefusal(text: string): { index: number; text: string } | null {
+  const m = /^Rule (\d+): (.*)$/s.exec(text);
+  if (!m) return null;
+  const why = m[2] ?? '';
+  return { index: Number(m[1]) - 1, text: why.charAt(0).toUpperCase() + why.slice(1) };
+}
+
+/** #140: what keeps a rule's profile from being used at hire (it is passed over, with a note), or null. */
+export function ruleProfileProblem(key: string, profiles: readonly CodexProfile[]): string | null {
+  const p = profiles.find((x) => x.key === key);
+  if (!p || p.missing) return `${p?.name ?? key} is gone: Auto passes this rule over.`;
+  if (p.hidden) return `${p.name} is hidden: Auto passes this rule over.`;
+  if (!p.signed_in) return `${p.name} is not signed in: Auto passes this rule over.`;
+  return null;
+}
+
 /** Plain words for a `codex_profiles.*` failure. */
 export function codexProfilesFailureText(code: string, message: string): string {
   switch (code) {
@@ -136,11 +224,20 @@ export function profileBlocked(p: CodexProfile): string | null {
   return p.signed_in ? null : 'not signed in';
 }
 
+/** #140: the bridge takes Auto (`codex_profile: "auto"`): the hire dialog and the preset editor offer it first. */
+export function autoOffered(state: CodexProfilesState | null): boolean {
+  return state?.auto === true;
+}
+
 /**
  * #139: the profile a form starts with: `want` (a preset's) while it can be picked, else the default. `gone` names a
- * `want` that is no longer offered (hidden, removed, or its folder gone): the form says it fell back.
+ * `want` that is no longer offered (hidden, removed, or its folder gone): the form says it fell back. #140: with `auto`
+ * (the bridge takes it), a new form (`want` undefined) and an Auto preset start on Auto; a preset with no profile (`''`)
+ * keeps meaning the default.
  */
-export function pickProfile(list: readonly CodexProfile[], want?: string): { key: string; gone: string | null } {
+export function pickProfile(list: readonly CodexProfile[], want?: string, auto = false): { key: string; gone: string | null } {
+  if (auto && (want === undefined || want === AUTO_PROFILE)) return { key: AUTO_PROFILE, gone: null };
+  if (want === AUTO_PROFILE) want = undefined; // an older bridge: the default, nothing gone
   const def = list.find((p) => p.default) ?? list[0];
   const wanted = want ? list.find((p) => p.key === want) : undefined;
   if (wanted && !profileBlocked(wanted)) return { key: wanted.key, gone: null };
@@ -159,7 +256,7 @@ export function profileGoneText(state: CodexProfilesState | null, key: string, d
  * with two or more (the picker says it), for a preset on the default, and from a bridge that hires on no profile.
  */
 export function loneProfileGone(state: CodexProfilesState | null, want?: string): string | null {
-  if (!state?.hire || !want || hireProfiles(state)) return null;
+  if (!state?.hire || !want || want === AUTO_PROFILE || hireProfiles(state)) return null;
   const list = usableProfiles(state);
   const { gone } = pickProfile(list, want);
   if (!gone) return null;
