@@ -29,7 +29,7 @@
   padding: 8px 12px 8px 14px;
 }
 .seat-line {
-  flex: 1 1 260px;
+  flex: 1 1 180px;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -276,6 +276,11 @@
   background: var(--seat-term-bg, #10162a);
   box-shadow: 0 0 0 1px var(--line);
 }
+/* #53: the plan-limits plate is an edge tab while seated: the content leaves it a gutter at the right (its snug tab's
+   room in either UI theme, limits.ts), below the header. */
+:root:has(.limits:not([hidden])) .seat-content {
+  margin-right: 36px;
+}
 .seat-term {
   position: absolute;
   inset: 0;
@@ -304,8 +309,11 @@
 .seat-content:not([data-mode='terminal']) .seat-term,
 .seat-content:not([data-mode='terminal']) .seat-history {
   visibility: hidden;
+  pointer-events: none;
 }
+/* Over the terminal (xterm's own layers have z-indexes of their own). */
 .seat-content > .seat-transcript {
+  z-index: 10;
   border-radius: inherit;
 }
 /* #176: the view is up the history: how far, and the way back. It sits over the terminal's bottom right. */
@@ -606,6 +614,16 @@
   outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
+/* A laptop's width keeps the header one row: the switch's keys and the controls' word go (their keys stay). */
+@media (max-width: 1180px) {
+  .seat-mode-key {
+    display: none;
+  }
+  .seat .seat-look-label {
+    font-size: 0;
+  }
+}
+
 /* A phone's width: whose laptop it is and Stand up share the first row, the switch and the terminal's controls the
    next; the keys row drops the switch's key it would repeat and the hint. */
 @media (max-width: 560px) {
@@ -614,9 +632,31 @@
     gap: 6px 10px;
   }
   .seat-line {
-    flex-basis: calc(100% - 140px);
+    flex: 1 1 0;
+    order: 0;
   }
-  .seat-content {
+  .seat-stand {
+    order: 1;
+  }
+  .seat-mode,
+  .seat-look {
+    order: 2;
+  }
+  .seat-look {
+    margin-left: auto;
+  }
+  .seat-note {
+    display: none;
+  }
+  .seat[data-state='error'] .seat-note,
+  .seat[data-state='offline'] .seat-note {
+    display: -webkit-box;
+  }
+  .seat-mode-opt {
+    padding: 4px 8px;
+  }
+  .seat-content,
+  :root:has(.limits:not([hidden])) .seat-content {
     margin: 0 4px;
   }
   .seat-keys .seat-key-mode,

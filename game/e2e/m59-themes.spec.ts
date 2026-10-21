@@ -528,14 +528,15 @@ for (const [w, h] of [
     for (const name of ['Ubuntu', 'Quiet', 'Smaller text', 'Larger text']) await expect(tx.getByRole(name.includes('text') ? 'button' : 'radio', { name, exact: true })).toBeVisible();
     await tx.getByRole('button', { name: 'Larger text' }).click();
     await expect(level).toHaveText('80%');
-    const seat = await controlsInside(page, '.seat', '.seat');
+    // #176: the seat is the full-window workspace and holds the conversation too: its own controls are its header's.
+    const seat = await controlsInside(page, '.seat-head', '.seat');
     expect(seat.outside, 'seat bar controls outside the bar or the window').toEqual([]);
     await shot(page, `m59-narrow-${w}-transcript`);
     // The terminal's side: the seat bar's controls, in terminal mode, at the same width.
     await page.keyboard.press('Control+Escape');
     await expect(tx).toBeHidden();
     await frames(page, 5);
-    const term = await controlsInside(page, '.seat', '.seat');
+    const term = await controlsInside(page, '.seat-head', '.seat');
     expect(term.outside, 'seat bar controls outside the bar or the window (terminal mode)').toEqual([]);
     expect(term.count).toBeGreaterThanOrEqual(7); // (#172: two swatches, not three)
     await expect(page.locator('.seat-zoom-level')).toHaveText('100%');

@@ -100,13 +100,17 @@ test('the seat bar’s Codex notice fits a phone, and a wide window keeps its ro
     const [sb, nb] = await Promise.all([stand.boundingBox(), notice.boundingBox()]);
     expect(sb && sb.x + sb.width <= 390 && sb.x >= 0).toBe(true);
     expect(nb && nb.x + nb.width <= 390 && nb.x >= 0).toBe(true);
-    expect(await seat.evaluate((el) => getComputedStyle(el).gridTemplateAreas)).toBe('"ask ask" "line stand" "mode mode" "keys keys"');
+    // #176: the notice has the workspace's notices line, between the header and the content.
+    const [hb, cb] = await Promise.all([seat.locator('.seat-head').boundingBox(), seat.locator('.seat-content').boundingBox()]);
+    expect(hb && nb && cb && nb.y >= hb.y + hb.height - 1 && nb.y + nb.height <= cb.y + 1).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   }
   await shot(page, 'seat-codex-notice-phone');
   await page.setViewportSize({ width: 1280, height: 800 });
   await expect(notice).toBeVisible();
-  expect(await seat.evaluate((el) => getComputedStyle(el).gridTemplateAreas)).toBe('"ask ask ask" "line mode stand" "keys keys keys"');
+  const [hb, nb, cb] = await Promise.all([seat.locator('.seat-head').boundingBox(), notice.boundingBox(), seat.locator('.seat-content').boundingBox()]);
+  expect(hb && nb && cb && nb.y >= hb.y + hb.height - 1 && nb.y + nb.height <= cb.y + 1).toBe(true);
+  expect(hb!.height).toBeLessThan(60); // one header row at a wide window
   clean();
 });
 

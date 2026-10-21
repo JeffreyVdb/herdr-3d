@@ -690,6 +690,12 @@ export class Laptops {
     this.contentObserver.observe(el);
   }
 
+  /** #176: the content area on the viewport (the plan-limits tab keeps right of it). */
+  private contentBox(): OverlayRect | null {
+    const r = this.host.seat.content?.getBoundingClientRect();
+    return r && r.width > 0 ? { left: r.left, top: r.top, width: r.width, height: r.height } : null;
+  }
+
   /** #176: where the conversation goes: the whole content area (its own px, relative to it). */
   private contentRect(): OverlayRect | null {
     const el = this.host.seat.content;
@@ -1435,8 +1441,8 @@ export class Laptops {
       this.transcript.place(this.host.seat.content ? this.contentRect() : rect);
       this.markReading(rect);
     } else this.markReading(null);
-    // #176: the workspace fills the window: the plate has no gutter beside it (Shift+L peeks it).
-    if (this.seat) this.markSeated(this.host.seat.content ? { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight } : rect);
+    // #176: the plate's edge tab goes right of the workspace's content (its gutter, seat.css).
+    if (this.seat) this.markSeated(this.host.seat.content ? this.contentBox() : rect);
   }
 
   /**
