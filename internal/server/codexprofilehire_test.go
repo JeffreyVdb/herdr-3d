@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/codex"
 	"github.com/JeffreyVdb/herdr-3d/internal/codexaccount"
 	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -83,6 +85,11 @@ func startProfileBridge(t *testing.T, on bool, kind shellpolicy.Kind) *profileBr
 	svc := codexaccount.New(user, pb.def)
 	pb.sharedBridge = startSharedBridgeWith(t, "", host, on, kind, func(o *server.Options) {
 		o.CodexProfiles = svc
+		// The default home's sessions are --codex-sessions (usage and the sleep backfill).
+		o.Usage.Roots.CodexSessions = filepath.Join(pb.def, "sessions")
+		o.CodexSession = func(cwd string, skip func(string) bool) (string, error) {
+			return codex.FindSession(filepath.Join(pb.def, "sessions"), cwd, skip)
+		}
 		o.Log = slog.New(slog.NewTextHandler(pb.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
 		o.CodexPrepare = func(ctx context.Context, key string) ([]string, func(), error) {
 			host.record("profile %s", key)
@@ -797,15 +804,45 @@ func TestProfileLegacyWakeGone(t *testing.T) {
 	pb.balanced(t)
 }
 
-// A Codex worker on a profile whose session herdr never learned (a bare
-// home runs no herdr hook) is not backfilled at sleep: a session found by
-// its folder in --codex-sessions (the default's) would be another one's. A
-// worker on the default profile still is.
-func TestProfileSleepSkipsBackfill(t *testing.T) {
+// profileRollout writes a Codex rollout started at stamp in cwd, under a
+// sessions folder, whose last token count has input tokens in.
+func profileRollout(t *testing.T, sessions, stamp, id, cwd string, in int) {
+	t.Helper()
+	dir := filepath.Join(sessions, stamp[0:4], stamp[5:7], stamp[8:10])
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"type":"session_meta","payload":{"id":%q,"cwd":%q}}`+"\n"+
+		`{"type":"turn_context","payload":{"model":"gpt-6-sol","cwd":%q}}`+"\n"+
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":%d,"cached_input_tokens":0,`+
+		`"output_tokens":1,"total_tokens":%d},"last_token_usage":{"total_tokens":%d},"model_context_window":258400}}}`+"\n",
+		id, cwd, cwd, in, in+1, in+1)
+	if err := os.WriteFile(filepath.Join(dir, "rollout-"+stamp+"-"+id+".jsonl"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// S1b: the sleep backfills a Codex worker on another profile whose session
+// herdr never learned (a bare home runs no herdr hook) from its own
+// profile's folder, never from --codex-sessions (the default's), where a
+// newer session of the same folder is another one's; a worker on the
+// default still is, from there. A profile that is gone is not looked in.
+func TestProfileSleepBackfillsOwnHome(t *testing.T) {
 	t.Parallel()
+	const (
+		defID  = "0c0d0e0f-1390-4000-8000-00000000000d"
+		teamID = "0c0d0e0f-1390-4000-8000-00000000000e"
+	)
 	pb := startProfileBridge(t, false, "")
+	profileRollout(t, filepath.Join(pb.def, "sessions"), "2026-10-21T11-00-00", defID, "/home/u/repo", 900)
+	profileRollout(t, filepath.Join(pb.team, "sessions"), "2026-10-21T10-00-00", teamID, "/home/u/repo", 300)
 	ackData[proto.HireResult](t, func() msg { m, _ := pb.hire(t, 1, "team"); return m }())
 	ackData[proto.HireResult](t, func() msg { m, _ := pb.hire(t, 2, "codex"); return m }())
+	ackData[proto.HireResult](t, func() msg { m, _ := pb.hire(t, 3, "work"); return m }())
+	if err := os.RemoveAll(pb.work); err != nil {
+		t.Fatal(err)
+	}
+	pb.c.mustAck(proto.CmdCodexProfilesGet, nil) // lists them again
 	fh := pb.fl.fakeHerdr
 	fh.onStop = func() {
 		pb.fl.mu.Lock()
@@ -815,14 +852,39 @@ func TestProfileSleepSkipsBackfill(t *testing.T) {
 	}
 	before := len(pb.fl.Calls())
 	pb.c.mustAck(proto.CmdFloorSleep, proto.FloorArgs{Session: "s"})
-	for _, c := range pb.fl.Calls()[before:] {
-		if strings.HasPrefix(c, "report s w1:p1") {
-			t.Fatalf("the worker on team was backfilled: %q", c)
+	calls := pb.fl.Calls()[before:]
+	if !slices.Contains(calls, "report s w1:p1 "+teamID) || !slices.Contains(calls, "report s w2:p1 "+defID) {
+		t.Fatalf("sleep calls = %q", calls)
+	}
+	for _, c := range calls {
+		if strings.HasPrefix(c, "report s w3:p1") || c == "report s w1:p1 "+defID {
+			t.Fatalf("sleep calls = %q", calls)
 		}
 	}
-	row := auditRow(t, pb.bridge, proto.CmdFloorSleep)
-	if !strings.Contains(row.Result, `"pane":"w1:p1","skipped":"its sessions are in its Codex profile's folder`) ||
-		!strings.Contains(row.Result, `"pane":"w2:p1","skipped":"no codex rollout`) {
+	if row := auditRow(t, pb.bridge, proto.CmdFloorSleep); !strings.Contains(row.Result, `"pane":"w3:p1","skipped":"its Codex profile is gone: its sessions are not read"`) {
 		t.Fatalf("sleep audit = %+v", row)
+	}
+}
+
+// S1a, S1b: a Codex worker on another profile whose session herdr does not
+// know gets the usage of the rollout of its folder in its own profile's
+// sessions folder, not the newer one of the same folder in --codex-sessions
+// (the default's), which is another worker's.
+func TestProfileUsageOwnHome(t *testing.T) {
+	t.Parallel()
+	const (
+		defID  = "0c0d0e0f-1390-4000-8000-0000000000a1"
+		teamID = "0c0d0e0f-1390-4000-8000-0000000000a2"
+	)
+	pb := startProfileBridge(t, false, "")
+	profileRollout(t, filepath.Join(pb.def, "sessions"), "2026-10-21T11-00-00", defID, "/home/u/repo", 900)
+	profileRollout(t, filepath.Join(pb.team, "sessions"), "2026-10-21T10-00-00", teamID, "/home/u/repo", 300)
+	res := ackData[proto.HireResult](t, func() msg { m, _ := pb.hire(t, 1, "team"); return m }())
+	w := workersOf(pb.world(func(w proto.World) bool {
+		x := workersOf(w, "s")[res.WorkspaceID]
+		return x.Usage != nil
+	}), "s")[res.WorkspaceID]
+	if w.Usage.Input != 300 || w.AgentSession != "" {
+		t.Fatalf("usage = %+v, agent session %q", w.Usage, w.AgentSession)
 	}
 }

@@ -3,6 +3,7 @@ package server
 import (
 	"cmp"
 	"context"
+	"path/filepath"
 	"slices"
 	"time"
 
@@ -76,6 +77,11 @@ type usageWorker struct {
 	agent string
 	// #26: its children whose transcripts a connection watches.
 	kids []txKid
+	// #139: codexOther: a Codex worker on a profile other than the
+	// bridge's own, whose rollouts are in codexHome's sessions folder (""
+	// when that profile is gone: none are read), never in --codex-sessions.
+	codexOther bool
+	codexHome  string
 }
 
 // usageUpdate is a worker's new usage, or (nil) its usage gone.
@@ -157,7 +163,10 @@ type usageTracker struct {
 	calls     map[string]*transcript.CallTracker
 	callShown map[string]string
 	callUps   []callsUpdate
-	now       func() time.Time
+	// #139: a Finder per Codex profile's sessions folder, for the workers
+	// on another profile than the bridge's own.
+	finders map[string]*codex.Finder
+	now     func() time.Time
 }
 
 // foundCodex is a Codex session found by a worker's cwd, and when.
@@ -191,7 +200,54 @@ func newUsageTracker(cfg UsageConfig) *usageTracker {
 		asks: map[string]*transcript.AskTracker{}, askShown: map[string]askShown{}, lines: map[string]*txLines{},
 		fuOffered: map[string]followupOffered{}, actOffered: map[string]activityOffered{}, dgOffered: map[string]digestOffered{},
 		hoOffered: map[string]handoffOffered{}, kids: map[string]ChildReader{}, calls: map[string]*transcript.CallTracker{},
-		callShown: map[string]string{}, now: time.Now}
+		callShown: map[string]string{}, finders: map[string]*codex.Finder{}, now: time.Now}
+}
+
+// codexRoots are the roots a worker's transcripts are read in (#139): the
+// bridge's own, or, for a Codex worker on another profile, that profile's
+// sessions folder (none when it is gone), whose auth.json is not read.
+func (tr *usageTracker) codexRoots(w usageWorker) usage.Roots {
+	r := tr.cfg.Roots
+	if w.codexOther {
+		r.CodexSessions, r.CodexProfile = profileSessions(w.codexHome), true
+	}
+	return r
+}
+
+// usageKey is what a worker's session reader is kept for: its harness and
+// session, and (#139) the profile folder it is read in.
+func usageKey(w usageWorker) string {
+	key := w.harness + "/" + w.session
+	if w.codexOther {
+		key += "@" + w.codexHome
+	}
+	return key
+}
+
+// findCodexIn is FindCodex in the worker's own Codex sessions (#139: its
+// profile's when it runs on another one).
+func (tr *usageTracker) findCodexIn(w usageWorker, skip func(string) bool) (string, error) {
+	if !w.codexOther {
+		return tr.cfg.FindCodex(w.codexCwd, skip)
+	}
+	root := profileSessions(w.codexHome)
+	if root == "" {
+		return "", nil
+	}
+	f := tr.finders[root]
+	if f == nil {
+		f = &codex.Finder{Root: root}
+		tr.finders[root] = f
+	}
+	return f.Find(w.codexCwd, skip)
+}
+
+// profileSessions is a Codex profile's sessions folder ("" for none).
+func profileSessions(home string) string {
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, "sessions")
 }
 
 // trackUsage runs the tracker until ctx is done.
@@ -323,7 +379,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 	for _, w := range ws {
 		seen[w.id] = true
 		clear := false
-		if key := w.harness + "/" + w.session; tr.keys[w.id] != key {
+		if key := usageKey(w); tr.keys[w.id] != key {
 			tr.keys[w.id] = key
 			tr.sessions[w.id] = nil
 			delete(tr.asks, w.id)
@@ -331,7 +387,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			delete(tr.lines, w.id)
 			tr.closeKid(w.id)
 			if w.session != "" {
-				tr.sessions[w.id] = usage.NewSession(w.harness, w.session, tr.cfg.Roots, tr.cfg.Pricing)
+				tr.sessions[w.id] = usage.NewSession(w.harness, w.session, tr.codexRoots(w), tr.cfg.Pricing)
 			}
 			if s := tr.sessions[w.id]; s != nil {
 				var k ChildReader
@@ -348,11 +404,11 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			}
 			if s := tr.sessions[w.id]; s != nil { // #57: the ask, from the same lines, the file's first included
 				l := &txLines{harness: w.harness, ask: transcript.NewAskTracker(w.harness), // #83: and a wrap-up's
-					followup: transcript.NewFollowupTracker(w.harness),                               // #90: and the turn's final message
-					activity: transcript.NewActivityTracker(w.harness, tr.cfg.Images, w.cwd, tr.now), // #98: and what it does
-					digest:   transcript.NewDigestTracker(w.harness),                                 // #118: and its digest
-					handoff:  transcript.NewHandoffTracker(w.harness),                                // #223: and its last reply
-					calls:    transcript.NewCallTracker(w.harness)}                                   // #106: and the calls it waits on
+					followup: transcript.NewFollowupTracker(w.harness),                              // #90: and the turn's final message
+					activity: transcript.NewActivityTracker(w.harness, tr.images(w), w.cwd, tr.now), // #98: and what it does
+					digest:   transcript.NewDigestTracker(w.harness),                                // #118: and its digest
+					handoff:  transcript.NewHandoffTracker(w.harness),                               // #223: and its last reply
+					calls:    transcript.NewCallTracker(w.harness)}                                  // #106: and the calls it waits on
 				if w.harness == transcript.Claude { // #95: and typed prompts arriving as a paste
 					l.paste = newPasteWatch()
 				}
@@ -516,7 +572,7 @@ func (tr *usageTracker) findCodex(ws []usageWorker, now time.Time) []usageWorker
 		w := &out[i]
 		f := tr.found[w.id]
 		if due(*w) || taken[w.floor][f.id] {
-			id, err := tr.cfg.FindCodex(w.codexCwd, func(id string) bool { return taken[w.floor][id] })
+			id, err := tr.findCodexIn(*w, func(id string) bool { return taken[w.floor][id] })
 			if err != nil && f.cwd == w.codexCwd && !taken[w.floor][f.id] {
 				id = f.id // keep the last answer through a failed lookup
 			}
@@ -543,7 +599,8 @@ func (h *Hub) usageWorkers() []usageWorker {
 		uw := usageWorker{id: id, harness: harness, session: w.AgentSession, agent: w.AgentSession, shown: w.Usage != nil, floor: w.Session,
 			watched: h.tx.watchedOwn(id), cwd: w.Cwd, asking: w.Ask != nil, wrap: h.wrapWatchOf(id), agentHo: h.agentWatchOf(id), typed: h.typedSums(id),
 			status: w.Status, idleAt: h.act.idleAt[id], kids: h.txKids(id)}
-		if w.AgentSession == "" && w.AgentKind == usage.Codex && w.Cwd != "" {
+		uw.codexHome, uw.codexOther = h.codexHomeOf(id) // #139
+		if w.AgentSession == "" && w.AgentKind == usage.Codex && w.Cwd != "" && (!uw.codexOther || uw.codexHome != "") {
 			uw.codexCwd = w.Cwd
 		}
 		ws = append(ws, uw)

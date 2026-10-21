@@ -5,10 +5,13 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 	"github.com/JeffreyVdb/herdr-3d/internal/usage"
 )
 
@@ -178,6 +181,83 @@ func TestUsageCodexWithoutSession(t *testing.T) {
 	}
 	if _, ok := tr.found["c"]; ok {
 		t.Fatal("c's found session kept")
+	}
+}
+
+// #139: a Codex worker on another profile reads its rollouts in that
+// profile's own sessions folder, by its session or by its folder: never in
+// --codex-sessions (the default home's), also not when its profile is gone.
+// A worker whose folder changes (a wake on the default) reads afresh.
+func TestUsageCodexProfileRoot(t *testing.T) {
+	t.Parallel()
+	const (
+		defID  = "0c0d0e0f-1390-4000-8000-000000000001"
+		workID = "0c0d0e0f-1390-4000-8000-000000000002"
+		bothID = "0c0d0e0f-1390-4000-8000-000000000003"
+	)
+	def, work := filepath.Join(t.TempDir(), "sessions"), t.TempDir()
+	codexRollout(t, def, "2026-09-29T11-00-00", defID, "/repo", 900) // newer, same folder: never another profile's
+	codexRollout(t, filepath.Join(work, "sessions"), "2026-09-29T10-00-00", workID, "/repo", 300)
+	codexRollout(t, def, "2026-09-29T09-00-00", bothID, "/elsewhere", 70)
+	codexRollout(t, filepath.Join(work, "sessions"), "2026-09-29T09-00-00", bothID, "/elsewhere", 7)
+	tr := newUsageTracker(UsageConfig{Roots: usage.Roots{CodexSessions: def}})
+	inputs := func(ups []usageUpdate) map[string]int64 {
+		out := map[string]int64{}
+		for _, u := range ups {
+			if u.usage == nil {
+				out[u.id] = -1
+			} else {
+				out[u.id] = u.usage.Input
+			}
+		}
+		return out
+	}
+	ws := []usageWorker{
+		{id: "found", harness: "codex", floor: "s1", codexCwd: "/repo", codexOther: true, codexHome: work, watched: true},
+		{id: "known", harness: "codex", session: bothID, floor: "s2", codexOther: true, codexHome: work},
+		{id: "gone", harness: "codex", session: defID, floor: "s3", codexOther: true},
+		{id: "own", harness: "codex", floor: "s4", codexCwd: "/repo"},
+	}
+	t0 := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	got := inputs(tr.poll(ws, t0))
+	if want := map[string]int64{"found": 300, "known": 7, "own": 900}; !maps.Equal(got, want) {
+		t.Fatalf("first = %v, want %v", got, want)
+	}
+	// Its transcript lines come from the same file (M16: a watched worker's log).
+	if path, _, _ := tr.sessions["found"].Main(); !strings.HasPrefix(path, filepath.Join(work, "sessions")+string(filepath.Separator)) {
+		t.Fatalf("read %s", path)
+	}
+	if l := tr.logs["found"]; l == nil {
+		t.Fatal("no transcript log for the worker on a profile")
+	}
+	// Woken on the default (its profile gone): the same session is looked
+	// for afresh, in the default's folder.
+	ws[1].codexOther, ws[1].codexHome, ws[1].shown = false, "", true
+	if got = inputs(tr.poll(ws, t0.Add(10*time.Second))); !maps.Equal(got, map[string]int64{"known": 70}) {
+		t.Fatalf("on the default = %v", got)
+	}
+}
+
+// S1c: a Codex worker on another profile resolves its transcripts' path
+// images under its own home's generated_images, never the bridge's own
+// home's (a gone profile: under none); the bridge's other roots and its
+// cache stay. Every other worker keeps the bridge's images as they are.
+func TestUsageCodexProfileImages(t *testing.T) {
+	t.Parallel()
+	base := &transcript.Images{Roots: []string{"/home/u/drops", "/home/u/.codex/generated_images"}}
+	tr := newUsageTracker(UsageConfig{Images: base})
+	if im := tr.images(usageWorker{harness: "codex"}); im != base {
+		t.Fatalf("the bridge's own: %+v", im)
+	}
+	im := tr.images(usageWorker{harness: "codex", codexOther: true, codexHome: "/home/u/.codex-work"})
+	if !slices.Equal(im.Roots, []string{"/home/u/drops", "/home/u/.codex-work/generated_images"}) || im.Cache != base.Cache {
+		t.Fatalf("on work: %+v", im)
+	}
+	if im := tr.images(usageWorker{harness: "codex", codexOther: true}); !slices.Equal(im.Roots, []string{"/home/u/drops"}) {
+		t.Fatalf("gone: %+v", im)
+	}
+	if !slices.Equal(base.Roots, []string{"/home/u/drops", "/home/u/.codex/generated_images"}) {
+		t.Fatalf("the bridge's images changed: %+v", base.Roots)
 	}
 }
 

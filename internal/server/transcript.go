@@ -393,7 +393,7 @@ func (h *Hub) startTranscriptWatch(ctx context.Context, c *Client, cmd proto.Com
 	w := &txWatch{c: c, id: a.ID, child: a.Child, key: key, limit: a.Limit, cancel: cancel, offers: make(chan txOffer, 1),
 		sent: map[string]struct{}{}, reads: make(chan struct{}, maxImageReads)}
 	if a.Child == nil {
-		w.agents = newAgentLogs(h.txImageOptions(wk.Cwd))
+		w.agents = newAgentLogs(h.txImageOptions(a.ID, wk.Cwd))
 	}
 	if old := h.tx.add(w); old != nil {
 		old.cancel()
@@ -992,7 +992,7 @@ func (tr *usageTracker) syncTranscript(w usageWorker, s *usage.Session, key stri
 	if path == "" {
 		return
 	}
-	log, err := transcript.Follow(w.harness, path, fi, next, tr.imageOptions(w.cwd)...)
+	log, err := transcript.Follow(w.harness, path, fi, next, tr.imageOptions(w)...)
 	if err != nil {
 		return // looked at again next round
 	}
@@ -1086,7 +1086,7 @@ func (tr *usageTracker) syncKidTranscripts(w usageWorker, s *usage.Session) {
 		if !ok {
 			continue // not read yet: looked for in the next Poll
 		}
-		opts := tr.imageOptions(w.cwd)
+		opts := tr.imageOptions(w)
 		if k.harness == transcript.Codex {
 			opts = append(opts, transcript.CodexHistoryStart(f.HistoryStart)) // its parent's copied history is not its own
 		}
@@ -1117,13 +1117,18 @@ func (tr *usageTracker) closeKidLogs(id string, keep map[string]txKid) {
 	}
 }
 
-// txImageOptions are the options a transcript log is opened with for a
-// worker: the bridge's images, and the worker's own directory as a root of
-// its path images.
-func (h *Hub) txImageOptions(cwd string) []transcript.Option {
+// txImageOptions are the options a transcript log is opened with for
+// worker id: the bridge's images (#139: with its Codex profile's generated
+// images for the bridge's own home's), and the worker's own directory as a
+// root of its path images.
+func (h *Hub) txImageOptions(id, cwd string) []transcript.Option {
 	var opts []transcript.Option
 	if h.opts.Usage != nil && h.opts.Usage.Images != nil {
-		opts = append(opts, transcript.WithImages(h.opts.Usage.Images))
+		im := h.opts.Usage.Images
+		if home, other := h.codexHomeOf(id); other {
+			im = profileImages(im, home)
+		}
+		opts = append(opts, transcript.WithImages(im))
 	}
 	if cwd != "" {
 		opts = append(opts, transcript.WithCwd(cwd))
@@ -1176,13 +1181,38 @@ func imageError(err error) error {
 }
 
 // imageOptions is txImageOptions for the tracker.
-func (tr *usageTracker) imageOptions(cwd string) []transcript.Option {
+func (tr *usageTracker) imageOptions(w usageWorker) []transcript.Option {
 	var opts []transcript.Option
-	if tr.cfg.Images != nil {
-		opts = append(opts, transcript.WithImages(tr.cfg.Images))
+	if im := tr.images(w); im != nil {
+		opts = append(opts, transcript.WithImages(im))
 	}
-	if cwd != "" {
-		opts = append(opts, transcript.WithCwd(cwd))
+	if w.cwd != "" {
+		opts = append(opts, transcript.WithCwd(w.cwd))
 	}
 	return opts
+}
+
+// images are the images a worker's transcripts resolve theirs with (#139:
+// on another Codex profile, its own home's generated images).
+func (tr *usageTracker) images(w usageWorker) *transcript.Images {
+	if tr.cfg.Images == nil || !w.codexOther {
+		return tr.cfg.Images
+	}
+	return profileImages(tr.cfg.Images, w.codexHome)
+}
+
+// profileImages is base with a Codex profile's generated_images in place
+// of the bridge's own home's (#139; home "": a gone profile, none): a
+// worker's path images are never read from another home.
+func profileImages(base *transcript.Images, home string) *transcript.Images {
+	im := &transcript.Images{Cache: base.Cache}
+	for _, r := range base.Roots {
+		if filepath.Base(r) != "generated_images" {
+			im.Roots = append(im.Roots, r)
+		}
+	}
+	if home != "" {
+		im.Roots = append(im.Roots, filepath.Join(home, "generated_images"))
+	}
+	return im
 }

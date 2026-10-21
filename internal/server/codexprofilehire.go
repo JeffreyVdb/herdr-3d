@@ -356,15 +356,23 @@ func (h *Hub) startLegacy(ctx context.Context, session, pane string, rec store.C
 	return err
 }
 
-// onOtherProfile reports whether a worker runs on a Codex profile other
-// than the default (hub goroutine): its sessions are in that profile's
-// folder, which the sleep's backfill (by folder, in --codex-sessions) does
-// not read. A profile no longer listed counts as another.
-func (h *Hub) onOtherProfile(id string) bool {
+// codexHomeOf is the Codex home a worker's sessions are in (hub
+// goroutine; #139): other is false for the bridge's own (--codex-sessions:
+// the default profile, a worker hired before profiles, any other worker);
+// on another profile home is its folder, "" when that profile is gone (no
+// longer listed, or its folder gone): its sessions are read nowhere then,
+// never in the default's folder.
+func (h *Hub) codexHomeOf(id string) (home string, other bool) {
 	l, ok := h.cx.launches[id]
 	if !ok || l.Profile == "" {
-		return false
+		return "", false
 	}
 	a, listed := h.codexAccount(l.Profile)
-	return !listed || !a.Default
+	switch {
+	case listed && a.Default:
+		return "", false
+	case !listed || !a.Exists:
+		return "", true
+	}
+	return a.Home, true
 }

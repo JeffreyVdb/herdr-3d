@@ -23,6 +23,10 @@ type Roots struct {
 	ClaudeProjects string
 	// CodexSessions holds Codex's YYYY/MM/DD/rollout-*-<session>.jsonl.
 	CodexSessions string
+	// CodexProfile: CodexSessions is a Codex profile's other than the
+	// bridge's own (#139): its auth.json is never read, so the auth mode
+	// (pricing's cache retention) is unknown.
+	CodexProfile bool
 }
 
 // DefaultClaudeProjects is $CLAUDE_CONFIG_DIR/projects, else
@@ -209,7 +213,7 @@ func NewSession(harness, id string, roots Roots, p *Pricing) *Session {
 	}
 	s := &Session{harness: harness, id: id, roots: roots, pricing: p, subs: map[string]*jsonl.Tail{}, metas: map[string]metaStamp{},
 		threads: map[string]string{}, want: map[string]bool{}, taps: map[string]Tap{}, starts: map[string]int64{}}
-	if harness == Codex {
+	if harness == Codex && !roots.CodexProfile {
 		s.auth = codexAuthMode(roots.CodexSessions)
 	}
 	s.parse = s.newParser()

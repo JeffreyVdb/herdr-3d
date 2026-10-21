@@ -300,6 +300,25 @@ func TestCacheStateBoundaries(t *testing.T) {
 	}
 }
 
+// #139: a Codex profile's sessions (not the bridge's own home) never have
+// their home's auth.json read: the auth route is unknown, as without one.
+func TestCodexProfileAuthUnread(t *testing.T) {
+	start := cacheAt("2026-10-11T10:00:00Z").Unix()
+	root := t.TempDir()
+	sessions := filepath.Join(root, "sessions")
+	writeFile(t, filepath.Join(root, "auth.json"), `{"auth_mode":"apikey"}`)
+	writeFile(t, filepath.Join(sessions, "2026", "10", "11", "rollout-x-"+codexID+".jsonl"),
+		cMeta("openai")+cTurn("gpt-6-sol")+cStart(start)+cCount(20000)+cDone(start+20))
+	u := poll(t, NewSession(Codex, codexID, Roots{CodexSessions: sessions, CodexProfile: true}, DefaultPricing()), cacheAt("2026-10-11T10:01:00Z"))
+	if u.Cache == nil || u.Cache.Auth != "" || u.Cache.Policy != proto.CachePolicyAssumed || u.Cache.TTLMin != ttl30m {
+		t.Fatalf("cache = %+v", u.Cache)
+	}
+	u = poll(t, NewSession(Codex, codexID, Roots{CodexSessions: sessions}, DefaultPricing()), cacheAt("2026-10-11T10:01:00Z"))
+	if u.Cache == nil || u.Cache.Auth != "apikey" {
+		t.Fatalf("the bridge's own home, cache = %+v", u.Cache)
+	}
+}
+
 // Codex: the cache's retention is the model's and the auth route's; the
 // request's start is its turn's start (its end, the turn's completion).
 func TestCodexCacheRetention(t *testing.T) {
