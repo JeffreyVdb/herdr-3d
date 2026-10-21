@@ -155,6 +155,11 @@ describe('the fixture’s Auto (#140)', () => {
       'Rule 2: use github.com/<owner>/* or github.com/<owner>/<repo>, or a folder starting with / or ~/.',
     );
     expect(() => run('codex_profiles.set', { rules: [{ match: '/a', profile: 'nope' }] })).toThrow('Rule 1: there is no Codex profile "nope".');
+    // A folder keeps its case, as the bridge's; GitHub matches are one rule ignoring case.
+    const cased = run('codex_profiles.set', { rules: [{ match: '/work/A', profile: 'work' }, { match: '/work/a/', profile: 'codex' }] }) as unknown as { rules: unknown[] };
+    expect(cased.rules).toEqual([{ match: '/work/A', profile: 'work' }, { match: '/work/a', profile: 'codex' }]);
+    expect(() => run('codex_profiles.set', { rules: [{ match: 'github.com/acme/*', profile: 'work' }, { match: 'github.com/ACME/*', profile: 'codex' }] })).toThrow('Rule 2: rule 1 already matches ACME/*.');
+    run('codex_profiles.set', { rules: [{ match: 'GitHub.com/JeffreyVdb/*', profile: 'work' }, { match: '~/scratch/', profile: 'codex' }] });
     expect(() => run('codex_profiles.set', { key: 'work', rules: [] })).toThrow('rules takes no key');
     run('codex_profiles.set', { key: 'work', anything: true });
     expect(run('codex_profiles.get').profiles.filter((p) => (p as { anything?: boolean }).anything).map((p) => p.key)).toEqual(['codex', 'work']);

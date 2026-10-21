@@ -172,6 +172,15 @@ func TestRulesAndAnything(t *testing.T) {
 	if !slices.Equal(set.Rules, want) {
 		t.Fatalf("rules = %+v", set.Rules)
 	}
+	// A folder keeps its case (the picker compares it so); only GitHub
+	// matches are one rule ignoring case.
+	cased := []Rule{{Match: "/work/A", Profile: "work"}, {Match: "/work/a/", Profile: "codex"}, {Match: "~/Work", Profile: "work"}, {Match: "~/work", Profile: "codex"}}
+	if set, err = s.SetRules(ctx, cased); err != nil {
+		t.Fatalf("folders differing by case: %v", err)
+	}
+	if want := []Rule{{Match: "/work/A", Profile: "work"}, {Match: "/work/a", Profile: "codex"}, {Match: "~/Work", Profile: "work"}, {Match: "~/work", Profile: "codex"}}; !slices.Equal(set.Rules, want) {
+		t.Fatalf("cased rules = %+v", set.Rules)
+	}
 	if set, err = s.SetRules(ctx, nil); err != nil || set.Rules == nil || len(set.Rules) != 0 {
 		t.Fatalf("cleared = %#v, %v", set.Rules, err)
 	}
@@ -196,6 +205,8 @@ func TestRulesAndAnything(t *testing.T) {
 		{[]Rule{{Match: "/a", Profile: ""}}, "Rule 1: choose the profile it hires on."},
 		{[]Rule{{Match: "/a", Profile: "gone"}}, `Rule 1: there is no Codex profile "gone".`},
 		{[]Rule{{Match: "github.com/acme/*", Profile: "work"}, {Match: "github.com/ACME/*", Profile: "codex"}}, "Rule 2: rule 1 already matches ACME/*."},
+		{[]Rule{{Match: "github.com/acme/widgets", Profile: "work"}, {Match: "GitHub.com/Acme/Widgets", Profile: "codex"}}, "Rule 2: rule 1 already matches Acme/Widgets."},
+		{[]Rule{{Match: "/work/A", Profile: "work"}, {Match: "/work/A/", Profile: "codex"}}, "Rule 2: rule 1 already matches /work/A."},
 	} {
 		_, err := s.SetRules(ctx, tc.rules)
 		var se *SettingsError

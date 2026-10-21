@@ -108,6 +108,10 @@ describe('#140 Auto and its rules', () => {
     const list = two.profiles;
     expect(rulesProblem([{ match: '/a', profile: 'work' }], list)).toBeNull();
     expect(rulesProblem([{ match: '/a', profile: 'work' }, { match: '/a/', profile: 'codex' }], list)).toEqual({ index: 1, text: 'Rule 1 already matches this.' });
+    // A folder keeps its case (the bridge's picker compares it so); GitHub matches are one rule ignoring case.
+    expect(rulesProblem([{ match: '/work/A', profile: 'work' }, { match: '/work/a/', profile: 'codex' }, { match: '~/Work', profile: 'work' }, { match: '~/work', profile: 'codex' }], list)).toBeNull();
+    expect(rulesProblem([{ match: 'github.com/acme/*', profile: 'work' }, { match: 'GitHub.com/ACME/*', profile: 'codex' }], list)).toEqual({ index: 1, text: 'Rule 1 already matches this.' });
+    expect(rulesProblem([{ match: 'github.com/acme/widgets', profile: 'work' }, { match: 'github.com/Acme/Widgets', profile: 'codex' }], list)).toEqual({ index: 1, text: 'Rule 1 already matches this.' });
     expect(rulesProblem([{ match: '/a', profile: '' }], list)).toEqual({ index: 0, text: 'Choose the profile it hires on.' });
     expect(rulesProblem([{ match: '/a', profile: 'nope' }], list)).toEqual({ index: 0, text: 'There is no Codex profile “nope”.' });
     expect(ruleRefusal('Rule 3: there is no Codex profile "x".')).toEqual({ index: 2, text: 'There is no Codex profile "x".' });

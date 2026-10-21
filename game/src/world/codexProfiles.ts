@@ -145,7 +145,7 @@ export function rulesProblem(rules: readonly CodexRule[], profiles: readonly Cod
   for (const [i, r] of rules.entries()) {
     const why = ruleMatchProblem(r.match);
     if (why) return { index: i, text: why };
-    const norm = normRule(r.match).toLowerCase();
+    const norm = dupKey(r.match);
     const j = seen.get(norm);
     if (j !== undefined) return { index: i, text: `Rule ${j + 1} already matches this.` };
     seen.set(norm, i);
@@ -153,6 +153,12 @@ export function rulesProblem(rules: readonly CodexRule[], profiles: readonly Cod
     if (!profiles.some((p) => p.key === r.profile)) return { index: i, text: `There is no Codex profile “${r.profile}”.` };
   }
   return null;
+}
+
+/** Two matches with the same key are one rule, as the bridge says: a GitHub match ignoring case (GitHub does), a folder exactly (the picker compares it so). */
+function dupKey(m: string): string {
+  const n = normRule(m);
+  return n.startsWith('github.com/') ? n.toLowerCase() : n;
 }
 
 /** A match as the bridge stores it, near enough to tell two of them apart (github.com in lower case, a folder without a trailing /). */

@@ -212,9 +212,10 @@ export class CodexProfilesSim {
         stored = `github.com/${owner}/${repo}`;
       } else if (m === '~' || m.startsWith('~/') || m.startsWith('/')) stored = m.length > 1 ? m.replace(/\/+$/, '') : m;
       else throw this.bad(`Rule ${n}: use ${FORMS}, or a folder starting with / or ~/.`);
-      const j = seen.get(stored.toLowerCase());
+      const key = stored.startsWith('github.com/') ? stored.toLowerCase() : stored; // GitHub ignores case; a folder keeps it
+      const j = seen.get(key);
       if (j !== undefined) throw this.bad(`Rule ${n}: rule ${j} already matches ${stored.replace(/^github\.com\//, '')}.`);
-      seen.set(stored.toLowerCase(), n);
+      seen.set(key, n);
       if (!r.profile) throw this.bad(`Rule ${n}: choose the profile it hires on.`);
       if (!this.profiles.some((p) => p.key === r.profile)) throw this.bad(`Rule ${n}: there is no Codex profile "${r.profile}".`);
       out.push({ match: stored, profile: r.profile });

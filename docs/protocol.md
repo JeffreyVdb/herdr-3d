@@ -2462,9 +2462,10 @@ an account, never reads a token and never runs codex-auth: it only looks at fold
     [Auto](#auto-the-bridge-picks-the-codex-profile) hire that no rule decides may land on it.
   - #140 `{"rules": [{"match", "profile"}, …]}` (no `key`): replaces the rules, in order (`[]` clears them), so a new
     order lands in one change. At most 32; each `match` one of `github.com/<owner>/*`, `github.com/<owner>/<repo>`
-    (owner and repo as GitHub allows them) or a folder (`/…` or `~/…`), no match twice (ignoring case), each `profile`
-    a key listed now (a hidden or signed-out one is allowed: Auto passes it over). Stored trimmed, `github.com` in
-    lower case, a folder cleaned (`~/work/` → `~/work`). A refusal (`bad_request`) starts with the rule's number:
+    (owner and repo as GitHub allows them) or a folder (`/…` or `~/…`), no match twice (a GitHub match ignoring case,
+    a folder exactly: `/work/A` and `/work/a` are two rules), each `profile` a key listed now (a hidden or signed-out
+    one is allowed: Auto passes it over). Stored trimmed, `github.com` in lower case, a folder cleaned (`~/work/` →
+    `~/work`). A refusal (`bad_request`) starts with the rule's number:
     `Rule 2: there is no Codex profile "gone".`
   - An unknown key is `not_found`; anything else (no change, two changes, `add` or `rules` with a `key`) is
     `bad_request`.

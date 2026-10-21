@@ -151,9 +151,9 @@ func (m match) label() string {
 }
 
 // SetRules replaces the rules (#140): at most MaxRules, each one of the
-// match forms and naming a profile listed now, no match twice. A refusal
-// starts with the rule's number ("Rule 2: …"), so the editor can put it
-// under that row.
+// match forms and naming a profile listed now, no match twice (a GitHub
+// one ignoring case, a folder exactly). A refusal starts with the rule's
+// number ("Rule 2: …"), so the editor can put it under that row.
 func (s *Service) SetRules(ctx context.Context, rules []Rule) (Settings, error) {
 	set := s.Settings()
 	if len(rules) > MaxRules {
@@ -169,10 +169,14 @@ func (s *Service) SetRules(ctx context.Context, rules []Rule) (Settings, error) 
 			return set, &SettingsError{fmt.Sprintf("Rule %d: %s.", n, problem)}
 		}
 		stored, _ := normMatch(r.Match)
-		if j, ok := seen[strings.ToLower(stored)]; ok {
+		key := stored
+		if m.path == "" {
+			key = strings.ToLower(stored) // GitHub ignores case; a folder keeps it, as matches does
+		}
+		if j, ok := seen[key]; ok {
 			return set, &SettingsError{fmt.Sprintf("Rule %d: rule %d already matches %s.", n, j, m.label())}
 		}
-		seen[strings.ToLower(stored)] = n
+		seen[key] = n
 		switch _, ok := find(all, r.Profile); {
 		case r.Profile == "":
 			return set, &SettingsError{fmt.Sprintf("Rule %d: choose the profile it hires on.", n)}
