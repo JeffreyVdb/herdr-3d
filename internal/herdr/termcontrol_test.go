@@ -836,13 +836,13 @@ func TestControlTerminalInputInAFullQueue(t *testing.T) {
 func TestControlTerminalInputGivenUpIsNotWritten(t *testing.T) {
 	appliedWait = 10 * time.Millisecond // no frames here
 	t.Cleanup(func() { appliedWait = 2 * time.Second })
-	for name, call := range map[string]func(t *testing.T, ct ControlStream) error{
-		"write timeout": func(t *testing.T, ct ControlStream) error {
+	for name, call := range map[string]func(ct ControlStream) error{
+		"write timeout": func(ct ControlStream) error {
 			writeWait = 30 * time.Millisecond
-			t.Cleanup(func() { writeWait = 5 * time.Second })
+			defer func() { writeWait = 5 * time.Second }() // this paste's only
 			return ct.Paste(context.Background(), "LATE_PASTE")
 		},
-		"cancelled": func(_ *testing.T, ct ControlStream) error {
+		"cancelled": func(ct ControlStream) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 			defer cancel()
 			return ct.Click(ctx, "left", 7, 7, 0)
@@ -850,7 +850,7 @@ func TestControlTerminalInputGivenUpIsNotWritten(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			p, ct := stalled(t, 2)
-			if err := call(t, ct); !errors.Is(err, ErrInputUnsent) {
+			if err := call(ct); !errors.Is(err, ErrInputUnsent) {
 				t.Fatalf("err = %v, want ErrInputUnsent", err)
 			}
 			k := ct.(*controller)

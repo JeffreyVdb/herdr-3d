@@ -130,7 +130,8 @@ type ControlStream interface {
 	// added, Enter neither. It returns once the line is on herdr's stdin, or
 	// fails: it is never dropped without a word, and one that fails before it
 	// is written (InputUnsent: a cancel or a timeout while it is queued) is
-	// never written later. Once its line is being written it waits for that.
+	// never written later. Once its line is being written it waits for that
+	// (Close, which stops a wedged herdr, ends the wait).
 	Paste(ctx context.Context, text string) error
 	// Click is a click of button (MouseButtons) on cell (col, row), 0-based,
 	// with modifier bits mods (Shift 1, Ctrl 2, Alt 4): terminal.mouse down,
