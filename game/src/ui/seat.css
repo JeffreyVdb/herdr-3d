@@ -307,6 +307,14 @@
     'line mode stand'
     'keys keys keys';
 }
+/* #139: the server's line and the profile's, one under the other. */
+.seat-codex-box {
+  grid-area: ask;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
 .seat-codex {
   grid-area: ask;
   display: flex;

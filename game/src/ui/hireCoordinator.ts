@@ -1,6 +1,5 @@
 import type { CommandResult } from '../net/client';
 import type { CommandArgs, HireAck } from '../net/protocol';
-import { codexNotice } from '../world/codexServer';
 import type { FailedImage, ResolveResult } from './composer/draft';
 import { HIRE_PROMPT_MAX_BYTES, serializeErrorText } from './composer/model';
 import { HANDOVER_EXPIRED } from './dictationModel';
@@ -238,8 +237,9 @@ export class HireCoordinator {
       case 'hired': {
         this.host.toast(SPAWNED_TEXT, 'info');
         this.host.beep();
-        const fallback = codexNotice({ codex: o.ack?.codex });
-        if (fallback) (this.host.later ?? ((fn, ms) => void setTimeout(fn, ms)))(() => this.host.toast(fallback.text, 'warn'), SPAWNED_NOTICE_GAP_MS);
+        // The fallback to Codex's built-in server (#155) and what the hire found about its Codex profile (#139), if any.
+        const t = hiredToast('', o.ack, '');
+        if (t.text) (this.host.later ?? ((fn, ms) => void setTimeout(fn, ms)))(() => this.host.toast(t.text, t.kind), SPAWNED_NOTICE_GAP_MS);
         return;
       }
       case 'not_prompted': {

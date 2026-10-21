@@ -272,6 +272,16 @@ describe('Codex profiles (#138)', () => {
     ]);
   });
 
+  it('#139: a dialog shows the limits of the profile it hires on: the default unless one is picked', () => {
+    const b = new LimitBook();
+    b.reset([claude(), codex({ account: own }), codex({ account: acct('work'), plan: 'team' })]);
+    expect(harnessViews(b, [{ harness: 'codex' }], NOW).map((v) => v.account)).toEqual(['codex']);
+    expect(harnessViews(b, [{ harness: 'codex', profile: 'work' }], NOW).map((v) => [v.account, v.profile])).toEqual([['work', null]]);
+    expect(harnessViews(b, [{ harness: 'codex', profile: 'codex' }], NOW).map((v) => v.account)).toEqual(['codex']);
+    expect(harnessViews(b, [{ harness: 'codex', profile: 'unread' }], NOW)).toEqual([]); // no reading: no line
+    expect(harnessViews(b, [{ harness: 'claude', profile: 'work' }, { harness: 'codex' }], NOW).map((v) => v.account)).toEqual([null, 'codex']);
+  });
+
   it('keeps the account from the wire (never more), and drops a malformed one', () => {
     expect(limitsOf({ ...codex(), account: { key: 'work', name: 'Work', plan: 'team', default: false, email: 'x@y' } })?.account).toEqual({ key: 'work', name: 'Work', plan: 'team', default: false });
     expect(limitsOf({ ...codex(), account: { name: 'no key' } })?.account).toBeUndefined();

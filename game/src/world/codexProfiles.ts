@@ -1,10 +1,12 @@
 /**
  * #138: the Codex profiles (Codex home folders, each with its own sign-in) as the snapshot's `codex_profiles` and the
  * `codex_profiles.update` events carry them (`CodexProfilesBook`), and the checks the Settings section makes before it
- * sends a change (the bridge makes them too). Pure.
+ * sends a change (the bridge makes them too). #139: the profiles a Codex hire can pick from, and what a Codex worker's
+ * seat says about its profile. Pure.
  */
 
-import type { CodexProfile, CodexProfilesState } from '../net/protocol';
+import type { CodexProfile, CodexProfilesState, Worker } from '../net/protocol';
+import type { CodexNotice } from './codexServer';
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -32,7 +34,9 @@ function profileOf(v: unknown): CodexProfile | null {
 /** A well-formed list (malformed profiles left out), else null. */
 export function codexProfilesOf(v: unknown): CodexProfilesState | null {
   if (!isObj(v) || !Array.isArray(v.profiles)) return null;
-  return { profiles: v.profiles.map(profileOf).filter((p): p is CodexProfile => p !== null) };
+  const out: CodexProfilesState = { profiles: v.profiles.map(profileOf).filter((p): p is CodexProfile => p !== null) };
+  if (v.hire === true) out.hire = true;
+  return out;
 }
 
 /** The Codex profiles, and who listens for changes. */
@@ -107,4 +111,67 @@ export function codexProfilesFailureText(code: string, message: string): string 
     default:
       return message.replace(/^bad args:\s*/, '').trim() || code;
   }
+}
+
+/**
+ * #139: the profiles shown and usable: not hidden, and (an added folder) still there. With fewer than two there is no
+ * choice to make, and nothing about profiles shows anywhere.
+ */
+function usableProfiles(state: CodexProfilesState | null): CodexProfile[] {
+  return state ? state.profiles.filter((p) => !p.hidden && !p.missing) : [];
+}
+
+/**
+ * #139: what a Codex hire can pick from (the hire dialog's and the preset editor's "Codex profile"), as listed (the
+ * default first); null: no picker, the form is as before profiles: an older bridge (no `hire`), or fewer than two.
+ */
+export function hireProfiles(state: CodexProfilesState | null): CodexProfile[] | null {
+  if (!state?.hire) return null;
+  const list = usableProfiles(state);
+  return list.length >= 2 ? list : null;
+}
+
+/** #139: why a profile cannot be picked (a chip shown disabled), or null. */
+export function profileBlocked(p: CodexProfile): string | null {
+  return p.signed_in ? null : 'not signed in';
+}
+
+/**
+ * #139: the profile a form starts with: `want` (a preset's) while it can be picked, else the default. `gone` names a
+ * `want` that is no longer offered (hidden, removed, or its folder gone): the form says it fell back.
+ */
+export function pickProfile(list: readonly CodexProfile[], want?: string): { key: string; gone: string | null } {
+  const def = list.find((p) => p.default) ?? list[0];
+  const wanted = want ? list.find((p) => p.key === want) : undefined;
+  if (wanted && !profileBlocked(wanted)) return { key: wanted.key, gone: null };
+  return { key: def?.key ?? '', gone: want && !wanted ? want : null };
+}
+
+/** #139: the note of a preset whose profile fell back (`pickProfile`'s `gone`), by that profile's name when still known. */
+export function profileGoneText(state: CodexProfilesState | null, key: string, def: string): string {
+  const name = state?.profiles.find((p) => p.key === key)?.name ?? key;
+  return `This preset’s Codex profile “${name}” is gone: it hires on ${def}.`;
+}
+
+/** #139: a profile's name now (a rename follows), or its key when it is not listed. */
+export function profileName(state: CodexProfilesState | null, key: string): string {
+  return state?.profiles.find((p) => p.key === key)?.name ?? key;
+}
+
+/**
+ * #139: what the seat bar says about a Codex worker's profile, with two or more profiles shown (else null, as before
+ * profiles): the one it was hired on by its current name, and what its hire or last wake found (`profile_note`; another
+ * account's sign-in needs you). A Codex worker with none (hired before profiles, or not by the bridge: write-code's)
+ * runs on the default one.
+ */
+export function profileNotice(w: Pick<Worker, 'codex' | 'harness' | 'agent_kind'>, state: CodexProfilesState | null): CodexNotice | null {
+  if (usableProfiles(state).length < 2 || (w.harness !== 'codex' && w.agent_kind !== 'codex' && !w.codex)) return null;
+  const c = w.codex;
+  if (!c?.profile) {
+    const def = state?.profiles.find((p) => p.default);
+    return def ? { tone: 'note', text: `Runs on the default profile (${def.name}).` } : null;
+  }
+  const name = profileName(state, c.profile);
+  const text = c.profile_note ? `${name}. ${c.profile_note}` : name;
+  return { tone: c.account === 'mismatch' ? 'down' : 'note', text };
 }

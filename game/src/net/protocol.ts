@@ -264,6 +264,16 @@ export interface WorkerCodex {
   turn?: string;
   questions?: CodexBatch[];
   async_blocked?: boolean;
+  /**
+   * #139: the key of the Codex profile it was hired on (absent: the default, and every worker hired before profiles), named
+   * from `codex_profiles` so a rename follows; `account`: what its server's sign-in was found to be (absent: not checked,
+   * the default profile); `plan` the plan it reported; `profile_note` what to know about its profile, in plain words. Never
+   * an email or an account id.
+   */
+  profile?: string;
+  account?: 'confirmed' | 'mismatch' | 'unconfirmed';
+  plan?: string;
+  profile_note?: string;
 }
 
 /** #156: one async question message of a shared Codex worker's thread; `batch` is Codex's call_id. */
@@ -468,6 +478,8 @@ export interface CodexProfile {
 export interface CodexProfilesState {
   /** The bridge's own first, then the found folders, then the added ones; hidden ones included. */
   profiles: CodexProfile[];
+  /** #139: `worker.hire` and hire presets take `codex_profile` (absent: an older bridge, which refuses the field). */
+  hire?: boolean;
 }
 
 /** #138: `codex_profiles.update`: the list, flat. */
@@ -969,6 +981,8 @@ export interface CommandArgs {
     /** #108 round 2: the review of `prompt` (as sent, before the herdr instructions), and `hire.interpret`'s hand-over when `prompt` is its task. */
     secrets?: SecretsReview;
     secrets_pending?: string;
+    /** #139 (Codex only): the Codex profile's key; only to a bridge whose `codex_profiles` says `hire`. Absent: the default. */
+    codex_profile?: string;
   };
   'worker.fire.prepare': { id: string };
   /** `handoff` (#223: filed through the shared filing service, see `worker.handoff`) and `stop_services` (#14) are reserved, not sent yet. */
@@ -3551,6 +3565,8 @@ export interface HirePreset {
   effort: string;
   /** #95 "Add herdr hiring instructions" (absent: off): a hire from it gets the lines for the floor it is used on. */
   herdr_instructions?: boolean;
+  /** #139: the Codex profile a hire from it runs on (absent: the default). */
+  codex_profile?: string;
   /** Unix ms. */
   created_at: number;
   /** Unix ms; an editor opened before a newer one is stale. */
@@ -3569,6 +3585,8 @@ export interface HirePresetSpec {
   herdr_instructions?: boolean;
   /** #108 round 2: the review of `prompt` (a stored prompt: every decision ignore). */
   secrets?: SecretsReview;
+  /** #139 (Codex only): only to a bridge whose `codex_profiles` says `hire`. */
+  codex_profile?: string;
 }
 
 /** #95 `hire_preset.check` ack: `delegates` false also on any failure, a timeout or a classifier not ready. */

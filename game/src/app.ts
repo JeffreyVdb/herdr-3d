@@ -780,7 +780,7 @@ export class App {
         this.hire.open(s, d, {
           prompt: p.prompt,
           choice: { harness: p.harness, model: p.model, effort: p.effort },
-          preset: { id: p.id, name: p.name, scope: p.floor ? 'floor' : 'global', ...(p.herdr_instructions ? { instructions: true } : {}) },
+          preset: { id: p.id, name: p.name, scope: p.floor ? 'floor' : 'global', ...(p.herdr_instructions ? { instructions: true } : {}), ...(p.codex_profile ? { profile: p.codex_profile } : {}) },
           ...(replace ? { replaceDraft: true as const } : {}),
         }),
       unsent: (s, d) => this.hire.unsent(s, d),

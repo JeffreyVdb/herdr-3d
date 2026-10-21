@@ -34,6 +34,7 @@ export function hirePresetOf(v: unknown): HirePreset | null {
   };
   if (isStr(v.floor) && v.floor) out.floor = v.floor;
   if (v.herdr_instructions === true) out.herdr_instructions = true;
+  if (isStr(v.codex_profile) && v.codex_profile) out.codex_profile = v.codex_profile;
   return out;
 }
 
@@ -154,11 +155,13 @@ export interface HirePresetDraft {
   effort: string;
   scope: 'floor' | 'global';
   instructions: boolean;
+  /** #139: the Codex profile's key ('': the default, or none to pick). */
+  profile: string;
 }
 
 /** A preset as the editor opens it (its scope as seen from `floor`). */
 export function draftFrom(p: HirePreset, floor: string): HirePresetDraft {
-  return { name: p.name, prompt: p.prompt, harness: p.harness, model: p.model, effort: p.effort, scope: p.floor && p.floor === floor ? 'floor' : 'global', instructions: p.herdr_instructions === true };
+  return { name: p.name, prompt: p.prompt, harness: p.harness, model: p.model, effort: p.effort, scope: p.floor && p.floor === floor ? 'floor' : 'global', instructions: p.herdr_instructions === true, profile: p.codex_profile ?? '' };
 }
 
 /**
@@ -169,6 +172,8 @@ export function presetSpec(d: HirePresetDraft, floor: string, instructions = fal
   const s: HirePresetSpec = { name: d.name.trim(), prompt: d.prompt, harness: d.harness, model: d.model, effort: d.effort };
   if (d.scope === 'floor') s.floor = floor;
   if (instructions) s.herdr_instructions = d.instructions;
+  // #139: a Codex preset's profile; the editor sets one only on a bridge that takes it.
+  if (d.harness === 'codex' && d.profile) s.codex_profile = d.profile;
   return s;
 }
 

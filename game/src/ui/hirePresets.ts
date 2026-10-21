@@ -8,7 +8,8 @@ import { effortsFor } from '../world/settings';
 import { backdropPolicy } from './dismiss';
 import { deskTabs, PRESET_ICON } from './deskTabs';
 import { h, icon, ICON, replaceKeepingFocus } from './dom';
-import { chips, modelField, type DialogHost, type HirePresetSeed } from './hire';
+import { chips, modelField, profileChips, type DialogHost, type HirePresetSeed } from './hire';
+import { hireProfiles, pickProfile, profileGoneText } from '../world/codexProfiles';
 import type { HireModelPrefs } from './hireModelPrefs';
 import { failureText } from './messages';
 import { onReviewKey, reviewButton, type Go } from './secretsFlow';
@@ -209,7 +210,7 @@ export class HirePresetsDialog {
     this.opening++;
     this.busy = false;
     const note = seed.imagesLeftOut ? `The ${seed.imagesLeftOut === 1 ? 'image' : `${seed.imagesLeftOut} images`} of the first task ${seed.imagesLeftOut === 1 ? 'is' : 'are'} not saved: a preset keeps text only.` : null;
-    this.edit(null, { name: '', prompt: seed.prompt, harness: seed.harness, model: seed.model, effort: seed.effort, scope: 'floor', instructions: seed.instructions === true }, note);
+    this.edit(null, { name: '', prompt: seed.prompt, harness: seed.harness, model: seed.model, effort: seed.effort, scope: 'floor', instructions: seed.instructions === true, profile: seed.profile ?? '' }, note);
     if (!this.dialog.open) this.dialog.showModal();
     this.focusEditor();
   }
@@ -438,6 +439,19 @@ export class HirePresetsDialog {
       choice.push(modelField(d.harness, models, d.model, labelsOf(options, d.harness), this.modelQuery, (x) => set({ model: x }), (q) => (this.modelQuery = q), 'preset-model'));
       choice.push(chips('preset-effort', 'Effort', effortsFor(options, d.harness, d.model), d.effort, (x) => set({ effort: x })));
     }
+    // #139: a Codex preset's profile, as the hire dialog picks it; a stored one that is gone shows the default and says so.
+    const profiles = d.harness === 'codex' ? hireProfiles((this.host.store.codexProfiles?.state ?? null)) : null;
+    if (profiles) {
+      const c = pickProfile(profiles, d.profile || undefined);
+      const def = profiles.find((p) => p.default)?.name ?? '';
+      const note = c.gone ? profileGoneText((this.host.store.codexProfiles?.state ?? null), c.gone, def) : null;
+      choice.push(
+        profileChips('preset-profile', profiles, c.key, (key) => {
+          d.profile = key;
+          this.render();
+        }, note),
+      );
+    }
     const stale = this.stale(v);
     const nodes: Node[] = [];
     if (stale === 'deleted')
@@ -613,11 +627,22 @@ export class HirePresetsDialog {
     this.host.use(floor, desk, structuredClone(p), replace);
   }
 
+  /**
+   * #139: the profile a save stores: what the editor shows when it offers a choice (a gone one fell back to the default);
+   * without a choice to make, the one it had; nothing to a bridge that does not take one.
+   */
+  private profileToSave(d: HirePresetDraft): string {
+    const state = (this.host.store.codexProfiles?.state ?? null);
+    if (!state?.hire || d.harness !== 'codex') return '';
+    const list = hireProfiles(state);
+    return list ? pickProfile(list, d.profile || undefined).key : d.profile;
+  }
+
   private edit(p: HirePreset | null, seed?: HirePresetDraft, note: string | null = null): void {
     const options = this.options(p);
     const draft: HirePresetDraft = p
       ? draftFrom(p, this.floor)
-      : (seed ?? { name: '', prompt: '', ...resolveVisibleChoice(options, null), scope: 'floor', instructions: false });
+      : (seed ?? { name: '', prompt: '', ...resolveVisibleChoice(options, null), scope: 'floor', instructions: false, profile: '' });
     this.view = { kind: 'edit', id: p?.id ?? null, draft, error: null, saving: false, seen: p ? structuredClone(p) : null, note, nudge: false, dismissed: p ? (this.declined.get(p.id) ?? null) : null };
     this.modelQuery = '';
     this.setStatus('');
@@ -705,7 +730,7 @@ export class HirePresetsDialog {
       return;
     }
     if (!live()) return;
-    const spec = presetSpec(v.draft, this.floor, book.instructions);
+    const spec = presetSpec({ ...v.draft, profile: this.profileToSave(v.draft) }, this.floor, book.instructions);
     const send = (g: Go): Promise<CommandResult> => {
       const s = g.secrets ? { ...spec, secrets: g.secrets } : spec;
       return current ? this.host.send('hire_preset.update', { id: current.id, ...s }) : this.host.send('hire_preset.create', s);

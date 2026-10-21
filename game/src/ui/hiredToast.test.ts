@@ -47,3 +47,13 @@ describe('hiredToast', () => {
     expect(t.text.startsWith(`${LEAD} ${NOT_SENT} No own Codex server:`)).toBe(true);
   });
 });
+
+describe('#139 the hire’s Codex profile', () => {
+  it('says what the hire found about the profile: a warning unless its account was confirmed', () => {
+    const mismatch = { mode: 'shared' as const, server: 'running' as const, profile: 'work', account: 'mismatch' as const, profile_note: 'Asked for work, the server signed in to another account.' };
+    expect(hiredToast(LEAD, { codex: mismatch }, '')).toEqual({ text: `${LEAD} Asked for work, the server signed in to another account.`, kind: 'warn' });
+    const bare = { mode: 'shared' as const, profile: 'work', account: 'confirmed' as const, profile_note: 'work has no hooks.json with herdr’s hook.' };
+    expect(hiredToast(LEAD, { codex: bare }, '')).toEqual({ text: `${LEAD} work has no hooks.json with herdr’s hook.`, kind: 'info' });
+    expect(hiredToast(LEAD, { codex: { mode: 'shared', profile: 'work', account: 'confirmed' } }, '')).toEqual({ text: LEAD, kind: 'info' });
+  });
+});
