@@ -38,6 +38,8 @@ type fakeHerdr struct {
 	// #155: ResumeCodexRemote fails with it (the pane stays at its shell),
 	// and ResumeCodexEmbedded with embeddedErr (after starting Codex).
 	remoteErr, embeddedErr error
+	// #139: ExportCodexHome fails with it.
+	exportErr error
 	gate                   chan struct{} // StartSession waits for it when set
 	// #58 session.create: what `session list` says, CreateSession's error
 	// and hook (after it "started" the server), and the gate a create of
@@ -192,7 +194,9 @@ func (f *fakeHerdr) StartCodexServer(_ context.Context, session, pane, launcher 
 
 func (f *fakeHerdr) ExportCodexHome(_ context.Context, session, pane, home string) error {
 	f.record("codex-home %s %s", pane, home)
-	return nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.exportErr
 }
 
 func (f *fakeHerdr) StartCodexRemote(_ context.Context, session, pane, name string, a herdr.Agent, r herdr.Remote) error {

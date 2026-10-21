@@ -779,7 +779,13 @@ func TestSharedCodexJoinsWithoutTheTranscript(t *testing.T) {
 // wake that follows brings the pane back at its shell.
 func (sb *sharedBridge) hireAndSleep(t *testing.T, thread string) proto.HireResult {
 	t.Helper()
-	_, m := sb.c.command(proto.CmdWorkerHire, "a", codexHire(1))
+	return sb.hireArgsAndSleep(t, codexHire(1), thread)
+}
+
+// hireArgsAndSleep is hireAndSleep with the hire's args (desk 1).
+func (sb *sharedBridge) hireArgsAndSleep(t *testing.T, args proto.WorkerHireArgs, thread string) proto.HireResult {
+	t.Helper()
+	_, m := sb.c.command(proto.CmdWorkerHire, "a", args)
 	a := ackData[proto.HireResult](t, m)
 	if thread != "" {
 		sb.fl.update("w1", func(w *world.WorkerObs) { w.AgentSession = thread })

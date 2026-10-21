@@ -131,19 +131,25 @@ func notSignedIn(p *codexProfileRun) error {
 
 // policyRefusal is the refusal of a workspace policy that does not allow
 // a worker that runs without asking and without a sandbox
-// (docs/research/codex-accounts-shared-setup.md "What #139 must report").
+// (docs/research/codex-accounts-shared-setup.md "What #139 must report"):
+// "<name> does not allow workers that run without asking. Its workspace
+// policy limits approvals to <list> and sandbox to <list>."
 func policyRefusal(p *codexProfileRun, r codexapp.Requirements) error {
-	limits := func(what string, allowed []string) string {
+	var limits []string
+	for _, l := range []struct {
+		what    string
+		allowed []string
+	}{{"approvals", r.Approvals}, {"sandbox", r.Sandboxes}} {
 		switch {
-		case allowed == nil:
-			return "does not limit " + what
-		case len(allowed) == 0:
-			return "allows no " + what
+		case l.allowed == nil:
+		case len(l.allowed) == 0:
+			limits = append(limits, l.what+" to none")
+		default:
+			limits = append(limits, l.what+" to "+strings.Join(l.allowed, ", "))
 		}
-		return "limits " + what + " to " + strings.Join(allowed, ", ")
 	}
-	return &profileRefusedError{fmt.Sprintf("%s does not allow workers that run without asking. Its workspace policy %s and %s.",
-		p.name, limits("approvals", r.Approvals), limits("sandbox", r.Sandboxes))}
+	return &profileRefusedError{fmt.Sprintf("%s does not allow workers that run without asking. Its workspace policy limits %s.",
+		p.name, strings.Join(limits, " and "))}
 }
 
 // confirmProfile checks a worker's own server on a profile once it
