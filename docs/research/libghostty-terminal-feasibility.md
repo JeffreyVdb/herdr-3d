@@ -2,6 +2,8 @@
 
 Investigated 2026-10-11 using Alterlab MCP search and scraping of upstream documentation and source. Repository inspected at `8951f0ff6c1704dc3d448b7dbd5cb7cb73b0421a`; upstream `main` and tip documentation can change. This is a documentation and architecture investigation; no build, migration, or comparative benchmark was performed.
 
+**2026-10-21 follow-up:** [Terminal experience](terminal-experience.md) adds a reproduction of split-pane enlargement, runnable Ghostty/xterm browser spikes and an isolated Herdr controller experiment. [Current upstream options](terminal-engine-options.md) update the toolchain/API facts below. Preserve this note as the earlier documentation-only investigation.
+
 ## Recommendation
 
 Fix terminal clipboard delivery independently. Consider a separate, bounded performance experiment with **libghostty-vt compiled to WebAssembly**, preserving the existing browser canvas and 3D texture presentation. A major speed improvement has not been demonstrated. Native Ghostty's Metal/OpenGL renderer is a different integration project.

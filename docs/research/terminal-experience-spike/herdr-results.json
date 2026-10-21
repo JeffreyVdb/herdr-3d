@@ -1,0 +1,31 @@
+{
+  "version": "herdr 0.9.1",
+  "observer_requested": "60x12",
+  "observer_actual_pty": "119x40",
+  "observer_did_not_resize_pty": true,
+  "controller_resized_pty": "80x24",
+  "resize_command_changed_pty": "110x31",
+  "osc8_preserved": true,
+  "scroll_before": {
+    "max_offset_from_bottom": 79,
+    "offset_from_bottom": 0,
+    "viewport_rows": 31
+  },
+  "scroll_after": {
+    "max_offset_from_bottom": 79,
+    "offset_from_bottom": 12,
+    "viewport_rows": 31
+  },
+  "mouse_modes_forwarded": false,
+  "output_record_types": [
+    "terminal.frame"
+  ],
+  "second_controller_refused": true,
+  "controller_frame_count": 7,
+  "controller_ansi_bytes": 7536,
+  "cleanup": {
+    "server_exited": true,
+    "session_stopped": true,
+    "session_deleted": true
+  }
+}
