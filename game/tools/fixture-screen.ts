@@ -31,7 +31,8 @@
 // #176 part 2: an owned pane's `terminal.control` says `paste: true` and `mouse: true` (`simcontrol=nomouse`: herdr
 // 0.9.1, no clicks; `simcontrol=part1`: a bridge of #176 part 1, neither, and `worker.paste` / `terminal.mouse` are
 // unknown). `worker.paste` shows its text where the cursor is (line ends as new lines, nothing submitted) and
-// `terminal.mouse` takes a click inside the grid; `sim.terminal` lists both (`pastes`, `clicks`). Output written while
+// `terminal.mouse` takes a click inside the grid, each answered with a full frame at the same size (the bridge waits for
+// herdr's); `sim.terminal` lists both (`pastes`, `clicks`). Output written while
 // the view is up the history (`sim.write`) grows its offset and its max, as herdr's pinned view does.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
@@ -373,6 +374,14 @@ export class SimScreens {
     c.pastes.push(text);
     this.live(id);
     if (text) this.typeOut(id, text.replace(/\r\n?|\n/g, '\r\n'));
+    this.applied(id);
+  }
+
+  /** The bridge ends a paste or a click once herdr answered the resize sent with it: a full frame at the same size. */
+  private applied(id: string): void {
+    const w = this.watches.get(id);
+    const s = this.screens.get(id);
+    if (w?.control?.mode === 'control') this.push(w, Buffer.concat(s?.tape ?? []), true);
   }
 
   /** #176 part 2: a click on a cell of the owned pane (herdr 0.9.2+). */
@@ -393,6 +402,7 @@ export class SimScreens {
     const row = int('row', c.rows - 1);
     c.clicks.push(`${button} ${column},${row}${modifiers ? ` mods ${modifiers}` : ''}`);
     this.live(id);
+    this.applied(id);
   }
 
   /** Input brings a controlled view back to the live bottom (the bridge does it before any). */

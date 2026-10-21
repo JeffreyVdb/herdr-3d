@@ -161,9 +161,10 @@ func (h *Hub) startMouse(ctx context.Context, c *Client, cmd proto.Command) erro
 	if err := h.clickFits(c, a, true); err != nil {
 		return err
 	}
-	h.tookOver(ctx, a.ID)      // #83: a person acts on the pane: an armed wrap-up is off
-	h.agentTookOver(ctx, a.ID) // #224: and a handoff request
-	h.clearFollowup(ctx, a.ID) // #90: and its follow-up questions are moot
+	// Not typing: herdr drops a click for every application without mouse
+	// reporting (a shell, Claude Code), and the bridge cannot tell, so an
+	// armed wrap-up (#83), a handoff request (#224) and follow-up questions
+	// (#90) stay.
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, _, _ string) (any, error) {
 		var (
 			cs  herdr.ControlStream

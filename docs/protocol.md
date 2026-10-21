@@ -2954,7 +2954,9 @@ for it instead of an observer, `herdr --session <s> terminal session control <pa
   `ESC[<0;col+1;row+1M` / `m`, measured on 0.9.5) and to nothing else: a shell gets no byte. Only when
   `terminal.control` says `mouse` (herdr 0.9.2 or later; older is `invalid_state` "mouse clicks need herdr 0.9.2 or
   newer", and its CLI would ignore the line); the same watch rules as `worker.paste`; on the worker's input lane in
-  order with the keys; at most 10 a second per watch (`capacity`). Clicks only: no drag or motion reporting. The game
+  order with the keys; at most 10 a second per watch (`capacity`). Clicks only: no drag or motion reporting. Unlike
+  typing, a click leaves an armed wrap-up, a handoff request and follow-up questions as they are (herdr drops it for
+  an application without mouse reporting, and the bridge cannot tell). The game
   sends a left click that selected nothing, did not move off its cell and opened no link, and none while the view is
   up the history.
 - **Typing returns to the live bottom.** Every input to the worker (`worker.keys`, `worker.prompt`, `worker.answer`,

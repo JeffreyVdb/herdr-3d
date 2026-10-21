@@ -1,4 +1,4 @@
-import { Terminal, type IDisposable } from '@xterm/xterm';
+import { Terminal, type IBufferRange, type IDisposable } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -355,13 +355,24 @@ export class SeatTerminal {
     const term = this.term;
     if (!term) return false;
     if (!f.full && (f.cols !== term.cols || f.rows !== term.rows)) return false;
+    // #176 part 2: a full frame at the same size (herdr's answer to a resize: a click's or a paste's, a resync) keeps
+    // the selection, which RIS clears (a double click's word, a drag going on).
+    let keep: IBufferRange | undefined;
     if (f.full) {
       if (f.cols !== term.cols || f.rows !== term.rows) term.resize(f.cols, f.rows);
+      else keep = term.getSelectionPosition();
       term.write('\x1bc');
     }
-    term.write(decodeFrame(f.data));
+    term.write(decodeFrame(f.data), keep ? () => this.reselect(term, keep) : undefined);
     this.frames++;
     return true;
+  }
+
+  /** The selection from before a full frame again (xterm's own cells: getSelectionPosition's, 0-based). */
+  private reselect(term: Terminal, sel: IBufferRange): void {
+    if (this.term !== term || term.hasSelection()) return;
+    const length = (sel.end.y - sel.start.y) * term.cols + (sel.end.x - sel.start.x);
+    if (length > 0) term.select(sel.start.x, sel.start.y, length);
   }
 
   /** Forgets the screen (a new watch, a pane that changed). */

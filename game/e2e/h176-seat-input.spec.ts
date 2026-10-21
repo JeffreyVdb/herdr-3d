@@ -90,8 +90,9 @@ test('a paste on a bridge of #176 part 1 or a read-only seat takes today’s way
   clean();
 });
 
-test('a click on a cell reaches the pane; a drag selects and sends none; Ctrl+click on a link opens it, no click', async ({ page }) => {
+test('a click on a cell reaches the pane; a drag selects and sends none; Ctrl+click on a link opens it, no click', async ({ page, context }) => {
   test.setTimeout(150_000);
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   const clean = watchErrors(page);
   await page.setViewportSize({ width: 1280, height: 800 });
   const id = await sitAt(page);
@@ -116,6 +117,15 @@ test('a click on a cell reaches the pane; a drag selects and sends none; Ctrl+cl
   await page.mouse.up();
   await frames(page, 3);
   expect(await page.evaluate(() => window.__h3d.seatTerminal()?.lines[0] ?? '')).toContain('select me');
+  // A double click selects a word: its first click goes in, and herdr's full frame after it keeps the selection.
+  const w = await cellAt(page, 2, 0);
+  const clicks = (await simTerm(page, id))!.clicks.length;
+  await page.mouse.dblclick(w.x, w.y);
+  await expect.poll(async () => (await simTerm(page, id))?.clicks.length).toBe(clicks + 1);
+  await page.waitForTimeout(300); // the frame has come
+  await page.locator('.seat-input').focus();
+  await page.keyboard.press('Control+Shift+C');
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('select');
   // Ctrl+click on the link: opened, no click.
   const l = await cellAt(page, 14, 0);
   await page.mouse.move(l.x, l.y);
@@ -125,7 +135,7 @@ test('a click on a cell reaches the pane; a drag selects and sends none; Ctrl+cl
   await page.keyboard.up('Control');
   await expect.poll(() => page.evaluate(() => window.__h3d.opened().map((o) => o.url))).toEqual(['https://example.com/x']);
   await page.waitForTimeout(300);
-  expect((await simTerm(page, id))?.clicks).toEqual(['left 5,2']);
+  expect((await simTerm(page, id))?.clicks).toEqual(['left 5,2', 'left 2,0']);
   // The keyboard stays the seat's.
   await expect(page.locator('.seat-input')).toBeFocused();
   // The footer says clicks reach an app that takes the mouse.
