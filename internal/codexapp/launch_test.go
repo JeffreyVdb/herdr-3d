@@ -63,6 +63,27 @@ func TestLaunchScriptFish(t *testing.T) {
 	assertInvalidLaunches(t, l)
 }
 
+// #139: a launch on a Codex profile sets its CODEX_HOME on the server's own
+// command line, after the startup files; without one the script is as above.
+func TestLaunchScriptCodexHome(t *testing.T) {
+	l := testLaunch(t)
+	l.Env = []string{"CODEX_HOME=/home/u/.codex-work"}
+	if got := l.Render(); !strings.Contains(got, `-c 'unset HISTFILE; export CODEX_HOME='\''/home/u/.codex-work'\''; codex app-server -c `) {
+		t.Fatalf("bash script =\n%s", got)
+	}
+	l.Shell = shell.Fish
+	if got := l.Render(); !strings.Contains(got, "\nset -gx CODEX_HOME '/home/u/.codex-work'\ncodex app-server -c ") {
+		t.Fatalf("fish script =\n%s", got)
+	}
+	for _, env := range [][]string{{"CODEX_HOME"}, {"codex_home=/x"}, {"CODEX_HOME=/x\ny"}, {"CODEX_HOME=/x\x00"}, {MarkerVar + "=x"}, {"=x"}} {
+		bad := l
+		bad.Env = env
+		if bad.Valid() == nil {
+			t.Errorf("env %q accepted", env)
+		}
+	}
+}
+
 func assertInvalidLaunches(t *testing.T, l Launch) {
 	t.Helper()
 	for _, bad := range []Launch{

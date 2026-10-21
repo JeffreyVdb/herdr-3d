@@ -26,6 +26,7 @@ const MarkerVar = "H3D_CODEX_SERVER"
 var (
 	nameRe  = regexp.MustCompile(`^[0-9a-f]{6,32}$`)
 	tokenRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	envRe   = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*=`)
 )
 
 // Launch is one shared-server Codex worker's launch: its files, all
@@ -41,6 +42,13 @@ type Launch struct {
 	// from a stored launch (Alive, FindServer, Stop, Remove) is
 	// shell-independent.
 	Shell shell.Kind
+	// Env (#139) is what the server runs with besides the pane's
+	// environment, as NAME=value: CODEX_HOME for a worker on a Codex
+	// profile, nil for the default one. The launcher sets it on the
+	// server's own command line, after the startup files (a CODEX_HOME
+	// that ~/.bashrc or config.fish sets cannot undo it). Not recorded:
+	// nothing that works from a stored launch needs it.
+	Env []string
 }
 
 // NewLaunch returns a launch with a fresh token and a Bash launcher.
@@ -74,6 +82,11 @@ func (l Launch) Valid() error {
 	}
 	if _, err := shell.Parse(string(l.Shell)); err != nil {
 		return fmt.Errorf("codexapp: %w", err)
+	}
+	for _, kv := range l.Env {
+		if !envRe.MatchString(kv) || strings.HasPrefix(kv, MarkerVar+"=") || strings.ContainsAny(kv, "\x00\n\r") {
+			return fmt.Errorf("codexapp: %q is not an environment variable the launcher sets", kv)
+		}
 	}
 	return nil
 }
@@ -148,7 +161,12 @@ func (l Launch) Render() string {
 // (+H) so a "!" in a path is just a character.
 func (l Launch) renderBash() string {
 	trust := "projects={" + tomlString(l.Cwd) + "={trust_level=\"trusted\"}}"
-	run := "unset HISTFILE; codex app-server -c " + bashQuote(trust) + " -c " + bashQuote(ServerFeatures) +
+	exports := ""
+	for _, kv := range l.Env {
+		k, v, _ := strings.Cut(kv, "=")
+		exports += "export " + k + "=" + bashQuote(v) + "; "
+	}
+	run := "unset HISTFILE; " + exports + "codex app-server -c " + bashQuote(trust) + " -c " + bashQuote(ServerFeatures) +
 		" --listen " + bashQuote("unix://"+l.Socket()) + " </dev/null >" + bashQuote(l.Log()) + " 2>&1"
 	return strings.Join([]string{
 		"# herdr-3d (#68): this worker's own Codex app-server, started from its pane (bash).",
@@ -163,14 +181,19 @@ func (l Launch) renderBash() string {
 // compatibility option.
 func (l Launch) renderFish() string {
 	trust := "projects={" + tomlString(l.Cwd) + "={trust_level=\"trusted\"}}"
-	return strings.Join([]string{
+	lines := []string{
 		"# herdr-3d (#155): this worker's own Codex app-server, started from its pane.",
 		"set -gx " + MarkerVar + " " + l.Token,
 		"echo $fish_pid >" + fishQuote(l.PIDFile()),
-		"codex app-server -c " + fishQuote(trust) + " -c " + fishQuote(ServerFeatures) + " --listen " + fishQuote("unix://"+l.Socket()) +
-			" </dev/null >" + fishQuote(l.Log()) + " 2>&1",
-		"",
-	}, "\n")
+	}
+	for _, kv := range l.Env {
+		k, v, _ := strings.Cut(kv, "=")
+		lines = append(lines, "set -gx "+k+" "+fishQuote(v))
+	}
+	return strings.Join(append(lines,
+		"codex app-server -c "+fishQuote(trust)+" -c "+fishQuote(ServerFeatures)+" --listen "+fishQuote("unix://"+l.Socket())+
+			" </dev/null >"+fishQuote(l.Log())+" 2>&1",
+		""), "\n")
 }
 
 // Write creates the run directory (0700, this user's) and the launcher

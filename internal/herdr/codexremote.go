@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/shell"
 )
 
 // Remote is where a shared-server Codex worker's TUI attaches (#155): its
@@ -30,6 +32,19 @@ func (c *Control) StartCodexServer(ctx context.Context, session, pane, launcher 
 		return fmt.Errorf("%w: launcher %q is not in the codex run directory", ErrNotAllowed, launcher)
 	}
 	_, err := c.run(ctx, opStartCodexServer, map[string]string{"session": session, "pane": pane, "launcher": launcher})
+	return err
+}
+
+// ExportCodexHome exports a Codex profile's home as CODEX_HOME in a pane's
+// shell (#139), in the policy's shell's syntax: everything typed into that
+// shell afterwards runs on the profile. A home that is not a plain path is
+// refused before anything runs.
+func (c *Control) ExportCodexHome(ctx context.Context, session, pane, home string) error {
+	op := opExportCodexHome
+	if c.Shell.Or() == shell.Fish {
+		op = opExportCodexHomeFish
+	}
+	_, err := c.run(ctx, op, map[string]string{"session": session, "pane": pane, "codex-home": home})
 	return err
 }
 

@@ -140,6 +140,10 @@ const (
 	opResumeCodexRemote = "resume-codex-remote"
 	// #155 round 2: a shared worker's wake when its server does not start.
 	opResumeCodexEmbedded = "resume-codex-embedded"
+	// #139: a worker on a Codex profile: its CODEX_HOME exported in its
+	// pane's shell (bash, or fish's set -gx).
+	opExportCodexHome     = "export-codex-home"
+	opExportCodexHomeFish = "export-codex-home-fish"
 )
 
 // #74: control operations of the fullscreen laptop (pane zoom).
@@ -265,6 +269,15 @@ var controlShapes = map[string][]string{
 	opResumeCodexEmbedded: {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "codex",
 		"--pane", "{pane}", "--timeout", "30000", "--", "resume", "{id}",
 		"-m", "{model}", "-c", "model_reasoning_effort={effort}", "--dangerously-bypass-approvals-and-sandbox"},
+
+	// #139. A worker on a Codex profile: the profile's home exported in its
+	// pane's shell before anything of it starts there, so every Codex herdr
+	// types into that shell (the attached TUI, a legacy start, a wake's
+	// embedded resume) runs on it; `herdr agent start` takes no env. The
+	// policy's shell picks the shape. The home is a plain path, so single
+	// quotes hold it in either shell.
+	opExportCodexHome:     {"{herdr}", "--session", "{session}", "pane", "run", "{pane}", "export CODEX_HOME='{codex-home}'"},
+	opExportCodexHomeFish: {"{herdr}", "--session", "{session}", "pane", "run", "{pane}", "set -gx CODEX_HOME '{codex-home}'"},
 }
 
 var (
@@ -540,6 +553,8 @@ var placeholders = map[string]func(string) bool{
 	"launcher": func(s string) bool { return validRunFile(s, ".sh") || validRunFile(s, ".fish") },
 	"socket":   func(s string) bool { return validRunFile(s, ".sock") },
 	"cwd":      ValidPlainDir,
+	// #139: a Codex profile's home, typed into the pane's shell.
+	"codex-home": ValidPlainDir,
 
 	// #23
 	"settings": validSettingsFile,

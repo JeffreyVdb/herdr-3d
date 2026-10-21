@@ -90,6 +90,9 @@ func TestControlAllowlist(t *testing.T) {
 		"resume-codex-embedded": {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "codex",
 			"--pane", "{pane}", "--timeout", "30000", "--", "resume", "{id}",
 			"-m", "{model}", "-c", "model_reasoning_effort={effort}", "--dangerously-bypass-approvals-and-sandbox"},
+		// #139
+		"export-codex-home":      {"{herdr}", "--session", "{session}", "pane", "run", "{pane}", "export CODEX_HOME='{codex-home}'"},
+		"export-codex-home-fish": {"{herdr}", "--session", "{session}", "pane", "run", "{pane}", "set -gx CODEX_HOME '{codex-home}'"},
 	}
 	if !reflect.DeepEqual(controlShapes, want) {
 		t.Fatalf("controlShapes = %q", controlShapes)
@@ -100,7 +103,7 @@ func TestControlAllowlist(t *testing.T) {
 	for i := range typ.NumMethod() {
 		methods = append(methods, typ.Method(i).Name)
 	}
-	if w := []string{"CloseWorkspace", "CreateSession", "CreateWorkspace", "CreateWorktree", "EraseTyped", "MarkPane", "Observe", "PaneProcesses", "Prompt",
+	if w := []string{"CloseWorkspace", "CreateSession", "CreateWorkspace", "CreateWorktree", "EraseTyped", "ExportCodexHome", "MarkPane", "Observe", "PaneProcesses", "Prompt",
 		"QueuePrompt", "ReadPane", "RemoveWorktree", "ReportCodexSession", "ResumeAgent", "ResumeCodexEmbedded", "ResumeCodexRemote", "SendKey", "SendKeys",
 		"SendSequence", "SendText", "SetZoom", "StartAgent", "StartCodexRemote", "StartCodexServer", "StartSession", "StopSession",
 		"SubmitPrompt", "TypeExit", "TypePrompt"}; !slices.Equal(methods, w) {
@@ -123,6 +126,14 @@ func TestControlAllowlist(t *testing.T) {
 			checkAllowlistArgv(t, pol)
 		})
 	}
+}
+
+// exportLine is #139's CODEX_HOME export as the policy's shell takes it.
+func exportLine(k shell.Kind, home string) string {
+	if k == shell.Fish {
+		return "set -gx CODEX_HOME '" + home + "'"
+	}
+	return "export CODEX_HOME='" + home + "'"
 }
 
 // fakeShell is an executable file named name in a fresh plain directory: a
@@ -223,6 +234,7 @@ func checkAllowlistArgv(t *testing.T, pol shellPolicy) {
 	must(c.StartCodexRemote(ctx, "h3d-it-1", "w7:p1", "mochi-a58752", codex, remote))
 	must(c.ResumeCodexRemote(ctx, "h3d-it-1", "w7:p1", "mochi-a58752", id, codex, remote))
 	must(c.ResumeCodexEmbedded(ctx, "h3d-it-1", "w7:p1", "mochi-a58752", id, codex))
+	must(c.ExportCodexHome(ctx, "h3d-it-1", "w7:p1", "/home/u/.codex-work")) // #139
 	// #23: with the bridge's Claude settings, Claude's start and resume pass
 	// it; Codex's do not.
 	c.ClaudeSettings = "/home/u/.local/state/herdr-world/claude-hooks/settings.json"
@@ -287,6 +299,8 @@ func checkAllowlistArgv(t *testing.T, pol shellPolicy) {
 		{"/opt/herdr", "--session", "h3d-it-1", "agent", "start", "mochi-a58752", "--kind", "codex", "--pane", "w7:p1",
 			"--timeout", "30000", "--", "resume", id, "-m", "gpt-6-sol", "-c", "model_reasoning_effort=low",
 			"--dangerously-bypass-approvals-and-sandbox"},
+		// #139
+		{"/opt/herdr", "--session", "h3d-it-1", "pane", "run", "w7:p1", exportLine(pol.kind, "/home/u/.codex-work")},
 		// #23
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "run", "w1:p2",
 			"claude --settings '/home/u/.local/state/herdr-world/claude-hooks/settings.json' --resume " + id},
@@ -596,7 +610,13 @@ func TestControlRefusesUnsafeCodexLaunch(t *testing.T) {
 		"resume shell id": func() error {
 			return c.ResumeCodexRemote(ctx, "s", "w1:p1", "x", id+";rm", codex, Remote{Socket: sock, Cwd: "/r"})
 		},
-		"embedded flag id":  func() error { return c.ResumeCodexEmbedded(ctx, "s", "w1:p1", "x", "--yolo", codex) },
+		"embedded flag id": func() error { return c.ResumeCodexEmbedded(ctx, "s", "w1:p1", "x", "--yolo", codex) },
+		// #139: a profile's home is typed into the pane's shell.
+		"home with space":   func() error { return c.ExportCodexHome(ctx, "s", "w1:p1", "/home/u/.codex work") },
+		"home with quote":   func() error { return c.ExportCodexHome(ctx, "s", "w1:p1", "/home/u/.codex-it's") },
+		"home with $":       func() error { return c.ExportCodexHome(ctx, "s", "w1:p1", "/home/u/$(id)") },
+		"home with newline": func() error { return c.ExportCodexHome(ctx, "s", "w1:p1", "/home/u\n/x") },
+		"home relative":     func() error { return c.ExportCodexHome(ctx, "s", "w1:p1", ".codex-work") },
 		"embedded shell id": func() error { return c.ResumeCodexEmbedded(ctx, "s", "w1:p1", "x", id+";rm", codex) },
 		"embedded no id":    func() error { return c.ResumeCodexEmbedded(ctx, "s", "w1:p1", "x", "", codex) },
 		"embedded effort override": func() error {
