@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CommandResult } from '../net/client';
 import type { Hire, HireOptions, Preset, RunPrepare } from '../net/protocol';
 import { PresetBook } from '../world/presets';
 import { HireModelPrefs } from './hireModelPrefs';
@@ -18,7 +19,7 @@ const CAT: HireOptions = {
   codex: { models: ['gpt-6.1-sol', 'gpt-6-sol'], efforts: ['high'], model_labels: { 'gpt-6.1-sol': 'GPT-6.1-Sol' } },
 };
 
-const tick = () => new Promise((r) => setTimeout(r, 0));
+const tick = () => vi.advanceTimersByTimeAsync(0);
 const memory = () => {
   const m = new Map<string, string>();
   return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) };
@@ -37,7 +38,14 @@ function bookOf(...list: Preset[]): PresetBook {
   return b;
 }
 
+function cleanup() {
+  // #37: removing an open dialog skips the close handler that cancels its debounce and invalidates late answers.
+  for (const dialog of document.querySelectorAll<HTMLDialogElement>('dialog[open]')) dialog.close();
+  document.body.replaceChildren();
+}
+
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   HTMLDialogElement.prototype.showModal = function () {
     this.setAttribute('open', '');
   };
@@ -48,8 +56,9 @@ beforeEach(() => {
   vi.stubGlobal('CSS', { escape: (s: string) => s });
 });
 afterEach(() => {
-  document.body.replaceChildren();
+  cleanup();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe('Start run: the orchestrator model chips', () => {
@@ -79,11 +88,41 @@ describe('Start run: the orchestrator model chips', () => {
       started: () => {},
     } as unknown as StartRunHost;
     const dlg = new StartRunDialog(document.body, host);
-    return { dlg, host };
+    return { dlg, host, prep };
   };
   const chipTexts = () => [...document.querySelectorAll<HTMLElement>('[data-pick="orch-model"] .dd-chip')].map((l) => l.querySelector('span')!.firstChild!.textContent);
   const chipValues = () => [...document.querySelectorAll<HTMLInputElement>('[data-pick="orch-model"] input')].map((i) => i.value);
   const orch = (dlg: StartRunDialog) => (dlg.summary() as { form: { orch: Hire | null } }).form.orch;
+
+  it('cleanup cancels the model change’s pending prepare before the DOM goes away', async () => {
+    const { dlg, host } = setup(new HireModelPrefs(memory()));
+    dlg.open({ floor: 'floor', desk: 0 });
+    await tick();
+    document.querySelector<HTMLInputElement>('[data-key="orch-harness:codex"]')!.click();
+    expect(host.send).toHaveBeenCalledTimes(1);
+
+    cleanup();
+    await vi.runAllTimersAsync();
+
+    expect(host.send).toHaveBeenCalledTimes(1);
+    expect(dlg.isOpen).toBe(false);
+  });
+
+  it('cleanup ignores a prepare answer still on its way when the DOM goes away', async () => {
+    const { dlg, host, prep } = setup(new HireModelPrefs(memory()));
+    let answer!: (r: CommandResult) => void;
+    const pending = new Promise<CommandResult>((resolve) => { answer = resolve; });
+    vi.mocked(host.send).mockReturnValueOnce(pending);
+    dlg.open({ floor: 'floor', desk: 0 });
+    const before = dlg.element.innerHTML;
+    cleanup();
+    answer({ ok: true, data: prep });
+    await tick();
+
+    expect(dlg.element.innerHTML).toBe(before);
+    expect(dlg.isOpen).toBe(false);
+    expect(dlg.summary()).toBeNull();
+  });
 
   it('names the models, keeps the exact id as the value, and renders labels as text', async () => {
     const { dlg } = setup(new HireModelPrefs(memory()));

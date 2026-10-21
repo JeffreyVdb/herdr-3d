@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, watchErrors } from './game';
+import { expectCommandDone, frames, openGame, watchErrors } from './game';
 
 // #116 on demo-m4 with the simulator (sim=1): after a hire is acknowledged, you are taken to the new worker's laptop with
 // its conversation on screen (Settings → Display "Go to a new hire after hiring", on by default); off, the hire leaves
@@ -29,7 +29,7 @@ async function startHire(page: Page): Promise<{ x: number; z: number }> {
   await page.locator('#hire-task').focus();
   await page.keyboard.type('Label the loaves');
   await page.keyboard.press('Enter');
-  await expect.poll(() => page.evaluate(() => window.__h3d.dialog())).toBeNull();
+  await expectCommandDone(page, 'worker.hire');
   await expect(page.locator('.toast')).toHaveText(/^Hired .* at Desk 15 .*Here they come\.$/);
   return at;
 }

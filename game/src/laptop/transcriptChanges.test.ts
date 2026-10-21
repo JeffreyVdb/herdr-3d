@@ -286,7 +286,8 @@ describe('code changes (#171)', () => {
     hunks: [{ old_start: 1, old_lines: 0, new_start: 1, new_lines: n, lines: Array.from({ length: n }, (_, i) => `+line ${i + 1}`) }],
     ...extra,
   });
-  const lineRows = (id: string) => $$('.tx-diff-body .tx-dl:not(.tx-dh)', row(id));
+  const lineRows = (id: string) => [...row(id).getElementsByClassName('tx-diff-body')]
+    .flatMap((body) => [...body.getElementsByClassName('tx-dl')].filter((line) => !line.classList.contains('tx-dh')));
   const more = (id: string) => $<HTMLButtonElement>('.tx-diff-more .tx-link', row(id));
 
   it('a diff past 2,000 lines shows the rest a page at a time, in place, keeping the page and its numbers', () => {
@@ -298,19 +299,22 @@ describe('code changes (#171)', () => {
     expect(more('long')?.textContent).toBe('Show next 2,000 lines (2,500 left)');
     more('long')!.click();
     expect($('.tx-diff-body', row('long'))).toBe(body);
-    expect(lineRows('long')).toHaveLength(4000);
-    expect($$('.tx-dn', lineRows('long')[2000]).map((e) => e.textContent)).toEqual(['', '2001']);
+    const secondPage = lineRows('long');
+    expect(secondPage).toHaveLength(4000);
+    expect($$('.tx-dn', secondPage[2000]).map((e) => e.textContent)).toEqual(['', '2001']);
     expect(more('long')?.textContent).toBe('Show next 500 lines (500 left)');
     // A re-render of the row keeps what was shown.
     view.applyUpdates([it]);
     expect(lineRows('long')).toHaveLength(4000);
     more('long')!.focus();
     more('long')!.click();
-    expect(lineRows('long')).toHaveLength(4500);
-    expect(lineRows('long').at(-1)?.textContent).toBe('4500+line 4500');
+    const lastPage = lineRows('long');
+    expect(lastPage).toHaveLength(4500);
+    expect(lastPage.at(-1)?.textContent).toBe('4500+line 4500');
     expect(more('long')).toBeNull();
     expect(document.activeElement).toBe($('.tx-diff-body', row('long')));
-  });
+  // This builds and rebuilds thousands of real DOM rows; its assertions cover pagination, not wall-clock speed.
+  }, 30_000);
 
   it('a cut change loaded whole past 2,000 lines reaches its last line', async () => {
     const it: TranscriptItem = { id: 'big', seq: 1, ts: 0, kind: 'tool', tool: { name: 'Edit', input_summary: 'long.ts', status: 'ok', diff: longDiff(300, { truncated: true }) } };

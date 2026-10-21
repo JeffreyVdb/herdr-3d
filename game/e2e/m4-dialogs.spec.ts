@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { frames, openGame, watchErrors, openMenu } from './game';
+import { expectCommandDone, frames, openGame, watchErrors, openMenu } from './game';
 
 // #51 on demo-m4 and the simulating fixture server: dialogs never close by accident (a press inside released on the
 // backdrop, a plain backdrop click), the hire dialog keeps what was typed until a hire is acknowledged, and it is a
@@ -126,7 +126,7 @@ test('hire: what was typed comes back for the desk, until a hire is acknowledged
   // Hire: acknowledged, the draft goes.
   await page.locator('#hire-task').focus();
   await page.keyboard.press('Enter');
-  await expect.poll(() => dialog(page)).toBeNull();
+  await expectCommandDone(page, 'worker.hire');
   expect((await sent(page)).filter((c) => c.t === 'worker.hire')).toHaveLength(1);
   await expect.poll(() => stored(one)).toBeNull();
   clean();

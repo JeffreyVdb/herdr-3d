@@ -44,8 +44,6 @@ type fakeTG struct {
 	holdGet func(n int)               // runs before getUpdates' n-th call reads the queue
 	gets    int
 	msgs    int
-	// #13: the getUpdates under way now, and the most there ever were.
-	polling, maxPolling int
 	// now dates the updates pushed (nil: 0).
 	now func() time.Time
 	// #14: each message's text and buttons as shown now (by id); failEdit
@@ -141,14 +139,7 @@ func (f *fakeTG) serve(w http.ResponseWriter, r *http.Request) {
 		n := f.gets
 		f.gets++
 		fail := f.failGet
-		f.polling++
-		f.maxPolling = max(f.maxPolling, f.polling)
 		f.mu.Unlock()
-		defer func() {
-			f.mu.Lock()
-			f.polling--
-			f.mu.Unlock()
-		}()
 		if fail != nil {
 			if st, b := fail(n); st != 0 {
 				w.WriteHeader(st)
@@ -305,6 +296,7 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 }
 
 type rig struct {
+	stop  func()
 	ch    *Channel
 	tg    *fakeTG
 	clock *notify.FakeClock
@@ -372,10 +364,11 @@ func newRigBefore(t *testing.T, opts Options, before func(*rig)) *rig {
 			r.mu.Unlock()
 		}, Reply: r.hookReply, Listen: r.listenAtStart})
 	}()
-	t.Cleanup(func() {
+	r.stop = func() {
 		cancel()
 		<-done
-	})
+	}
+	t.Cleanup(r.stop)
 	return r
 }
 
@@ -541,7 +534,8 @@ func TestPairingCodeExpiresInFlight(t *testing.T) {
 }
 
 func TestPairingCancelStopsPolling(t *testing.T) {
-	r := newRig(t, Options{})
+	polls := &pollTracker{transport: http.DefaultTransport}
+	r := newRig(t, Options{Client: &http.Client{Transport: polls}})
 	r.startPairing(t)
 	if err := r.ch.CancelPairing(); err != nil {
 		t.Fatal(err)
@@ -550,9 +544,12 @@ func TestPairingCancelStopsPolling(t *testing.T) {
 	if r.pairResults()[0].Outcome != notify.PairCancelled || r.ch.State().Pairing != nil {
 		t.Fatalf("result %+v", r.pairResults())
 	}
-	n := len(r.tg.requests("getUpdates"))
+	// A cancelled request can reach the fake server after the cancellation
+	// result. Count when the client starts requests, rather than when the
+	// server's goroutines happen to record them.
+	n := polls.total()
 	time.Sleep(150 * time.Millisecond)
-	if m := len(r.tg.requests("getUpdates")); m != n {
+	if m := polls.total(); m != n {
 		t.Fatalf("polling after cancel: %d → %d", n, m)
 	}
 }
@@ -695,6 +692,9 @@ func TestTokenNeverLeaks(t *testing.T) {
 	}
 	msgs := r.tg.requests("sendMessage")
 	check("a message's text", msgs[len(msgs)-1].body["text"].(string))
+	// The pairing reader can still be confirming its last offset. Finish
+	// it before changing the API endpoint for the direct error-path calls.
+	r.stop()
 
 	// *url.Error: nothing listening (connection refused) prints the URL.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

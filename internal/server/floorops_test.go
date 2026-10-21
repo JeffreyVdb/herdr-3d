@@ -504,6 +504,9 @@ func TestFloorCommandStates(t *testing.T) {
 	b.floorAt("up", true, nil)
 	b.floorAt("other", false, nil)
 	b.floorAt("hidden", false, nil) // known, but outside the watched set
+	b.world(func(w proto.World) bool {
+		return floorOf(w, "s").State == "asleep" && floorOf(w, "up").State == "running" && floorOf(w, "other").State == "asleep"
+	})
 	c := b.connect(proto.Hello{Client: "states"})
 	c.snapshot()
 

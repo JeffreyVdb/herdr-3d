@@ -80,40 +80,39 @@ describe('handOver', () => {
 });
 
 describe('deskToDeskRoute', () => {
-  it('between every pair of desks: straight, walkable legs from seat to the hand-over spot, and back', () => {
-    for (const [storey, L] of floors.entries()) {
-      for (const from of L.slots) {
-        for (const to of L.slots) {
-          if (from.index === to.index) continue;
-          const route = deskToDeskRoute(L, storey, from.index, { slot: to.index });
-          const what = `storey ${storey} desk ${from.index} → ${to.index}`;
-          expect(route.length, what).toBeGreaterThanOrEqual(3);
-          const spot = handOver(L, { slot: to.index })!;
-          expect(route[0], what).toEqual({ x: from.seat.x, y: floorY(storey), z: from.seat.z });
-          expect(route.at(-1), what).toEqual({ x: spot.x, y: floorY(storey), z: spot.z });
-          // Out of the pod behind the chair first.
-          expect(Math.abs((route[1] as Waypoint).z - from.seat.z), what).toBeGreaterThan(0.9);
-          const w = worldWith(L, storey, [from.index]);
-          expectWalkable(route, w, what);
-          expectWalkable(reverseRoute(route), w, `${what} (back)`);
-        }
+  it.each(floors.flatMap((L, storey) => L.slots.map((from) => ({ L, storey, from }))))(
+    'storey $storey desk $from.index: walkable legs to every other desk’s hand-over spot, and back',
+    ({ L, storey, from }) => {
+      const w = worldWith(L, storey, [from.index]);
+      for (const to of L.slots) {
+        if (from.index === to.index) continue;
+        const route = deskToDeskRoute(L, storey, from.index, { slot: to.index });
+        const what = `storey ${storey} desk ${from.index} → ${to.index}`;
+        expect(route.length, what).toBeGreaterThanOrEqual(3);
+        const spot = handOver(L, { slot: to.index })!;
+        expect(route[0], what).toEqual({ x: from.seat.x, y: floorY(storey), z: from.seat.z });
+        expect(route.at(-1), what).toEqual({ x: spot.x, y: floorY(storey), z: spot.z });
+        // Out of the pod behind the chair first.
+        expect(Math.abs((route[1] as Waypoint).z - from.seat.z), what).toBeGreaterThan(0.9);
+        expectWalkable(route, w, what);
+        expectWalkable(reverseRoute(route), w, `${what} (back)`);
       }
-    }
-  });
+    },
+  );
 
   it('pods at the grid’s edges and bigger floors', () => {
     for (const n of [4, 6, 7, 13, 28, 41]) {
       const o = outlineOf([n]);
       const L = floorLayout(n, o);
       const p = buildingPlan(o, 1, L.fireDoor);
+      const w = walkWorld(p, loadedFloor(L, 0));
       const edges = L.slots.filter((s) => s.index < 4 || s.index >= L.desks - 4 || s.index % 4 === 3);
       for (const from of edges) {
+        const busy = { supports: w.supports, solids: [...w.solids, ...L.slots.filter((s) => s.index !== from.index).map(seatRect).map((r) => ({ ...r, y0: 0, y1: 3 }))] };
         for (const to of L.slots.filter((_, i) => i % 3 === 0)) {
           if (from.index === to.index) continue;
           const route = deskToDeskRoute(L, 0, from.index, { slot: to.index });
           expect(route.length, `${n} desks: ${from.index} → ${to.index}`).toBeGreaterThanOrEqual(3);
-          const w = walkWorld(p, loadedFloor(L, 0));
-          const busy = { supports: w.supports, solids: [...w.solids, ...L.slots.filter((s) => s.index !== from.index).map(seatRect).map((r) => ({ ...r, y0: 0, y1: 3 }))] };
           expectWalkable(route, busy, `${n} desks: ${from.index} → ${to.index}`);
         }
       }

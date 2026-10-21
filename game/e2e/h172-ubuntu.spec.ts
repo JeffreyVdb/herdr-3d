@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { frames, leftInTerminal, openGame, seatMode, shot, watchErrors } from './game';
 
@@ -31,7 +32,7 @@ async function sit(page: Page, init: Record<string, string> = UBUNTU): Promise<s
 /** Ctrl+Esc to the conversation, plus a box with no fallback glyph, a table with one, rows of symbols, a reply with every emphasis. */
 async function transcript(page: Page, id: string): Promise<Locator> {
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.transcript()))?.items ?? 0).toBeGreaterThan(10);
-  await page.keyboard.press('Control+Escape');
+  await seatMode(page, 'transcript');
   const tx = page.locator('.seat-transcript .tx');
   await expect(tx).toBeVisible();
   const r = await page.evaluate(
@@ -199,6 +200,17 @@ test('Ubuntu: a table of box drawing stays lined up at 70, 100 and 200 %, and th
   const clean = watchErrors(page);
   const id = await sit(page);
   const tx = await transcript(page, id);
+  // The app's optional local fallback fonts differ by host. Keep its real family, unicode range and size-adjust,
+  // replacing only that face's source with a pinned monospace fixture for every symbol measured below.
+  const font = readFileSync(new URL('./fixtures/fonts/h3d-test-symbols.woff2', import.meta.url)).toString('base64');
+  await page.evaluate(async (bytes) => {
+    const rules = [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]);
+    const face = rules.find((rule): rule is CSSFontFaceRule => rule instanceof CSSFontFaceRule && rule.style.getPropertyValue('font-family').replaceAll('"', '').replaceAll("'", '') === 'H3D Symbols Ubuntu');
+    if (!face) throw new Error('Ubuntu symbol fallback face is missing');
+    face.style.setProperty('src', `url("data:font/woff2;base64,${bytes}") format("woff2")`);
+    await document.fonts.load('14px "H3D Symbols Ubuntu"', '→←↑↓↔⇒⇄↩↵●◆▶✓✔✗✘❯★☐☑⠿≤≥≠');
+    await document.fonts.ready;
+  }, font);
   const widths = (id = 'u-box', rows = 6) =>
     tx.locator(`[data-id="${id}"] .tx-out`).evaluate((e, n) => {
       const r = document.createRange();
@@ -371,6 +383,34 @@ for (const [name, theme, ink, fill, size] of [
     await expect.poll(async () => (await filled(jump)).bg, { message: 'hovered chip' }).toBe(theme === 'ubuntu' ? 'rgb(235, 101, 54)' : fill);
     expect(await filled(jump), 'hovered chip').toMatchObject({ fg: ink });
     await shot(page, `r2-jump-${name.toLowerCase().replace(/ /g, '-')}`);
+    // Finish the answer's scripted turn before keeping the worker at work for the pulse measurements.
+    await expect.poll(() => page.evaluate((id) => window.__h3d.worker(id)?.status, id), { timeout: 20_000 }).toBe('done');
+    expect(await page.evaluate((id) => window.__h3d.simStatus(id, 'working'), id)).toBe(true);
+    // Both activity words stay readable throughout their pulse, rather than depending on the sampled frame.
+    for (const [kind, word, seq] of [['thinking', 'Thinking…', 99], ['assistant', 'Working…', 100]] as const) {
+      const result = await page.evaluate(([id, kind, seq]) => window.__h3d.simTranscript({
+        id,
+        items: [{ id: `contrast-${kind}`, seq, ts: Date.now(), kind, parts: [{ text: 'Checking activity contrast.' }] }],
+      }), [id, kind, seq] as const);
+      expect(result.ok).toBe(true);
+      const label = tx.locator('.tx-activity-label');
+      await expect(label).toHaveText(word);
+      expect(await label.evaluate((el) => el.getAnimations().length)).toBe(1);
+      const opacity: number[] = [];
+      for (const phase of [0, 0.5, 1]) {
+        opacity.push(await label.evaluate((el, at) => {
+          const animation = el.getAnimations()[0]!;
+          animation.pause();
+          animation.currentTime = Number(animation.effect!.getTiming().duration) * at;
+          return Number(getComputedStyle(el).opacity);
+        }, phase));
+        const row = (await contrastScan(tx)).find((r) => r.cls === 'span.tx-activity-label');
+        expect(row, `${name}: ${word} at ${phase * 100}%`).toBeDefined();
+        expect(row!.ratio, `${name}: ${word} at ${phase * 100}%: ${JSON.stringify(row)}`).toBeGreaterThanOrEqual(4.5);
+      }
+      expect(opacity[1], 'the cue still pulses').toBeLessThan(opacity[0]!);
+      expect(opacity[2]).toBe(opacity[0]);
+    }
     // And the whole transcript, enabled controls included, still clears 4.5:1 on the ground each text sits on.
     expect((await contrastScan(tx)).filter((r) => r.ratio < 4.5 && theme === 'ubuntu')).toEqual([]);
   });

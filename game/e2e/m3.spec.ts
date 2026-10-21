@@ -163,10 +163,10 @@ test('elevator: E at the elevator lists the building’s floors with state and c
   await expect(page.locator('.prompt .key').first()).not.toHaveAttribute('aria-disabled', 'true');
 
   // A movement key held while the panel opens does not keep walking behind it.
-  const pose = await page.evaluate(() => window.__h3d.pose());
   await page.keyboard.down('KeyW');
   await page.keyboard.press('KeyE');
   await expect(page.locator('dialog.panel h2')).toHaveText('Work');
+  const pose = await page.evaluate(() => window.__h3d.pose());
   await frames(page, 6);
   expect(await page.evaluate(() => window.__h3d.pose())).toEqual(pose);
   await page.keyboard.up('KeyW');
@@ -407,7 +407,7 @@ test('keyboard only on a floor: the top bar, L and the arrow keys reach the elev
   await page.keyboard.press('Escape');
   await expect(page.locator('dialog.panel')).toBeHidden();
   // The ack can land after the world event the panel waited for: poll.
-  await expect.poll(async () => (await sent(page)).map((c) => [c.t, c.result?.ok])).toEqual([
+  await expect.poll(async () => (await sent(page)).filter((c) => c.t === 'floor.wake' || c.t === 'floor.sleep').map((c) => [c.t, c.result?.ok])).toEqual([
     ['floor.wake', true],
     ['floor.sleep', true],
   ]);

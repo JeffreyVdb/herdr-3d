@@ -97,11 +97,17 @@ export function mountAudioControls(parent: HTMLElement, audio: GameAudio, before
   group.append(mute, vol, sep, trigger, pop);
   parent.insertBefore(group, before && before.parentNode === parent ? before : null);
 
-  /** Under the button, right edge to right edge (the popover is fixed in the top layer). */
+  /** Below the button when it fits, otherwise above; keep the fixed popover inside the viewport. */
   const place = () => {
     const r = trigger.getBoundingClientRect();
-    pop.style.setProperty('--pop-top', `${Math.round(r.bottom + 8)}px`);
+    const height = pop.offsetHeight;
+    const below = Math.round(r.bottom + 8);
+    const top = below + height <= window.innerHeight - 12 ? below : Math.round(r.top - height - 8);
+    pop.style.setProperty('--pop-top', `${Math.max(12, Math.min(top, window.innerHeight - height - 12))}px`);
     pop.style.setProperty('--pop-right', `${Math.max(12, Math.round(window.innerWidth - r.right))}px`);
+  };
+  const placeIfOpen = () => {
+    if (pop.matches(':popover-open')) place();
   };
   let hadFocus = false;
   const onBeforeToggle = (e: Event) => {
@@ -110,11 +116,15 @@ export function mountAudioControls(parent: HTMLElement, audio: GameAudio, before
   };
   // Closed with focus inside (Esc, light dismiss, the credits button): it goes back to the Music button.
   const onToggle = (e: Event) => {
-    if ((e as ToggleEvent).newState === 'closed' && hadFocus) trigger.focus();
+    // The open popover has a measurable height; beforetoggle only positions its first paint.
+    if ((e as ToggleEvent).newState === 'open') place();
+    else if (hadFocus) trigger.focus();
     hadFocus = false;
   };
   pop.addEventListener('beforetoggle', onBeforeToggle);
   pop.addEventListener('toggle', onToggle);
+  window.addEventListener('resize', placeIfOpen);
+  window.addEventListener('scroll', placeIfOpen, true);
   // The game's own keys (E, R, WASD…) are not for the popover.
   const onKey = (e: KeyboardEvent) => e.stopPropagation();
   pop.addEventListener('keydown', onKey);
@@ -187,6 +197,8 @@ export function mountAudioControls(parent: HTMLElement, audio: GameAudio, before
       musicVol.removeEventListener('input', onMusicInput);
       pop.removeEventListener('beforetoggle', onBeforeToggle);
       pop.removeEventListener('toggle', onToggle);
+      window.removeEventListener('resize', placeIfOpen);
+      window.removeEventListener('scroll', placeIfOpen, true);
       pop.removeEventListener('keydown', onKey);
       group.remove();
     },

@@ -2,6 +2,8 @@ package telegram
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -20,11 +22,17 @@ func pairedRig(t *testing.T, listen bool) *rig { return pairedRigRun(t, listen, 
 // unless run (a notify.Service's Run: the one reader of the updates).
 func pairedRigRun(t *testing.T, listen, run bool) *rig {
 	t.Helper()
+	return pairedRigOptions(t, listen, run, Options{})
+}
+
+func pairedRigOptions(t *testing.T, listen, run bool, opts Options) *rig {
+	t.Helper()
 	file := t.TempDir() + "/telegram.json"
 	if err := (fileStore{file}).save(Stored{Token: token, BotID: "123456789", Bot: "herdr3d_bot", UserID: 42, UserName: "Ada", PairedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
-	return newRigBefore(t, Options{File: file}, func(r *rig) {
+	opts.File = file
+	return newRigBefore(t, opts, func(r *rig) {
 		r.listenAtStart = listen
 		r.tg.now = r.clock.Now
 		r.ch.Listen(listen)
@@ -201,7 +209,8 @@ func TestRepliesReadTheBacklogAfterARestart(t *testing.T) {
 // someone else, never adds a second getUpdates; the replies of who was
 // paired stop with it.
 func TestOneReaderOfUpdates(t *testing.T) {
-	r := pairedRig(t, true)
+	polls := &pollTracker{transport: http.DefaultTransport}
+	r := pairedRigOptions(t, true, true, Options{Client: &http.Client{Transport: polls}})
 	waitFor(t, "the reply poll", func() bool { return len(r.tg.requests("getUpdates")) >= 1 })
 	r.tg.pushMsg(&message{From: ada(), Chat: chat{ID: 42, Type: "private"}, Text: "before", ReplyTo: replyTo(1)})
 	waitReplies(t, r, 1)
@@ -229,9 +238,9 @@ func TestOneReaderOfUpdates(t *testing.T) {
 	if len(r.gotReplies()) != 3 {
 		t.Fatalf("replies %+v", r.gotReplies())
 	}
-	r.tg.mu.Lock()
-	most := r.tg.maxPolling
-	r.tg.mu.Unlock()
+	polls.mu.Lock()
+	most := polls.maxPolling
+	polls.mu.Unlock()
 	if most != 1 {
 		t.Fatalf("%d getUpdates at once", most)
 	}
@@ -239,6 +248,55 @@ func TestOneReaderOfUpdates(t *testing.T) {
 	if r.ch.Hold(got[1], func() {}) || !r.ch.Hold(got[2], func() {}) {
 		t.Fatal("held across the new pairing")
 	}
+}
+
+// Count requests through response-body close. A canceled HTTP request can
+// return to the reader before its server handler finishes unwinding.
+type pollTracker struct {
+	transport  http.RoundTripper
+	mu         sync.Mutex
+	polling    int
+	maxPolling int
+	calls      int
+}
+
+func (p *pollTracker) total() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls
+}
+
+func (p *pollTracker) RoundTrip(r *http.Request) (*http.Response, error) {
+	if !strings.HasSuffix(r.URL.Path, "/getUpdates") {
+		return p.transport.RoundTrip(r)
+	}
+	p.mu.Lock()
+	p.calls++
+	p.polling++
+	p.maxPolling = max(p.maxPolling, p.polling)
+	p.mu.Unlock()
+	done := sync.OnceFunc(func() {
+		p.mu.Lock()
+		p.polling--
+		p.mu.Unlock()
+	})
+	res, err := p.transport.RoundTrip(r)
+	if err != nil {
+		done()
+		return res, err
+	}
+	res.Body = &pollBody{ReadCloser: res.Body, done: done}
+	return res, nil
+}
+
+type pollBody struct {
+	io.ReadCloser
+	done func()
+}
+
+func (b *pollBody) Close() error {
+	defer b.done()
+	return b.ReadCloser.Close()
 }
 
 // Hold hands a reply over only under the switch and the recipient it was

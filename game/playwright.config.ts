@@ -52,6 +52,9 @@ export default defineConfig({
   ...profile,
   outputDir: 'test-results/artifacts',
   timeout: 120_000,
+  // Parallel renderers can dispatch completed bridge work after 5s (hire/run, secret scans, schedule preparation).
+  // Wait for the expected state; passing assertions return immediately. Latency contracts set their own budgets.
+  expect: { timeout: 20_000 },
   retries: 0,
   fullyParallel: true,
   workers,
@@ -65,7 +68,7 @@ export default defineConfig({
     headless: true,
     viewport: { width: 1280, height: 720 },
     launchOptions: {
-      // No GPU on the server: WebGL2 through ANGLE -> Vulkan -> mesa (lavapipe/llvmpipe).
+      // WebGL2 through ANGLE -> Vulkan: use the host GPU, or Mesa's software Vulkan on CPU-only runners.
       args: ['--use-angle=vulkan', '--enable-features=Vulkan', '--ignore-gpu-blocklist'],
     },
   },

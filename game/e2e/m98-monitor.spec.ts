@@ -211,16 +211,24 @@ test('prefers-reduced-motion holds every mascot on its first frame; with motion 
     await sim(page, { id: nibble.id, activity: { kind: 'writing', detail: 'store.ts' } });
     await expect.poll(async () => (await deskOf(page, nibble.id))?.word).toBe('Writing');
     expect((await monitorsOf(page))?.stats?.motion).toBe(!reduced);
-    await lookAtMonitor(page, nibble.desk, { x: 0.45, z: 0.3 });
+    // Face the monitor squarely: an oblique bounding-box crop includes the status band's and bezel's edges.
+    // Their depth-edge pixels can vary between frames independently of the mascot's animation.
+    await lookAtMonitor(page, nibble.desk, { x: 0, z: 0.3 });
     await frames(page, 4);
     // The mascot's part only (the counter on the right ticks either way), clear of the bezel.
-    const clip = await areaClip(page, nibble.id, 0.08, 0.36, 0.12, 0.88);
+    const clip = await areaClip(page, nibble.id, 0.08, 0.36, 0.25, 0.85);
     let most = 0;
     const first = await page.screenshot({ clip });
     for (let i = 0; i < 4; i++) {
       await page.waitForTimeout(300);
       await frames(page, 2);
-      most = Math.max(most, changed(first, await page.screenshot({ clip })));
+      const next = await page.screenshot({ clip });
+      const difference = changed(first, next);
+      if (reduced && difference > most) {
+        await test.info().attach(`reduced-mascot-first-${i}`, { body: first, contentType: 'image/png' });
+        await test.info().attach(`reduced-mascot-changed-${i}`, { body: next, contentType: 'image/png' });
+      }
+      most = Math.max(most, difference);
     }
     mkdirSync(RESULTS, { recursive: true });
     writeFileSync(resolve(RESULTS, `m98-${reduced ? 'reduced' : 'full'}-motion.png`), first);

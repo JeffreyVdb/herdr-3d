@@ -285,12 +285,13 @@ export class BoardSession {
     const out: BinaryFileData[] = [];
     await Promise.all(
       Object.entries(board.files).map(async ([id, meta]) => {
+        // The bridge manifest confirms this file is stored even if its download fails locally.
+        this.uploaded.add(id);
         try {
           const res = await fetch(fileUrl(this.host.wsUrl, this.host.floor, id), { cache: 'force-cache' });
           if (!res.ok) return;
           const blob = await res.blob();
           out.push({ id: id as FileId, mimeType: meta.mimeType as BinaryFileData['mimeType'], dataURL: await toDataURL(blob), created: meta.created || Date.now() });
-          this.uploaded.add(id);
         } catch {
           // A missing file shows as Excalidraw's broken image; the board still opens.
         }
@@ -319,7 +320,10 @@ export class BoardSession {
 
   /** The board as one save sends it. The PNG is made from this, and it is posted on this base, whatever comes after. */
   private snapshot(api: ExcalidrawImperativeAPI): SaveSnapshot {
-    const elements = api.getSceneElementsIncludingDeleted();
+    // Excalidraw mutates existing elements while initializing pasted images (and during drags). Its file map is
+    // replaced separately: retaining live elements here can gain a fileId after uploadFiles already ran against
+    // the older files. Keep the scene, its signature and the PNG fixed throughout the asynchronous save.
+    const elements = structuredClone(api.getSceneElementsIncludingDeleted());
     const appState = cleanAppState(api.getAppState() as unknown as Record<string, unknown>);
     return { elements, files: api.getFiles(), appState, base: this.base, els: elsSig(elements), app: JSON.stringify(appState) };
   }
@@ -355,9 +359,19 @@ export class BoardSession {
     const api = this.api;
     if (!api) return;
     for (let round = 0; round < MAX_ROUNDS; round++) {
-      await this.canonicalize(api);
-      if (this.api !== api) return;
-      const snap = this.snapshot(api);
+      let snap: SaveSnapshot;
+      for (;;) {
+        await this.canonicalize(api);
+        if (this.api !== api) return;
+        snap = this.snapshot(api);
+        // Excalidraw inserts a pasted image before asynchronously reading and resizing its bytes. Saving a null
+        // fileId would let close() discard that unfinished paste; taking its live element would race its upload.
+        // Wait for initialization (or deletion after an insertion error), then canonicalize the completed file.
+        // A known bridge file can stay broken locally; a new image needs its binary data before the save can post.
+        if (!snap.elements.some((e) => imageOf(e) && !e.isDeleted && (!e.fileId || (!this.uploaded.has(e.fileId) && !snap.files[e.fileId])))) break;
+        this.setStatus({ kind: 'saving' });
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      }
       if (snap.els === this.savedEls && snap.app === this.savedApp && !this.stale) {
         this.setStatus({ kind: 'saved', version: this.base });
         return;

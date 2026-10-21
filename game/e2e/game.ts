@@ -11,7 +11,10 @@ export const NOON = '2026-09-30T12:00';
 /** Collects page errors; call `expectClean()` at the end of a test. */
 export function watchErrors(page: Page): () => void {
   const errors: string[] = [];
-  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('pageerror', (e) => {
+    errors.push(e.message);
+    console.log(`page error: ${e.message}`);
+  });
   page.on('console', (m) => {
     if (m.type() === 'error') errors.push(m.text());
     if (m.type() === 'warning' && !m.text().includes('GL Driver Message')) console.log(`page warning: ${m.text()}`);
@@ -40,6 +43,21 @@ export async function openGame(page: Page, fixture = 'demo', extra = '', wsQuery
 export async function frames(page: Page, n = 3): Promise<void> {
   const start = await page.evaluate(() => window.__h3d.frames);
   await page.waitForFunction((want) => window.__h3d.frames >= want, start + n, { timeout: 30_000 });
+}
+
+/**
+ * #43: the bridge sends world events before its acknowledgement. Parallel pages can spend several
+ * seconds applying and rendering those events before dispatching the ack. The fixture uses a 150 ms Node timer.
+ * Allow 20 s for this end-to-end state change; feature latency contracts retain their explicit bounds.
+ */
+export async function expectCommandDone(page: Page, command: 'worker.hire' | 'worker.fire' | 'run.start'): Promise<void> {
+  await expect.poll(() => page.evaluate((t) => ({
+    result: window.__h3d.sent().filter((c) => c.t === t).at(-1)?.result,
+    dialog: window.__h3d.dialog(),
+  }), command), { message: `${command} is acknowledged and its dialog closes`, timeout: 20_000 }).toMatchObject({
+    result: { ok: true },
+    dialog: null,
+  });
 }
 
 /**
@@ -73,10 +91,35 @@ export async function leftInTerminal(page: Page, ...ids: string[]): Promise<void
   }, ids);
 }
 
-/** Seated: switches to the terminal or the conversation with Ctrl+Esc, as a player would, when it is not up yet. */
+/** Seated: switches with Ctrl+Esc and waits for the requested view, including the conversation's lazy renderer. */
 export async function seatMode(page: Page, mode: 'terminal' | 'transcript'): Promise<void> {
   if ((await page.evaluate(() => window.__h3d.seat().mode)) !== mode) await page.keyboard.press('Control+Escape');
   await expect.poll(() => page.evaluate(() => window.__h3d.seat().mode)).toBe(mode);
+  if (mode === 'transcript') {
+    await expect.poll(() => page.evaluate(() => {
+      const transcript = window.__h3d.transcript();
+      if (transcript?.mounted) return true;
+      return JSON.stringify({
+        transcript, seat: window.__h3d.seat(), error: window.__h3d.error,
+        sent: window.__h3d.sent().slice(-10).map(({ t, result }) => ({ t, result })),
+      });
+    }), {
+      message: 'the conversation renderer is mounted', timeout: 20_000,
+    }).toBe(true);
+    await expect(page.locator('.seat-transcript .txl:visible'), 'the conversation has its first rows or empty state').toHaveCount(0, { timeout: 20_000 });
+  }
+}
+
+/** A schedule's hire preparation completed; the form exposes its resolved choices. */
+export async function expectScheduleReady(page: Page): Promise<void> {
+  await expect.poll(() => page.evaluate(() => {
+    const form = window.__h3d.scheduleForm();
+    if (form?.open === true && form.preparing === false) return true;
+    return JSON.stringify({
+      form: form ? { open: form.open, mode: form.mode, floor: form.floor, preparing: form.preparing } : null,
+      prepare: window.__h3d.sent().filter(({ t }) => t === 'hire.prepare').at(-1)?.result,
+    });
+  }), { message: 'the schedule form finished preparing', timeout: 20_000 }).toBe(true);
 }
 
 /**
