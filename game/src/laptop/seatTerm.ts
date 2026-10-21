@@ -151,6 +151,10 @@ export class SeatTerminal {
     // The widget's own textarea never keeps the keyboard: the seat's does (one owner of focus and IME).
     term.textarea?.addEventListener('focus', () => this.deps.keyboard());
     this.host.addEventListener('paste', this.onPaste, { capture: true });
+    // xterm knows its cell size only once it has rendered: a fit that found none is tried again then.
+    this.offs.push(term.onRender(() => {
+      if (!this.proposed && this.fitting) this.refit(true);
+    }));
     this.observer = new ResizeObserver(() => this.refit());
     this.observer.observe(this.host);
     this.watchDpr();

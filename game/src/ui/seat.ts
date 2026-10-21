@@ -410,7 +410,8 @@ export class SeatBar implements SeatView {
     for (const e of this.inerted) e.inert = false;
     this.inerted = [];
     if (!on) return;
-    const skip = (e: Element) => e === this.el || e.contains(this.el) || e.matches('dialog, script, .toast, [data-over-seat]') || (e as HTMLElement).inert;
+    // Never a dialog, a toast or a popover (the plan-limits plate: Shift+L peeks it over the seat).
+    const skip = (e: Element) => e === this.el || e.contains(this.el) || e.matches('dialog, script, .toast, [popover], [data-over-seat]') || (e as HTMLElement).inert;
     for (const e of [...this.hud.children, ...(this.hud.parentElement?.children ?? [])]) {
       if (!(e instanceof HTMLElement) || skip(e)) continue;
       // Of the page around the HUD only the scene's canvas: the overlays there open over the seat (the overview from

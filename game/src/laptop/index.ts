@@ -193,6 +193,8 @@ const PRINT_SPOT = new THREE.Vector3(0, DESK_H, SEAT_OFFSET - 0.28);
 const GLASS = glassFrame();
 /** The seated terminal's watch while you read the transcript: kept alive, so switching back shows it at once. */
 const READING_FPS = 1;
+/** #176: how long the seat waits for its terminal's first grid (its first render) before it watches without one. */
+const GRID_WAIT_MS = 1500;
 /** #187: how long the seat waits before asking for a watch the bridge refused. */
 const SEAT_RETRY_MS = 5000;
 /** #187: the commands that put something into a worker: refused while it is away. */
@@ -310,7 +312,7 @@ export class Laptops {
   /** #176: what the workspace says of the seated pane, as last shown. */
   private controlShown = '';
   /** #176: the seat waits for its terminal's first grid before it watches (a controller starts at the PTY's size). */
-  private seatGridWait = false;
+  private seatGridWait: boolean | 'late' = false;
   private contentObserver: ResizeObserver | null = null;
 
   constructor(
@@ -604,6 +606,7 @@ export class Laptops {
   private onGrid(g: SeatGrid): void {
     const s = this.seat;
     if (!s) return;
+    if (this.seatGridWait) this.seatGridWait = false;
     if (!this.watches.controlOf(s.id)) return this.syncWatches();
     void this.watches.resize(s.id, g);
   }
@@ -614,7 +617,8 @@ export class Laptops {
     if (!s || (id !== undefined && id !== s.id)) return;
     const c = this.watches.controlOf(s.id);
     const mode = c?.mode ?? 'none';
-    this.seatTerm?.setFitting(mode !== 'observe' && mode !== 'none');
+    // It fits its area until the bridge says it cannot own the pane (its first grid is what the control watch starts at).
+    this.seatTerm?.setFitting(c ? mode === 'control' || mode === 'pending' : !this.watches.noControl);
     const note = mode === 'observe' ? readOnlyNote(c?.reason ?? 'busy') : null;
     const h = mode === 'control' ? c?.history ?? null : null;
     const key = `${mode}\u0000${note?.text ?? ''}\u0000${h ? `${h.offset}/${h.max}` : ''}`;
@@ -662,6 +666,16 @@ export class Laptops {
   /** The seat's terminal opened (or could not): its grid is known, so its watch can start. */
   private gridReady(id: string): void {
     if (this.seat?.id !== id || !this.seatGridWait) return;
+    if (this.seatGridWait === 'late') {
+      this.seatGridWait = false;
+      return this.syncWatches();
+    }
+    // Opened, but its first grid comes with its first render (`onGrid`); one that never comes (no layout) watches without.
+    if (!this.seatTerm?.grid) {
+      setTimeout(() => this.gridReady(id), GRID_WAIT_MS);
+      this.seatGridWait = 'late';
+      return;
+    }
     this.seatGridWait = false;
     this.syncWatches();
   }
@@ -1520,11 +1534,12 @@ export class Laptops {
     if (this.attached && !this.attached.isAsleep) for (const id of this.planner.live) want.set(id, this.cfg.fps);
     // #187: not while its worker is away (the bridge would refuse it), nor right after it refused (a retry later).
     const watched = this.seat && !this.seat.away && performance.now() >= this.seat.retryAt && !this.seatGridWait ? this.seat : null;
-    if (watched) want.set(watched.id, this.transcript.shown ? READING_FPS : this.cfg.seatedFps);
-    // #176: the seat owns its pane at the grid its terminal fits (a bridge before it: watched as before).
+    // #176: the seat owns its pane at the grid its terminal fits (a bridge before it: watched as before). Such a watch
+    // keeps the seated fps while you read: a new fps would restart it, which releases the pane and attaches again.
     const control = new Map<string, SeatGrid>();
-    const grid = watched ? this.seatTerm?.grid : null;
+    const grid = watched && !this.watches.noControl ? this.seatTerm?.grid : null;
     if (watched && grid) control.set(watched.id, grid);
+    if (watched) want.set(watched.id, this.transcript.shown && !control.has(watched.id) ? READING_FPS : this.cfg.seatedFps);
     // #74: only the screen you sit at says anything about fullscreen (the others show their panes as they are, and must
     // not move the tab around); the player's preference says whether it asks for the zoom (true) or only follows the
     // pane, so the chip stays true when the human changes it (false).
@@ -1533,6 +1548,7 @@ export class Laptops {
     const fullscreen = new Map<string, boolean>();
     if (watched) fullscreen.set(watched.id, control.has(watched.id) && !this.watches.noControl ? false : (this.host.themes?.prefs.fullscreen ?? true));
     this.watches.sync(want, fullscreen, control);
+    if (this.seat) this.syncControl(this.seat.id); // #176: a bridge that cannot own panes: the terminal shows the pane as it is
     // M16: the transcript of the worker you sit at (not counted against the terminal watches), and a few items of the
     // desks that have prints (only their images matter).
     const tx = new Map<string, number>();

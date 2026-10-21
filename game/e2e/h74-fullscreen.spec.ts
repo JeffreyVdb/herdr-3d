@@ -4,13 +4,16 @@ import { frames, leftInTerminal, openGame, shot, watchErrors } from './game';
 // #74: a laptop at a split herdr pane shows it at its own (narrow) size. Sitting down asks the bridge to zoom the
 // pane's tab (`terminal.watch` with `fullscreen: true`), and the seat bar's chip states the pane's state and switches
 // it (`terminal.zoom`). The fixture simulator plays the bridge's zoom with `simzoom=` (tools/fixture-screen.ts).
+// #176: a bridge that owns the seated pane sizes its PTY to the window and never zooms; the chip ("Zoom herdr tab")
+// shows only when the pane is watched read only (the last test). These tests play a bridge before #176
+// (`simcontrol=old`), where the seat watches as #74 does.
 
 const FLOOR = 'herdr-3d';
-const SIM = (zoom: string) => `play=none&sim=1&simms=500&simusage=0&simlimits=ok${zoom ? `&simzoom=${zoom}` : ''}`;
+const SIM = (zoom: string, control = 'old') => `play=none&sim=1&simms=500&simusage=0&simlimits=ok${zoom ? `&simzoom=${zoom}` : ''}${control ? `&simcontrol=${control}` : ''}`;
 
-async function sitAt(page: Page, zoom: string, name = 'Tofu', init: Record<string, string> = {}): Promise<string> {
+async function sitAt(page: Page, zoom: string, name = 'Tofu', init: Record<string, string> = {}, control = 'old'): Promise<string> {
   if (Object.keys(init).length) await page.addInitScript((kv) => Object.entries(kv).forEach(([k, v]) => localStorage.setItem(k, v)), init);
-  await openGame(page, 'demo-m5', '&prints=0', SIM(zoom));
+  await openGame(page, 'demo-m5', '&prints=0', SIM(zoom, control));
   await page.evaluate((s) => window.__h3d.enterFloor(s), FLOOR);
   await frames(page, 3);
   const id = await page.evaluate((n) => window.__h3d.world().flatMap((f) => f.workers).find((w) => w.name === n)?.id ?? '', name);
@@ -21,7 +24,7 @@ async function sitAt(page: Page, zoom: string, name = 'Tofu', init: Record<strin
   expect(await page.evaluate((w) => window.__h3d.sitAt(w), id)).toBe(true);
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
   await expect.poll(() => page.evaluate(() => (window.__h3d.screenText(window.__h3d.seated() ?? '') ?? []).join('').trim().length)).toBeGreaterThan(0);
-  if (zoom === 'split') {
+  if (zoom === 'split' && control === 'old') {
     // Screen text may arrive from the ambient watch before the seated watch applies its fullscreen preference.
     await expect.poll(() => fs(page), { message: 'the seated terminal watch applied its fullscreen preference' }).toMatchObject({
       pressed: init['h3d.term.fullscreen'] !== '0', unavailable: false,
@@ -39,7 +42,7 @@ test('sitting at a split pane zooms it: only the seated watch asks, and the chip
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   const id = await sitAt(page, 'split');
-  await expect.poll(() => fs(page)).toEqual({ label: 'Fullscreen', pressed: true, unavailable: false });
+  await expect.poll(() => fs(page)).toEqual({ label: 'herdr tab zoomed', pressed: true, unavailable: false });
   await expect(chip(page)).toHaveAttribute('aria-pressed', 'true');
   const watches = await log(page, 'terminal.watch');
   // The ambient watches of the floor's other laptops show their panes as they are.
@@ -54,9 +57,9 @@ test('the chip is a toggle: Split pane fact when off, terminal.zoom both ways, r
   const clean = watchErrors(page);
   const id = await sitAt(page, 'split');
   await chip(page).click();
-  await expect.poll(() => fs(page)).toEqual({ label: 'Split pane 120×36', pressed: false, unavailable: false });
+  await expect.poll(() => fs(page)).toEqual({ label: 'Zoom herdr tab (split 120×36)', pressed: false, unavailable: false });
   await expect(chip(page)).toHaveAttribute('aria-pressed', 'false');
-  await expect(chip(page)).toHaveAttribute('aria-label', 'Fullscreen, off. Split pane 120 by 36');
+  await expect(chip(page)).toHaveAttribute('aria-label', 'Zoom herdr tab, off. Split pane 120 by 36');
   expect(await log(page, 'terminal.zoom')).toMatchObject([{ args: { id, on: false } }]);
   expect(await stored(page)).toBe('0');
   const watched = (await log(page, 'terminal.watch')).length;
@@ -64,7 +67,7 @@ test('the chip is a toggle: Split pane fact when off, terminal.zoom both ways, r
   expect(await page.evaluate(() => document.activeElement?.className)).toContain('seat-input');
   await shot(page, 'h74-fullscreen-split');
   await chip(page).click();
-  await expect.poll(() => fs(page)).toMatchObject({ label: 'Fullscreen', pressed: true });
+  await expect.poll(() => fs(page)).toMatchObject({ label: 'herdr tab zoomed', pressed: true });
   expect(await log(page, 'terminal.zoom')).toMatchObject([{ args: { id, on: false } }, { args: { id, on: true } }]);
   expect(await stored(page)).toBeNull();
   expect(await log(page, 'terminal.watch')).toHaveLength(watched);
@@ -75,14 +78,15 @@ test('with the preference off the seated watch asks for no zoom, and the chip of
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   const id = await sitAt(page, 'split', 'Tofu', { 'h3d.term.fullscreen': '0' });
-  await expect.poll(() => fs(page)).toMatchObject({ label: 'Split pane 120×36', pressed: false });
+  await expect.poll(() => fs(page)).toMatchObject({ label: 'Zoom herdr tab (split 120×36)', pressed: false });
   expect((await log(page, 'terminal.watch')).some((w) => (w.args as { fullscreen?: boolean }).fullscreen === true)).toBe(false);
   // The seated watch says "no" in so many words (the bridge then follows the pane for the chip); the ambient ones say nothing.
-  const watches = await log(page, 'terminal.watch');
+  // (#176: the bridge before it refused the seat's first watch, with `control`: only the watches it took count.)
+  const watches = (await log(page, 'terminal.watch')).filter((w) => w.result?.ok);
   expect(watches.filter((w) => (w.args as { fullscreen?: boolean }).fullscreen === false).map((w) => (w.args as { id: string }).id)).toEqual([id]);
   expect(watches.filter((w) => (w.args as { id: string }).id !== id).every((w) => !('fullscreen' in (w.args as object)))).toBe(true);
   await chip(page).click();
-  await expect.poll(() => fs(page)).toMatchObject({ label: 'Fullscreen', pressed: true });
+  await expect.poll(() => fs(page)).toMatchObject({ label: 'herdr tab zoomed', pressed: true });
   expect(await log(page, 'terminal.zoom')).toMatchObject([{ args: { id, on: true } }]);
   clean();
 });
@@ -93,7 +97,7 @@ test('the human unzooming the tab reaches the chip (terminal.state), and it can 
   const id = await sitAt(page, 'split');
   await expect.poll(() => fs(page)).toMatchObject({ pressed: true });
   expect(await page.evaluate((i) => window.__h3d.simUnzoom(i), id)).toBe(true);
-  await expect.poll(() => fs(page)).toEqual({ label: 'Split pane 120×36', pressed: false, unavailable: false });
+  await expect.poll(() => fs(page)).toEqual({ label: 'Zoom herdr tab (split 120×36)', pressed: false, unavailable: false });
   // Nobody re-applied it: the game did not ask again by itself.
   expect(await log(page, 'terminal.zoom')).toEqual([]);
   await chip(page).click();
@@ -105,7 +109,7 @@ test('a zoom that cannot widen the pane (no herdr screen attached) says so and d
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   await sitAt(page, 'headless');
-  await expect.poll(() => fs(page)).toEqual({ label: 'Fullscreen unavailable', pressed: false, unavailable: true });
+  await expect.poll(() => fs(page)).toEqual({ label: 'Zoom unavailable', pressed: false, unavailable: true });
   await expect(chip(page)).toHaveAttribute('aria-disabled', 'true');
   await expect(chip(page)).toHaveAttribute('title', /no herdr screen/);
   // aria-disabled: Playwright waits for such a control to be enabled; the click is meant to find it inert.
@@ -271,5 +275,30 @@ test('the chip keeps AA contrast in every state at all three presets, and the ba
   await expect.poll(() => fs(page)).toMatchObject({ pressed: false });
   heights.push(await page.evaluate(() => document.querySelector('.seat')!.getBoundingClientRect().height));
   expect(Math.abs((heights[0] as number) - (heights[1] as number))).toBeLessThan(1);
+  clean();
+});
+
+test('#176: a seat that owns its pane never zooms and has no chip; read only, the chip zooms herdr’s tab', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  const id = await sitAt(page, 'split', 'Tofu', {}, '');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seatTerminal()?.control?.mode)).toBe('control');
+  const seated = (await log(page, 'terminal.watch')).filter((w) => (w.args as { id: string }).id === id).at(-1)?.args as { fullscreen?: boolean; control?: boolean };
+  expect(seated).toMatchObject({ control: true, fullscreen: false });
+  expect(await fs(page)).toBeNull();
+  await expect(chip(page)).toBeHidden();
+  expect(await log(page, 'terminal.zoom')).toEqual([]);
+  clean();
+});
+
+test('#176: watched read only (another client owns the pane), the chip offers herdr’s zoom and switches it', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  const id = await sitAt(page, 'split', 'Tofu', {}, 'busy');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seatTerminal()?.control?.mode)).toBe('observe');
+  await expect.poll(() => fs(page)).toEqual({ label: 'Zoom herdr tab (split 120×36)', pressed: false, unavailable: false });
+  await chip(page).click();
+  await expect.poll(() => fs(page)).toMatchObject({ label: 'herdr tab zoomed', pressed: true });
+  expect(await log(page, 'terminal.zoom')).toMatchObject([{ args: { id, on: true } }]);
   clean();
 });

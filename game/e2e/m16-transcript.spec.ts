@@ -144,8 +144,8 @@ test('sitting down opens the conversation over the monitor, fed by transcript.wa
   const clean = watchErrors(page);
   const worker = await sitAt(page, 'Tofu');
 
-  // #98: the transcript, over the monitor's glass, as you sit; watched from that moment, not counted as a terminal
-  // watch; the terminal behind it watched at 1 fps.
+  // #98: the transcript as you sit (#176: in the workspace's content area); watched from that moment, not counted as a terminal
+  // watch; the terminal behind it stays watched (#176: at the seated fps).
   await expect.poll(async () => (await txState(page)).items).toBeGreaterThan(10);
   await expect.poll(async () => (await txState(page)).mounted).toBe(true);
   expect(await txState(page)).toMatchObject({ mode: 'transcript', watches: 1 });
@@ -153,7 +153,11 @@ test('sitting down opens the conversation over the monitor, fed by transcript.wa
   expect((await watchLog(page)).filter((c) => c.t === 'transcript.watch').map((c) => c.args)).toEqual([{ id: worker, limit: 200 }]);
   const tx = page.locator('.seat-transcript .tx');
   await expect(tx).toBeVisible();
-  await expect.poll(() => termFps(page, worker)).toBe(1);
+  // #176: the seat owns the pane: its watch keeps the seated fps behind the conversation (a new fps would restart the
+  // watch, releasing the pane and attaching again); it used to drop to 1 fps.
+  await expect.poll(() => termFps(page, worker)).toBeGreaterThan(1);
+  const seatedFps = await termFps(page, worker);
+  const watchesAtSit = (await watchLog(page)).filter((c) => c.t === 'terminal.watch' && (c.args as { id: string }).id === worker).length;
 
   // Right after sitting down, with nothing clicked, the scroll keys work (the keyboard is on the timeline) and nothing
   // reaches the pane.
@@ -174,16 +178,16 @@ test('sitting down opens the conversation over the monitor, fed by transcript.wa
   expect(await scrollTop()).toBeGreaterThanOrEqual(bottom - 2);
   expect(await sentKeys()).toBe(keysBefore);
 
-  // The overlay sits between the top bar and the seat bar, over the laptop the camera looks at.
+  // #176: the overlay fills the seated workspace's content area (it used to sit over the monitor's glass).
   const box = (await txState(page)).box as NonNullable<Tx['box']>;
-  const seatTop = await page.locator('.seat').evaluate((e) => e.getBoundingClientRect().top);
-  const topbar = await page.evaluate(() => parseFloat(document.querySelector<HTMLElement>('.hud')?.style.getPropertyValue('--topbar-bottom') ?? '') || 70);
+  const content = (await page.locator('.seat-content').boundingBox()) as { x: number; y: number; width: number; height: number };
   const vw = page.viewportSize() as { width: number; height: number };
-  expect(box.top).toBeGreaterThanOrEqual(Math.floor(topbar));
-  expect(box.top + box.height).toBeLessThanOrEqual(Math.ceil(seatTop));
-  expect(box.width).toBeGreaterThan(vw.width * 0.4);
-  expect(box.height).toBeGreaterThan(vw.height * 0.3);
-  expect(Math.abs(box.left + box.width / 2 - vw.width / 2)).toBeLessThan(vw.width * 0.1);
+  expect(Math.abs(box.left - content.x)).toBeLessThanOrEqual(2);
+  expect(Math.abs(box.top - content.y)).toBeLessThanOrEqual(2);
+  expect(Math.abs(box.width - content.width)).toBeLessThanOrEqual(2);
+  expect(Math.abs(box.height - content.height)).toBeLessThanOrEqual(2);
+  expect(box.width).toBeGreaterThan(vw.width * 0.85);
+  expect(box.height).toBeGreaterThan(vw.height * 0.7);
 
   // Nothing of the HUD (the plan limits widget hangs over the top right) covers the view's controls.
   const covered = await page.evaluate(() =>
@@ -276,18 +280,17 @@ test('sitting down opens the conversation over the monitor, fed by transcript.wa
   await expect(tx.locator('.tx-thinking button, .tx-thinking [aria-expanded]')).toHaveCount(0);
   await expect(tx.locator('[data-id="demo-98"] .tx-chip-mute')).toHaveText('reasoning');
 
-  // Ctrl+Esc: the live terminal at the seated fps; Ctrl+Esc again: the transcript, the terminal behind it frozen at
-  // 1 fps, and the keyboard on the timeline again, no click needed.
+  // Ctrl+Esc: the live terminal at the seated fps; Ctrl+Esc again: the transcript, the monitor behind it frozen (#176:
+  // its watch at the same fps), and the keyboard on the timeline again, no click needed.
   await page.keyboard.press('Control+Escape');
   await expect.poll(async () => (await txState(page)).mode).toBe('terminal');
-  await expect.poll(() => termFps(page, worker)).toBeGreaterThan(1);
-  const seatedFps = await termFps(page, worker);
+  expect(await termFps(page, worker)).toBe(seatedFps);
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.screens())).find((s) => s.id === worker)?.state).toBe('live');
   await expect.poll(() => page.evaluate((id) => (window.__h3d.screenText(id) ?? []).join('').trim().length, worker)).toBeGreaterThan(0);
   await page.keyboard.press('Control+Escape');
   await expect.poll(async () => (await txState(page)).mode).toBe('transcript');
   await expect(scroller).toBeFocused();
-  await expect.poll(() => termFps(page, worker)).toBe(1);
+  expect(await termFps(page, worker)).toBe(seatedFps);
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.screens())).find((s) => s.id === worker)?.state).toBe('frozen');
   await page.keyboard.press('End');
   const end = await scrollTop();
@@ -344,6 +347,8 @@ test('sitting down opens the conversation over the monitor, fed by transcript.wa
   expect((await txState(page)).box).toBeNull();
   await expect(page.locator('.seat-transcript')).toBeHidden();
   await expect.poll(() => termFps(page, worker)).toBe(seatedFps);
+  // No mode switch watched the pane again.
+  expect((await watchLog(page)).filter((c) => c.t === 'terminal.watch' && (c.args as { id: string }).id === worker).length).toBe(watchesAtSit);
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.screens())).find((s) => s.id === worker)?.state).toBe('live');
   expect((await page.evaluate(() => window.__h3d.seat())).mode).toBe('terminal');
 
@@ -483,12 +488,12 @@ for (const [w, h] of [
     expect(await page.evaluate((i) => window.__h3d.sitAt(i), id)).toBe(true);
     await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
     await frames(page, 20);
-    // The plate is open in the corner while you stand at the desk... (#98: the conversation is up as you sit)
-    await expect(page.locator('.limits')).toBeVisible();
+    // #98: the conversation is up as you sit. #176: in the full-window workspace there is no gutter beside it, so the
+    // plate steps away (it was an edge tab beside the monitor's glass); Shift+L still peeks it.
     const tx = page.locator('.seat-transcript .tx');
     await expect(tx.locator('.tx-user').first()).toBeVisible();
     await frames(page, 8);
-    // ... and steps out of the overlay: a slim tab (or nothing), never over the header.
+    // It steps out of the overlay: a slim tab (or nothing), never over the header.
     await expect(page.locator('.limits')).toHaveAttribute('data-dock', /^(tab|away)$/);
     const box = (await txState(page)).box as NonNullable<Tx['box']>;
     const plate = await page.locator('.limits').evaluate((e) => {
