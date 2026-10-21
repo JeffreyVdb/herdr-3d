@@ -660,7 +660,9 @@ func (h *Hub) launchRun(ctx context.Context, c *Client, cmd proto.Command, a pro
 	if prompt == "" {
 		call, roles := h.writeCodeCall(a.Orch.Harness), presetView(p).Roles
 		prompt = TeamPrompt(call, ticket, roles, team.profiles, a.Floor, a.Extra)
-		compose = func(tr func(string) string) string { return TeamPrompt(call, ticket, roles, team.profiles, a.Floor, tr(a.Extra)) }
+		compose = func(tr func(string) string) string {
+			return TeamPrompt(call, ticket, roles, team.profiles, a.Floor, tr(a.Extra))
+		}
 	}
 	label := a.Label
 	if label == "" {
