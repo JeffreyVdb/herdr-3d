@@ -2936,8 +2936,10 @@ for it instead of an observer, `herdr --session <s> terminal session control <pa
   state: a question's or an approval's own input takes it as typed text (it is not `worker.prompt`, whose guards
   stay). It needs the connection's control watch of the worker owning the pane: `bad_request` without one,
   `invalid_state` read only or while the controller is starting, checked again when its turn comes. It runs on the
-  worker's input lane, in order with `worker.keys` before and after it (the lane job ends once the line is on the
-  controller's stdin; the next keys go by `pane send-keys`). A full controller queue makes room as the reset to live
+  worker's input lane, in order with `worker.keys` before and after it: the next keys go by `pane send-keys`, another
+  way into herdr, so the bridge sends a resize to the size asked last with the paste and ends the job once herdr's
+  full frame for it came (herdr acknowledges no input, but answers each resize with a full frame after what came
+  before it; at most 2 s, then it goes on). The game's screen gets that full frame too. A full controller queue makes room as the reset to live
   does (queued wheels are moot once input lands); a paste that still finds no room, or that is dropped when the pane
   is released, fails with `input_failed`, never silently. #108: an agent's paste goes through the same gate as its
   prompt (with prompt secrets reviewed, a possible secret without `secrets` is `secrets_review_required`; with a

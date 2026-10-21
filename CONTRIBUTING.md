@@ -375,8 +375,8 @@ parts:
     `ESC[200~` + at most 16 KiB without NUL or paste markers, line ends as CR + `ESC[201~`), its click
     (`terminal.mouse` `down` then `up`, `left`/`right`/`middle`, a cell inside the grid, modifiers 0–7, only for a herdr
     0.9.2+) and `terminal.release`; each line at most 128 KiB, through a
-    bounded queue that never blocks its caller (a paste or a click waits, at most 5 s, for its line to be written, so
-    the lane's next keys come after it; `internal/herdr/termcontrol.go`). A refusal (`terminal.closed` with
+    bounded queue that never blocks its caller (a paste or a click waits for herdr's full frame answering the same-size
+    resize written with it, so the lane's next keys come after it; `internal/herdr/termcontrol.go`). A refusal (`terminal.closed` with
     "already has an attached client") or a takeover makes the watch a read-only observer
     (`herdr.ControlRefused` / `ControlTakenOver`); `Close` resizes the PTY back to the pane's size before the attach
     (the session's snapshot), then releases, waits up to 1 s and stops it. The hub's part is
