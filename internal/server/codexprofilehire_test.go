@@ -898,7 +898,7 @@ func TestProfileLegacyWakeGone(t *testing.T) {
 
 // profileRollout writes a Codex rollout started at stamp in cwd, under a
 // sessions folder, whose last token count has input tokens in.
-func profileRollout(t *testing.T, sessions, stamp, id, cwd string, in int) {
+func profileRollout(t *testing.T, sessions, stamp, id, cwd string, in int, more ...string) {
 	t.Helper()
 	dir := filepath.Join(sessions, stamp[0:4], stamp[5:7], stamp[8:10])
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -909,6 +909,9 @@ func profileRollout(t *testing.T, sessions, stamp, id, cwd string, in int) {
 		`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":%d,"cached_input_tokens":0,`+
 		`"output_tokens":1,"total_tokens":%d},"last_token_usage":{"total_tokens":%d},"model_context_window":258400}}}`+"\n",
 		id, cwd, cwd, in, in+1, in+1)
+	for _, line := range more {
+		body += line + "\n"
+	}
 	if err := os.WriteFile(filepath.Join(dir, "rollout-"+stamp+"-"+id+".jsonl"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -970,7 +973,8 @@ func TestProfileUsageOwnHome(t *testing.T) {
 	)
 	pb := startProfileBridge(t, false, "")
 	profileRollout(t, filepath.Join(pb.def, "sessions"), "2026-10-21T11-00-00", defID, "/home/u/repo", 900)
-	profileRollout(t, filepath.Join(pb.team, "sessions"), "2026-10-21T10-00-00", teamID, "/home/u/repo", 300)
+	profileRollout(t, filepath.Join(pb.team, "sessions"), "2026-10-21T10-00-00", teamID, "/home/u/repo", 300,
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"review the team's pull requests"}]}}`)
 	res := ackData[proto.HireResult](t, func() msg { m, _ := pb.hire(t, 1, "team"); return m }())
 	w := workersOf(pb.world(func(w proto.World) bool {
 		x := workersOf(w, "s")[res.WorkspaceID]
@@ -978,5 +982,16 @@ func TestProfileUsageOwnHome(t *testing.T) {
 	}), "s")[res.WorkspaceID]
 	if w.Usage.Input != 300 || w.AgentSession != "" {
 		t.Fatalf("usage = %+v, agent session %q", w.Usage, w.AgentSession)
+	}
+	// Its transcript lines come from the same rollout (the watch's first page).
+	c := pb.connect(proto.Hello{Client: "tx"})
+	c.snapshot()
+	_, wack := c.mustAck(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: res.ID})
+	b, _ := json.Marshal(wack.Data)
+	var page proto.TranscriptWatchResult
+	if err := json.Unmarshal(b, &page); err != nil || page.Session != teamID || !slices.ContainsFunc(page.Items, func(it proto.TranscriptItem) bool {
+		return it.Kind == proto.ItemUser && len(it.Parts) > 0 && it.Parts[0].Text == "review the team's pull requests"
+	}) {
+		t.Fatalf("transcript.watch = %s", b)
 	}
 }
