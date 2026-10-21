@@ -57,7 +57,14 @@ describe('the fixture’s Codex profiles (#138)', () => {
     expect({ ...l[1], account: undefined }).toEqual({ ...readings('ok', NOW)[1], account: undefined });
   });
 
-  it('renames (with the reading again), hides, refuses as herdr-world, adds and removes', () => {
+  it('shows the profile hidden from the start (Settings > Show old)', () => {
+    const { run, sent } = sim();
+    expect(run('codex_profiles.set', { key: 'old', hidden: false }).profiles.find((p) => p.key === 'old')!.hidden).toBe(false);
+    expect(sent.map((m) => m.t)).toEqual(['codex_profiles.update', 'limits.update']);
+    expect(run('codex_profiles.set', { key: 'old', hidden: true, remove: false }).profiles.find((p) => p.key === 'old')!.hidden).toBe(true);
+  });
+
+  it('renames (with the reading again), hides and shows, refuses as herdr-world, adds and removes', () => {
     const { run, sent } = sim();
     expect(run('codex_profiles.set', { key: 'work', name: 'Work seat' }).profiles[1]!.name).toBe('Work seat');
     expect(sent.map((m) => m.t)).toEqual(['limits.update', 'codex_profiles.update']);
@@ -69,6 +76,13 @@ describe('the fixture’s Codex profiles (#138)', () => {
     expect(() => run('codex_profiles.set', { add: 'rel' })).toThrow(/absolute path/);
     expect(() => run('codex_profiles.set', { key: 'nope', hidden: true })).toThrow(/no Codex profile/);
     expect(run('codex_profiles.set', { key: 'work', hidden: true }).profiles[1]!.hidden).toBe(true);
+    expect(() => run('codex_profiles.set', { key: 'work', hidden: false, remove: true })).toThrow(/exactly one/);
+    sent.length = 0;
+    expect(run('codex_profiles.set', { key: 'work', hidden: false }).profiles[1]!.hidden).toBe(false);
+    expect(sent.map((m) => [m.t, (m.account as { key: string } | undefined)?.key])).toEqual([
+      ['codex_profiles.update', undefined],
+      ['limits.update', 'work'],
+    ]);
     const added = run('codex_profiles.set', { add: '~/.codex-team' }).profiles;
     expect(added.at(-1)).toMatchObject({ key: 'team', added: true });
     expect(run('codex_profiles.set', { key: 'team', remove: true }).profiles.map((p) => p.key)).toEqual(['codex', 'work', 'old', 'spare']);

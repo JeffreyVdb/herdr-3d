@@ -93,7 +93,8 @@ export class CodexProfilesSim {
   }
 
   private set(a: Obj, send: Send, base: () => Limits | undefined): void {
-    const n = ['add', 'name', 'hidden', 'remove'].filter((k) => a[k] !== undefined && a[k] !== false).length;
+    // As the bridge counts them: add, name and hidden when given (hidden: false shows), remove when true.
+    const n = ['add', 'name', 'hidden'].filter((k) => a[k] !== undefined && a[k] !== null).length + (a.remove === true ? 1 : 0);
     if (n !== 1) throw this.bad('exactly one of add, name, hidden and remove is required');
     let changed: CodexProfile | null = null;
     if (typeof a.add === 'string') {

@@ -2437,9 +2437,12 @@ an account, never reads a token and never runs codex-auth: it only looks at fold
   in the order added. Paths are absolute with symlinks resolved, and a folder is listed once (a `$CODEX_HOME` that
   is a `~/.codex-*` folder is the default only). A folder without an `auth.json` is a profile all the same, "not signed
   in" (Codex can also keep the sign-in in the keyring; a reading with a plan counts as signed in).
-- **Key**: from the folder's name, lower case: `~/.codex` is `codex`, `~/.codex-work` is `work`, `/data/team-codex`
-  is `team-codex`; a key already taken gets `-2`, `-3`… in listing order. It does not change on a rename. The default
-  name is the key.
+- **Key**: from the folder alone, so it never moves to another folder when folders come and go, and does not change
+  on a rename. The folder's name, lower case, without leading dots and `codex-`: `~/.codex` is `codex`,
+  `~/.codex-work` is `work`. Only the default and a `~/.codex-<key>` folder whose name is already that (`.codex-Work`
+  is not; nor is `~/.codex-codex` beside a default `codex`) have the name alone; any other folder adds the first 6 hex
+  digits of the SHA-256 of its path: `/data/team-codex` is `team-codex-32b74a`, `~/.codex-Work` `work-<hash>`. The
+  default name is the folder's name without the hash when no other profile's folder has that name, else the key.
 - **Settings** (SQLite `codex_profiles_settings`, one row, a JSON object: per folder a `name` and `hidden`, and the
   added folders). `codex_profiles.set` takes **one** change and answers the list:
   - `{"key", "name"}`: trimmed, 1–40 characters, no control characters, no other profile's name or key in any case
@@ -2456,7 +2459,7 @@ an account, never reads a token and never runs codex-auth: it only looks at fold
 {"t":"codex_profiles.update","seq":2301,"profiles":[
   {"key":"codex","name":"codex","path":"/home/me/.codex","display":"~/.codex","plan":"prolite","signed_in":true,"default":true,"hidden":false,"added":false},
   {"key":"work","name":"Work seat","path":"/home/me/.codex-work","display":"~/.codex-work","plan":"team","signed_in":true,"default":false,"hidden":false,"added":false},
-  {"key":"spare","name":"spare","path":"/srv/codex-spare","display":"/srv/codex-spare","plan":"","signed_in":false,"default":false,"hidden":true,"added":true,"missing":true}]}
+  {"key":"spare-306ceb","name":"spare","path":"/srv/codex-spare","display":"/srv/codex-spare","plan":"","signed_in":false,"default":false,"hidden":true,"added":true,"missing":true}]}
 ```
 
   `display` is `path` with `~` for the bridge user's home; `plan` is the profile's latest reading's (`""` unknown);

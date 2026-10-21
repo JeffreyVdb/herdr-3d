@@ -2,12 +2,14 @@ package server_test
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -215,9 +217,12 @@ func TestCodexProfilesLimits(t *testing.T) {
 	}
 
 	// Added: listed after the found ones, signed out, removable.
+	// Its key has a hash of its path (it is not a ~/.codex-* folder); its
+	// name is the folder's.
 	_, ack = a.mustAck(proto.CmdCodexProfilesSet, proto.CodexProfilesSetArgs{Add: ptr("~/spare")})
 	p := profilesOf(t, ack.Data)
-	if keysOf(&p) != "codex,work,spare" || !p.Profiles[2].Added || p.Profiles[2].SignedIn || p.Profiles[2].Display != "~/spare" {
+	spare := p.Profiles[len(p.Profiles)-1].Key
+	if keysOf(&p) != "codex,work,"+spare || !strings.HasPrefix(spare, "spare-") || p.Profiles[2].Name != "spare" || !p.Profiles[2].Added || p.Profiles[2].SignedIn || p.Profiles[2].Display != "~/spare" {
 		t.Fatalf("add ack %+v", p)
 	}
 	b.stop()
@@ -225,12 +230,12 @@ func TestCodexProfilesLimits(t *testing.T) {
 	// Kept over a restart.
 	b = startBridge(t, db, profilesOptions(home, &profileRunner{}))
 	w := b.connect(proto.Hello{}).snapshot().World.CodexProfiles
-	if keysOf(w) != "codex,work,spare" || w.Profiles[1].Name != "Work seat" || !w.Profiles[1].Hidden || !w.Profiles[2].Added {
+	if keysOf(w) != "codex,work,"+spare || w.Profiles[1].Name != "Work seat" || !w.Profiles[1].Hidden || !w.Profiles[2].Added {
 		t.Fatalf("after a restart %+v", w)
 	}
 	c := b.connect(proto.Hello{})
 	c.snapshot()
-	_, ack = c.mustAck(proto.CmdCodexProfilesSet, proto.CodexProfilesSetArgs{Key: "spare", Remove: true})
+	_, ack = c.mustAck(proto.CmdCodexProfilesSet, proto.CodexProfilesSetArgs{Key: spare, Remove: true})
 	if p := profilesOf(t, ack.Data); keysOf(&p) != "codex,work" {
 		t.Fatalf("remove ack %+v", p)
 	}
@@ -248,5 +253,115 @@ func TestCodexProfilesUnsupported(t *testing.T) {
 	c.mustError(proto.CmdCodexProfilesGet, nil, proto.ErrUnsupported)
 	if ev := c.until(proto.EvLimitsUpdate); ev.Account != nil {
 		t.Fatalf("an account without profiles: %+v", ev.Limits)
+	}
+}
+
+// R1 of the #138 review: two folders with the same name each keep their
+// key, and their readings, when the other one goes (~/.codex-+a, listed
+// first, was "a" and ~/.codex-a "a-2" until ~/.codex-+a went).
+func TestCodexProfileKeysStayWithTheirFolder(t *testing.T) {
+	t.Parallel()
+	home := codexHomes(t, map[string]bool{".codex": true, ".codex-+a": true, ".codex-a": true})
+	b := startBridge(t, filepath.Join(t.TempDir(), "world.db"), profilesOptions(home, &profileRunner{}))
+	c := b.connect(proto.Hello{})
+	snap := c.snapshot().World
+	keyOf := map[string]string{}
+	for _, p := range snap.CodexProfiles.Profiles {
+		keyOf[p.Path] = p.Key
+	}
+	if keyOf[filepath.Join(home, ".codex-a")] != "a" || !strings.HasPrefix(keyOf[filepath.Join(home, ".codex-+a")], "a-") {
+		t.Fatalf("keys %v", keyOf)
+	}
+	for range 4 {
+		c.until(proto.EvLimitsUpdate)
+	}
+	if err := os.Remove(filepath.Join(home, ".codex-+a", "auth.json")); err != nil {
+		t.Fatal(err)
+	}
+	_, ack := c.mustAck(proto.CmdCodexProfilesGet, map[string]any{})
+	p := profilesOf(t, ack.Data)
+	if keysOf(&p) != "codex,a" {
+		t.Fatalf("profiles %+v", p)
+	}
+	if a := p.Profiles[1]; a.Path != filepath.Join(home, ".codex-a") || a.Plan != "codex-a" {
+		t.Fatalf("~/.codex-a: %+v", a)
+	}
+	for _, l := range b.connect(proto.Hello{}).snapshot().World.Limits {
+		if l.Account != nil && l.Account.Key == "a" && l.Plan != "codex-a" {
+			t.Fatalf("a's reading %+v", l)
+		}
+	}
+}
+
+// gateLister holds the poller's first list after it is armed, once it has
+// listed (from the settings as they were then).
+type gateLister struct {
+	codexaccount.Lister
+	armed            atomic.Bool
+	started, release chan struct{}
+}
+
+func (g *gateLister) Accounts(ctx context.Context) ([]codexaccount.Account, error) {
+	list, err := g.Lister.Accounts(ctx)
+	if g.armed.CompareAndSwap(true, false) {
+		close(g.started)
+		<-g.release
+	}
+	return list, err
+}
+
+// R3 of the #138 review: a list the poller took before a codex_profiles.set
+// does not undo the change the hub published (it lists again itself).
+func TestCodexProfilesOlderPollerListIsNotApplied(t *testing.T) {
+	t.Parallel()
+	home := codexHomes(t, map[string]bool{".codex": true, ".codex-work": true})
+	opts := profilesOptions(home, &profileRunner{})
+	gate := &gateLister{Lister: opts.Limits.Accounts, started: make(chan struct{}), release: make(chan struct{})}
+	opts.Limits.Accounts = gate
+	b := startBridge(t, filepath.Join(t.TempDir(), "world.db"), opts)
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	for range 3 {
+		c.until(proto.EvLimitsUpdate)
+	}
+	// A folder found makes the poller's next list a change.
+	if err := os.MkdirAll(filepath.Join(home, ".codex-new"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".codex-new", "auth.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gate.armed.Store(true)
+	c.mustAck(proto.CmdLimitsRefresh, map[string]any{})
+	<-gate.started
+	_, ack := c.mustAck(proto.CmdCodexProfilesSet, proto.CodexProfilesSetArgs{Key: "work", Hidden: ptr(true)})
+	if p := profilesOf(t, ack.Data); keysOf(&p) != "codex,new,work" || !p.Profiles[2].Hidden {
+		t.Fatalf("hide ack %+v", p)
+	}
+	close(gate.release)
+	// The poller hands its list over before it reads ~/.codex-new.
+	for {
+		m := c.next()
+		switch m.env.T {
+		case proto.EvCodexProfilesUpdate:
+			var u proto.CodexProfilesUpdate
+			if err := json.Unmarshal(m.raw, &u); err != nil {
+				t.Fatal(err)
+			}
+			if keysOf(&u.CodexProfiles) != "codex,new,work" || !u.Profiles[2].Hidden {
+				t.Fatalf("work shown again by an older list: %s", m.raw)
+			}
+		case proto.EvLimitsUpdate:
+			var ev proto.Event
+			if err := json.Unmarshal(m.raw, &ev); err != nil {
+				t.Fatal(err)
+			}
+			if ev.Account != nil && ev.Account.Key == "work" {
+				t.Fatalf("a hidden profile's reading: %s", m.raw)
+			}
+			if ev.Account != nil && ev.Account.Key == "new" {
+				return
+			}
+		}
 	}
 }

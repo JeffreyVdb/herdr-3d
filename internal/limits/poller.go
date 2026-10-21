@@ -96,6 +96,10 @@ type providerState struct {
 	// so when it ends the reading is due at once instead of at next.
 	again bool
 	last  *proto.Limits // the last fresh reading
+	// home is the Codex profile's folder. Should its key name another
+	// folder in a later list (codexaccount keys are a folder's alone, so
+	// only by a fluke), the state starts afresh rather than carry over.
+	home string
 }
 
 // target is one thing to read: Claude, or a Codex profile (acct nil: the
@@ -113,6 +117,14 @@ func (t target) key() string {
 	return t.provider + "/" + t.acct.Key
 }
 
+// home is a Codex profile's folder ("": not a profile).
+func (t target) home() string {
+	if t.acct == nil {
+		return ""
+	}
+	return t.acct.Home
+}
+
 // Poller reads the Claude and Codex limits while somebody looks.
 type Poller struct {
 	cfg  Config
@@ -123,10 +135,14 @@ type Poller struct {
 	lastManual time.Time
 	// The Codex profiles as last listed (hidden ones included), and when
 	// to list them again: every Interval, on a refresh, and on Relist.
+	// relist counts the requests, listedAt is the count the list was taken
+	// at: a request made while the profiles are being listed (the settings
+	// may have changed after that list read them) lists them again.
 	accounts []codexaccount.Account
 	listed   bool
 	listNext time.Time
-	relist   bool
+	relist   uint64
+	listedAt uint64
 }
 
 // providers in the order they are read and shown.
@@ -151,7 +167,7 @@ func (p *Poller) Run(ctx context.Context, active func() bool, publish func(proto
 	defer t.Stop()
 	for {
 		if active() {
-			p.poll(ctx, p.cfg.Now(), func(_ int, l proto.Limits) { publish(l) }, accounts)
+			p.poll(ctx, p.cfg.Now(), active, func(_ int, l proto.Limits) { publish(l) }, accounts)
 		}
 		select {
 		case <-ctx.Done():
@@ -176,7 +192,7 @@ func (p *Poller) Refresh() (queued bool) {
 	for _, st := range p.state {
 		st.next, st.again = time.Time{}, true
 	}
-	p.relist = true
+	p.relist++
 	p.wake()
 	return true
 }
@@ -187,7 +203,7 @@ func (p *Poller) Refresh() (queued bool) {
 func (p *Poller) Relist() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.relist = true
+	p.relist++
 	p.wake()
 }
 
@@ -224,7 +240,8 @@ func (p *Poller) listAccounts(ctx context.Context, now time.Time) ([]codexaccoun
 		return nil, false
 	}
 	p.mu.Lock()
-	due := !p.listed || p.relist || !now.Before(p.listNext)
+	gen := p.relist
+	due := !p.listed || gen != p.listedAt || !now.Before(p.listNext)
 	p.mu.Unlock()
 	if !due {
 		return nil, false
@@ -232,7 +249,7 @@ func (p *Poller) listAccounts(ctx context.Context, now time.Time) ([]codexaccoun
 	list, err := p.cfg.Accounts.Accounts(ctx)
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.relist, p.listNext = false, now.Add(p.cfg.Interval)
+	p.listedAt, p.listNext = gen, now.Add(p.cfg.Interval)
 	if err != nil {
 		p.cfg.Log.Warn("limits: cannot list the Codex profiles", "error", err)
 		return nil, false
@@ -242,8 +259,8 @@ func (p *Poller) listAccounts(ctx context.Context, now time.Time) ([]codexaccoun
 	keep := map[string]bool{}
 	for _, t := range p.targets() {
 		keep[t.key()] = true
-		if p.state[t.key()] == nil {
-			p.state[t.key()] = &providerState{} // due at once
+		if st := p.state[t.key()]; st == nil || st.home != t.home() {
+			p.state[t.key()] = &providerState{home: t.home()} // due at once
 		}
 	}
 	for k := range p.state {
@@ -261,7 +278,7 @@ func (p *Poller) listAccounts(ctx context.Context, now time.Time) ([]codexaccoun
 func (p *Poller) step(ctx context.Context, now time.Time) []proto.Limits {
 	var mu sync.Mutex
 	got := map[int]proto.Limits{}
-	n := p.poll(ctx, now, func(i int, l proto.Limits) {
+	n := p.poll(ctx, now, func() bool { return true }, func(i int, l proto.Limits) {
 		mu.Lock()
 		got[i] = l
 		mu.Unlock()
@@ -278,9 +295,11 @@ func (p *Poller) step(ctx context.Context, now time.Time) []proto.Limits {
 // poll lists the Codex profiles when due (accounts gets a changed list),
 // then reads what is due at now: Claude beside the Codex profiles, the
 // profiles one after the other. Each reading goes to emit with its place in
-// display order as soon as it is taken (none once ctx is done). It returns
-// how many reads were due.
-func (p *Poller) poll(ctx context.Context, now time.Time, emit func(int, proto.Limits), accounts func([]codexaccount.Account)) int {
+// display order as soon as it is taken (none once ctx is done). A read
+// still queued when active says nobody is connected any more is not
+// started: it stays due, for when a client is back. It returns how many
+// reads were due.
+func (p *Poller) poll(ctx context.Context, now time.Time, active func() bool, emit func(int, proto.Limits), accounts func([]codexaccount.Account)) int {
 	if list, changed := p.listAccounts(ctx, now); changed && accounts != nil {
 		accounts(list)
 	}
@@ -303,7 +322,11 @@ func (p *Poller) poll(ctx context.Context, now time.Time, emit func(int, proto.L
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for _, i := range idx {
+			for n, i := range idx {
+				if !active() {
+					p.undue(due, idx[n:])
+					return
+				}
 				l := p.read(ctx, due[i], now)
 				if ctx.Err() != nil {
 					return
@@ -314,6 +337,18 @@ func (p *Poller) poll(ctx context.Context, now time.Time, emit func(int, proto.L
 	}
 	wg.Wait()
 	return len(due)
+}
+
+// undue makes the targets due[idx] due again, now that they will not be
+// read in this poll.
+func (p *Poller) undue(due []target, idx []int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, i := range idx {
+		if st := p.state[due[i].key()]; st != nil {
+			st.next = time.Time{}
+		}
+	}
 }
 
 // read probes one target and works out what to show and when to look

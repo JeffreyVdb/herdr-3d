@@ -266,7 +266,7 @@ func TestProfilesAreListedAgain(t *testing.T) {
 		now = now.Add(d)
 		var mu sync.Mutex
 		var got []proto.Limits
-		p.poll(context.Background(), now, func(_ int, l proto.Limits) { mu.Lock(); got = append(got, l); mu.Unlock() },
+		p.poll(context.Background(), now, func() bool { return true }, func(_ int, l proto.Limits) { mu.Lock(); got = append(got, l); mu.Unlock() },
 			func(l []codexaccount.Account) { lists = append(lists, l) })
 		return got
 	}
@@ -360,5 +360,128 @@ func TestRunListsNothingWithoutAClient(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("no Codex reading after a client came")
 		}
+	}
+}
+
+// R2 of the #138 review: the profiles read one after the other stop when
+// the last client goes, and the ones not read stay due for the next.
+func TestProfilesQueuedWhenTheClientGoesWait(t *testing.T) {
+	var on atomic.Bool
+	on.Store(true)
+	started, release := make(chan struct{}), make(chan struct{})
+	b := &byHome{scripts: map[string]script{
+		"/h/.codex":      func(p *fakeProc) { close(started); <-release; failing(p) },
+		"/h/.codex-work": failing,
+	}}
+	f := &fakeLister{}
+	f.set(profile("codex", "/h/.codex", true), profile("work", "/h/.codex-work", false))
+	c := profilesCfg(t, b, f)
+	c.Now = time.Now
+	c.Tick = 10 * time.Millisecond
+	c.Timeout, c.Grace = 30*time.Second, 10*time.Second // a read in a poll holds the others off that long
+	p := New(c)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	got := make(chan proto.Limits, 8)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.Run(ctx, on.Load, func(l proto.Limits) { got <- l }, nil)
+	}()
+	defer func() { cancel(); <-done }()
+	<-started
+	on.Store(false)
+	close(release)
+	deadline := time.After(300 * time.Millisecond)
+wait:
+	for {
+		select {
+		case l := <-got:
+			if l.Account != nil && l.Account.Key == "work" {
+				t.Fatalf("work read with no client: probed %v", b.probed())
+			}
+		case <-deadline:
+			break wait
+		}
+	}
+	if h := b.probed(); !slices.Equal(h, []string{"/h/.codex"}) {
+		t.Fatalf("probed %v with no client", h)
+	}
+	on.Store(true)
+	for {
+		select {
+		case l := <-got:
+			if l.Account != nil && l.Account.Key == "work" {
+				return
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("work not read when a client came back: probed %v", b.probed())
+		}
+	}
+}
+
+// blockingLister holds its first list after taking the settings it lists
+// from, as codexaccount.Service does before it looks at the folders.
+type blockingLister struct {
+	fakeLister
+	started, release chan struct{}
+	once             sync.Once
+}
+
+func (f *blockingLister) Accounts(ctx context.Context) ([]codexaccount.Account, error) {
+	list, err := f.fakeLister.Accounts(ctx)
+	f.once.Do(func() { close(f.started); <-f.release })
+	return list, err
+}
+
+// R3 of the #138 review: a Relist asked for while the profiles are being
+// listed (the settings changed after that list read them) lists them again
+// at the next poll.
+func TestRelistDuringListingIsKept(t *testing.T) {
+	f := &blockingLister{started: make(chan struct{}), release: make(chan struct{})}
+	f.set(profile("codex", "/h/.codex", true), profile("work", "/h/.codex-work", false))
+	c, _ := newCfg(t, nil)
+	c.Accounts = f
+	p := New(c)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.listAccounts(context.Background(), t0)
+	}()
+	<-f.started
+	hidden := profile("work", "/h/.codex-work", false)
+	hidden.Hidden = true
+	f.set(profile("codex", "/h/.codex", true), hidden)
+	p.Relist()
+	close(f.release)
+	<-done
+	list, changed := p.listAccounts(context.Background(), t0.Add(time.Second))
+	if n := f.calls.Load(); n != 2 || !changed || !list[1].Hidden {
+		t.Fatalf("the Relist was lost: %d lists, changed %v, %+v", n, changed, list)
+	}
+	if _, changed := p.listAccounts(context.Background(), t0.Add(2*time.Second)); changed || f.calls.Load() != 2 {
+		t.Fatalf("listed again with nothing asked: %d lists", f.calls.Load())
+	}
+}
+
+// A key that names another folder in a later list does not carry the
+// state (last reading, failures) of the folder it named before.
+func TestKeyOnAnotherHomeStartsAfresh(t *testing.T) {
+	b := &byHome{scripts: map[string]script{
+		"/h/.codex":   codexAnswers(t, fixture(t, "codex_primary.json")),
+		"/h/.codex-a": codexAnswers(t, fixture(t, "codex_two.json")),
+		"/h/.codex-b": failing,
+	}}
+	f := &fakeLister{}
+	f.set(profile("codex", "/h/.codex", true), profile("a", "/h/.codex-a", false))
+	p := New(profilesCfg(t, b, f))
+	if got := codexReadings(p.step(context.Background(), t0)); got["a"].Plan != "pro" {
+		t.Fatalf("got %+v", got)
+	}
+	f.set(profile("codex", "/h/.codex", true), profile("a", "/h/.codex-b", false))
+	p.Relist()
+	got := codexReadings(p.step(context.Background(), t0.Add(time.Second)))
+	if a, ok := got["a"]; !ok || a.Plan == "pro" || a.Error == "" {
+		t.Fatalf("the other folder's reading carried over: %+v", got)
 	}
 }

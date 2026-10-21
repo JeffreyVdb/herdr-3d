@@ -88,18 +88,22 @@ func (h *Hub) codexAccount(key string) (codexaccount.Account, bool) {
 	return codexaccount.Account{}, false
 }
 
-// applyCodexAccounts takes a new list (the poller's, or one listed for a
-// command): a hidden or gone profile's reading is dropped, a renamed one's
-// is sent again with its new name, and the view is published when it
-// changed.
+// applyCodexAccounts takes a new list (listed on the hub goroutine): a
+// hidden or gone profile's reading is dropped, and so is one whose key now
+// names another folder; a renamed one's is sent again with its new name,
+// and the view is published when it changed.
 func (h *Hub) applyCodexAccounts(list []codexaccount.Account) {
+	homes := map[string]string{}
+	for _, a := range h.cp.list {
+		homes[a.Key] = a.Home
+	}
 	h.cp.list = list
 	for k, l := range h.limits {
 		if l.Account == nil {
 			continue
 		}
 		a, ok := h.codexAccount(l.Account.Key)
-		if !ok || a.Hidden {
+		if home, was := homes[a.Key]; !ok || a.Hidden || (was && home != a.Home) {
 			delete(h.limits, k)
 			continue
 		}

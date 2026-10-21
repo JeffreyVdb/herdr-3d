@@ -12,6 +12,8 @@ package codexaccount
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,10 +36,14 @@ const (
 
 // Account is one Codex profile.
 type Account struct {
-	// Key names the profile for good: it comes from the folder's name
-	// (~/.codex-work: "work"), so a rename does not change it.
+	// Key names the profile for good: it comes from its folder alone
+	// (~/.codex-work: "work"; a folder elsewhere, or one whose name had to
+	// be changed, gets a hash of its path too: /data/team "team-1a2b3c"),
+	// so neither a rename nor other folders coming and going change it.
 	Key string
-	// Name is what the user calls it (default: the Key).
+	// Name is what the user calls it (default: its folder's name as in the
+	// Key, without a hash, when no other profile's folder has it; else the
+	// Key).
 	Name string
 	// Home is the Codex home folder, absolute, symlinks resolved.
 	Home string
@@ -167,14 +173,32 @@ func list(userHome, defaultHome string, set Settings) []Account {
 	for _, o := range set.Overrides {
 		over[canonical(o.Path)] = o
 	}
+	defKey, userDir := "", ""
+	if defaultHome != "" {
+		defKey = keyOf(canonical(defaultHome))
+	}
+	if userHome != "" {
+		userDir = canonical(userHome)
+	}
+	bases := map[string]int{}
+	for _, f := range homes {
+		bases[keyOf(f.home)]++
+	}
 	out := make([]Account, 0, len(homes))
 	keys := map[string]bool{}
-	for _, f := range homes {
-		key := uniqueKey(keyOf(f.home), keys)
-		a := Account{Key: key, Name: key, Home: f.home, Default: f.def, Added: f.added, Exists: f.exists, SignedIn: f.auth}
+	stored := make([]bool, len(homes))
+	for i, f := range homes {
+		key := uniqueKey(keyFor(f.home, f.def, userDir, defKey), keys)
+		// A key with a path hash is named by its folder alone while no
+		// other profile's folder has that name.
+		name := key
+		if base := keyOf(f.home); bases[base] == 1 {
+			name = base
+		}
+		a := Account{Key: key, Name: name, Home: f.home, Default: f.def, Added: f.added, Exists: f.exists, SignedIn: f.auth}
 		if o, ok := over[f.home]; ok {
 			if o.Name != "" {
-				a.Name = o.Name
+				a.Name, stored[i] = o.Name, true
 			}
 			a.Hidden = o.Hidden && !f.def
 		}
@@ -187,7 +211,7 @@ func list(userHome, defaultHome string, set Settings) []Account {
 		names[strings.ToLower(a.Name)]++
 	}
 	for i, a := range out {
-		if a.Name != a.Key && names[strings.ToLower(a.Name)] > 1 {
+		if stored[i] && names[strings.ToLower(a.Name)] > 1 {
 			names[strings.ToLower(a.Name)]--
 			out[i].Name = a.Key
 		}
@@ -257,8 +281,27 @@ func keyOf(home string) string {
 	return name
 }
 
-// uniqueKey is key, or key-2, key-3… when it is taken (in listing order:
-// the default, the found folders, the added ones).
+// keyFor is the key of home, from home alone, so that a folder keeps its
+// key whatever else is listed or comes and goes: the folder's name (keyOf)
+// for the default home and for ~/.codex-<key> (a name keyOf keeps as it is,
+// not the default's key), as no two other folders can have them; the name
+// and a hash of the path for any other folder. userDir is the user's home
+// folder, canonical.
+func keyFor(home string, def bool, userDir, defKey string) string {
+	key := keyOf(home)
+	if def {
+		return key
+	}
+	if userDir != "" && key != defKey && home == filepath.Join(userDir, ".codex-"+key) {
+		return key
+	}
+	sum := sha256.Sum256([]byte(home))
+	return key + "-" + hex.EncodeToString(sum[:3])
+}
+
+// uniqueKey is key, or key-2, key-3… when it is taken (in listing order).
+// keyFor makes the keys unique but for a path hash that collides: this only
+// keeps two profiles from ever sharing a key.
 func uniqueKey(key string, taken map[string]bool) string {
 	k := key
 	for n := 2; taken[k]; n++ {

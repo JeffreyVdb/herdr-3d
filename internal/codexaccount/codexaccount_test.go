@@ -2,6 +2,8 @@ package codexaccount
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -37,6 +39,12 @@ func keys(list []Account) []string {
 		out = append(out, a.Key)
 	}
 	return out
+}
+
+// hashed is the key of a folder that is not the default nor ~/.codex-<base>.
+func hashed(base, home string) string {
+	sum := sha256.Sum256([]byte(home))
+	return base + "-" + hex.EncodeToString(sum[:3])
 }
 
 func TestOnlyTheDefaultHome(t *testing.T) {
@@ -102,8 +110,97 @@ func TestKeysAreUniqueAndFromTheFolder(t *testing.T) {
 	s := New(h, filepath.Join(h, ".codex"))
 	s.Configure(Settings{Added: []string{filepath.Join(h, "else/codex")}})
 	got, _ := s.Accounts(ctx)
-	if k := keys(got); !slices.Equal(k, []string{"codex", "codex-2", "codex-3"}) {
-		t.Fatalf("keys %v", k)
+	want := []string{"codex", hashed("codex", filepath.Join(h, ".codex-codex")), hashed("codex", filepath.Join(h, "else/codex"))}
+	if k := keys(got); !slices.Equal(k, want) {
+		t.Fatalf("keys %v, want %v", k, want)
+	}
+	// Three folders called codex: each is named by its key.
+	if n := got[2].Name; n != want[2] {
+		t.Fatalf("name %q", n)
+	}
+}
+
+// R1 of the #138 review: a key is the folder's alone. Whichever of the
+// other folders are there (found or added), every folder keeps the key it
+// has with all of them there, and no two share one.
+func TestKeysDependOnTheFolderAlone(t *testing.T) {
+	h := home(t, map[string]bool{".codex": true, ".codex-a": false, ".codex-+a": false, ".codex-codex": false, ".codex-b": false, "else/a": false, "else/b": false})
+	found := []string{".codex-a", ".codex-+a", ".codex-codex"} // found when they have an auth.json
+	added := []string{".codex-b", "else/a", "else/b"}
+	s := New(h, filepath.Join(h, ".codex"))
+	listWith := func(mask int) map[string]string {
+		t.Helper()
+		set := Settings{Added: []string{}}
+		for i, name := range append(slices.Clone(found), added...) {
+			on := mask&(1<<i) != 0
+			if i >= len(found) {
+				if on {
+					set.Added = append(set.Added, filepath.Join(h, name))
+				}
+				continue
+			}
+			auth := filepath.Join(h, name, "auth.json")
+			if on {
+				if err := os.WriteFile(auth, []byte(`{}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Remove(auth); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+		}
+		s.Configure(set)
+		got, _ := s.Accounts(ctx)
+		out := map[string]string{}
+		seen := map[string]bool{}
+		for _, a := range got {
+			if seen[a.Key] {
+				t.Fatalf("mask %b: key %q twice in %v", mask, a.Key, keys(got))
+			}
+			seen[a.Key] = true
+			out[a.Home] = a.Key
+		}
+		return out
+	}
+	all := 1<<(len(found)+len(added)) - 1
+	want := listWith(all)
+	if len(want) != 1+len(found)+len(added) {
+		t.Fatalf("all: %v", want)
+	}
+	for _, c := range []struct{ name, key string }{{".codex", "codex"}, {".codex-a", "a"}, {".codex-b", "b"},
+		{".codex-+a", hashed("a", filepath.Join(h, ".codex-+a"))}, {".codex-codex", hashed("codex", filepath.Join(h, ".codex-codex"))},
+		{"else/a", hashed("a", filepath.Join(h, "else/a"))}, {"else/b", hashed("b", filepath.Join(h, "else/b"))}} {
+		if got := want[filepath.Join(h, c.name)]; got != c.key {
+			t.Errorf("%s: key %q, want %q", c.name, got, c.key)
+		}
+	}
+	for mask := range all {
+		for home, key := range listWith(mask) {
+			if key != want[home] {
+				t.Errorf("mask %b: %s has key %q, %q with every folder there", mask, home, key, want[home])
+			}
+		}
+	}
+}
+
+// A key with a path hash is named by its folder while no other profile's
+// folder has that name; a stored name it now has gives way.
+func TestHashedKeysAreNamedByTheFolder(t *testing.T) {
+	h := home(t, map[string]bool{".codex": true, "srv/codex-spare": false, "other/spare": false})
+	s := New(h, filepath.Join(h, ".codex"))
+	s.Configure(Settings{Added: []string{filepath.Join(h, "srv/codex-spare")}})
+	got, _ := s.Accounts(ctx)
+	if a := got[1]; a.Key != hashed("spare", filepath.Join(h, "srv/codex-spare")) || a.Name != "spare" {
+		t.Fatalf("spare %+v", a)
+	}
+	s.Configure(Settings{Added: []string{filepath.Join(h, "srv/codex-spare"), filepath.Join(h, "other/spare")}})
+	got, _ = s.Accounts(ctx)
+	if got[1].Name != got[1].Key || got[2].Name != got[2].Key {
+		t.Fatalf("two spares: %+v", got[1:])
+	}
+	s.Configure(Settings{Added: []string{filepath.Join(h, "srv/codex-spare")}, Overrides: []Override{{Path: filepath.Join(h, ".codex"), Name: "spare"}}})
+	got, _ = s.Accounts(ctx)
+	if got[0].Name != "codex" || got[1].Name != "spare" {
+		t.Fatalf("stored name gives way: %+v", got)
 	}
 }
 
@@ -121,13 +218,14 @@ func TestRenameHideAddRemove(t *testing.T) {
 	apply(s.SetHidden(ctx, "work", true))
 	apply(s.Add(ctx, "~/spare/"))
 	got, _ := s.Accounts(ctx)
-	if k := keys(got); !slices.Equal(k, []string{"codex", "work", "spare"}) {
+	spare := hashed("spare", filepath.Join(h, "spare"))
+	if k := keys(got); !slices.Equal(k, []string{"codex", "work", spare}) {
 		t.Fatalf("keys %v", k)
 	}
 	if w := got[1]; w.Name != "Work seat" || !w.Hidden {
 		t.Fatalf("work %+v", w)
 	}
-	if sp := got[2]; !sp.Added || sp.SignedIn || !sp.Exists || sp.Home != filepath.Join(h, "spare") {
+	if sp := got[2]; !sp.Added || sp.SignedIn || !sp.Exists || sp.Home != filepath.Join(h, "spare") || sp.Name != "spare" {
 		t.Fatalf("spare %+v", sp)
 	}
 	if set := s.Settings(); !slices.Equal(set.Added, []string{filepath.Join(h, "spare")}) {
@@ -139,8 +237,8 @@ func TestRenameHideAddRemove(t *testing.T) {
 	if set := s.Settings(); len(set.Overrides) != 0 {
 		t.Fatalf("overrides %+v", set.Overrides)
 	}
-	apply(s.Rename(ctx, "spare", "Spare"))
-	apply(s.Remove(ctx, "spare"))
+	apply(s.Rename(ctx, spare, "Spare"))
+	apply(s.Remove(ctx, spare))
 	if set := s.Settings(); len(set.Added) != 0 || len(set.Overrides) != 0 {
 		t.Fatalf("after remove %+v", set)
 	}
@@ -207,7 +305,8 @@ func TestMissingOrUnreadableAddedFolder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if k := keys(got); !slices.Equal(k, []string{"codex", "gone", "locked"}) {
+	gone := hashed("gone", filepath.Join(h, "gone"))
+	if k := keys(got); !slices.Equal(k, []string{"codex", gone, hashed("locked", filepath.Join(h, "locked"))}) {
 		t.Fatalf("keys %v", k)
 	}
 	if g := got[1]; g.Exists || g.SignedIn || !g.Added {
@@ -216,7 +315,7 @@ func TestMissingOrUnreadableAddedFolder(t *testing.T) {
 	if l := got[2]; !l.Exists || (l.SignedIn && os.Geteuid() != 0) {
 		t.Errorf("locked %+v", l)
 	}
-	set, err := s.Remove(ctx, "gone")
+	set, err := s.Remove(ctx, gone)
 	if err != nil || len(set.Added) != 1 {
 		t.Fatalf("remove gone: %v %+v", err, set)
 	}

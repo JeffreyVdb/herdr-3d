@@ -17,13 +17,26 @@ import (
 // latest of each provider is in the snapshot. #138: the latest of each
 // (provider, Codex profile), every visible profile its own reading.
 
-// trackLimits runs the poller until ctx is done.
+// trackLimits runs the poller until ctx is done. A list of the Codex
+// profiles the poller found changed is not taken as it is: the poller took
+// it outside the hub goroutine, maybe from settings older than the ones a
+// codex_profiles.set has since applied and published, so the hub lists
+// them again on its goroutine, where the settings change.
 func (h *Hub) trackLimits(ctx context.Context) {
 	defer h.wg.Done()
 	h.limitsPoller.Run(ctx, func() bool { return h.nclients.Load() > 0 }, func(l proto.Limits) {
 		_ = h.doWait(ctx, func() { h.setLimits(l) })
 	}, func(list []codexaccount.Account) {
-		_ = h.doWait(ctx, func() { h.applyCodexAccounts(list) })
+		_ = h.doWait(ctx, func() {
+			if svc := h.opts.CodexProfiles; svc != nil {
+				fresh, err := svc.Accounts(ctx)
+				if err != nil {
+					return
+				}
+				list = fresh
+			}
+			h.applyCodexAccounts(list)
+		})
 	})
 }
 
