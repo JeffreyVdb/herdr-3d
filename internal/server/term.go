@@ -65,6 +65,10 @@ type termWatches struct {
 	procs   int
 	procsOf map[*Client]int
 	freed   chan struct{} // closed (and replaced) when one is reaped
+	// #176: the running controllers, per worker id, until each is released
+	// and reaped: a new controller of the worker waits for the ones whose
+	// watch ended, or herdr would refuse it for its own predecessor.
+	ctlProcs map[string]map[*ctlProc]struct{}
 }
 
 // watch is one connection watching one worker's pane.
@@ -80,12 +84,16 @@ type watch struct {
 	// #74: the fullscreen laptop.
 	ctx                context.Context
 	socket             string
-	autoCols, autoRows bool            // the size is the pane's, not the client's, so it follows the pane
+	autoCols, autoRows bool            // the size is the pane's, not the client's, so it follows the pane (under hub.zoom.mu once it runs: #176's read-only fallback sets them)
 	resize             chan [2]int     // the pane's new size, for the pump (cap 1)
 	fullscreen         bool            // the tab is wanted zoomed on the pane (under hub.zoom.mu)
 	follow             bool            // the client sent fullscreen (true or false): it hears of the pane's zoom, focus and size changing
 	zoom               zoomWatch       // under hub.zoom.mu
 	zoomAck            *proto.ZoomInfo // the zoom state the ack tells (runWatch's goroutine only)
+
+	// #176: the seated laptop owns its pane (termcontrol.go).
+	control bool     // the client asked for control
+	ctl     ctlWatch // under termWatches.mu
 }
 
 func (t *termWatches) get(c *Client, id string) *watch {
@@ -198,6 +206,9 @@ func (t *termWatches) send(w *watch, frame func(n uint64) []byte) error {
 	if !roomy(w.c) {
 		return errResync
 	}
+	if !t.sendControl(w) { // #176: who owns the pane, before the frame it applies to
+		return errResync
+	}
 	select {
 	case w.c.send <- frame(w.n + 1):
 		w.n++
@@ -229,6 +240,9 @@ func (h *Hub) startWatch(ctx context.Context, c *Client, cmd proto.Command) erro
 	if err != nil {
 		return err
 	}
+	if a.Control && h.term.controls(c, a.ID) {
+		return fmt.Errorf("%w: this connection already controls a terminal (one per connection)", errCapacity)
+	}
 	conn, host := h.term.counts(c)
 	if old := h.term.get(c, a.ID); old != nil { // a re-watch replaces it
 		conn, host = conn-1, host-1
@@ -239,9 +253,11 @@ func (h *Hub) startWatch(ctx context.Context, c *Client, cmd proto.Command) erro
 	case host >= h.opts.MaxObservers:
 		return fmt.Errorf("%w: %d panes are watched already (--max-observers)", errCapacity, host)
 	}
+	control := a.Control && h.controller() != nil // #176: a controller's size is the client's, never the pane's
 	w := &watch{c: c, id: a.ID, session: wk.Session, pane: wk.PaneID, cols: a.Cols, rows: a.Rows, fps: a.Fps,
-		socket: f.socket, autoCols: a.Cols == 0, autoRows: a.Rows == 0, resize: make(chan [2]int, 1),
-		fullscreen: a.Fullscreen != nil && *a.Fullscreen, follow: a.Fullscreen != nil}
+		socket: f.socket, autoCols: a.Cols == 0 && !control, autoRows: a.Rows == 0 && !control, resize: make(chan [2]int, 1),
+		fullscreen: a.Fullscreen != nil && *a.Fullscreen, follow: a.Fullscreen != nil,
+		control: control, ctl: ctlWatch{poke: make(chan struct{}, 1)}}
 	if w.fps == 0 {
 		w.fps = DefaultWatchFps
 	}
@@ -356,10 +372,31 @@ func (h *Hub) runWatch(hctx, ctx context.Context, w *watch, cmd proto.Command) {
 			h.followStart(w, info, w.cols, w.rows)
 		}
 	}
+	if w.control {
+		h.ctlSize(w, w.cols, w.rows)
+		h.wg.Add(1)
+		go func() {
+			defer h.wg.Done()
+			h.followHistory(ctx, w) // #176
+		}()
+	}
 	var fails []time.Time
 	acked := false
 	for {
-		obs, err := h.startObserver(ctx, w)
+		var (
+			obs herdr.FrameStream
+			cs  herdr.ControlStream
+			err error
+		)
+		owning := h.term.wantsControl(w)
+		if owning {
+			cs, err = h.startController(ctx, w)
+			if cs != nil {
+				obs = cs
+			}
+		} else {
+			obs, err = h.startObserver(ctx, w)
+		}
 		if !acked {
 			acked = true
 			if err != nil && ctx.Err() == nil {
@@ -373,12 +410,28 @@ func (h *Hub) runWatch(hctx, ctx context.Context, w *watch, cmd proto.Command) {
 			h.finishWatchCmd(hctx, w, cmd, nil)
 		}
 		if err == nil {
-			err = h.pump(ctx, w, obs)
-			obs.Close() // reaped
+			err = h.pump(ctx, w, obs, cs)
+			if cs != nil {
+				h.stopController(w, cs) // released, then reaped
+			} else {
+				obs.Close() // reaped
+			}
 			h.term.release(w.c)
 		}
 		if ctx.Err() != nil || errors.Is(err, errWatchStopped) {
 			return
+		}
+		// #176: herdr refused the controller (another client owns the pane) or
+		// a client took it over: observe read only, at once and for good.
+		var closed *closedError
+		if owning && errors.As(err, &closed) && (herdr.ControlRefused(closed.reason) || herdr.ControlTakenOver(closed.reason)) {
+			why := proto.ReadOnlyBusy
+			if herdr.ControlTakenOver(closed.reason) {
+				why = proto.ReadOnlyTakenOver
+			}
+			h.readOnly(ctx, w, why)
+			fails = nil
+			continue
 		}
 		if errors.Is(err, errResync) {
 			h.log.Debug("watch resync", "client", w.c.name, "worker", w.id)
@@ -392,6 +445,14 @@ func (h *Hub) runWatch(hctx, ctx context.Context, w *watch, cmd proto.Command) {
 			fails = fails[1:]
 		}
 		fails = append(fails, now)
+		if len(fails) > observerRestarts && owning {
+			// #176: a controller that keeps failing (an old herdr, a pane it
+			// cannot own): the screen is still worth showing, read only.
+			h.log.Warn("controller failed: observing read only", "client", w.c.name, "worker", w.id, "pane", w.pane, "err", err)
+			h.readOnly(ctx, w, proto.ReadOnlyFailed)
+			fails = nil
+			continue
+		}
 		if len(fails) > observerRestarts {
 			h.log.Warn("observer failed", "client", w.c.name, "worker", w.id, "pane", w.pane, "err", err)
 			_ = h.doWait(hctx, func() { h.closeWatch(w, proto.ClosedObserverFailed) })
@@ -421,7 +482,7 @@ func (h *Hub) startObserver(ctx context.Context, w *watch) (herdr.FrameStream, e
 func (h *Hub) finishWatchCmd(hctx context.Context, w *watch, cmd proto.Command, err error) {
 	var data any
 	if err == nil {
-		data = proto.TerminalWatchResult{Pane: w.pane, Cols: w.cols, Rows: w.rows, Zoom: w.zoomAck}
+		data = proto.TerminalWatchResult{Pane: w.pane, Cols: w.cols, Rows: w.rows, Zoom: w.zoomAck, Control: w.control}
 	}
 	if derr := h.doWait(hctx, func() {
 		h.audit(hctx, w.c, cmd, err)
@@ -506,17 +567,35 @@ func (q *watchQueue) take() (data []byte, full bool, cols, rows int, ok bool, er
 	return data, full, cols, rows, true, nil
 }
 
+// restart empties the queue for a resync in place (#176: a controller's
+// stream goes on): nothing pending, and diffs are dropped until the next
+// full frame.
+func (q *watchQueue) restart() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.data, q.full, q.pending, q.gotFull, q.overflow = nil, false, false, false, false
+}
+
 func (q *watchQueue) state() (gotFull, overflow bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return q.gotFull, q.overflow
 }
 
+// closedError is a stream that ended with herdr's terminal.closed.
+type closedError struct{ reason string }
+
+func (e *closedError) Error() string { return fmt.Sprintf("%v: %s", errObserverEnded, e.reason) }
+func (e *closedError) Unwrap() error { return errObserverEnded }
+
 // pump forwards an observer's frames to the watch's connection, at most
 // fps a second, through its watchQueue. It returns when the observer ends
 // (errObserverEnded, errStalled), the watch ends, or it must resync
-// (errResync: the queue overflowed or the connection has no room).
-func (h *Hub) pump(ctx context.Context, w *watch, obs herdr.FrameStream) error {
+// (errResync: the queue overflowed or the connection has no room). #176: a
+// controller's stream (cs) resyncs in place instead: its process goes on
+// (a restart would release the pane and attach again), the queue starts
+// over and a resize to the same size asks herdr for a full frame.
+func (h *Hub) pump(ctx context.Context, w *watch, obs herdr.FrameStream, cs herdr.ControlStream) error {
 	q := newWatchQueue()
 	ended := make(chan error, 1)
 	go func() { // until obs is closed
@@ -526,7 +605,7 @@ func (h *Hub) pump(ctx context.Context, w *watch, obs herdr.FrameStream) error {
 			case err != nil && errors.Is(err, io.EOF):
 				err = errObserverEnded
 			case err == nil && f.Closed:
-				err = fmt.Errorf("%w: %s", errObserverEnded, f.Reason)
+				err = &closedError{f.Reason}
 			}
 			if err != nil {
 				ended <- err
@@ -550,6 +629,9 @@ func (h *Hub) pump(ctx context.Context, w *watch, obs herdr.FrameStream) error {
 		if err != nil || !ok {
 			return err
 		}
+		if cs != nil && full {
+			h.controlOwned(w, cols, rows) // #176: the controller's first frame: the pane is ours
+		}
 		data := base64.StdEncoding.EncodeToString(pend)
 		if err := h.term.send(w, func(n uint64) []byte {
 			return mustJSON(proto.TerminalFrame{T: proto.TTerminalFrame, ID: w.id, Pane: w.pane, N: n, Full: full,
@@ -558,6 +640,24 @@ func (h *Hub) pump(ctx context.Context, w *watch, obs herdr.FrameStream) error {
 			return err
 		}
 		last = time.Now()
+		return nil
+	}
+	// resynced handles an error of the loop: a controller's resync is done in
+	// place (nil: go on), anything else ends the pump.
+	resynced := func(err error) error {
+		if cs == nil || !errors.Is(err, errResync) {
+			return err
+		}
+		h.log.Debug("watch resync in place", "client", w.c.name, "worker", w.id)
+		q.restart()
+		if !h.awaitRoom(ctx, w) {
+			return ctx.Err()
+		}
+		cols, rows, cw, ch := h.term.ctlGrid(w)
+		if err := cs.Resize(cols, rows, cw, ch); err != nil {
+			return err
+		}
+		first.Reset(h.opts.FirstFrame)
 		return nil
 	}
 	for {
@@ -579,15 +679,18 @@ func (h *Hub) pump(ctx context.Context, w *watch, obs herdr.FrameStream) error {
 			}
 		case <-flushAt.C:
 			arm = false
-			if err := flush(); err != nil {
+			if err := resynced(flush()); err != nil {
 				return err
 			}
 		case <-q.ready:
 			if _, overflow := q.state(); overflow {
-				return errResync
+				if err := resynced(errResync); err != nil {
+					return err
+				}
+				continue
 			}
 			if wait := interval - time.Since(last); wait <= 0 {
-				if err := flush(); err != nil {
+				if err := resynced(flush()); err != nil {
 					return err
 				}
 			} else if !arm {
@@ -636,6 +739,9 @@ func termDefaults(o *Options) {
 	if o.ZoomPoll <= 0 { // #74
 		o.ZoomPoll = DefaultZoomPoll
 	}
+	if o.HistoryPoll <= 0 { // #176
+		o.HistoryPoll = DefaultHistoryPoll
+	}
 	if o.MaxTranscriptWatches <= 0 { // M16 transcript
 		o.MaxTranscriptWatches = DefaultMaxTranscriptWatches
 	}
@@ -648,7 +754,8 @@ func (h *Hub) initTerm() {
 	h.term.byC = map[*Client]map[string]*watch{}
 	h.term.procsOf = map[*Client]int{}
 	h.term.freed = make(chan struct{})
-	h.zoom.tabs = map[string]*zoomTab{} // #74
+	h.term.ctlProcs = map[string]map[*ctlProc]struct{}{} // #176
+	h.zoom.tabs = map[string]*zoomTab{}                  // #74
 	h.lanes = map[string]*inputLane{}
 	h.questions = map[string]questionState{}
 	h.calls = map[string]workerCalls{} // #106

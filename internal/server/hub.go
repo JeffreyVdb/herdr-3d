@@ -166,6 +166,12 @@ type Options struct {
 	// a followed watch looks again (default DefaultZoomPoll).
 	PaneState func(ctx context.Context, socket, pane string) (herdr.PaneState, bool)
 	ZoomPoll  time.Duration
+	// #176: PaneScroll reads where a pane's view is in herdr's history
+	// (pane.get; nil: a controlled laptop gets no terminal.history).
+	// HistoryPoll is how often a view above the live bottom is read again
+	// (default DefaultHistoryPoll).
+	PaneScroll  func(ctx context.Context, socket, pane string) (herdr.PaneScroll, bool)
+	HistoryPoll time.Duration
 	// MaxWatches caps the watches of one connection, MaxObservers all of
 	// them (defaults DefaultMaxWatches, DefaultMaxObservers).
 	MaxWatches, MaxObservers int
@@ -1075,6 +1081,10 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startUnwatch
 		case proto.CmdTerminalZoom: // #74
 			start = h.startZoom
+		case proto.CmdTerminalResize: // #176
+			start = h.startResize
+		case proto.CmdTerminalScroll: // #176
+			start = h.startScroll
 		case proto.CmdWorkerKeys:
 			start = h.startKeys
 		case proto.CmdWorkerPrompt:

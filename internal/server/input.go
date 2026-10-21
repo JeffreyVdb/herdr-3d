@@ -169,7 +169,10 @@ func (h *Hub) queueLane(ctx context.Context, id string, job func(context.Context
 		l = &inputLane{}
 		h.lanes[id] = l
 	}
-	l.jobs = append(l.jobs, job)
+	l.jobs = append(l.jobs, func(ctx context.Context) {
+		h.toLive(id) // #176: input brings a controlled view back to the live bottom
+		job(ctx)
+	})
 	if !l.running {
 		l.running = true
 		h.wg.Add(1)

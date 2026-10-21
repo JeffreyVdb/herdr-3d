@@ -11,6 +11,10 @@ const (
 	CmdWorkerPrompt    = "worker.prompt"
 	CmdWorkerAnswer    = "worker.answer"
 	CmdTerminalZoom    = "terminal.zoom" // #74
+	// #176: the seated laptop's controller: the real PTY's size and herdr's
+	// history.
+	CmdTerminalResize = "terminal.resize"
+	CmdTerminalScroll = "terminal.scroll"
 
 	// TTerminalFrame and TTerminalClosed go only to the watching
 	// connection: no seq, not in the replay ring.
@@ -19,10 +23,15 @@ const (
 	// TTerminalState (#74) is a followed watch's zoom, focus or size
 	// changing: connection-scoped like the frames.
 	TTerminalState = "terminal.state"
+	// #176: a control watch's ownership (TerminalControl) and where its view
+	// is in herdr's history (TerminalHistory): connection-scoped like the frames.
+	TTerminalControl = "terminal.control"
+	TTerminalHistory = "terminal.history"
 )
 
 func init() {
-	Commands = append(Commands, CmdTerminalWatch, CmdTerminalUnwatch, CmdWorkerKeys, CmdWorkerPrompt, CmdWorkerAnswer, CmdTerminalZoom)
+	Commands = append(Commands, CmdTerminalWatch, CmdTerminalUnwatch, CmdWorkerKeys, CmdWorkerPrompt, CmdWorkerAnswer, CmdTerminalZoom,
+		CmdTerminalResize, CmdTerminalScroll)
 }
 
 // Error codes.
@@ -61,6 +70,83 @@ type TerminalWatchArgs struct {
 	// focus and size (terminal.state). Absent (nil): the watch of an old
 	// client, as before #74: no zoom, no state messages.
 	Fullscreen *bool `json:"fullscreen,omitempty"`
+	// Control (#176): own the pane while it is watched (the seated laptop):
+	// the bridge runs herdr's terminal controller instead of an observer, the
+	// real PTY at Cols × Rows (absent: the pane's size), and terminal.resize
+	// and terminal.scroll act on it. At most one per connection. When herdr
+	// refuses (another client owns the pane) the watch observes read only
+	// (terminal.control says so).
+	Control bool `json:"control,omitempty"`
+}
+
+// terminal.control modes and read-only reasons (#176).
+const (
+	ControlOwned    = "control" // the bridge owns the pane for this watch
+	ControlReadOnly = "observe" // it observes the pane read only
+	// ReadOnlyBusy: another client owns the pane (herdr refused the controller).
+	ReadOnlyBusy = "busy"
+	// ReadOnlyTakenOver: another client took the pane over.
+	ReadOnlyTakenOver = "taken_over"
+	// ReadOnlyFailed: the controller kept failing to start or ended at once.
+	ReadOnlyFailed = "failed"
+)
+
+// TerminalControl (#176) tells a control watch who owns its pane: Mode
+// ControlOwned once the controller's first frame came, ControlReadOnly (with
+// Reason) when the watch fell back to a read-only observer. Cols × Rows is the
+// size its frames come at from now on. Sent when the mode changes, before the
+// next frame.
+type TerminalControl struct {
+	T      string `json:"t"`
+	ID     string `json:"id"`
+	Pane   string `json:"pane"`
+	Mode   string `json:"mode"`
+	Reason string `json:"reason,omitempty"`
+	Cols   int    `json:"cols"`
+	Rows   int    `json:"rows"`
+}
+
+// TerminalHistory (#176) is where a controlled pane's view is in herdr's
+// history: Offset lines above the live bottom (0: live), at most Max, Rows
+// rows shown. Sent when it changes (herdr's `pane.get`, read after a scroll and
+// about once a second while the view is above the live bottom).
+type TerminalHistory struct {
+	T      string `json:"t"`
+	ID     string `json:"id"`
+	Pane   string `json:"pane"`
+	Offset int    `json:"offset"`
+	Max    int    `json:"max"`
+	Rows   int    `json:"rows"`
+}
+
+// TerminalResizeArgs are the args of terminal.resize (#176): the PTY's new
+// size (cols 40-300, rows 10-100) and, optionally, a cell's size in pixels
+// (0-256).
+type TerminalResizeArgs struct {
+	ID         string `json:"id"`
+	Cols       int    `json:"cols"`
+	Rows       int    `json:"rows"`
+	CellWidth  int    `json:"cell_width_px,omitempty"`
+	CellHeight int    `json:"cell_height_px,omitempty"`
+}
+
+// TerminalResizeResult is the ack data of terminal.resize.
+type TerminalResizeResult struct {
+	Cols int `json:"cols"`
+	Rows int `json:"rows"`
+}
+
+// TerminalScrollArgs are the args of terminal.scroll (#176): exactly one of a
+// wheel (Direction "up" or "down", Lines 1-1000, over cell Column × Row with
+// Modifiers: Shift 1, Ctrl 2, Alt 4) and Bottom (back to the live bottom).
+type TerminalScrollArgs struct {
+	ID        string `json:"id"`
+	Direction string `json:"direction,omitempty"`
+	Lines     int    `json:"lines,omitempty"`
+	Column    int    `json:"column,omitempty"`
+	Row       int    `json:"row,omitempty"`
+	Modifiers int    `json:"modifiers,omitempty"`
+	Bottom    bool   `json:"bottom,omitempty"`
 }
 
 // Zoom states of a watched pane (ZoomInfo.State).
@@ -88,6 +174,9 @@ type TerminalWatchResult struct {
 	Cols int       `json:"cols"`
 	Rows int       `json:"rows"`
 	Zoom *ZoomInfo `json:"zoom,omitempty"`
+	// Control (#176): the watch asked for control and the bridge can give it
+	// (terminal.control follows with who owns the pane).
+	Control bool `json:"control,omitempty"`
 }
 
 // TerminalZoomArgs are the args of terminal.zoom (#74): On is required.
