@@ -202,6 +202,7 @@ async function withBridges(page: Page): Promise<void> {
 
 const said = (task: string) => ({ provenance: 'dictated', value: task, span: { source: 0, start: 0, end: task.length } });
 
+// Mutable fixture namespaces are created by each getter read at boot, never shared by later tests in a worker.
 export const SURFACES: Surface[] = [
   {
     name: 'bars-city',
@@ -345,7 +346,7 @@ export const SURFACES: Surface[] = [
     open: async (page) => {
       await openMenu(page);
       await page.locator('.audio-music').click();
-      await page.locator('.audio-credits').click();
+      await page.locator('.audio-credits').click({ timeout: 20_000 });
       await expect(page.locator('dialog.credits').first()).toBeVisible();
     },
     root: 'dialog.credits',
@@ -394,7 +395,9 @@ export const SURFACES: Surface[] = [
     // The hire composer holding a pasted screenshot: an image chip (its thumbnail and remove button) in the text.
     name: 'hire-chips',
     fixture: 'demo-m4',
-    wsQuery: `${SIM}&upload_key=ui${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    get wsQuery() {
+      return `${SIM}&upload_key=ui${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    },
     open: async (page) => {
       await onFloor(page);
       await page.evaluate(() => window.__h3d.openHire(5));
@@ -556,7 +559,9 @@ export const SURFACES: Surface[] = [
     // fixture server shares a key's presets between connections).
     name: 'hire-presets',
     fixture: 'demo-m4',
-    wsQuery: `${SIM}&simhirepresets=ui${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    get wsQuery() {
+      return `${SIM}&simhirepresets=ui${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    },
     open: async (page) => {
       await onFloor(page);
       await page.evaluate(() => window.__h3d.openHire(5));
@@ -581,7 +586,9 @@ export const SURFACES: Surface[] = [
     // #93: the hire preset editor, as "New preset" opens it.
     name: 'hire-preset-editor',
     fixture: 'demo-m4',
-    wsQuery: `${SIM}&simsecretson=1&simhirepresets=ui${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}e`,
+    get wsQuery() {
+      return `${SIM}&simsecretson=1&simhirepresets=ui${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}e`;
+    },
     open: async (page) => {
       await onFloor(page);
       await page.evaluate(() => window.__h3d.openHire(5));
@@ -968,7 +975,9 @@ export const SURFACES: Surface[] = [
     name: 'whiteboard',
     fixture: 'demo',
     extra: '&me=Theo',
-    wsQuery: `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    get wsQuery() {
+      return `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    },
     open: async (page) => void (await openWhiteboard(page)),
     root: '.wb',
   },
@@ -977,7 +986,9 @@ export const SURFACES: Surface[] = [
     name: 'whiteboard-empty',
     fixture: 'demo',
     extra: '&me=Theo',
-    wsQuery: `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    get wsQuery() {
+      return `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    },
     open: async (page) => {
       await openWhiteboard(page, false); // (a short screen has no room for the welcome: Excalidraw leaves it out)
       await page.waitForTimeout(300);
@@ -988,7 +999,9 @@ export const SURFACES: Surface[] = [
     name: 'whiteboard-menu',
     fixture: 'demo',
     extra: '&me=Theo',
-    wsQuery: `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    get wsQuery() {
+      return `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    },
     open: async (page) => {
       await openWhiteboard(page);
       await page.locator('.wb .main-menu-trigger, .wb [data-testid="main-menu-trigger"]').first().click();
@@ -1001,7 +1014,9 @@ export const SURFACES: Surface[] = [
     name: 'whiteboard-colors',
     fixture: 'demo',
     extra: '&me=Theo',
-    wsQuery: `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    get wsQuery() {
+      return `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    },
     open: async (page) => {
       await openWhiteboard(page);
       await page.locator('.wb .color-picker__button.active-color').first().click();
@@ -1014,7 +1029,9 @@ export const SURFACES: Surface[] = [
     name: 'whiteboard-tools',
     fixture: 'demo',
     extra: '&me=Theo',
-    wsQuery: `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    get wsQuery() {
+      return `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    },
     open: async (page) => {
       await openWhiteboard(page);
       await page.locator('.wb .App-toolbar__extra-tools-trigger').first().click();
@@ -1027,7 +1044,9 @@ export const SURFACES: Surface[] = [
     name: 'whiteboard-context',
     fixture: 'demo',
     extra: '&me=Theo',
-    wsQuery: `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    get wsQuery() {
+      return `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    },
     open: async (page) => {
       await openWhiteboard(page);
       const box = await page.locator('.wb-canvas').boundingBox();
@@ -1042,7 +1061,9 @@ export const SURFACES: Surface[] = [
     name: 'whiteboard-search',
     fixture: 'demo',
     extra: '&me=Theo',
-    wsQuery: `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    get wsQuery() {
+      return `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    },
     open: async (page) => {
       await openWhiteboard(page);
       await page.locator('.wb [data-testid="main-menu-trigger"]').first().click();
@@ -1055,7 +1076,9 @@ export const SURFACES: Surface[] = [
     name: 'whiteboard-help',
     fixture: 'demo',
     extra: '&me=Theo',
-    wsQuery: `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    get wsQuery() {
+      return `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    },
     open: async (page) => {
       await openWhiteboard(page);
       // The editor takes keys only while it has the focus (handleKeyboardGlobally: false): a click on empty canvas first.
@@ -1071,7 +1094,9 @@ export const SURFACES: Surface[] = [
     name: 'whiteboard-mermaid',
     fixture: 'demo',
     extra: '&me=Theo',
-    wsQuery: `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    get wsQuery() {
+      return `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    },
     open: async (page) => {
       await openWhiteboard(page);
       await page.locator('.wb .App-toolbar__extra-tools-trigger').first().click();

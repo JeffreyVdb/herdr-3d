@@ -141,6 +141,10 @@
   /* What is scrolled to clears the sticky genre heading (14px + its line + 8px) and its ring's room. */
   scroll-padding-top: 52px;
 }
+:root[data-ui-theme='ubuntu'] .credits-fonts-texts {
+  /* The licence link's 3px ring, 2px outside it, must clear the following Marks heading. */
+  padding-bottom: 5px;
+}
 :root[data-ui-theme='ubuntu'] .credits-body:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
