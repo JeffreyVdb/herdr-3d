@@ -20,7 +20,7 @@ import (
 
 // RulesVersion names the rule set: it is part of every revision, so a
 // review made under other rules is stale.
-const RulesVersion = "gitleaks-" + gitleaksVersion + "+" + "structural-1"
+const RulesVersion = "gitleaks-" + gitleaksVersion + "+" + "structural-1" + "+" + "entropy-1"
 
 // Candidate is one possible secret: the bytes [Start, End) of the text, the
 // detectors that found exactly that range (gitleaks:<rule id> or a Kind*),
@@ -71,7 +71,12 @@ func Scan(text string, own func(path string) bool) []Candidate {
 			won = append(won, p)
 		}
 	}
-	more := outside(text, repeats(text, won), refs)
+	// The other occurrences of a value another rule found are repeats as
+	// before: the entropy rule's spans are not one of those values, and give
+	// way to a repeat over them.
+	known := slices.DeleteFunc(slices.Clone(won), func(s span) bool { return s.kind == KindEntropy })
+	more := outside(text, repeats(text, known), refs)
+	won = slices.DeleteFunc(won, func(s span) bool { return s.kind == KindEntropy && overlapsAny(s.start, s.end, more) })
 	for r, k := range kindsBySpan(more) {
 		kinds[r] = k
 	}
@@ -87,8 +92,8 @@ func Scan(text string, own func(path string) bool) []Candidate {
 
 // detect is every detector's spans in text: Gitleaks' rules (and its
 // provider rules again before a sentence's punctuation), then the
-// structural ones. refs are the own references masked in text (nil: as
-// typed).
+// structural ones, then the entropy rule's (entropyKept). refs are the own
+// references masked in text (nil: as typed).
 func detect(text string, refs []span) []span {
 	var spans []span
 	for _, m := range append(Gitleaks(text), punctuated(text, refs)...) {
@@ -98,7 +103,35 @@ func detect(text string, refs []span) []span {
 		}
 		spans = append(spans, span{start: m.Start, end: m.End, kind: "gitleaks:" + m.Rule, rank: rank, shaped: true})
 	}
-	return append(spans, structural(text, refs)...)
+	spans = append(spans, structural(text, refs)...)
+	return append(spans, entropyKept(text, entropySpans(text, refs), spans)...)
+}
+
+// entropyKept are the entropy spans that no other detector found a part of:
+// the entropy rule fills the gaps, and every other finding keeps its bytes
+// and its kinds (the same range found twice would add a kind to it). One
+// exception: a Gitleaks generic rule's finding is no known format, only a
+// value after a name, and its value runs on through a sentence's '.'
+// ("<tok>." and "<tok>..."): where the bytes it has past the run are only
+// that punctuation, and it starts where the run does, the run replaces it at
+// the run's exact bytes (rankEntropy comes before rankGeneric). Any other
+// overlap keeps the generic finding whole and drops the run: a prefix
+// ("foo=<tok>", where the run starts after the '='), a longer value, a
+// generic span inside the run, a partial overlap; so does "foo=<tok>." (the
+// finding is the whole value, period included, as before). The same range
+// stays the generic rule's.
+func entropyKept(text string, found, others []span) []span {
+	return slices.DeleteFunc(found, func(e span) bool {
+		return slices.ContainsFunc(others, func(o span) bool {
+			if o.start >= e.end || e.start >= o.end {
+				return false
+			}
+			if o.rank != rankGeneric {
+				return true
+			}
+			return !(o.start == e.start && o.end > e.end && strings.Trim(text[e.end:o.end], ".!?:") == "")
+		})
+	})
 }
 
 // gitleaksBoundary ends most Gitleaks rules: after the token a blank, a

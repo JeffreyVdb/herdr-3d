@@ -29,6 +29,11 @@ const (
 	maxClientMsg = 256 << 10
 )
 
+// acceptOptions deflates what the bridge sends when the client offers it
+// (#147): a browser does, Go clients (proto.Dial) do not. The read limit
+// still bounds a message as inflated.
+var acceptOptions = &websocket.AcceptOptions{CompressionMode: websocket.CompressionContextTakeover}
+
 // DefaultCloseGrace is how long Serve, when it stops, waits for the clients
 // to answer its close handshake before it cuts them off.
 const DefaultCloseGrace = time.Second
@@ -128,7 +133,7 @@ func (s *Server) eachConn(fn func(*websocket.Conn, context.CancelFunc)) {
 }
 
 func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
-	ws, err := websocket.Accept(w, r, nil)
+	ws, err := websocket.Accept(w, r, acceptOptions)
 	if err != nil {
 		s.log.Debug("websocket accept failed", "err", err)
 		return

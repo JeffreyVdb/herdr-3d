@@ -76,7 +76,8 @@ func (s span) found() [2]int {
 }
 
 // Ranks: a provider's exact format, then the structural families in this
-// order, then Gitleaks' generic rules, then repeats.
+// order, then the entropy rule (it wins over a generic rule's part of its
+// run: detect), then Gitleaks' generic rules, then repeats.
 const (
 	rankProvider = iota
 	rankPEM
@@ -87,6 +88,7 @@ const (
 	rankYAMLBlock
 	rankProse
 	rankFenced
+	rankEntropy
 	rankGeneric
 	rankRepeat
 )

@@ -360,7 +360,7 @@ export interface SecretCandidate {
   id: string;
   start: number;
   end: number;
-  /** What found it: `gitleaks:<rule id>`, `pem`, `auth-header`, `url-password`, `url-query`, `assignment`, `yaml-block`, `prose`, `fenced`, `repeat`. */
+  /** What found it: `gitleaks:<rule id>`, `pem`, `auth-header`, `url-password`, `url-query`, `assignment`, `yaml-block`, `prose`, `fenced`, `entropy`, `repeat`. */
   kinds: string[];
   /** Its bytes hold an escape, percent-encoding or a block's indentation: the file keeps them as typed. */
   encoded?: boolean;
