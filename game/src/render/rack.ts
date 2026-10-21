@@ -5,6 +5,7 @@ import type { HostDiskRate, HostStats } from '../net/protocol';
 import { barTone, memText, pctText, rackLevels, RACK_SERVERS, sampleClock, updatesText, type RackMode, type Tone } from '../world/hostStats';
 import type { Box3 } from '../world/layout';
 import { FONT } from './cards/layout';
+import { meshKit, reuse, type FloorPool, type PoolKit } from './floorPool';
 
 /**
  * #74: the server rack: a short rack of five 1U/2U servers (face plates, vents, drive bays) with a monitor and a keyboard on top,
@@ -301,25 +302,22 @@ function paint(g: CanvasRenderingContext2D, mode: RackMode, f: HostStats | null)
   return out;
 }
 
-/** The rack in `box` (its footprint, 0 to its top), its front toward +z. */
-export function buildRack(box: Box3): RackMesh {
-  const group = new THREE.Group();
-  group.name = 'server.rack';
-  const b = build(box);
+/** #141: the LEDs' mesh, their per-LED attribute and their clock (see `FloorPool`). */
+interface LedKit extends PoolKit {
+  leds: THREE.InstancedMesh;
+  aLed: THREE.InstancedBufferAttribute;
+  uTime: ReturnType<typeof floatUniform>;
+  uMotion: ReturnType<typeof floatUniform>;
+}
 
-  const body = new THREE.Mesh(b.body, new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: true }));
-  body.name = 'server.rack.body';
-  body.castShadow = true;
-  body.receiveShadow = true;
-  group.add(body);
+const floatUniform = (v: number) => uniform(v);
 
-  // The LEDs: one instanced draw; kind, level, phase and a rate jitter per instance.
-  const n = RACK_SERVERS * LEDS_PER_SERVER;
+function ledKit(n: number): LedKit {
   const ledGeo = new THREE.CircleGeometry(LED_R, 10);
   const aLed = new THREE.InstancedBufferAttribute(new Float32Array(n * 4), 4);
   ledGeo.setAttribute('aLed', aLed);
-  const uTime = uniform(0);
-  const uMotion = uniform(1);
+  const uTime = floatUniform(0);
+  const uMotion = floatUniform(1);
   const led = attribute('aLed', 'vec4');
   const kind = led.x;
   const level = led.y;
@@ -334,10 +332,33 @@ export function buildRack(box: Box3): RackMesh {
   ledMat.colorNode = vec3(0.22, 1.0, 0.48).mul(bright);
   ledMat.toneMapped = false;
   const leds = new THREE.InstancedMesh(ledGeo, ledMat, n);
-  leds.name = 'server.rack.leds';
   leds.frustumCulled = false;
+  return meshKit(n, [leds], { leds, aLed, uTime, uMotion });
+}
+
+/** The rack in `box` (its footprint, 0 to its top), its front toward +z; `pool`: its LEDs from there (#141). */
+export function buildRack(box: Box3, pool?: FloorPool): RackMesh {
+  const group = new THREE.Group();
+  group.name = 'server.rack';
+  const b = build(box);
+
+  const body = new THREE.Mesh(b.body, new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: true }));
+  body.name = 'server.rack.body';
+  body.castShadow = true;
+  body.receiveShadow = true;
+  group.add(body);
+
+  // The LEDs: one instanced draw; kind, level, phase and a rate jitter per instance. #141: pooled, the same mesh on every floor.
+  const n = RACK_SERVERS * LEDS_PER_SERVER;
+  const holder = {};
+  const kit = pool ? pool.take('rack.leds', n, holder, ledKit) : ledKit(n);
+  kit.holder = holder;
+  const { leds, aLed, uTime, uMotion } = kit;
+  reuse(leds, n);
+  leds.name = 'server.rack.leds';
+  uTime.value = 0;
+  uMotion.value = 1;
   b.leds.forEach((m, i) => leds.setMatrixAt(i, m));
-  leds.instanceMatrix.needsUpdate = true;
   // A fixed random phase and jitter per LED, so they never strobe in unison (the same on every floor and every run).
   let seed = 74;
   const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32);
@@ -346,6 +367,9 @@ export function buildRack(box: Box3): RackMesh {
     const isLink = i % LEDS_PER_SERVER === 3;
     aLed.setXYZW(i, isActivity ? 2 : isLink ? 2 : 0, 0, rnd(), rnd());
   }
+  aLed.needsUpdate = true;
+  /** #141: a rack of a floor you left writes nothing into the pooled LEDs. */
+  const live = () => kit.holder === holder;
   group.add(leds);
 
   // The screen: a canvas texture, redrawn only when what it says changes.
@@ -373,7 +397,7 @@ export function buildRack(box: Box3): RackMesh {
   /** The kinds and levels of the LEDs: power steady, activity from `levels` (or calm without), link always calm. */
   const writeRates = (next: number[] | null) => {
     const same = next === null ? levels === null : levels !== null && next.length === levels.length && next.every((v, i) => v === levels?.[i]);
-    if (same) return;
+    if (same || !live()) return;
     levels = next;
     for (let i = 0; i < n; i++) {
       const s = Math.floor(i / LEDS_PER_SERVER);
@@ -405,11 +429,11 @@ export function buildRack(box: Box3): RackMesh {
       draws++;
     },
     setTime(s) {
-      uTime.value = s;
+      if (live()) uTime.value = s;
     },
     setMotion(on) {
       motion = on;
-      uMotion.value = on ? 1 : 0;
+      if (live()) uMotion.value = on ? 1 : 0;
     },
     info: () => ({
       drawCalls: group.children.length,
@@ -423,7 +447,7 @@ export function buildRack(box: Box3): RackMesh {
     }),
     dispose() {
       group.traverse((o) => {
-        if (o instanceof THREE.Mesh) {
+        if (o instanceof THREE.Mesh && !pool?.owns(o)) {
           o.geometry.dispose();
           (o.material as THREE.Material).dispose();
         }

@@ -4,6 +4,7 @@ import type { StampTone } from '../world/crew';
 import { TRAY_CAP, TRAY_FOLDER_SCALE, trayAt, trayFolderAt, type TrayPose } from '../world/delivery';
 import { TRAY_BOX } from '../world/deskKit';
 import { STAMP_3D } from './crewLook';
+import { meshKit, reuse, type FloorPool, type PoolKit } from './floorPool';
 
 /**
  * M6c: the orchestrator's in-tray: a small steel tray on the desk's front corner and the reports handed in lying
@@ -64,8 +65,33 @@ export function edgeGeometry(): THREE.BufferGeometry {
 /** A stamp tone's colour on a folder's edge. */
 export const toneColor = (tone: StampTone | null): number => (tone ? STAMP_3D[tone] : NO_VERDICT);
 
+/** #141: the trays' meshes, sized for `capacity` desks (see `FloorPool`). */
+interface TrayKit extends PoolKit {
+  trays: THREE.InstancedMesh;
+  folders: THREE.InstancedMesh;
+  edges: THREE.InstancedMesh;
+}
+
+function trayKit(capacity: number): TrayKit {
+  const n = Math.max(1, capacity);
+  const make = (geo: THREE.BufferGeometry, mat: THREE.Material, count: number) => {
+    const mesh = new THREE.InstancedMesh(geo, mat, count);
+    mesh.frustumCulled = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    return mesh;
+  };
+  const trays = make(trayGeometry(), new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: true }), n);
+  const folders = make(folderGeometry(), new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: true }), n * TRAY_CAP);
+  const edges = make(edgeGeometry(), new THREE.MeshToonMaterial({ color: 0xffffff }), n * TRAY_CAP);
+  // The edges' verdict colours are there from the start (the shader is built with them).
+  edges.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * TRAY_CAP * 3).fill(1), 3);
+  return meshKit(n, [trays, folders, edges], { trays, folders, edges });
+}
+
 export class TrayView {
   readonly group = new THREE.Group();
+  private readonly kit: TrayKit;
+  private readonly pooled: boolean;
   private readonly trays: THREE.InstancedMesh;
   private readonly folders: THREE.InstancedMesh;
   private readonly edges: THREE.InstancedMesh;
@@ -79,34 +105,38 @@ export class TrayView {
   private readonly v = new THREE.Vector3();
   private readonly s = new THREE.Vector3(1, 1, 1);
 
+  /** `pool`: the office's trays, their meshes kept from floor to floor (#141); none: their own. */
   constructor(
     readonly capacity: number,
     shadows: boolean,
+    pool?: FloorPool,
   ) {
     const n = Math.max(1, capacity);
     this.held = Array.from({ length: n }, () => 0);
     this.on = Array.from({ length: n }, () => false);
-    const make = (name: string, geo: THREE.BufferGeometry, mat: THREE.Material, count: number, shadow: boolean) => {
-      const mesh = new THREE.InstancedMesh(geo, mat, count);
+    this.pooled = !!pool;
+    this.kit = pool ? pool.take('trays', n, this, trayKit) : trayKit(n);
+    this.kit.holder = this;
+    const init = (name: string, mesh: THREE.InstancedMesh, count: number, shadow: boolean) => {
+      reuse(mesh, count);
       mesh.name = `tray.${name}`;
-      mesh.frustumCulled = false;
       mesh.castShadow = shadows && shadow;
       mesh.visible = false;
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       for (let i = 0; i < count; i++) mesh.setMatrixAt(i, ZERO);
       this.group.add(mesh);
       return mesh;
     };
-    this.trays = make('body', trayGeometry(), new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: true }), n, true);
-    this.folders = make('folders', folderGeometry(), new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: true }), n * TRAY_CAP, true);
-    this.edges = make('edges', edgeGeometry(), new THREE.MeshToonMaterial({ color: 0xffffff }), n * TRAY_CAP, false);
+    this.trays = init('body', this.kit.trays, n, true);
+    this.folders = init('folders', this.kit.folders, n * TRAY_CAP, true);
+    this.edges = init('edges', this.kit.edges, n * TRAY_CAP, false);
     for (let i = 0; i < n * TRAY_CAP; i++) this.edges.setColorAt(i, this.color.set(NO_VERDICT));
     this.group.name = 'trays';
   }
 
   /** Desk `i`'s tray with these folders (oldest first; null: no tray - a desk with no orchestrator at it). */
   set(i: number, pose: TrayPose | null, tones: ReadonlyArray<StampTone | null> = []): void {
-    if (i < 0 || i >= this.capacity) return;
+    // #141: pooled trays of a floor you left write nothing.
+    if (i < 0 || i >= this.capacity || this.kit.holder !== this) return;
     if (!pose) {
       this.trays.setMatrixAt(i, ZERO);
       for (let k = 0; k < TRAY_CAP; k++) {
@@ -154,11 +184,8 @@ export class TrayView {
     return { tray: this.on[i] ?? false, folders: this.held[i] ?? 0, edges };
   }
 
+  /** Pooled trays' meshes are the pool's: they stay. */
   dispose(): void {
-    for (const mesh of [this.trays, this.folders, this.edges]) {
-      mesh.geometry.dispose();
-      (mesh.material as THREE.Material).dispose();
-      mesh.dispose();
-    }
+    if (!this.pooled) this.kit.dispose();
   }
 }

@@ -67,7 +67,7 @@ test('P prompts the looked-at worker: sent, then it works and is done; queued wh
   await openGame(page, 'demo-m5', '', SIM);
   await enter(page, 'herdr-3d');
   const pebble = await face(page, 'Pebble');
-  await expect(page.locator('.prompt .key:not([aria-disabled])')).toHaveText(['ELaptop', 'CChanges', 'PPrompt', 'XSend home']);
+  await expect(page.locator('.prompt .key:not([aria-disabled])')).toHaveText(['ELaptop', 'CChanges', 'PPrompt', 'XSend home', 'FHandoff']);
 
   await page.keyboard.press('p');
   let p = await promptPanel(page, 'ready');
@@ -184,8 +184,8 @@ test('P says why not: a plain shell, a worker waiting on a question, an asleep f
 
   await enter(page, 'depot-manager');
   await face(page, 'Muffin');
-  await expect(page.locator('.prompt .key[aria-disabled="true"]', { hasText: 'Prompt' })).toHaveAttribute('title', 'depot-manager is asleep. Wake it from the elevator (L) to prompt Muffin.');
-  await expect(page.locator('.prompt .key[aria-disabled="true"]', { hasText: 'Changes' })).toHaveAttribute('title', /depot-manager is asleep/);
+  await expect(page.locator('.prompt .key[aria-disabled="true"]', { hasText: 'Prompt' })).toHaveAttribute('title', 'This floor is asleep. Wake it from the elevator (L) to prompt Muffin.');
+  await expect(page.locator('.prompt .key[aria-disabled="true"]', { hasText: 'Changes' })).toHaveAttribute('title', 'depot-manager is asleep: wake it from the elevator (L) first.');
   clean();
 });
 

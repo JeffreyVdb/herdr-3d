@@ -206,7 +206,13 @@ test('the sound control has a music popover with a slider and mute of its own, a
 
   // The credits panel: opened from the popover, one row per manifest track, license and source linked.
   const total = await page.evaluate(async () => (await (await fetch('/MUSIC_CREDITS.txt')).text()).split('\n').filter((l) => l.startsWith('"')).length);
+  // At 200% zoom the Menu scrolls: a Music button near its foot still opens a reachable popover.
+  await page.setViewportSize({ width: 640, height: 360 });
   await trigger.click();
+  await expect.poll(() => pop.evaluate((e) => {
+    const r = e.getBoundingClientRect();
+    return r.left >= 11.5 && r.top >= 11.5 && r.right <= innerWidth - 11.5 && r.bottom <= innerHeight - 11.5;
+  }), { message: 'the music popover clears every viewport edge by 12px' }).toBe(true);
   await pop.getByRole('button', { name: 'Music credits' }).click();
   await expect(pop).toBeHidden();
   const dialog = page.getByRole('dialog', { name: 'Music credits' });

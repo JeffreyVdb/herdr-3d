@@ -1083,12 +1083,12 @@ export class Laptops {
     this.liveAt.clear();
     this.planner.clear();
     if (office) {
-      this.meshes = new ScreenMeshes(office.layout.slots);
+      this.meshes = new ScreenMeshes(office.layout.slots, office.pool ?? undefined);
       office.root.add(this.meshes.group);
       const prints = new PrintMeshes(office.layout.slots);
       office.root.add(prints.group);
       this.prints.setMeshes(prints);
-      const cards = new MonitorCards(office.layout.slots);
+      const cards = new MonitorCards(office.layout.slots, office.pool ?? undefined);
       office.root.add(cards.group);
       this.monitors.setCards(cards);
     }

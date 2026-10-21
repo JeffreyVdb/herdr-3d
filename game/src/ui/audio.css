@@ -146,6 +146,7 @@
   box-sizing: border-box;
   width: 244px;
   max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);

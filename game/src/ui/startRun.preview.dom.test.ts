@@ -55,7 +55,7 @@ function setup(o: { supported?: boolean } = {}) {
 const base = () => document.querySelector('#run-worktree-base')?.textContent ?? '';
 const refetch = () => document.querySelector<HTMLButtonElement>('[data-key="refetch"]');
 const settle = async () => {
-  await new Promise((r) => setTimeout(r, 300)); // the debounced run.prepare
+  await vi.advanceTimersByTimeAsync(300); // the debounced run.prepare
   await flush();
 };
 function type(text: string) {
@@ -66,12 +66,15 @@ function type(text: string) {
 
 describe('StartRunDialog: the base as a preview (#134)', () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     installDialogs();
     vi.stubGlobal('CSS', { escape: (s: string) => s });
   });
   afterEach(() => {
+    for (const dialog of document.querySelectorAll<HTMLDialogElement>('dialog[open]')) dialog.close();
     document.body.replaceChildren();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it('opens and follows an edit on a preview, says the base is the last fetched one, and keeps the worktree on', async () => {
@@ -160,7 +163,7 @@ describe('StartRunDialog: the base as a preview (#134)', () => {
     if (c.before) t.release();
     await flush();
     type('Tidy the roof');
-    await new Promise((r) => setTimeout(r, 300));
+    await vi.advanceTimersByTimeAsync(300);
     // An edit while the recheck is on its way fetches too (the recheck's answer is dropped); after it, a preview.
     expect(t.prepares.at(-1)).toEqual({ floor: 'floor', text: 'Tidy the roof', ...(c.fetches ? {} : { preview: true }) });
     t.state.hold = false;
@@ -198,7 +201,7 @@ describe('StartRunDialog: the base as a preview (#134)', () => {
     t.state.hold = true;
     refetch()!.click();
     type('Tidy the roof');
-    await new Promise((r) => setTimeout(r, 300));
+    await vi.advanceTimersByTimeAsync(300);
     t.state.hold = false;
     t.release();
     await flush();

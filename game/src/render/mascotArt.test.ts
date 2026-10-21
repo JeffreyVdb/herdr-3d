@@ -38,7 +38,8 @@ describe('the mascot sheet', () => {
     expect(s.width).toBe(SPRITE * SPRITE_COLS);
     expect(s.height).toBe(SPRITE * SPRITE_ROWS);
     // Pixels are opaque or empty: crisp art, no stray half-alpha.
-    for (let i = 3; i < s.data.length; i += 4) expect(s.data[i] === 0 || s.data[i] === 255).toBe(true);
+    const invalidAlpha = s.data.findIndex((value, index) => index % 4 === 3 && value !== 0 && value !== 255);
+    expect(invalidAlpha, 'first pixel byte with a partial alpha').toBe(-1);
     if (process.env.H3D_MASCOT_SHEET) {
       // A look at the art, 6× (H3D_MASCOT_SHEET=1): test-results/mascots.png on the monitor's ground.
       const k = 6;

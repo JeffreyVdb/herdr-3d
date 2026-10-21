@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, openMenu, seatMode, shot, watchErrors } from './game';
+import { expectScheduleReady, frames, openGame, openMenu, seatMode, shot, watchErrors } from './game';
+
+test.use({ timezoneId: 'Europe/Brussels' });
 
 // #64 schedules (part 3 of #61): the scheduled agents dialog against the fixture bridge (`sim=1`,
 // tools/fixture-schedule.ts): "New" from the Menu creates one, the palette opens the dialog, "Schedule follow-up…"
@@ -92,7 +94,7 @@ test('“Schedule follow-up…” files the reply once, as written, and schedule
   await follow.click();
   const form = page.getByRole('dialog', { name: 'Schedule a follow-up to Zippy' });
   await expect(form).toBeVisible();
-  await expect.poll(() => page.evaluate(() => window.__h3d.scheduleForm()?.preparing)).toBe(false);
+  await expectScheduleReady(page);
   const f = await page.evaluate(() => window.__h3d.scheduleForm());
   expect(f).toMatchObject({ handoff: 'transcript', when: '', due: null, harness: w.harness, cwd: w.cwd });
   await form.locator('#sf-title-in').fill('After the soak');
@@ -180,7 +182,20 @@ async function sitAtZippy(page: Page, params: string): Promise<{ w: Worker; tx: 
 test('the suggestion chip opens the form prefilled; Save schedules it and the chip goes', async ({ page }) => {
   const clean = watchErrors(page);
   const { w, tx } = await sitAtZippy(page, suggestSim('save'));
-  const chip = tx.getByRole('button', { name: /^Schedule follow-up · tomorrow \d\d:45/ });
+  const suggestion = await page.evaluate((id) => window.__h3d.worker(id)?.schedule_suggestion, w.id);
+  expect(suggestion).toBeTruthy();
+  const made = new Date(suggestion!.at);
+  const due = Date.UTC(made.getUTCFullYear(), made.getUTCMonth(), made.getUTCDate() + 1, 10, 45);
+  expect(suggestion!.due_at).toBe(due);
+  // The fixture's UTC tomorrow can already be today in the viewer's zone near midnight.
+  const label = await page.evaluate((at) => {
+    const date = new Date(at);
+    const day = date.toDateString() === new Date().toDateString() ? 'today' : 'tomorrow';
+    const clock = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    const utc = Intl.DateTimeFormat().resolvedOptions().timeZone === 'UTC' ? '' : ' (10:45 UTC)';
+    return `Schedule follow-up · ${day} ${clock}${utc}`;
+  }, due);
+  const chip = tx.getByRole('button', { name: label, exact: true });
   await expect(chip).toHaveCount(1);
   // On the reply's row, beside Handoff, in place of the plain button.
   await expect(tx.getByRole('button', { name: 'Schedule follow-up…' })).toHaveCount(0);
@@ -192,11 +207,9 @@ test('the suggestion chip opens the form prefilled; Save schedules it and the ch
   await chip.click();
   const form = page.getByRole('dialog', { name: 'Schedule a follow-up to Zippy' });
   await expect(form).toBeVisible();
-  await expect.poll(() => page.evaluate(() => window.__h3d.scheduleForm()?.preparing)).toBe(false);
+  await expectScheduleReady(page);
   const f = await page.evaluate(() => window.__h3d.scheduleForm());
   expect(f).toMatchObject({ title: 'Post-soak cleanup: Vector 0.59 rollout', handoff: 'transcript', harness: w.harness, cwd: w.cwd });
-  const tomorrow = new Date();
-  const due = Date.UTC(tomorrow.getUTCFullYear(), tomorrow.getUTCMonth(), tomorrow.getUTCDate() + 1, 10, 45);
   expect(f?.due).toBe(due);
   // Opening it scheduled nothing.
   expect((await sent(page)).filter((c) => c.t === 'schedule.create')).toEqual([]);

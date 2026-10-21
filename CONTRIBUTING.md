@@ -171,20 +171,25 @@ make browsers          # download the Chromium revision the pinned Playwright ex
   `docs/research/e2e-selection.md` says why each test is where it is and maps every case #42 moved or removed.
 - `make shot` (only `e2e/shot.spec.ts`) and `make e2e` run Playwright against the **cached** Chromium in
   `~/.cache/ms-playwright` (`@playwright/test` is pinned to the version that matches it). Browsers are never downloaded (`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`) except by `make browsers`; `make setup` fails naming it when that revision is missing. It forces the
-  WebGL2 backend (`?backend=webgl2`) because the server has no GPU; rendering goes through ANGLE → Vulkan → mesa llvmpipe.
+  WebGL2 backend (`?backend=webgl2`) for consistent coverage. Chromium's ANGLE backend can use a hardware GPU or a
+  software renderer such as Mesa llvmpipe; check the actual WebGL renderer when comparing performance across hosts.
 - Every e2e target runs `H3D_WORKERS` tests in parallel (default 6, a positive integer; anything else falls back to it).
   Playwright runs with `fullyParallel`, so the tests of one spec file are spread over the workers too. Every test opens
   its own page against the shared preview server and writes only its own `test-results/<name>.png`, so keep it that
   way: no shared files, no fixed ports, no order between tests (also within a file: no `describe.serial`, no pages
-  shared through `beforeAll`, no module-level mutable state). Lower it on a loaded machine if timeouts appear: the
-  suite is CPU-bound on llvmpipe, and first-attempt failures rise with workers (#241). `LP_NUM_THREADS` (Mesa's
-  rasterizer threads per pool, default the CPU count) reaches the browser too; capping it alone made the suite slower.
+  shared through `beforeAll`, no module-level mutable state). Keep functional waits tied to the state the next action
+  needs: parallel rendering load can delay browser callbacks on either hardware or software rendering. State assertions
+  have a 20 s default expectation budget and return as soon as they pass. Keep feature latency contracts explicit with
+  their own elapsed-time checks or poll deadlines. Measure suite
+  duration and first-attempt failures when choosing a worker count for a host; retain failures as evidence rather than
+  relying on fewer workers to hide a readiness race. On Mesa software rendering, `LP_NUM_THREADS` (rasterizer threads
+  per pool, default the CPU count) reaches the browser too; capping it alone made the historical llvmpipe run slower.
   Each run writes a JSON report beside the list output, `game/test-results/e2e-report.json` (`H3D_E2E_REPORT` moves it);
   `H3D_E2E_TMPDIR` sets `TMPDIR` for the test run only (browser profiles), never `TMPDIR` around make, since portlease
   keeps its shared state there.
 - Every e2e target and `make shot` take a host-wide lock (`flock` on `$XDG_RUNTIME_DIR/herdr-3d-e2e.lock`, `/tmp` without
-  it): one Playwright run at a time per host. Two suites side by side take about as long as two in a row, but both
-  render below 10 fps on llvmpipe, where game time runs slower than wall time and fixed polls time out. A second run
+  it): one Playwright run at a time per host. Competing suites share CPU and rendering resources; historical llvmpipe
+  runs dropped below 10 fps when two suites overlapped, slowing game time relative to wall time. A second run
   prints `waiting for another worktree's e2e run (…)` and starts when the first ends (or fails, or is interrupted).
   Without `flock` (util-linux), or when the lock can't be taken, they fail before Playwright starts, never
   run unlocked. Running `pnpm exec playwright` directly skips the lock (`make e2e-list` takes none: it runs nothing).
@@ -1686,6 +1691,7 @@ Tests:
 ```sh
 make test lint                # vitest + tsc (protocol client and requests, store, layout, collision, cards, frame
                               # policy, fixtures, settings validation/diffing, reordering, the command simulation)
+make -j2 test                 # overlap the independent Go, Vitest and shell suites
 make shot                     # Playwright WebGL2, just the screenshot: game/test-results/shot.png
 make e2e                      # the @smoke journeys of the specs below, WebGL2 (H3D_WORKERS parallel, one per host)
 make e2e-extended             # on request: every functional spec below (the whole suite before #42 took ~38 min):
@@ -1763,6 +1769,15 @@ make e2e-extended             # on request: every functional spec below (the who
                               # {city,floor,clock,street}.png, m17-about-time.png. m17-shadow-acne.spec.ts (#86): ?lat=51 at 09:00-17:00,
                               # no vertical stripes (stripeScore) on the whiteboard, partition, sofa and the city's walls; floor shadows stay. m17-perf.spec.ts: perf-floor60
                               # at night against noon (H3D_M17_RUNS=<n> pairs, H3D_DIST=<build> for a baseline)
+                              # #141 floor entry on demo-m6 (h141-floor-entry.spec.ts, __h3d.floorPool): a floor entered
+                              # again (through the city, floor to floor, outgrowing the pool, asleep, shadows=0) draws
+                              # what it draws entered first on a new page, mesh by mesh and by screenshot, each pooled
+                              # mesh from its own buffers; live changes after a re-entry; ten rides A -> B -> A leave the
+                              # renderer's memory flat; a resize, asleep or removal during a new page's first ride (its
+                              # compile) leaves what the same change after the ride leaves. h141-floor-entry-perf.spec.ts (@perf): perf-floor60 and demo-m3b's
+                              # floors entered and entered again (first frame, longest frame), and a new page's first
+                              # ride through the doors (the longest frame shut, the first frame opening);
+                              # test-results/h141-floor-{entry,ride}-perf[-<H3D_DIST>].json, H3D_141_RUNS=<n>
                               # #59 transcript presets on demo-m5 with sim=1 (m59-themes.spec.ts): the font files a
                               # fresh load fetches (Quiet's only; a stored preset's only), each transcript preset
                               # from its strip (computed fonts: mono vs prose; the limits widget; a box in tool
@@ -1803,6 +1818,25 @@ pnpm -C game test:live:m3     # opt-in: buildings across a bridge restart, sleep
 pnpm -C game test:live:m5     # opt-in: the M5 laptops and panels against a real bridge and Claude (see below)
 pnpm -C game perf:mac         # opt-in: Metal/WebGPU perf + screenshots on the Mac -> game/test-results/perf/
 ```
+
+For order-dependent failures, keep the shuffle seed from the failing run. These runs bypass Go's result cache and
+exercise the same tests with parallel or serial scheduling:
+
+```sh
+go test -count=3 -parallel=8 -shuffle=359 ./...
+go test -count=1 -p=1 -parallel=1 -shuffle=359 ./...
+pnpm -C game exec vitest run --maxWorkers=4 --sequence.shuffle --sequence.seed=359
+pnpm -C game exec vitest run --maxWorkers=1 --sequence.shuffle --sequence.seed=359
+```
+
+Keep Vitest's per-file isolation and Playwright's zero retries. E2E command acknowledgements use
+`expectCommandDone` to await both the successful result and the closed dialog: world events before the ack can rebuild
+the scene under parallel rendering load. Performance measurements belong in benchmarks; for the largest
+accepted SVGs, use `go test ./internal/logo -run '^$' -bench BenchmarkSVGWorstAccepted -benchtime=1x`.
+
+If the host's `/tmp` quota is exhausted, use a short disk-backed temporary root such as `TMPDIR=/var/tmp` for unit
+tests. Long temporary roots can exceed Unix socket path limits. For E2E, `H3D_E2E_TMPDIR=/var/tmp` moves browser and
+preview-server temporary files while leaving portlease's shared lease state in its usual location.
 
 `test:live` builds `bin/herdr-world` from the worktree (or runs `H3D_LIVE_BRIDGE=<path>`, e.g. another branch's
 bridge built elsewhere), starts `herdr --session h3d-m2game-<random> server` (with
@@ -1851,6 +1885,8 @@ pipelined throughput, GPU timestamps, and rAF frames that include DOM layout. M3
 `window8` (out of a top-floor window), and `floor60-street`; `bench()` reports the `area` it ran in. M3c jobs:
 `floor60-mezz` (at the corner office's glass, looking down over 60 workers), `floor60-desk` (seated at your desk) and
 `floor96-desk` (seated over 96 workers who all need you: every card shows).
+#141 jobs: `floor60-entry` and `m3b-entry` time `enterFloor` to the next drawn frame, and the longest
+long-animation-frame after it, for each floor's first entry (cold) and the ones after (warm), left for the city between.
 M5 jobs, on `perf-floor60` with the simulator: `floor60-screens` (the overview with four live laptop screens),
 `floor60-screens0` (the same with `screens=0`) and `floor60-laptop` (seated at a laptop). On the server,
 `H3D_BENCH=1` with the m5-screen spec runs the same comparison on WebGL2 (relative numbers only).
@@ -1864,7 +1900,9 @@ close the first page before benching the baseline, so the two runs don't share t
 `window.__h3d` (tests, perf): `backend`, `frames`, `error`, `ready`, `view()`, `lookAt()` → `{kind, id, name?, label?}`
 or null, `status(workerId)` → `{status, at}` as last rendered, `world()` (shown `name`/`desk` plus what the bridge
 sent, `bridgeName`/`bridgeDesk`, null from an older bridge), `layout(session)`, `enterFloor(session, pose?)`,
-`leaveFloor()`, `inject(event)` (applies a protocol event as if the bridge sent it), `setPose({x, z, yaw, pitch})`,
+`leaveFloor()`, `floorPool({data?, t?, hold?, resume?})` (#141: the pool's meshes as drawn, with the instances in use
+and whether the renderer's state reads each mesh's own buffers, the lamps, the renderer's memory; `t`: after one frame at
+that time, `hold`: the loop paused on it until `resume`), `inject(event)` (applies a protocol event as if the bridge sent it), `setPose({x, z, yaw, pitch})`,
 `pose()`, `plan(open)`, `focusBuilding(i)`, `cards()`, `badgePoint(session)`, `bench(opts)`. M3d: `logos()` → `{fetches, cached, city: [{building, hash, lit}], lobby: {canopy, wall}}` (`showing` `'logo'` | `'name'` and the
 hash on each of the entrance sign and the reception wall; null outside a building). M3: `view().asleep`
 (the office's lights are off), `world()[].building` (its name, null in the lot), `openElevator(building?)` (a building

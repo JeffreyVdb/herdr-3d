@@ -21,7 +21,12 @@ async function sitAt(page: Page, zoom: string, name = 'Tofu', init: Record<strin
   expect(await page.evaluate((w) => window.__h3d.sitAt(w), id)).toBe(true);
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
   await expect.poll(() => page.evaluate(() => (window.__h3d.screenText(window.__h3d.seated() ?? '') ?? []).join('').trim().length)).toBeGreaterThan(0);
-  await frames(page, 5);
+  if (zoom === 'split') {
+    // Screen text may arrive from the ambient watch before the seated watch applies its fullscreen preference.
+    await expect.poll(() => fs(page), { message: 'the seated terminal watch applied its fullscreen preference' }).toMatchObject({
+      pressed: init['h3d.term.fullscreen'] !== '0', unavailable: false,
+    });
+  } else await frames(page, 5);
   return id;
 }
 

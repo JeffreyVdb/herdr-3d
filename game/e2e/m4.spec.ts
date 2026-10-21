@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, shot, watchErrors, openMenu } from './game';
+import { expectCommandDone, frames, openGame, shot, watchErrors, openMenu } from './game';
 
 // M4 on the demo-m4 fixture and the simulating fixture server
 // (tools/fixture-sim.ts): Work holds herdr-3d (top), depot-manager (asleep)
@@ -177,8 +177,7 @@ test('E on an empty desk: the hire dialog from the keyboard, then the worker dro
   ]);
   // The "+" goes as the hire starts, and stays gone until the worker is there.
   expect((await desks(page))[14]).toMatchObject({ plus: false, away: 'empty' });
-  // #43: the simulated hire ack runs on game time, which lags wall time under a loaded llvmpipe; 5 s is too short.
-  await expect.poll(() => dialog(page), { timeout: 20_000 }).toBeNull();
+  await expectCommandDone(page, 'worker.hire');
   await expect(page.locator('.toast')).toHaveText(/^Hired Gumdrop at Desk 15 on h3d\/gumdrop-[0-9a-f]{6}\. Here they come\.$/);
   // M6b: it drops in to its chair (no walk from the street), and its desk is its own from the first frame.
   const w = await arrived(page, 14);
@@ -224,7 +223,7 @@ test('X on a worker with unsaved work: delete is off, with the warning; Esc send
   expect(d.choice).toBe('keep');
   await expect(page.locator('.dd-porcelain li')).toHaveText([' M game/src/app.ts', ' M game/src/ui/hud.ts', '?? notes/todo.md']);
   await expect(page.locator('.dd-desk')).toContainText('2 commits not on any remote');
-  await expect(page.locator('.dd-callout')).toHaveText(
+  await expect(page.locator('dialog.desk-dlg--home .dd-callout')).toHaveText(
     'Deleting is off: the worktree has uncommitted changes and 2 commits are not on any remote. The worktree stays; commit and push first to delete it.',
   );
   await expect(page.locator('#home-delete')).toBeDisabled();
@@ -239,7 +238,7 @@ test('X on a worker with unsaved work: delete is off, with the warning; Esc send
   await shot(page, 'm4-send-home-dirty');
   await page.keyboard.press('Escape');
   await expect.poll(() => dialog(page)).toBeNull();
-  expect((await sent(page)).map((c) => c.t)).toEqual(['worker.fire.prepare']);
+  expect((await sent(page)).filter((c) => c.t.startsWith('worker.')).map((c) => c.t)).toEqual(['worker.fire.prepare']);
   expect((await page.evaluate(() => window.__h3d.world())).find((f) => f.session === 'pastry')?.workers.some((w) => w.name === 'Jellybean')).toBe(true);
   clean();
 });
@@ -265,7 +264,7 @@ test('send home a clean worker: delete worktree + branch, it packs a box, takes 
   await expect(page.locator('dialog.desk-dlg--home [data-key="send"]')).toHaveText('Send Marble home and delete');
   await shot(page, 'm4-send-home-clean');
   await page.keyboard.press('Enter');
-  expect((await sent(page)).map((c) => c.t)).toEqual(['worker.fire.prepare']);
+  expect((await sent(page)).filter((c) => c.t.startsWith('worker.')).map((c) => c.t)).toEqual(['worker.fire.prepare']);
   await expect(page.locator('dialog.desk-dlg--home .dd-confirm')).toContainText('Delete the worktree at /home/dev/pastry-wt/timers? This cannot be undone.');
   expect(await focusedKey(page)).toBe('confirm-cancel');
   await page.keyboard.press('Tab');
@@ -273,7 +272,7 @@ test('send home a clean worker: delete worktree + branch, it packs a box, takes 
   // Slow motion, to watch it pack.
   await page.evaluate(() => window.__h3d.arrivalRate(0.5));
   await page.keyboard.press('Enter');
-  await expect.poll(() => dialog(page)).toBeNull();
+  await expectCommandDone(page, 'worker.fire');
   expect((await sent(page)).filter((c) => c.t === 'worker.fire').map((c) => c.args)).toEqual([{ id, worktree: 'delete_branch' }]);
   await expect(page.locator('.toast')).toHaveText('Sent Marble home. Its worktree and branch are deleted.');
   // Gone from the world, but packing at the desk: chair out, laptop in its dock, no "+".
@@ -347,7 +346,7 @@ test('#53: a desk whose worker was sent home is hireable while it still walks ou
   expect(await focusedKey(page)).toBe('send');
   await page.evaluate(() => window.__h3d.arrivalRate(3));
   await page.keyboard.press('Enter');
-  await expect.poll(() => dialog(page)).toBeNull();
+  await expectCommandDone(page, 'worker.fire');
   expect((await page.evaluate(() => window.__h3d.world())).find((f) => f.session === 'pastry')?.workers.some((w) => w.id === id)).toBe(false);
   // Up from the desk and off with its box: the desk has its "+" back, and the walk-out (fire escape, street) is held there.
   await walker(page, (a) => a.id === id && a.phase === 'walk' && a.desk_show === 'free', 'Nacho walks off with the box', 15_000);
@@ -369,7 +368,7 @@ test('#53: a desk whose worker was sent home is hireable while it still walks ou
   await page.keyboard.press('Enter');
   expect((await sent(page)).filter((c) => c.t === 'worker.hire').map((c) => c.args)).toEqual([expect.objectContaining({ floor: 'pastry', desk_index: desk })]);
   expect((await desks(page))[desk]).toMatchObject({ plus: false, away: 'empty' });
-  await expect.poll(() => dialog(page), { timeout: 20_000 }).toBeNull();
+  await expectCommandDone(page, 'worker.hire');
   const w = await arrived(page, desk);
   expect((await arrivals(page)).find((a) => a.id === id)).toMatchObject({ kind: 'out', yielded: true });
   await expect.poll(async () => (await desks(page))[desk]).toEqual({ desk, worker: w.id, plus: false, away: null });
@@ -408,8 +407,8 @@ test('the top bar’s Hire opens the first free desk; a worker with no worktree 
   let h = await homeDialog(page);
   expect(h.options).toEqual({ offered: false, choices: [], enabled: { keep: true, delete: false, delete_branch: false }, warning: null, branchNote: null });
   expect(h.blocked).toBeNull();
-  await expect(page.locator('.dd-choices')).toHaveCount(0);
-  await expect(page.locator('.dd-facts')).toContainText('not a git worktree');
+  await expect(page.locator('dialog.desk-dlg--home .dd-choices')).toHaveCount(0);
+  await expect(page.locator('dialog.desk-dlg--home .dd-facts')).toContainText('not a git worktree');
   expect(await focusedKey(page)).toBe('send');
   await page.keyboard.press('Escape');
   await expect.poll(() => dialog(page)).toBeNull();
@@ -447,7 +446,7 @@ test('capacity: a warning above the soft cap, a refusal at the hard cap; no work
   await expect(page.locator('dialog.desk-dlg--hire [data-key="hire"]')).toBeInViewport();
   await shot(page, 'm4-hire-capacity-warn');
   await page.locator('dialog.desk-dlg--hire [data-key="hire"]').click();
-  await expect.poll(() => dialog(page)).toBeNull();
+  await expectCommandDone(page, 'worker.hire');
   expect((await sent(page)).filter((c) => c.t === 'worker.hire').map((c) => c.args)).toEqual([
     { floor: 'scratchpad', desk_index: 3, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', label: 'Gumdrop', cwd: '/home/dev/scratch' },
   ]);
@@ -565,7 +564,7 @@ test('a failed git fetch: opens on the last fetched base, the worktree hire is r
   await expect(box).toBeDisabled();
   // Hire without a worktree.
   await page.locator('dialog.desk-dlg--hire [data-key="hire"]').click();
-  await expect.poll(() => dialog(page)).toBeNull();
+  await expectCommandDone(page, 'worker.hire');
   const hire = (await sent(page)).filter((c) => c.t === 'worker.hire');
   const args = { floor: 'herdr-3d', desk_index: 5, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', label: 'Gumdrop', cwd: '/home/dev/devel/herdr-3d', prompt: 'Tidy the fixtures' };
   expect(hire.map((c) => c.args)).toEqual([
@@ -591,7 +590,7 @@ test('a clean worktree on a branch of the user’s own: delete the worktree only
   await expect(page.locator('[data-key="branch-note"]')).toHaveText('The branch dev/bridge-ws stays either way: herdr-world only deletes a branch it made for this worker.');
   await page.locator('label[for="home-delete"]').click();
   await page.locator('dialog.desk-dlg--home [data-key="send"]').click();
-  await expect.poll(() => dialog(page)).toBeNull();
+  await expectCommandDone(page, 'worker.fire');
   expect((await sent(page)).filter((c) => c.t === 'worker.fire').map((c) => c.args)).toEqual([{ id: noodle?.id, worktree: 'delete' }]);
   clean();
 });

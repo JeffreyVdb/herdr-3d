@@ -104,6 +104,8 @@ export interface SimOptions {
   /** #92: where Jev is (`simjev=<url>`; default the real API) and whether the bridge has the service (`simai=off`). */
   jev?: string;
   ai?: 'on' | 'off';
+  /** UI-focused feature cases can answer their model requests in process (`simmodel=packup|hiring`). */
+  modelFixture?: 'packup' | 'hiring';
   /** M10: which readings the plan limits show (tools/fixture-limits.ts; default `ok`). */
   limits?: string;
   /** #74: the host stats' scripted numbers (`simhost=ok|hot|noupdates|busy`) and their period (`simhostms=<ms>`, default 5000; tools/fixture-host.ts). */
@@ -357,7 +359,7 @@ export class SimWorld {
       { workers: this.workers, floors: this.floors, emit: (send, m) => this.emit(send, m), now: this.now, error: (code, message) => new CmdError(code, message) },
       o.activity,
     );
-    this.ai = new AiSim(o.jev ?? 'https://api.typesafe.ai', o.fail === 'no_ai' ? 'old' : (o.ai ?? 'on'), (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message));
+    this.ai = new AiSim(o.jev ?? 'https://api.typesafe.ai', o.fail === 'no_ai' ? 'old' : (o.ai ?? 'on'), (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message), o.modelFixture);
     this.ai.onChange = (send) => {
       this.followups.changed(send); // #90: a model's state is the feature's
       this.schedSuggest.changed(send); // #66: and the schedule suggestions'

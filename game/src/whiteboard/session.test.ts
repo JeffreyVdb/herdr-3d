@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ExcalidrawElement, OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
+import type { ExcalidrawElement, ExcalidrawImageElement, OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
+import type { BinaryFileData, BinaryFiles } from '@excalidraw/excalidraw/types';
 import type { BoardStatus } from './model';
 
 // M13: the editor session's sync (editor.ts) with the real BoardSession and Excalidraw's own element functions
@@ -35,7 +36,7 @@ HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement) {
 type Ex = typeof import('@excalidraw/excalidraw');
 type Net = typeof import('../net/whiteboard');
 let ex: Ex;
-let net: { getBoard: ReturnType<typeof vi.fn>; saveBoard: ReturnType<typeof vi.fn> };
+let net: { getBoard: ReturnType<typeof vi.fn>; saveBoard: ReturnType<typeof vi.fn>; putFile: ReturnType<typeof vi.fn> };
 let BoardSession: typeof import('./editor').BoardSession;
 let drafts: typeof import('./draft');
 
@@ -73,20 +74,26 @@ type Session = InstanceType<typeof BoardSession>;
 function session(els: OrderedExcalidrawElement[], base: number, statuses: BoardStatus[] = []): { s: Session; f: Fake } {
   const s = new BoardSession({ wsUrl: WS, floor: FLOOR, mount: document.createElement('div'), author: () => 'Theo', status: (x) => statuses.push(x), stale: () => {}, saved: () => {}, link: () => {} });
   let elements: readonly OrderedExcalidrawElement[] = els;
+  let files: BinaryFiles = {};
   let appState: Record<string, unknown> = { ...WHITE, selectedElementIds: {}, activeTool: { type: 'selection' } };
   const internal = s as unknown as { changed(): void };
   const api = {
     getSceneElementsIncludingDeleted: () => elements,
     getSceneElements: () => elements.filter((e) => !e.isDeleted),
     getAppState: () => appState,
-    getFiles: () => ({}),
-    addFiles: () => {},
+    getFiles: () => files,
+    addFiles: (added: BinaryFileData[]) => {
+      files = { ...files, ...Object.fromEntries(added.map((file) => [file.id, file])) };
+    },
     updateScene: (u: { elements?: readonly OrderedExcalidrawElement[]; appState?: Record<string, unknown> }) => {
       if (u.elements) elements = u.elements;
       if (u.appState) appState = { ...appState, ...u.appState };
     },
   };
   Object.assign(s, { api, base, savedEls: ex.hashElementsVersion(els).toString(), savedApp: JSON.stringify(WHITE) });
+  // open() knows the files of this already-saved scene are on the bridge, even if a local download failed.
+  const uploaded = (s as unknown as { uploaded: Set<string> }).uploaded;
+  for (const e of els) if (e.type === 'image' && e.fileId) uploaded.add(e.fileId);
   const f: Fake = {
     api,
     elements: () => elements,
@@ -130,6 +137,7 @@ let open: Session[] = [];
 beforeEach(() => {
   net.saveBoard.mockReset();
   net.getBoard.mockReset();
+  net.putFile.mockClear();
   renderHold = null;
   open = [];
   localStorage.clear();
@@ -137,6 +145,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   for (const s of open) s.dispose('discard');
+  vi.unstubAllGlobals();
 });
 
 describe('BoardSession', () => {
@@ -234,6 +243,77 @@ describe('BoardSession', () => {
     }
     // b's local edit won over the board's older b.
     expect(posted().at(-1)?.scene.elements.find((e) => e.id === 'b')?.x).toBe(400);
+  }, 30_000);
+
+  it('freezes elements that Excalidraw mutates while a save renders (#32)', async () => {
+    const { s, f } = session(make('a'), 1);
+    open.push(s);
+    bridgeSaves(1);
+    f.draw(f.elements().map((e) => ex.newElementWith(e, { x: 10 })));
+    let release = () => {};
+    renderHold = new Promise<void>((r) => (release = r));
+    const rendering = vi.mocked(ex.exportToBlob).mock.calls.length;
+    const saving = s.save();
+    await until(() => vi.mocked(ex.exportToBlob).mock.calls.length > rendering);
+    ex.mutateElement(f.elements()[0]!, { x: 20 }, false);
+    f.draw(f.elements());
+    renderHold = null;
+    release();
+    await saving;
+    expect(posted()[0]?.scene.elements[0]?.x).toBe(10);
+    expect(await s.flush()).toBe(true);
+    expect(posted()[1]?.scene.elements[0]?.x).toBe(20);
+  }, 30_000);
+
+  it.each(['file id', 'binary data'])('waits for a pasted image’s %s before a close saves it (#32)', async (pending) => {
+    const statuses: BoardStatus[] = [];
+    const { s, f } = session(make('a'), 1, statuses);
+    open.push(s);
+    const fileId = 'a'.repeat(64);
+    const [image] = ex.convertToExcalidrawElements([{ type: 'image', id: 'paste', fileId: (pending === 'binary data' ? fileId : null) as BinaryFileData['id'], x: 200, y: 0, width: 20, height: 20 }], { regenerateIds: false }) as OrderedExcalidrawElement[];
+    f.draw([...f.elements(), image!]);
+    const missing: string[] = [];
+    net.saveBoard.mockImplementation(async (_ws, _floor, request) => {
+      const uploaded = new Set(net.putFile.mock.calls.map((c) => c[2] as string));
+      const refs = (request.scene.elements as ExcalidrawElement[]).filter((e) => e.type === 'image' && e.fileId && !uploaded.has(e.fileId));
+      missing.push(...refs.map((e) => (e as { fileId: string }).fileId));
+      return refs.length
+        ? { ok: false, code: 'whiteboard_missing_file', message: 'upload it first' }
+        : { ok: true, data: { floor: FLOOR, version: net.saveBoard.mock.calls.length + 1, author: 'Theo', at: 1, render_version: net.saveBoard.mock.calls.length + 1, render: true, stale: false, stale_pins: [] } };
+    });
+    const rendering = vi.mocked(ex.exportToBlob).mock.calls.length;
+    const closing = s.flush();
+    await until(() => statuses.some((status) => status.kind === 'saving'));
+    expect(vi.mocked(ex.exportToBlob).mock.calls.length, 'an incomplete paste must not be reported saved or closed').toBe(rendering);
+    expect(net.saveBoard).not.toHaveBeenCalled();
+    // initializeImage() mutates the existing scene element and then adds its binary data.
+    ex.mutateElement(image! as ExcalidrawImageElement, { fileId: fileId as BinaryFileData['id'] }, false);
+    s.excalidraw!.addFiles([{ id: fileId as BinaryFileData['id'], mimeType: 'image/png', dataURL: 'data:image/png;base64,AA==' as BinaryFileData['dataURL'], created: 1 }]);
+    // Keep this test focused on the save snapshot; this file is already canonical.
+    (s as unknown as { canon: Map<string, string> }).canon.set(fileId, fileId);
+    expect(await closing).toBe(true);
+    expect(missing, 'a save must never fail with whiteboard_missing_file after a paste mutates its snapshot').toEqual([]);
+    expect(posted()).toHaveLength(1);
+    expect(net.putFile).toHaveBeenCalledTimes(1);
+    expect(posted()[0]?.scene.elements.find((e) => e.id === 'paste')).toMatchObject({ fileId });
+    expect(s.dirty).toBe(false);
+  }, 30_000);
+
+  it('can still save when a bridge-owned image fails to download locally (#32)', async () => {
+    const fileId = 'a'.repeat(64);
+    const els = ex.convertToExcalidrawElements([{ type: 'image', id: 'existing', fileId: fileId as BinaryFileData['id'], x: 0, y: 0, width: 20, height: 20 }]) as OrderedExcalidrawElement[];
+    const { s, f } = session(els, 1);
+    open.push(s);
+    (s as unknown as { uploaded: Set<string> }).uploaded.clear();
+    const remote = board(1, els);
+    Object.assign(remote.data.files, { [fileId]: { mimeType: 'image/png', size: 1, created: 1 } });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })));
+    expect(await (s as unknown as { fetchFiles(data: unknown): Promise<BinaryFileData[]> }).fetchFiles(remote.data)).toEqual([]);
+    f.setBackground('#ff0000');
+    bridgeSaves(1);
+    expect(await s.flush()).toBe(true);
+    expect(net.putFile).not.toHaveBeenCalled();
+    expect(posted()[0]?.scene.appState.viewBackgroundColor).toBe('#ff0000');
   }, 30_000);
 
   it('a close that cannot save says so, and keeps a draft unless told to discard (WB-U1)', async () => {

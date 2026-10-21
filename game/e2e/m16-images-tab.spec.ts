@@ -25,7 +25,7 @@ async function sitAt(page: Page, name: string): Promise<string> {
   expect(await page.evaluate((w) => window.__h3d.sitAt(w), id)).toBe(true);
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
   await expect(page.locator('.seat')).toBeVisible();
-  await frames(page, 30);
+  await seatMode(page, 'transcript');
   return id;
 }
 
@@ -38,11 +38,11 @@ test('the lightbox fits a 390 x 844 screen: zoom, copy, jump and close are all i
   await frames(page, 6);
   // #98: the conversation is up as you sit.
   await seatMode(page, 'transcript');
-  await expect.poll(async () => (await txState(page)).mounted).toBe(true);
   const box = page.locator('.seat-transcript');
   await expect.poll(async () => (await txState(page)).imageCount).toBeGreaterThan(0);
   await box.locator('.tx-bar .seat-tab[data-mode="images"]').click();
   await expect.poll(async () => (await txState(page)).mode).toBe('images');
+  await expect.poll(async () => (await txState(page)).tabMounted, { message: 'the lazy Images view is mounted', timeout: 20_000 }).toBe(true);
   const tab = box.locator('.imgs');
   await tab.locator('.imgs-group[data-origin="input"] .imgs-item').first().locator('.imgs-tile').click();
   const lb = page.locator('dialog.ilb');
@@ -84,13 +84,13 @@ test('the Images tab: Input and Agent, deduped, lightbox, jump to message, live,
 
   // The conversation (#98: up as you sit), with its Conversation | Images strip; the strip's Images tab opens the tab.
   await seatMode(page, 'transcript');
-  await expect.poll(async () => (await txState(page)).mounted).toBe(true);
   const box = page.locator('.seat-transcript');
   await expect(box.locator('.tx .tx-bar .seat-tabs')).toBeVisible();
   await expect(box.locator('.tx-bar .seat-tab[aria-selected="true"]')).toHaveText('Conversation');
   await expect.poll(async () => (await txState(page)).imageCount).toBeGreaterThan(0);
   await box.locator('.tx-bar .seat-tab[data-mode="images"]').click();
   await expect.poll(async () => (await txState(page)).mode).toBe('images');
+  await expect.poll(async () => (await txState(page)).tabMounted, { message: 'the lazy Images view is mounted', timeout: 20_000 }).toBe(true);
   expect((await page.evaluate(() => window.__h3d.seat())).mode).toBe('images');
   const tab = box.locator('.imgs');
   await expect(tab).toBeVisible();
@@ -195,8 +195,8 @@ test('sit / images / stand cycles leave no views, tabs, feeds or watches behind'
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   const worker = await sitAt(page, 'Nibble');
-  // Desks near you may hold a watch of their own (their prints): what a cycle must not do is add to them.
-  let baseline: { watches: number; feeds: number } | null = null;
+  // The print planner runs every 250 ms with hysteresis, so nearby desks can legitimately change between cycles.
+  // Standing may keep exactly those desks' watches and feeds; no seated view's resources may remain beside them.
   for (let i = 0; i < 6; i++) {
     if (i > 0) {
       expect(await page.evaluate((w) => window.__h3d.sitAt(w), worker)).toBe(true);
@@ -204,18 +204,24 @@ test('sit / images / stand cycles leave no views, tabs, feeds or watches behind'
     }
     await expect.poll(async () => (await txState(page)).watches).toBeGreaterThanOrEqual(1);
     // The last view is remembered per worker: the first sit is the conversation (#98), the others come back to the images.
-    if ((await txState(page)).mode === 'terminal') await page.keyboard.press('Control+Escape');
+    if ((await txState(page)).mode !== 'images') {
+      await seatMode(page, 'transcript');
+      await page.keyboard.press('i');
+    }
     await expect.poll(async () => (await txState(page)).mode).not.toBe('terminal');
-    if ((await txState(page)).mode !== 'images') await page.keyboard.press('i');
-    await expect.poll(async () => (await txState(page)).tabMounted).toBe(true);
+    await expect.poll(async () => (await txState(page)).tabMounted, { message: 'the lazy Images view is mounted', timeout: 20_000 }).toBe(true);
     await expect(page.locator('.seat-transcript .imgs')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
     expect(await page.locator('.seat-transcript').count()).toBe(0);
-    await frames(page, 4);
-    const now = { watches: (await txState(page)).watches, feeds: (await page.evaluate(() => window.__h3d.imageFeeds())).ids.length };
-    baseline ??= now;
-    expect(now).toEqual(baseline);
+    await expect.poll(() => page.evaluate(() => {
+      const prints = window.__h3d.prints();
+      const desks = (prints?.desks ?? []).map((desk) => desk.id).sort();
+      return {
+        watches: JSON.stringify([...(prints?.watches ?? [])].sort()) === JSON.stringify(desks),
+        feeds: JSON.stringify(window.__h3d.imageFeeds().ids.sort()) === JSON.stringify(desks),
+      };
+    }), { message: 'only active print desks retain watches and image feeds after standing' }).toEqual({ watches: true, feeds: true });
   }
   const c = (await txState(page)).counts;
   expect(c.tabsMounted).toBe(6);

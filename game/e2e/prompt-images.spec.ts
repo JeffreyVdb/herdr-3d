@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { frames, openGame, RESULTS, seatMode, watchErrors } from './game';
+import { expectCommandDone, frames, openGame, RESULTS, seatMode, watchErrors } from './game';
 
 // #64: a pasted screenshot in every field that prompts an agent, next to hire-composer.spec.ts (the hire dialog's First
 // task, the same shared composer). Built game, fixture server with sim=1 and the fixture POST /upload. Paste is a real
@@ -333,7 +333,7 @@ test('Start Run: a screenshot pasted in Extra instructions is a chip; the genera
   const args = (await runStarts(page))[0]!.args as { extra?: string; prompt?: string; text?: string; issue?: unknown };
   expect(args.extra).toBe(`Match this mock-up: ${marker}`);
   expect(args.prompt).toBeUndefined(); // not edited: the bridge composes it from the extra
-  await expect.poll(() => dialog(page)).toBeNull();
+  await expectCommandDone(page, 'run.start');
   clean();
 });
 

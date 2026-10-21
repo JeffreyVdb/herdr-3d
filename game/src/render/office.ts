@@ -12,6 +12,7 @@ import { CARD_RANGE, cardWeight, OVERLOOK_CARD_RANGE } from './cards/select';
 import type { CardData } from './cards/types';
 import { Crowd, type Member } from './crowd';
 import { DeskSet } from './desks';
+import type { FloorPool } from './floorPool';
 import { TrayView } from './tray';
 import { MezzanineView } from './mezzanine';
 import { BODY_TINTS, OFFICE } from './palette';
@@ -96,6 +97,8 @@ export interface OfficeOptions {
   outline?: Outline;
   /** #20: the name on your desk's name plate. */
   owner?: string;
+  /** #141: the meshes and lamps kept from floor to floor; none: the office makes its own. */
+  pool?: FloorPool;
 }
 
 /**
@@ -130,6 +133,11 @@ export const GLASS_IN = { color: 0x9fd3f0, opacity: 0.16 };
  * (docs/decisions.md). Full at night, a little by day, off on an asleep floor.
  */
 export const LAMPS = { count: 2, intensity: 80, night: 1, day: 0.3, below: 0.4, angle: 1.2, penumbra: 0.85, color: 0xffe4bf } as const;
+
+/** M17: the lamps, off; #141: made once per `FloorPool`, they light every floor. */
+export function officeLamps(): THREE.SpotLight[] {
+  return Array.from({ length: LAMPS.count }, () => new THREE.SpotLight(LAMPS.color, 0, 0, LAMPS.angle, LAMPS.penumbra, 2));
+}
 
 /** Visual state for a worker (shared by the office and the city). */
 export function memberOf(v: WorkerView): { tint: number; cue: ReturnType<typeof modelCue>; display: Display; phase: number; crew?: CrewLook } {
@@ -169,6 +177,9 @@ export class OfficeView {
   readonly root = new THREE.Group();
   /** Counts the offices built (test hook: a board update must not build another). */
   readonly serial = ++officeSerial;
+  /** #141: where its instanced parts and lamps come from (null: its own). */
+  readonly pool: FloorPool | null;
+  private disposed = false;
   readonly layout: FloorLayout;
   /** #58: the floor id. */
   readonly id: string;
@@ -232,6 +243,7 @@ export class OfficeView {
   constructor(view: FloorView, o: OfficeOptions) {
     this.id = view.id;
     this.name = view.name;
+    this.pool = o.pool ?? null;
     const L = (this.layout = floorLayout(view.desks, o.outline));
     this.outlineKey = outlineKey(o.outline);
     this.seats = Array.from({ length: L.desks }, () => null);
@@ -350,9 +362,12 @@ export class OfficeView {
     this.ceiling.add(ceil, panels);
     this.root.add(this.ceiling);
     // The lamps: evenly across the desk area's width, under the ceiling panels.
+    // #141: the pool's lamps, moved here from the office before (same place in the scene, same lights).
     const da = L.deskArea;
+    const lamps = this.pool?.lamps ?? officeLamps();
     for (let i = 0; i < LAMPS.count; i++) {
-      const lamp = new THREE.SpotLight(LAMPS.color, 0, 0, LAMPS.angle, LAMPS.penumbra, 2);
+      const lamp = lamps[i] as THREE.SpotLight;
+      lamp.intensity = 0;
       lamp.name = `office.lamp${i}`;
       lamp.castShadow = false;
       const x = da.x0 + ((i + 0.5) * (da.x1 - da.x0)) / LAMPS.count;
@@ -363,15 +378,16 @@ export class OfficeView {
       this.root.add(lamp, lamp.target);
     }
 
-    this.props = buildProps(L.props, L, view.level ? `${view.level.number}` : '·');
+    this.props = buildProps(L.props, L, view.level ? `${view.level.number}` : '·', this.pool ?? undefined);
     this.root.add(this.props.group);
-    this.boards = new BoardsView(L.props, L.height, (id, tex) => this.props.swapBoard(id, tex));
+    this.boards = new BoardsView(L.props, L.height, (id, tex) => this.props.swapBoard(id, tex), this.pool ?? undefined);
     this.root.add(this.boards.group);
 
     this.kits = L.slots.map((s) => deskKit(s));
-    this.desks = new DeskSet(L.desks, o.shadows, { plus: true, kits: this.kits });
-    this.crowd = new Crowd(L.desks, o.shadows);
-    this.tray = new TrayView(L.desks, o.shadows);
+    const pool = this.pool ?? undefined;
+    this.desks = new DeskSet(L.desks, o.shadows, { plus: true, kits: this.kits, pool });
+    this.crowd = new Crowd(L.desks, o.shadows, false, pool);
+    this.tray = new TrayView(L.desks, o.shadows, pool);
     this.root.add(this.desks.group, this.crowd.group, this.tray.group);
 
     const weight = (slot: number) => cardWeight(this.seats[slot]?.display === 'needs_you', this.overlook);
@@ -386,7 +402,7 @@ export class OfficeView {
         return t !== null && t < dist - 0.05;
       });
     };
-    this.cards = new AtlasCards(L.desks, undefined, weight, occluded);
+    this.cards = new AtlasCards(L.desks, undefined, weight, occluded, pool);
     this.root.add(this.cards.object);
 
     this.propTargets = L.props.map((p) => ({
@@ -704,7 +720,8 @@ export class OfficeView {
 
   private applyLight(): void {
     const k = this.asleep ? 0 : LAMPS.intensity * (LAMPS.night + (LAMPS.day - LAMPS.night) * this.look.day);
-    for (const l of this.lamps) l.intensity = k;
+    // #141: pooled lamps light the floor they hang in now, not one you left.
+    for (const l of this.lamps) if (l.parent === this.root) l.intensity = k;
     this.glassMat.color.copy(this.look.glass);
     this.glassMat.opacity = this.look.glassOpacity;
   }
@@ -982,7 +999,15 @@ export class OfficeView {
     this.cardsDirty = false;
   }
 
+  /** #141: whether the pool's lamps and meshes are this office's still (no office was built after it). */
+  get holdsPool(): boolean {
+    return !this.pool || this.pool.lamps.every((l) => l.parent === this.root);
+  }
+
+  /** #141: its pooled meshes and lamps stay (the next office draws with them); everything else goes, once. */
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.cards.dispose();
     this.mezz.dispose();
     this.crowd.dispose();
@@ -992,7 +1017,7 @@ export class OfficeView {
     this.props.dispose();
     this.root.removeFromParent();
     this.root.traverse((o) => {
-      if (o instanceof THREE.Mesh) {
+      if (o instanceof THREE.Mesh && !this.pool?.owns(o)) {
         o.geometry.dispose();
         for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
           (m as THREE.MeshBasicMaterial).map?.dispose();

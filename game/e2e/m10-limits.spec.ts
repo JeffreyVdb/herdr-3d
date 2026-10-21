@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
-import { frames, leftInTerminal, openGame, shot, watchErrors, openMenu, settingsSection } from './game';
+import { frames, leftInTerminal, openGame, seatMode, shot, watchErrors, openMenu, settingsSection } from './game';
 
 // M10 (#12) on demo-m4 and the simulating fixture server (tools/fixture-limits.ts): the always-on plan limits widget in the
 // city, on a floor, over an overlay; its colours, panel, staleness, refresh and switch-off; and the limits inside the
@@ -147,13 +147,14 @@ test('old and transcript readings are dimmed with the time they are as of', asyn
   await openGame(page, 'demo-m4', '', SIM('old'));
   let w = await withReadings(page);
   expect(w.lines.map((l) => l.stale)).toEqual([true, false]);
-  await expect(limits(page).locator('.lm-line[data-provider="claude"] .lm-asof')).toHaveText(/^as of \d\d:\d\d$/);
+  // A stale reading can be from yesterday during a run near midnight; the formatter includes its weekday then.
+  await expect(limits(page).locator('.lm-line[data-provider="claude"] .lm-asof')).toHaveText(/^as of (?:(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat) )?\d\d:\d\d$/);
   expect(await limits(page).locator('.lm-line[data-provider="claude"] .lm-wins').evaluate((e) => getComputedStyle(e).opacity)).toBe('0.72');
   await openGame(page, 'demo-m4', '', SIM('transcript'));
   w = await withReadings(page);
   expect(w.lines.map((l) => l.stale)).toEqual([false, true]);
   await page.locator('.lm-strip').click();
-  await expect(page.locator('.lm-sec[data-provider="codex"] .lm-read')).toHaveText(/^As of \d\d:\d\d, from the last Codex session log$/);
+  await expect(page.locator('.lm-sec[data-provider="codex"] .lm-read')).toHaveText(/^As of (?:(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat) )?\d\d:\d\d, from the last Codex session log$/);
   await shot(page, 'm10-stale');
 });
 
@@ -358,7 +359,7 @@ test('at 390x640 an open panel folds away while a dialog is open, and comes back
   await expect(limits(page)).toHaveAttribute('data-folded', 'true');
   // The dialog carries the chosen harness's limits itself, and its controls are all reachable.
   await expect(page.locator('[data-hook="plan-limits"] .lm-line')).toHaveCount(1);
-  for (const sel of ['[data-key="task"]', '[data-key="close"]', '[data-key="hire"]']) await expect(page.locator(sel)).toBeInViewport();
+  for (const sel of ['[data-key="task"]', '[data-key="close"]', '[data-key="hire"]']) await expect(page.locator('dialog.desk-dlg--hire').locator(sel)).toBeInViewport();
   await shot(page, 'm10-narrow-hire');
   // Shift+L does not flip a hidden panel behind the dialog.
   await page.keyboard.press('Shift+L');
@@ -987,9 +988,7 @@ test('seated on a narrow viewport the glass leaves no gutter: the widget is away
   await sitAtLaptop(page);
   await expect(limits(page)).toHaveAttribute('data-dock', 'away');
   await expect(limits(page)).toBeHidden();
-  await page.keyboard.press('Control+Escape');
-  await expect.poll(() => page.evaluate(() => window.__h3d.transcript()?.mode)).toBe('transcript');
-  await frames(page, 10);
+  await seatMode(page, 'transcript');
   await page.keyboard.press('Shift+L');
   await expect(limits(page)).toHaveAttribute('data-peek', 'true');
   await expect(page.locator('.lm-panel')).toBeVisible();

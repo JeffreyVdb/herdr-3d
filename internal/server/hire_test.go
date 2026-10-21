@@ -312,6 +312,7 @@ type fakeGit struct {
 	mu       sync.Mutex
 	calls    []string
 	repos    map[string]string   // dir → top level
+	mains    map[string]string   // dir in a linked worktree → its main checkout
 	dirty    map[string][]string // top ("*": any) → porcelain lines
 	unpushed map[string]int
 	current  map[string]string // checkout → branch, else as named by its path
@@ -325,7 +326,7 @@ type fakeGit struct {
 }
 
 func newFakeGit() *fakeGit {
-	return &fakeGit{repos: map[string]string{}, dirty: map[string][]string{}, unpushed: map[string]int{},
+	return &fakeGit{repos: map[string]string{}, mains: map[string]string{}, dirty: map[string][]string{}, unpushed: map[string]int{},
 		current: map[string]string{}, ahead: map[string]int{}, tips: map[string]string{}, def: "main",
 		sha: "8739ddc5f3e1d0c4b2a8e7f6d5c4b3a2918e7d6c"}
 }
@@ -345,6 +346,18 @@ func (g *fakeGit) Calls() []string {
 func (g *fakeGit) TopLevel(_ context.Context, dir string) (string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if top, ok := g.repos[dir]; ok {
+		return top, nil
+	}
+	return "", gitops.ErrNotRepo
+}
+
+func (g *fakeGit) MainCheckout(_ context.Context, dir string) (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if main, ok := g.mains[dir]; ok {
+		return main, nil
+	}
 	if top, ok := g.repos[dir]; ok {
 		return top, nil
 	}
@@ -968,6 +981,30 @@ func TestHireIntoWorktree(t *testing.T) {
 	hb.git.def = ""
 	a.Cwd = "/home/u/repo/sub"
 	hb.c.mustError(proto.CmdWorkerHire, a, proto.ErrBadRequest)
+}
+
+// A worktree hire from inside a linked worktree branches from the
+// repository's main checkout: herdr makes no worktree from a linked one.
+func TestHireIntoWorktreeFromALinkedWorktree(t *testing.T) {
+	t.Parallel()
+	hb := startHireBridge(t, nil)
+	linked := "/home/u/.herdr/worktrees/repo/h3d-crumpet-613421"
+	hb.git.repos[linked] = linked
+	hb.git.mains[linked] = "/home/u/repo"
+	a := hireArgs(1)
+	a.Cwd, a.Worktree, a.Label = linked, true, "Pixel"
+	_, m := hb.c.command(proto.CmdWorkerHire, "h", a)
+	res := ackData[proto.HireResult](t, m)
+	branch := "h3d/pixel-" + strings.ReplaceAll(res.ID, "-", "")[:6]
+	if calls := hb.fl.Calls(); calls[0] != "worktree s /home/u/repo "+branch+" origin/main Pixel" {
+		t.Fatalf("herdr calls = %q", calls)
+	}
+	if g := hb.git.Calls(); !slices.Equal(g[:2], []string{"fetch /home/u/repo", "commit /home/u/repo origin/main"}) {
+		t.Fatalf("git calls = %q", g)
+	}
+	if row := auditRow(t, hb.bridge, proto.CmdWorkerHire); !row.OK || !strings.Contains(row.Result, `"repo_root":"/home/u/repo"`) {
+		t.Fatalf("audit = %+v", row)
+	}
 }
 
 func TestHireRollsBack(t *testing.T) {

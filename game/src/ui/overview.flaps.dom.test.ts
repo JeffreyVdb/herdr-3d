@@ -57,6 +57,8 @@ const tick = (n: number) => ({ activity: { kind: 'testing' as const, detail: `py
 
 beforeEach(() => void vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame', 'performance'] }));
 afterEach(() => {
+  // The calm test spies on a fake frame function: restore it before replacing the clock.
+  vi.restoreAllMocks();
   vi.useRealTimers();
   document.body.innerHTML = '';
 });

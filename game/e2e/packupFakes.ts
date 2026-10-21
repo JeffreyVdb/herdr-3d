@@ -2,6 +2,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, type Locator, type Page } from '@playwright/test';
 import { openMenu, settingsSection } from './game';
+import { packupParts, packupScore } from '../tools/fixture-ai-responses.ts';
 
 // #110 pack up on request's fakes for the fixture bridge (`sim=1`, tools/fixture-packup.ts): Jev and an OpenAI-compatible
 // LLM on OS-leased loopback ports (no spec reaches a real provider), and the Settings steps that switch pack up on.
@@ -10,17 +11,34 @@ import { openMenu, settingsSection } from './game';
 export const JEV_KEY = 'jev-test-key-0123456789';
 export const LLM_KEY = 'sk-test-llm-key-abcdef';
 export const CLEANUP = 'Once that is done: Stop every server, background process, pane and freelancer you started in this session. Don’t touch anything else.';
+const PACKUP_TIME = new Date('2026-09-30T12:00:00Z');
 
-/** The leaving parts the fake LLM cuts, by what the prompt says. "TAMPER" gets a span that is not in it. */
-const CUTS: Array<[RegExp, (p: string) => string]> = [
-  [/TAMPER/, () => ' and finish your day'],
-  [/^Go home and clean up/, (p) => p],
-  [/ and end your turn$/, () => ' and end your turn'],
-  [/ and stop working$/, () => ' and stop working'],
-  [/, leave the office and clean up the worktree$/, () => ', leave the office and clean up the worktree'],
-  [/, then go home\.?$/, () => ', then go home'],
-];
-const LEAVES = /end your turn|stop working|leave the office|go home|Go home|finish the day/;
+/** Install before navigation: Date is fixed, while timers and rendering keep running normally. */
+export async function setUpPackupClock(page: Page): Promise<void> {
+  await page.clock.setFixedTime(PACKUP_TIME);
+}
+
+/**
+ * Positive UI checks exercise the model result and confirm, independent of browser callback scheduling under load.
+ * Invoke an already checked button with evaluate(click), or press Enter: locator.click() needs animation frames.
+ * Timers resume before any explicit slow-provider or late-ack deadline assertion; Date stays fixed.
+ */
+export async function withPositivePackup(page: Page, submit: () => Promise<void>): Promise<void> {
+  const before = await page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'packup.detect').length);
+  await page.clock.pauseAt(PACKUP_TIME);
+  try {
+    await submit();
+    await expect.poll(async () => JSON.stringify(await page.evaluate((n) => window.__h3d.sent().filter((c) => c.t === 'packup.detect')[n]?.result ?? null, before)),
+      { message: 'the positive pack-up check receives its actual matching result', timeout: 20_000 }).toMatch(/"ok":true.*"matched":true/);
+    await expect.poll(() => page.evaluate(() => {
+      const d = window.__h3d.dialog();
+      return d?.kind === 'send-home' ? d.state : null;
+    }), { message: 'the positive pack-up confirmation is ready', timeout: 20_000 }).toBe('ready');
+    await expect(page.locator('dialog.desk-dlg--home')).toBeVisible();
+  } finally {
+    await page.clock.resume();
+  }
+}
 
 export interface Fake {
   url: string;
@@ -54,7 +72,7 @@ export function fakeJev(): Promise<Fake> {
       void body(req).then((b) => {
         const state = (JSON.parse(b) as { state?: Record<string, string> }).state ?? {};
         const text = state.prompt ?? state.message ?? '';
-        const answer = () => res.end(JSON.stringify({ answers: { question: { noul: LEAVES.test(text) ? 0.97 : 0.03 } } }));
+        const answer = () => res.end(JSON.stringify({ answers: { question: { noul: packupScore(text) } } }));
         if (text.includes('SLOW')) setTimeout(answer, 2500);
         else answer();
       });
@@ -75,8 +93,7 @@ export function fakeOpenAI(): Promise<Fake> {
         if (!b.includes('Reply with exactly this JSON')) {
           const msgs = (JSON.parse(b) as { messages: Array<{ content: string }> }).messages;
           const prompt = (msgs.at(-1)?.content ?? '').replace(/^The prompt:\n\n/, '');
-          const cut = CUTS.find(([re]) => re.test(prompt));
-          content = JSON.stringify({ remove: cut ? [cut[1](prompt)] : [] });
+          content = JSON.stringify({ remove: packupParts(prompt) });
         }
         res.end(JSON.stringify({ choices: [{ message: { content } }] }));
       });
@@ -114,8 +131,9 @@ export async function switchOn(page: Page, llm: Fake): Promise<Locator> {
   const section = dialog.locator('[data-section="packup"]');
   await setUpModels(page, dialog, llm);
   await section.getByRole('button', { name: 'Test' }).click();
-  await expect(section).toContainText('Test passed');
+  // Parallel renderers can dispatch these bridge acknowledgements after 5 s; await their completed UI states.
+  await expect(section).toContainText('Test passed', { timeout: 20_000 });
   await section.getByRole('checkbox', { name: 'Pack up on request' }).check();
-  await expect(section).toContainText('On: each prompt is checked');
+  await expect(section).toContainText('On: each prompt is checked', { timeout: 20_000 });
   return section;
 }

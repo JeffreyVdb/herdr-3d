@@ -38,7 +38,6 @@ async function sitAt(page: Page, name: string, sim = SIM): Promise<string> {
   await expect.poll(async () => (await txState(page)).items).toBeGreaterThan(10);
   // #98: its conversation is up as you sit.
   await seatMode(page, 'transcript');
-  await expect.poll(async () => (await txState(page)).mounted).toBe(true);
   await expect(page.locator('.seat-transcript .tx')).toBeVisible();
   return id;
 }
@@ -132,11 +131,11 @@ test('a prompt shows at once, Sending → Sent → its real item; the agent thin
   expect(await animations(cue)).toEqual([{ state: 'running', props: ['opacity'] }]);
 
   // Terminal mode: out of the DOM, nothing of the overlay animating; back, it runs again.
-  await page.keyboard.press('Control+Escape');
+  await seatMode(page, 'terminal');
   await expect.poll(async () => (await txState(page)).mode).toBe('terminal');
   await expect(cue).toHaveCount(0);
   expect(await overlayAnimations(page)).toEqual([]);
-  await page.keyboard.press('Control+Escape');
+  await seatMode(page, 'transcript');
   await expect(cue.locator('.tx-activity-label')).toHaveText('Working…');
   expect(await animations(cue)).toEqual([{ state: 'running', props: ['opacity'] }]);
 

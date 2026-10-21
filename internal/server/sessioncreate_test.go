@@ -29,7 +29,9 @@ type sessionHost struct {
 
 func newSessionHost(t *testing.T) *sessionHost {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "sessions")
+	// These names are checked against herdr's Unix socket path limit. Keep
+	// the fixture independent of the test name and TempDir's random suffix.
+	dir := filepath.Join(shortDir(t), "sessions")
 	if err := os.MkdirAll(filepath.Join(dir, "existing"), 0o700); err != nil {
 		t.Fatal(err)
 	}

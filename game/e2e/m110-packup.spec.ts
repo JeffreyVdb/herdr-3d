@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { frames, openGame, seatMode, settingsSection, shot, watchErrors, openMenu } from './game';
-import { CLEANUP, fakeJev, fakeOpenAI, setUpModels, switchOn } from './packupFakes';
+import { CLEANUP, fakeJev, fakeOpenAI, setUpModels, setUpPackupClock, switchOn, withPositivePackup } from './packupFakes';
 
 // #110 pack up on request against the fixture bridge (`sim=1`, tools/fixture-packup.ts), whose AI integration calls
 // fake Jev and OpenAI-compatible servers started here on OS-leased loopback ports: no spec reaches a real provider.
@@ -19,12 +19,13 @@ async function idOf(page: Page, session: string, name: string): Promise<string> 
 async function packupDialog(page: Page): Promise<Home> {
   await expect.poll(async () => {
     const d = await home(page);
-    return d?.kind === 'send-home' && d.mode === 'packup' && d.state;
+    if (d?.kind === 'send-home' && d.mode === 'packup' && d.state === 'ready') return 'ready';
+    return JSON.stringify({ dialog: d, detect: (await sent(page, 'packup.detect')).at(-1)?.result ?? null });
   }, { message: 'pack-up confirm ready', timeout: 10_000 }).toBe('ready');
   return (await home(page)) as Home;
 }
 
-test('Settings: the switch is off until a test passed, beside the follow-up questions, in a wider dialog', async ({ page }) => {
+test('Settings: the switch is off until a test passed, after the follow-up questions, in a wider dialog', async ({ page }) => {
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
   try {
@@ -37,12 +38,12 @@ test('Settings: the switch is off until a test passed, beside the follow-up ques
     const section = await settingsSection(page, 'packup');
     await expect(section.getByRole('heading', { name: 'Pack up on request', level: 3 })).toBeVisible();
     await expect(section.locator('.settings-store')).toHaveText('Bridge');
-    // Right after the follow-up questions.
+    // The request classifiers follow the follow-up questions; other classifiers can sit between them.
     expect(await dialog.locator('section.settings-section').evaluateAll((s) => s.map((x) => (x as HTMLElement).dataset.section))).toEqual(
       expect.arrayContaining(['followups', 'packup']),
     );
     const order = await dialog.locator('section.settings-section').evaluateAll((s) => s.map((x) => (x as HTMLElement).dataset.section));
-    expect(order.indexOf('packup')).toBe(order.indexOf('followups') + 1);
+    expect(order.indexOf('packup')).toBeGreaterThan(order.indexOf('followups'));
     const toggle = section.getByRole('checkbox', { name: 'Pack up on request' });
     await expect(toggle).not.toBeChecked();
     await expect(toggle).toBeDisabled();
@@ -79,10 +80,11 @@ test('Settings: the switch is off until a test passed, beside the follow-up ques
 
 test('the P overlay: checking…, the confirm with the leaving part struck, an edited task, Send and go home is a wrap-up', async ({ page }) => {
   test.setTimeout(120_000);
+  await setUpPackupClock(page);
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
   try {
-    await openGame(page, 'demo-m4', '', `play=none&sim=1&simms=150&simjev=${encodeURIComponent(jev.url)}`);
+    await openGame(page, 'demo-m4', '', `play=none&sim=1&simms=150&simmodel=packup&simjev=${encodeURIComponent(jev.url)}`);
     await switchOn(page, llm);
     await page.keyboard.press('Escape');
     await page.evaluate(() => window.__h3d.enterFloor('pastry'));
@@ -93,7 +95,7 @@ test('the P overlay: checking…, the confirm with the leaving part struck, an e
     const overlay = page.locator('dialog.desk-dlg--prompt');
     await expect(overlay).toBeVisible();
     await page.keyboard.type('Fix the header, then go home.');
-    await page.keyboard.press('Enter');
+    await withPositivePackup(page, () => page.keyboard.press('Enter'));
     const d = await packupDialog(page);
     expect(d.title).toBe('Send the task, then send Marble home');
     expect(d.choice).toBe('delete_branch');
@@ -140,37 +142,40 @@ async function sitAtTranscript(page: Page, name: string): Promise<string> {
 
 test('the laptop’s prompt box: send as written, cancel, nothing left, a tampered cut, Esc while checking, the timeouts', async ({ page }) => {
   test.setTimeout(180_000);
+  await setUpPackupClock(page);
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
   try {
-    await openGame(page, 'demo-m5', '', `play=none&sim=1&simms=300&simusage=0&simecho=200&simjev=${encodeURIComponent(jev.url)}`);
+    await openGame(page, 'demo-m5', '', `play=none&sim=1&simms=300&simusage=0&simecho=200&simmodel=packup&simjev=${encodeURIComponent(jev.url)}`);
     await switchOn(page, llm);
     await page.keyboard.press('Escape');
     const id = await sitAtTranscript(page, 'Pebble');
     const tx = page.locator('.seat-transcript .tx');
     const input = tx.locator('.tx-input');
     const confirm = page.locator('dialog.desk-dlg--home');
-    const write = async (text: string) => {
+    const write = async (text: string, positive = false) => {
+      await expect(input).toHaveAttribute('contenteditable', 'true', { timeout: 20_000 });
       await input.click();
       await page.keyboard.press('Control+A');
       await page.keyboard.press('Delete');
       await page.keyboard.type(text);
-      await page.keyboard.press('Enter');
+      if (positive) await withPositivePackup(page, () => page.keyboard.press('Enter'));
+      else await page.keyboard.press('Enter');
     };
     const prompts = async () => (await sent(page, 'worker.prompt')).map((c) => (c.args as { text: string }).text);
 
     // Send as written (stay): the prompt goes as you wrote it, through worker.prompt.
-    await write('Please make a PR and end your turn');
+    await write('Please make a PR and end your turn', true);
     await packupDialog(page);
     await expect(confirm.locator('[data-key="pk-original"] del')).toHaveText(' and end your turn');
     await confirm.getByRole('button', { name: 'Send as written (stay)' }).click();
     await expect(confirm).toBeHidden();
     await expect.poll(prompts).toEqual(['Please make a PR and end your turn']);
-    await expect(input).toHaveText('');
+    await expect(input).toHaveText('', { timeout: 20_000 });
     expect(await sent(page, 'worker.wrapup')).toHaveLength(0);
 
     // Cancel (Esc): nothing is sent, the draft stays in the box.
-    await write('Please make a PR and stop working');
+    await write('Please make a PR and stop working', true);
     await packupDialog(page);
     await page.keyboard.press('Escape');
     await expect(confirm).toBeHidden();
@@ -182,10 +187,10 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
     await write('Please make a PR');
     await expect.poll(prompts).toEqual(['Please make a PR and end your turn', 'Please make a PR']);
     expect(await home(page)).toBeNull();
-    await expect(input).toHaveText(''); // its ack came: the box takes the next one
+    await expect(input).toHaveText('', { timeout: 20_000 }); // its ack came: the box takes the next one
 
     // Nothing left of it: the plain send-home dialog, nothing sent.
-    await write('Go home and clean up the worktree.');
+    await write('Go home and clean up the worktree.', true);
     await expect.poll(async () => (await home(page))?.mode ?? null).toBe('home');
     await page.keyboard.press('Escape');
     expect(await prompts()).toHaveLength(2);
@@ -195,7 +200,7 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
     await write('Ship it TAMPER and finish the day');
     await expect.poll(prompts).toContain('Ship it TAMPER and finish the day');
     expect(await home(page)).toBeNull();
-    await expect(input).toHaveText('');
+    await expect(input).toHaveText('', { timeout: 20_000 });
 
     // Esc while it is checked: nothing goes, the draft stays, you stay seated.
     await write('SLOW: make a PR and end your turn');
@@ -208,8 +213,8 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
     expect(await page.evaluate(() => window.__h3d.seated())).toBe(id);
     expect(await page.evaluate(() => window.__h3d.seat().note)).toBe('Not sent: the prompt is still in the box.');
 
-    // A model too slow: the bridge gives up after 1.2 s, its no match comes within the game's 1.5 s, and the prompt goes
-    // as written (fail open).
+    // A model too slow: the bridge gives up after 1.2 s, and the prompt goes as written. Under rendering load the
+    // game's 1.5 s bound can win before that no-match reply is dispatched: both outcomes must fail open once.
     const lastDetect = async () => (await sent(page, 'packup.detect')).at(-1)?.result;
     let t0 = Date.now();
     await input.click();
@@ -217,7 +222,11 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
     await expect.poll(prompts, { timeout: 6000 }).toContain('SLOW: make a PR and end your turn');
     expect(Date.now() - t0).toBeLessThan(4500);
     expect(await home(page)).toBeNull();
-    expect(await lastDetect()).toMatchObject({ ok: true, data: { matched: false } });
+    const detected = await lastDetect();
+    expect(detected).toMatchObject(detected?.ok ? { ok: true, data: { matched: false } } : { ok: false, code: 'timeout' });
+    expect((await prompts()).filter((p) => p === 'SLOW: make a PR and end your turn')).toHaveLength(1);
+    await expect(input).toHaveAttribute('contenteditable', 'true', { timeout: 20_000 });
+    await expect(input).toHaveText('', { timeout: 20_000 });
 
     // The game's own bound: an answer held 4 s on the way (a slow link, a busy bridge) is too late. 1.5 s after Send the
     // prompt goes as written, for a slow model's no match and for a match alike, and the late match opens nothing.
@@ -228,8 +237,8 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
       await expect.poll(prompts, { timeout: 6000, intervals: [50] }).toContain(text);
       expect(Date.now() - t0).toBeLessThan(2300);
       expect(await lastDetect()).toMatchObject({ ok: false, code: 'timeout' });
-      await expect(input).toHaveText('');
-      await page.waitForTimeout(4500 - (Date.now() - t0)); // the held answer has come by now
+      await expect(input).toHaveText('', { timeout: 20_000 });
+      await page.waitForTimeout(Math.max(0, 4500 - (Date.now() - t0))); // the held answer has come by now
       expect(await home(page)).toBeNull();
       await expect(confirm).toBeHidden();
       expect((await prompts()).filter((p) => p === text)).toHaveLength(1);

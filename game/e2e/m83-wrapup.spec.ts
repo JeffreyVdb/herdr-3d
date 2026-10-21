@@ -82,7 +82,7 @@ test('wrap up: delete preselected, Enter in the prompt adds lines, Enter on a de
   d = await home(page);
   expect(d.prompt).toBe('Stop every server, background process, pane and freelancer you started in this session. Don’t touch anything else.\n\nAlso close the tmux pane you split.\n');
   expect(d.confirming).toBe(false);
-  expect((await sent(page)).map((c) => c.t)).toEqual(['worker.fire.prepare']);
+  expect((await sent(page)).filter((c) => c.t.startsWith('worker.')).map((c) => c.t)).toEqual(['worker.fire.prepare']);
   await shot(page, 'm83-wrapup-prompt');
 
   // Enter on the delete choice: the warning, Cancel focused; a second Enter cancels.
@@ -94,7 +94,7 @@ test('wrap up: delete preselected, Enter in the prompt adds lines, Enter on a de
   await shot(page, 'm83-wrapup-confirm');
   await page.keyboard.press('Enter');
   await expect.poll(async () => (await home(page)).confirming).toBe(false);
-  expect((await sent(page)).map((c) => c.t)).toEqual(['worker.fire.prepare']);
+  expect((await sent(page)).filter((c) => c.t.startsWith('worker.')).map((c) => c.t)).toEqual(['worker.fire.prepare']);
   // Esc in the warning steps back to the dialog, it does not close it.
   await page.locator('#home-delete').focus();
   await page.keyboard.press('Enter');
