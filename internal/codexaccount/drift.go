@@ -4,20 +4,21 @@ package codexaccount
 // links config.toml, AGENTS.md, AGENTS.override.md and rules/ to the
 // default's and has its own hooks.json with the default's commands. The
 // drift check reads what is there now (a few lstat and readlink calls, the
-// two hooks.json files, both skills/ folders, and the [mcp_servers.<name>]
-// headers of a config.toml that replaced its link): it names files, MCP
+// two hooks.json files, both skills/ folders, and the MCP server names of a
+// config.toml that replaced its link: mcpservers.go): it names files, MCP
 // server names and skill names, never a value of a config.toml.
 
 import (
-	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 // The entries a shared profile links to the default home's, as shown
@@ -137,12 +138,11 @@ func driftOf(defHome, defName, home, name string) []DriftItem {
 			add(DriftLinkReplaced, e, text)
 		}
 	}
-	if def, ok := hookCommands(filepath.Join(defHome, hooksFile)); ok || exists(filepath.Join(defHome, hooksFile)) {
-		mine, mineOK := hookCommands(filepath.Join(home, hooksFile))
+	if exists(filepath.Join(defHome, hooksFile)) {
 		switch {
 		case !exists(filepath.Join(home, hooksFile)):
 			add(DriftHooksMissing, hooksFile, hooksFile+" is missing")
-		case !ok || !mineOK || !slices.Equal(def, mine):
+		case !sameHooks(filepath.Join(defHome, hooksFile), filepath.Join(home, hooksFile)):
 			add(DriftHooksDiffer, hooksFile, hooksFile+" runs other commands than "+defName+"'s")
 		}
 	}
@@ -177,70 +177,74 @@ func realSkills(home string) []string {
 	return out
 }
 
-// hookCommands are the commands a hooks.json runs, as "<event>: <command>",
-// sorted (ok false: no such file, or not the shape Codex reads). Parsed,
-// never compared as bytes.
-func hookCommands(path string) ([]string, bool) {
-	b, err := os.ReadFile(path)
+// maxRead bounds a hooks.json or config.toml the drift check reads.
+const maxRead = 1 << 20
+
+// readRegular is the content of path when it is a regular file (or a link
+// to one) of at most maxRead bytes. Anything else is not read: a FIFO is
+// opened without blocking and refused, so a read never waits on one.
+func readRegular(path string) ([]byte, bool) {
+	if st, err := os.Stat(path); err != nil || !st.Mode().IsRegular() || st.Size() > maxRead {
+		return nil, false
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, false
 	}
-	var f struct {
+	defer f.Close()
+	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
+		return nil, false
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxRead+1))
+	if err != nil || len(b) > maxRead {
+		return nil, false
+	}
+	return b, true
+}
+
+// hooksOf is the hooks a hooks.json defines, as one comparable string: its
+// "hooks" table parsed and written again, so only the JSON's formatting
+// (spacing, key order) is set aside; every event, group, handler and its
+// order, type and command (as written, to the byte) count. ok is false: no
+// such file, or not the shape Codex reads.
+func hooksOf(path string) (string, bool) {
+	b, ok := readRegular(path)
+	if !ok {
+		return "", false
+	}
+	var shape struct {
 		Hooks map[string][]struct {
 			Hooks []struct {
+				Type    string `json:"type"`
 				Command string `json:"command"`
 			} `json:"hooks"`
 		} `json:"hooks"`
 	}
-	if json.Unmarshal(b, &f) != nil {
-		return nil, false
+	if json.Unmarshal(b, &shape) != nil {
+		return "", false
 	}
-	out := []string{}
-	for ev, groups := range f.Hooks {
-		for _, g := range groups {
-			for _, h := range g.Hooks {
-				out = append(out, ev+": "+strings.Join(strings.Fields(h.Command), " "))
-			}
-		}
+	var raw struct {
+		Hooks any `json:"hooks"`
 	}
-	slices.Sort(out)
-	return out, true
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.UseNumber()
+	if d.Decode(&raw) != nil {
+		return "", false
+	}
+	out, err := json.Marshal(raw.Hooks)
+	return string(out), err == nil
 }
 
-// serverHeader is a [mcp_servers.<name>] table header (or a sub-table of
-// one); only the name is taken.
-var serverHeader = regexp.MustCompile(`^\s*\[\s*mcp_servers\s*\.\s*(?:"([^"]*)"|'([^']*)'|([A-Za-z0-9_-]+))`)
-
-// mcpServers are the MCP server names a config.toml declares, from its
-// table headers alone (no TOML library, and no value is ever looked at),
-// sorted.
-func mcpServers(path string) []string {
-	f, err := os.Open(path)
-	if err != nil {
+// missingServers are the MCP servers def declares and mine does not (none
+// when either cannot be scanned).
+func missingServers(def, mine string) []string {
+	have, ok1 := mcpServers(mine)
+	want, ok2 := mcpServers(def)
+	if !ok1 || !ok2 {
 		return nil
 	}
-	defer f.Close()
 	var out []string
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64<<10), 1<<20)
-	for sc.Scan() {
-		m := serverHeader.FindStringSubmatch(sc.Text())
-		if m == nil {
-			continue
-		}
-		if n := m[1] + m[2] + m[3]; n != "" && !slices.Contains(out, n) {
-			out = append(out, n)
-		}
-	}
-	slices.Sort(out)
-	return out
-}
-
-// missingServers are the MCP servers def declares and mine does not.
-func missingServers(def, mine string) []string {
-	have := mcpServers(mine)
-	var out []string
-	for _, n := range mcpServers(def) {
+	for _, n := range want {
 		if !slices.Contains(have, n) {
 			out = append(out, n)
 		}

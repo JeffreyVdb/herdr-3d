@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -379,7 +380,7 @@ func TestDriftKinds(t *testing.T) {
 	share(t, s, "work")
 	// sed -i: a temp file renamed over the link.
 	tmp := filepath.Join(work, "sedXYZ")
-	os.WriteFile(tmp, []byte("edited\n"), 0o600)
+	os.WriteFile(tmp, []byte("model = \"edited\"\n"), 0o600)
 	if err := os.Rename(tmp, filepath.Join(work, "config.toml")); err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +443,7 @@ func TestDriftKinds(t *testing.T) {
 	if a := listed(t, s, "work"); a.Drift != nil {
 		t.Fatalf("after Fix: %s", driftKinds(a))
 	}
-	if b, _ := os.ReadFile(filepath.Join(work, "config.toml.before-share-20261021-151002")); string(b) != "edited\n" {
+	if b, _ := os.ReadFile(filepath.Join(work, "config.toml.before-share-20261021-151002")); string(b) != "model = \"edited\"\n" {
 		t.Errorf("backup %q", b)
 	}
 }
@@ -610,4 +611,256 @@ func TestAccountEqualComparesDrift(t *testing.T) {
 	if a.Equal(b) || a.Equal(Account{Key: "work", Share: true}) {
 		t.Fatal("other drift, equal")
 	}
+}
+
+// AC6 (review R1): a header-looking line inside a value of the default's
+// config.toml (a multi-line string of either kind, an array of strings over
+// lines) is not a server: no drift item, report or note names it.
+func TestConfigValueNeverNamed(t *testing.T) {
+	for name, config := range map[string]string{
+		"multi-line literal": "developer_instructions = '''\n[mcp_servers.\"" + secret + "\"]\n'''\n",
+		"multi-line basic":   "developer_instructions = \"\"\"\n[mcp_servers.\"" + secret + "\"]\n\"\"\"\n",
+		"array over lines":   "notes = [\n  \"a\",\n  '''\n[mcp_servers." + secret + "]\n''',\n  \"[mcp_servers." + secret + "]\",\n]\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _, def, work := shareHomes(t)
+			if err := os.WriteFile(filepath.Join(def, "config.toml"), []byte(config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			seen := []string{share(t, s, "work").Report}
+			os.Remove(filepath.Join(work, "config.toml"))
+			if err := os.WriteFile(filepath.Join(work, "config.toml"), []byte("model = \"mine\"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			list := mustList(t, s)
+			a, _ := find(list, "work")
+			if got := driftKinds(a); !strings.Contains(got, "link_replaced:config.toml") {
+				t.Fatalf("drift %s", got)
+			}
+			seen = append(seen, mustJSON(t, list))
+			for _, d := range a.Drift.Items {
+				seen = append(seen, d.Text)
+			}
+			unshared := a
+			unshared.Share = false
+			seen = append(seen, SetupNote(list, a), SetupNote(list, unshared))
+			plan, _ := s.SharePlan(ctx, "work")
+			seen = append(seen, mustJSON(t, plan))
+			res, err := s.Share(ctx, "work", []string{"config.toml"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			seen = append(seen, res.Report)
+			for _, x := range seen {
+				if strings.Contains(x, secret) || strings.Contains(x, "MCP servers") {
+					t.Fatalf("a value was named as a server: %s", x)
+				}
+			}
+		})
+	}
+}
+
+// AC5 (review R5): a default whose rules/ is itself a link: unsharing
+// copies the folder it names (a link inside stays a link).
+func TestUnshareLinkedDefaultRules(t *testing.T) {
+	s, u, def, work := shareHomes(t)
+	shared := filepath.Join(u, "shared-rules")
+	if err := os.Rename(filepath.Join(def, "rules"), shared); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(shared, filepath.Join(def, "rules")); err != nil {
+		t.Fatal(err)
+	}
+	share(t, s, "work")
+	res, err := s.Unshare(ctx, "work")
+	if err != nil || res.Failed {
+		t.Fatal(err, res)
+	}
+	if fi, err := os.Lstat(filepath.Join(work, "rules")); err != nil || !fi.IsDir() {
+		t.Fatalf("rules/ is not a folder of its own: %v %v; %s", fi, err, res.Report)
+	}
+	if fi, err := os.Lstat(filepath.Join(work, "rules", "more", "deep.rules")); err != nil || !fi.Mode().IsRegular() {
+		t.Fatalf("deep.rules not copied: %v %v", fi, err)
+	}
+	readlink(t, filepath.Join(work, "rules", "alias.rules"))
+}
+
+func hooksJSON(t *testing.T, command string) []byte {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{"hooks": map[string]any{"SessionStart": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command}}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// AC4 (review R6): hook commands are compared as written (a space inside
+// quotes counts) and only the JSON's formatting is set aside; a Fix
+// restores a changed command.
+func TestHooksComparedAsWritten(t *testing.T) {
+	s, _, def, work := shareHomes(t)
+	if err := os.WriteFile(filepath.Join(def, "hooks.json"), hooksJSON(t, "printf '%s' 'a  b'"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	share(t, s, "work")
+	// The same hooks, laid out and ordered otherwise: no drift.
+	os.WriteFile(filepath.Join(work, "hooks.json"), []byte("{\n  \"hooks\": {\"SessionStart\": [\n    {\"hooks\": [{\"command\": \"printf '%s' 'a  b'\", \"type\": \"command\"}]}\n  ]}\n}\n"), 0o600)
+	const skill = "skill_only_default:infra" // the default's skill, not shared
+	if got := driftKinds(listed(t, s, "work")); got != skill {
+		t.Fatalf("formatting is drift: %s", got)
+	}
+	os.WriteFile(filepath.Join(work, "hooks.json"), hooksJSON(t, "printf '%s' 'a b'"), 0o600)
+	if got := driftKinds(listed(t, s, "work")); got != "hooks_differ:hooks.json "+skill {
+		t.Fatalf("drift %q", got)
+	}
+	plan, err := s.SharePlan(ctx, "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := plan[len(plan)-1]; last.Name != hooksFile || last.Action != StepReplace {
+		t.Fatalf("Fix keeps the changed hooks: %+v", last)
+	}
+	if res, err := s.Share(ctx, "work", []string{hooksFile}); err != nil || res.Failed {
+		t.Fatal(err, res)
+	}
+	if b, _ := os.ReadFile(filepath.Join(work, "hooks.json")); string(b) != string(hooksJSON(t, "printf '%s' 'a  b'")) {
+		t.Fatalf("Fix wrote %s", b)
+	}
+	if got := driftKinds(listed(t, s, "work")); got != skill {
+		t.Fatalf("drift after the Fix: %s", got)
+	}
+}
+
+// AC7 (review R2): a skill is moved only from a skills/ that is a folder
+// of its own, into a ~/.agents/skills that is one: a skills/ linked to
+// sessions/ or out of the listed homes, or a linked ~/.agents/skills, is
+// refused and nothing is written.
+func TestMoveSkillOnlyThroughRealFolders(t *testing.T) {
+	t.Run("skills/ linked to sessions/", func(t *testing.T) {
+		s, u, _, work := shareHomes(t)
+		os.Symlink(filepath.Join(work, "sessions"), filepath.Join(work, "skills"))
+		before := tree(t, u)
+		if _, err := s.MoveSkill(ctx, "work", "2026"); !errors.As(err, new(*SettingsError)) {
+			t.Fatalf("moved: %v", err)
+		}
+		if !maps(before, tree(t, u)) {
+			t.Fatal("a refused move wrote something")
+		}
+	})
+	t.Run("skills/ linked out of the homes", func(t *testing.T) {
+		s, u, _, work := shareHomes(t)
+		outside := t.TempDir()
+		os.MkdirAll(filepath.Join(outside, "mine"), 0o755)
+		os.WriteFile(filepath.Join(outside, "mine", "SKILL.md"), []byte("keep"), 0o600)
+		os.Symlink(outside, filepath.Join(work, "skills"))
+		before, out := tree(t, u), tree(t, outside)
+		if _, err := s.MoveSkill(ctx, "work", "mine"); !errors.As(err, new(*SettingsError)) {
+			t.Fatalf("moved: %v", err)
+		}
+		if !maps(before, tree(t, u)) || !maps(out, tree(t, outside)) {
+			t.Fatal("a refused move wrote something")
+		}
+	})
+	for _, link := range []string{".agents", ".agents/skills"} {
+		t.Run(link+" a link", func(t *testing.T) {
+			s, u, _, _ := shareHomes(t)
+			elsewhere := t.TempDir()
+			os.RemoveAll(filepath.Join(u, link))
+			os.Symlink(elsewhere, filepath.Join(u, link))
+			before, out := tree(t, u), tree(t, elsewhere)
+			if _, err := s.MoveSkill(ctx, "codex", "infra"); !errors.As(err, new(*SettingsError)) {
+				t.Fatalf("moved: %v", err)
+			}
+			if !maps(before, tree(t, u)) || !maps(out, tree(t, elsewhere)) {
+				t.Fatal("a refused move wrote something")
+			}
+		})
+	}
+	t.Run("no ~/.agents yet", func(t *testing.T) {
+		s, u, _, _ := shareHomes(t)
+		os.RemoveAll(filepath.Join(u, ".agents"))
+		if res, err := s.MoveSkill(ctx, "codex", "infra"); err != nil || res.Failed {
+			t.Fatal(err, res)
+		}
+		for _, d := range []string{".agents", ".agents/skills", ".agents/skills/infra"} {
+			if !realDir(filepath.Join(u, d)) {
+				t.Fatalf("%s is not a folder", d)
+			}
+		}
+	})
+}
+
+// Review R3/R4: what appeared since the plan is never overwritten. A
+// backup name taken meanwhile: the next free one, and the report names it.
+// A hooks.json or an entry where the plan saw none: left as it is, and the
+// share stops there, saying so.
+func TestShareNeverOverwrites(t *testing.T) {
+	t.Run("backup name taken", func(t *testing.T) {
+		s, _, def, work := shareHomes(t)
+		os.WriteFile(filepath.Join(work, "config.toml"), []byte("profile original"), 0o600)
+		plan := planShare(def, work, s.clock())
+		backup := filepath.Join(work, plan[0].Backup)
+		os.WriteFile(backup, []byte("irreplaceable earlier backup"), 0o600)
+		done, err := applySteps(def, work, plan, s.clock())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b, _ := os.ReadFile(backup); string(b) != "irreplaceable earlier backup" {
+			t.Fatalf("backup overwritten: %q", b)
+		}
+		if done[0].Backup != plan[0].Backup+"-2" {
+			t.Fatalf("backup %s", done[0].Backup)
+		}
+		if b, _ := os.ReadFile(filepath.Join(work, done[0].Backup)); string(b) != "profile original" {
+			t.Fatalf("-2 holds %q", b)
+		}
+		if r := shareReport(done, "work", "codex"); !strings.Contains(r, "config.toml.before-share-20261021-151002-2") {
+			t.Fatalf("report %q", r)
+		}
+	})
+	for _, entry := range []string{hooksFile, "AGENTS.md"} {
+		t.Run(entry+" appeared", func(t *testing.T) {
+			s, _, def, work := shareHomes(t)
+			plan := planShare(def, work, s.clock())
+			p := filepath.Join(work, entry)
+			os.WriteFile(p, []byte("concurrent user's"), 0o600)
+			done, err := applySteps(def, work, plan, s.clock())
+			if err == nil || err.Error() != "a new "+entry+" appeared meanwhile: left as it is" {
+				t.Fatalf("err %v", err)
+			}
+			if b, _ := os.ReadFile(p); string(b) != "concurrent user's" {
+				t.Fatalf("overwritten: %q", b)
+			}
+			if backups, _ := filepath.Glob(p + ".before-share-*"); len(backups) > 0 || strings.Contains(actions(done), entry) {
+				t.Fatalf("%v %s", backups, actions(done))
+			}
+		})
+	}
+	// A FIFO where the default's hooks.json is: refused, not waited on.
+	t.Run("hooks.json a FIFO", func(t *testing.T) {
+		s, _, def, work := shareHomes(t)
+		hooks := filepath.Join(def, hooksFile)
+		os.Remove(hooks)
+		if err := syscall.Mkfifo(hooks, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan ShareResult, 1)
+		go func() {
+			res, _ := s.Share(ctx, "work", nil)
+			done <- res
+		}()
+		select {
+		case res := <-done:
+			if !res.Failed || !strings.Contains(res.Report, "Stopped: hooks.json: hooks.json is not a regular file.") {
+				t.Fatalf("report %q", res.Report)
+			}
+		case <-time.After(5 * time.Second):
+			w, _ := os.OpenFile(hooks, os.O_WRONLY, 0)
+			w.Close()
+			t.Fatal("share waited on the FIFO")
+		}
+		if _, err := os.Lstat(filepath.Join(work, hooksFile)); !isNotExist(err) {
+			t.Fatalf("hooks.json written: %v", err)
+		}
+	})
 }
