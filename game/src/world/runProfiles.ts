@@ -62,10 +62,22 @@ export function keepProfile(next: Hire, prev: Hire | null | undefined): Hire {
   return withProfile(next, next.harness === 'codex' && prev?.harness === 'codex' ? prev.codex_profile : null);
 }
 
-/** Preset roles as a bridge is sent them: profiles only on Codex roles, and none at all to a bridge without `runs`. */
+/**
+ * A role's profile as a save stores it: what its chips show (a stored one gone, hidden or not signed in fell back to the
+ * default: the default's key), the stored one when there are no chips, none when it has none (the default, as before).
+ */
+export function roleProfileToSave(state: CodexProfilesState | null, h: Hire): string | undefined {
+  if (!h.codex_profile) return undefined;
+  return roleProfileChoice(state, h.harness, h.codex_profile)?.key ?? h.codex_profile;
+}
+
+/**
+ * Preset roles as a bridge is sent them: profiles only on Codex roles (`roleProfileToSave`: what the chips show), and none
+ * at all to a bridge without `runs`.
+ */
 export function rolesFor(state: CodexProfilesState | null, roles: PresetRoles): PresetRoles {
   const on = runsTakeProfiles(state);
-  return Object.fromEntries(Object.entries(roles).map(([r, h]) => [r, withProfile(h, on ? h.codex_profile : null)])) as PresetRoles;
+  return Object.fromEntries(Object.entries(roles).map(([r, h]) => [r, withProfile(h, on ? roleProfileToSave(state, h) : null)])) as PresetRoles;
 }
 
 /** A role's profile for the preset list's line (" · Work"), '' on the default or with no choice shown. */

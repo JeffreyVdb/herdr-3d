@@ -58,6 +58,14 @@ describe('the profile on the wire', () => {
     const old = rolesFor(NORUNS, roles);
     expect(Object.values(old).some((h) => 'codex_profile' in h)).toBe(false);
   });
+  it('rolesFor saves what the chips show: a gone, hidden or signed-out profile as the default; without chips, as stored', () => {
+    const state: CodexProfilesState = { ...RUNS, profiles: [...RUNS.profiles, prof('hidden', { hidden: true })] };
+    const roles: PresetRoles = { orch: codex('gone'), coder: claude, reviewer: codex('hidden'), ux: codex('off'), researcher: codex() };
+    expect(rolesFor(state, roles)).toEqual({ orch: codex('codex'), coder: claude, reviewer: codex('codex'), ux: codex('codex'), researcher: codex() });
+    const lone: CodexProfilesState = { ...RUNS, profiles: [own] };
+    expect(rolesFor(lone, roles)).toEqual(roles);
+    expect(rolesFor(NOAUTO, { ...roles, orch: codex('auto') }).orch).toEqual(codex('codex'));
+  });
   it('presetPatch sees a profile change; the list line names a non-default profile', () => {
     const p = { id: 'p_1', name: 'T', roles: { orch: codex(), coder: claude, reviewer: codex(), ux: codex(), researcher: codex() } };
     expect(presetPatch(p, { name: 'T', roles: { ...p.roles, reviewer: codex('') } })).toBeNull();

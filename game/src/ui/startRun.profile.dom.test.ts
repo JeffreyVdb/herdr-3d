@@ -194,4 +194,28 @@ describe('Team presets: a Codex role’s profile (#167)', () => {
     document.querySelectorAll<HTMLButtonElement>('[data-key="edit:p_1"]')[0]!.click();
     expect(document.querySelector('[data-role-profile]')).toBeNull();
   });
+
+  // Review B-R1: a stored profile that is gone, not signed in or hidden shows the default checked; saving (the default
+  // clicked or not) stores the default, what the chips show.
+  for (const key of ['gone', 'work', 'hidden']) {
+    it(`a role on a ${key === 'work' ? 'signed-out' : key} profile saves the default it shows`, async () => {
+      const state = key === 'work' ? { ...RUNS, profiles: [own, prof('work', { signed_in: false })] }
+        : key === 'hidden' ? { ...RUNS, profiles: [...RUNS.profiles, prof('hidden', { hidden: true })] } : RUNS;
+      for (const click of [true, false]) {
+        const t = setup(state, { id: 'p_1', name: 'Team', roles: roles(cx(), cx(key)) });
+        t.panel.open();
+        document.querySelector<HTMLButtonElement>('[data-key="edit:p_1"]')!.click();
+        const def = document.querySelector<HTMLInputElement>('[data-key="role:reviewer:profile:codex"]')!;
+        expect(def.checked).toBe(true);
+        if (click) def.click();
+        const name = document.querySelector<HTMLInputElement>('#preset-name')!;
+        name.value = 'Renamed';
+        name.dispatchEvent(new Event('input'));
+        document.querySelector<HTMLFormElement>('#presets-form')!.requestSubmit();
+        await flush();
+        expect(t.sent).toEqual([['preset.update', { id: 'p_1', name: 'Renamed', roles: roles(cx(), cx('codex')) }]]);
+        t.panel.close();
+      }
+    });
+  }
 });
