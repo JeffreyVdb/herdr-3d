@@ -57,7 +57,8 @@ func TestRunStartOrchProfile(t *testing.T) {
 	if i := slices.Index(calls, "codex-home w1:p1 "+pb.team); i < 0 || !strings.HasPrefix(calls[i+1], "start-agent w1:p1 ") {
 		t.Fatalf("herdr calls = %q", calls)
 	}
-	if res.Codex == nil || res.Codex.Profile != "team" || !strings.Contains(res.Codex.ProfileNote, "team has no hooks.json with herdr's hook") {
+	if res.Codex == nil || res.Codex.Profile != "team" || !strings.Contains(res.Codex.ProfileNote, "team has no hooks.json with herdr's hook") ||
+		!strings.Contains(res.Codex.ProfileNote, "team does not share setup with codex: no herdr hooks.") { // #167: as a hire's
 		t.Fatalf("run.start ack %s", m.raw)
 	}
 	if l := pb.launches(t)[res.ID]; l.Profile != "team" {
@@ -116,7 +117,8 @@ func TestRunStartTeamProfiles(t *testing.T) {
 		t.Fatalf("run.prepare showed\n%s\nrun.start sent\n%s", prep.Prompt, res.Prompt)
 	}
 	if res.CodexTeamReason != "reviewers: Account: work (rule acme/*)" ||
-		strings.Count(res.CodexTeamNote, "has no hooks.json with herdr's hook") != 2 {
+		strings.Count(res.CodexTeamNote, "has no hooks.json with herdr's hook") != 2 ||
+		strings.Count(res.CodexTeamNote, "does not share setup with codex: no herdr hooks.") != 2 || strings.Contains(res.CodexTeamNote, "wake") {
 		t.Fatalf("ack %s", m.raw)
 	}
 	// The orchestrator itself is on the default: nothing exported.
@@ -257,5 +259,36 @@ func TestTaggedFreelancerOnProfile(t *testing.T) {
 		return it.Kind == proto.ItemUser && len(it.Parts) > 0 && it.Parts[0].Text == "review the lobby"
 	}) {
 		t.Fatalf("transcript.watch = %+v", page)
+	}
+}
+
+// #167: a team role's notes say what a hire on its profile would: not
+// shared, nothing while it shares in step, how it drifted; and the bare
+// home's note for an agent the orchestrator starts promises no wake.
+func TestRunStartTeamSetupNotes(t *testing.T) {
+	t.Parallel()
+	pb := startProfileBridge(t, false, "")
+	preset := pb.runOn(t, "Work reviewers", runTeam("work", "", ""))
+	orch := proto.Hire{Harness: "codex", Model: "gpt-6-sol", Effort: "low"}
+	note := func(desk int) string {
+		t.Helper()
+		m, _ := pb.start(t, desk, preset, orch)
+		return ackData[proto.RunStartResult](t, m).CodexTeamNote
+	}
+	want := "work does not share setup with codex: no herdr hooks. work has no hooks.json with herdr's hook: herdr is not told the " +
+		"Codex session of an agent the orchestrator starts on it, so the bridge finds its sessions by the agent's folder in work's " +
+		"sessions (its usage and transcript)."
+	if got := note(1); got != want {
+		t.Fatalf("not shared:\n%s\nwant\n%s", got, want)
+	}
+	pb.c.mustAck(proto.CmdCodexProfilesShare, proto.CodexShareArgs{Key: "work", Share: ptr(true)})
+	if got := note(2); got != "" {
+		t.Fatalf("shared in step: %q", got)
+	}
+	if err := os.Remove(filepath.Join(pb.work, "hooks.json")); err != nil {
+		t.Fatal(err)
+	}
+	if got := note(3); !strings.HasPrefix(got, "work's shared setup has drifted from codex's: hooks.json is missing. work has no hooks.json") {
+		t.Fatalf("drifted: %q", got)
 	}
 }

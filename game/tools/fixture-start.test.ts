@@ -186,6 +186,8 @@ describe('SimWorld run profiles (#167)', () => {
     const ack = data(s.got().find((m) => m.req_id === s.req_id && m.t !== "progress"));
     expect(ack?.prompt).toBe(prep.prompt);
     expect(ack?.codex_team_note).toContain("work has no hooks.json with herdr's hook");
+    expect(ack?.codex_team_note).toMatch(/^work's shared setup has drifted from codex's: config\.toml is no longer a link/); // #167: as a hire's
+    expect(ack?.codex_team_note).not.toContain('wake');
     expect(r.store.workers.get(ack!.id as string)?.codex?.profile).toBe('work');
   });
   it('refuses a role on a profile that is not signed in, naming the role; a bridge without profiles refuses the field', () => {

@@ -22,6 +22,7 @@
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { CodexProfile, Floor, Hire, HireOptions, Preset, PresetRole, Worker } from '../src/net/protocol.ts';
+import { setupNote } from './fixture-codex-profiles.ts';
 
 type Obj = Record<string, unknown>;
 type Send = (m: Obj) => void;
@@ -260,7 +261,11 @@ export class StartSim {
       if (why && strict) throw this.bad(`the ${what}' Codex profile cannot be used: ${why}`);
       if (why || !p || p.default) continue;
       out.profiles[r] = { key: p.key, name: p.name, home: p.path };
-      out.notes.push(`${p.name} has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, so the bridge finds it by the worker's folder in ${p.name}'s sessions (for its usage, and at sleep, so a wake resumes it).`);
+      const setup = setupNote(list.find((x) => x.default)?.name ?? 'the default', p); // #167: as the bridge's teamNotes
+      if (setup) out.notes.push(setup);
+      out.notes.push(
+        `${p.name} has no hooks.json with herdr's hook: herdr is not told the Codex session of an agent the orchestrator starts on it, so the bridge finds its sessions by the agent's folder in ${p.name}'s sessions (its usage and transcript).`,
+      );
     }
     out.notes = [...new Set(out.notes)];
     return out;

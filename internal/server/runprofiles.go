@@ -120,6 +120,10 @@ func (h *Hub) resolveTeam(ctx context.Context, ask *teamAsk, notes bool) (runTea
 	}
 	repo, read := "", false
 	noted := map[string]bool{}
+	var listed []codexaccount.Account // #167: as listed now, with each shared profile's drift
+	if notes && h.opts.CodexProfiles != nil {
+		listed, _ = h.opts.CodexProfiles.Accounts(ctx)
+	}
 	for _, r := range ask.roles {
 		key := r.hire.CodexProfile
 		if key == proto.CodexProfileAuto {
@@ -145,19 +149,43 @@ func (h *Hub) resolveTeam(ctx context.Context, ask *teamAsk, notes bool) (runTea
 				fmt.Errorf("the folder of the Codex profile %q (%s) has characters the bridge does not type into a terminal", a.Name, a.Home))
 		}
 		team.profiles[r.role] = TeamProfile{Key: a.Key, Name: a.Name, Home: a.Home}
-		if notes && !noted[a.Key] && !codexaccount.RunsHerdrHook(a.Home) {
+		if notes && !noted[a.Key] {
 			noted[a.Key] = true
-			team.notes = append(team.notes, teamHookNote(a.Name))
+			team.notes = append(team.notes, teamNotes(listed, a)...)
 		}
 	}
 	return team, nil
 }
 
-// teamHookNote is what a role's home that runs no herdr hook changes, in
-// the run's start report: the hire's note for a worker the bridge finds by
-// its folder (the one place it is called for a run's roles).
+// teamNotes are what the run's start report says of a role's profile a,
+// as a hire on it would: whether it shares the default's setup (#167:
+// codexaccount.SetupNote, with list as listed now; a when it is not in
+// it), then the note of a home that runs no herdr hook.
+func teamNotes(list []codexaccount.Account, a codexaccount.Account) []string {
+	var out []string
+	now := a
+	for _, x := range list {
+		if x.Key == a.Key {
+			now = x
+		}
+	}
+	if note := codexaccount.SetupNote(list, now); note != "" {
+		out = append(out, note)
+	}
+	if !codexaccount.RunsHerdrHook(a.Home) {
+		out = append(out, teamHookNote(a.Name))
+	}
+	return out
+}
+
+// teamHookNote is what a role's home that runs no herdr hook changes: herdr
+// is not told the session of an agent the orchestrator starts there, so
+// the bridge finds its sessions by its folder in that home (codexHomeOf's
+// token). Unlike a hire's (noHookNote), it promises nothing of a wake: the
+// bridge does not resume such an agent on another home.
 func teamHookNote(name string) string {
-	return noHookNote(name, store.CodexLegacy)
+	return name + " has no hooks.json with herdr's hook: herdr is not told the Codex session of an agent the orchestrator " +
+		"starts on it, so the bridge finds its sessions by the agent's folder in " + name + "'s sessions (its usage and transcript)."
 }
 
 // teamReport puts what resolving the team found into the run's start

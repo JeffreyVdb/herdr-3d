@@ -2674,8 +2674,12 @@ to a bridge with `runs`. A preset role keeps a stored profile that is gone on `p
   workspace `h3d_codex_profile=<key>`. With every role on the default the prompt is byte for byte the one before #167.
   It never says `auto`.
 - **The ack** of `run.start` adds `codex_team_reason` (Auto's pick per role, `"reviewers: Account: work (rule
-  acme/*)"`, `"; "` between them) and `codex_team_note` (for each such profile whose home runs no herdr hook, the note a
-  hire on it gets); both absent when there is nothing to say.
+  acme/*)"`, `"; "` between them) and `codex_team_note`: for each such profile, what a hire on it says of its setup
+  ([Sharing a profile's setup](#sharing-a-profiles-setup): "work does not share setup with personal: …", or how its
+  shared setup drifted), and for a home that runs no herdr hook "`<name>` has no hooks.json with herdr's hook: herdr is
+  not told the Codex session of an agent the orchestrator starts on it, so the bridge finds its sessions by the agent's
+  folder in `<name>`'s sessions (its usage and transcript)." (no promise of a wake: the bridge does not resume such an
+  agent on another home); both absent when there is nothing to say.
 - **A workspace tagged** `h3d_codex_profile=<key>` (an agent the bridge did not start) is read in that profile's
   `sessions`: its usage, transcript and images, and the sleep backfill. A key that is not listed is read nowhere.
 

@@ -190,13 +190,8 @@ export class CodexProfilesSim {
     const base = codex ?? { mode: 'shared' as const, server: 'running' as const };
     if (p.default) return { ...base, profile: key };
     if (!p.signed_in) throw this.h.error('hire_failed', `hire_failed: ${p.name} is not signed in. Run \`CODEX_HOME=${p.path} codex login\` in a terminal.`);
-    const drift = this.drift(p); // #167: what the bridge says of its setup first
-    const def = this.profiles.find((x) => x.default)!.name;
-    const setup = drift.length
-      ? `${p.name}'s shared setup has drifted from ${def}'s: ${drift.map((d) => d.text).join('; ')}. `
-      : p.share
-        ? ''
-        : `${p.name} does not share setup with ${def}: no MCP servers, no herdr hooks. `;
+    const note = setupNote(this.profiles.find((x) => x.default)!.name, { ...p, drift: this.drift(p) }); // #167: its setup first
+    const setup = note ? `${note} ` : '';
     return {
       ...base,
       profile: key,
@@ -378,6 +373,16 @@ export class CodexProfilesSim {
     this.h.emit(send, { t: 'codex_profiles.update', ...this.view() });
     if (changed) this.h.emit(send, { t: 'limits.update', ...this.reading(changed, base() ?? emptyCodex(this.h.now()), this.h.now()) });
   }
+}
+
+/**
+ * #167: what a Codex hire, or a run's team role, on profile `p` says of its setup, as codexaccount.SetupNote words it
+ * (`p.drift` as the list carries it; `def` the default's name): "" on the default or a shared profile in step.
+ */
+export function setupNote(def: string, p: CodexProfile): string {
+  if (p.default) return '';
+  if (p.drift?.length) return `${p.name}'s shared setup has drifted from ${def}'s: ${p.drift.map((d) => d.text).join('; ')}.`;
+  return p.share ? '' : `${p.name} does not share setup with ${def}: no MCP servers, no herdr hooks.`;
 }
 
 /** "a", "a and b", "a, b and c". */
