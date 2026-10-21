@@ -391,7 +391,12 @@ func (h *Hub) seedTrust(ctx context.Context, svc *codexaccount.Service, key stri
 	r, err := t.SeedHookTrust(ctx, def.Home, a.Home)
 	switch {
 	case err != nil:
-		h.log.Warn("codex profiles: trusting a shared profile's hooks failed", "profile", key, "err", err)
+		// An app-server's error text could quote its config: only its code is logged.
+		why := err.Error()
+		if rpc := (*codexapp.RPCError)(nil); errors.As(err, &rpc) {
+			why = fmt.Sprintf("app-server error %d", rpc.Code)
+		}
+		h.log.Warn("codex profiles: trusting a shared profile's hooks failed", "profile", key, "err", why)
 		return review
 	case r.Untrusted > 0:
 		return review

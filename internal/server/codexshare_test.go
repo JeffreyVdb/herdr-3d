@@ -3,6 +3,8 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -231,5 +233,29 @@ func TestCodexShareTrustFallbackAndSkill(t *testing.T) {
 	}
 	if moved.Report != "Moved the skill infra to ~/.agents/skills/infra and left a link in codex's skills/: every Codex home sees it now." || profileByKey(&moved.CodexProfiles, "work").Drift != nil {
 		t.Fatalf("moved %+v", moved)
+	}
+}
+
+// A trust seed that fails says Codex will ask once, and its app-server's
+// error text (which could quote the config) is not logged.
+func TestCodexShareTrustErrorNotLogged(t *testing.T) {
+	t.Parallel()
+	home := shareHome(t)
+	os.Remove(filepath.Join(home, ".codex-work", "config.toml"))
+	host := &trustingHost{fakeCodexHost: newFakeCodexHost(),
+		err: fmt.Errorf("config/batchWrite: %w", &codexapp.RPCError{Code: -32600, Message: "bad value " + shareSecret})}
+	log := &syncBuffer{}
+	opts := profilesOptions(home, &profileRunner{})
+	opts.CodexHost = host
+	opts.Log = slog.New(slog.NewTextHandler(log, nil))
+	b := startBridge(t, "", opts)
+	a := b.connect(proto.Hello{})
+	a.snapshot()
+	done := shareAck(t, a, proto.CodexShareArgs{Key: "work", Share: ptr(true)})
+	if !strings.HasSuffix(done.Report, " Codex will ask once to review the hooks of work.") {
+		t.Fatalf("report %q", done.Report)
+	}
+	if got := log.String(); strings.Contains(got, shareSecret) || !strings.Contains(got, "app-server error -32600") {
+		t.Fatalf("log %s", got)
 	}
 }
