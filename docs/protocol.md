@@ -2440,9 +2440,13 @@ an account, never reads a token and never runs codex-auth: it only looks at fold
 - **Key**: from the folder alone, so it never moves to another folder when folders come and go, and does not change
   on a rename. The folder's name, lower case, without leading dots and `codex-`: `~/.codex` is `codex`,
   `~/.codex-work` is `work`. Only the default and a `~/.codex-<key>` folder whose name is already that (`.codex-Work`
-  is not; nor is `~/.codex-codex` beside a default `codex`) have the name alone; any other folder adds the first 6 hex
-  digits of the SHA-256 of its path: `/data/team-codex` is `team-codex-32b74a`, `~/.codex-Work` `work-<hash>`. The
-  default name is the folder's name without the hash when no other profile's folder has that name, else the key.
+  is not; nor is `~/.codex-codex` beside a default `codex`) have the name alone; any other folder adds `-` and the
+  first 6 hex digits of the SHA-256 of its path: `/data/team-codex` is `team-codex-32b74a`, `~/.codex-Work`
+  `work-<hash>`. A name that itself ends in `-` and 6 or more hex digits is hashed too (`~/.codex-a-812dc0` is
+  `a-812dc0-<hash>`), so a name alone never ends like a hash and never equals another folder's hashed key. Two paths
+  whose 6 digits are the same both take all 64, whichever is listed first: no key depends on the listing order. The
+  default name is the folder's name without the hash when no other profile's folder has that name and no other
+  profile has it as its key, else the key.
 - **Settings** (SQLite `codex_profiles_settings`, one row, a JSON object: per folder a `name` and `hidden`, and the
   added folders). `codex_profiles.set` takes **one** change and answers the list:
   - `{"key", "name"}`: trimmed, 1–40 characters, no control characters, no other profile's name or key in any case

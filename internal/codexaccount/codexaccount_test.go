@@ -5,9 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -354,3 +357,166 @@ func TestAuthJSONIsOnlyStated(t *testing.T) {
 }
 
 func errOf(_ Settings, err error) error { return err }
+
+// R1 of the #138 review, round 3: a folder named like another folder's
+// hashed key (~/.codex-a-<hash of ~/.codex-+a>) does not take that key, nor
+// does any folder whose name ends in "-" and hex. Every folder keeps its key
+// whichever of the others are there, found or added, in whatever order.
+func TestKeysDependOnTheFolderAloneInAnyOrder(t *testing.T) {
+	h, err := filepath.EvalSymlinks(home(t, map[string]bool{".codex": true, ".codex-+a": false, ".codex-a": false,
+		".codex-team-c0ffee": false, "else/a": false, "else/.codex-a": false, "real/codex-s": false}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plusA := hashed("a", filepath.Join(h, ".codex-+a"))
+	for _, dir := range []string{".codex-" + plusA, "links"} {
+		if err := os.MkdirAll(filepath.Join(h, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(h, "real/codex-s"), filepath.Join(h, ".codex-link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(h, "else/a"), filepath.Join(h, "links/a")); err != nil {
+		t.Fatal(err)
+	}
+	// Each folder as listed (found when it has an auth.json, else added),
+	// the folder its auth.json goes in, and its key.
+	type folder struct{ path, auth, key string }
+	folders := []folder{
+		{".codex-+a", ".codex-+a", plusA},
+		{".codex-" + plusA, ".codex-" + plusA, hashed(plusA, filepath.Join(h, ".codex-"+plusA))},
+		{".codex-a", ".codex-a", "a"},
+		{".codex-team-c0ffee", ".codex-team-c0ffee", hashed("team-c0ffee", filepath.Join(h, ".codex-team-c0ffee"))},
+		{"else/a", "", hashed("a", filepath.Join(h, "else/a"))},
+		{"else/.codex-a", "", hashed("a", filepath.Join(h, "else/.codex-a"))},
+		{".codex-link", "real/codex-s", hashed("s", filepath.Join(h, "real/codex-s"))},
+		{"links/a", "", hashed("a", filepath.Join(h, "else/a"))},
+	}
+	s := New(h, filepath.Join(h, ".codex"))
+	rng := rand.New(rand.NewPCG(138, 3))
+	check := func(trial string, found []bool, added []int) {
+		t.Helper()
+		for i, f := range folders {
+			if f.auth == "" {
+				continue
+			}
+			auth := filepath.Join(h, f.auth, "auth.json")
+			if found[i] {
+				if err := os.WriteFile(auth, []byte(`{}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Remove(auth); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+		}
+		set := Settings{Added: []string{}}
+		for _, i := range added {
+			set.Added = append(set.Added, filepath.Join(h, folders[i].path))
+		}
+		s.Configure(set)
+		got, _ := s.Accounts(ctx)
+		want := map[string]string{filepath.Join(h, ".codex"): "codex"}
+		for i, f := range folders {
+			if found[i] || slices.Contains(added, i) {
+				want[canonical(filepath.Join(h, f.path))] = f.key
+			}
+		}
+		keySeen, nameSeen := map[string]bool{}, map[string]bool{}
+		for _, a := range got {
+			if k, ok := want[a.Home]; !ok || a.Key != k {
+				t.Fatalf("%s: %s has key %q, want %q (all %v)", trial, a.Home, a.Key, k, keys(got))
+			}
+			delete(want, a.Home)
+			if keySeen[a.Key] || nameSeen[strings.ToLower(a.Name)] {
+				t.Fatalf("%s: key %q or name %q twice in %+v", trial, a.Key, a.Name, got)
+			}
+			keySeen[a.Key], nameSeen[strings.ToLower(a.Name)] = true, true
+		}
+		if len(want) != 0 {
+			t.Fatalf("%s: not listed %v", trial, want)
+		}
+	}
+	// Every subset, added in order and in reverse; then random mixes of
+	// found and added folders in random orders.
+	for mask := range 1 << len(folders) {
+		var added []int
+		for i := range folders {
+			if mask&(1<<i) != 0 {
+				added = append(added, i)
+			}
+		}
+		check(fmt.Sprintf("added %v", added), make([]bool, len(folders)), added)
+		slices.Reverse(added)
+		check(fmt.Sprintf("added %v", added), make([]bool, len(folders)), added)
+	}
+	for trial := range 500 {
+		found := make([]bool, len(folders))
+		var added []int
+		for _, i := range rng.Perm(len(folders)) {
+			switch rng.IntN(3) {
+			case 1:
+				added = append(added, i)
+			case 2:
+				found[i] = folders[i].auth != "" && strings.HasPrefix(folders[i].path, ".codex-")
+			}
+		}
+		check(fmt.Sprintf("trial %d: found %v, added %v", trial, found, added), found, added)
+	}
+}
+
+// Two paths whose hashes start alike both take the whole hash, whichever
+// is listed first; alone, each has the short one.
+func TestHashPrefixClashTakesTheWholeHash(t *testing.T) {
+	h, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p, q string
+	seen := map[string]string{}
+	for i := 0; p == ""; i++ {
+		path := filepath.Join(h, strconv.Itoa(i), "x")
+		sum := sha256.Sum256([]byte(path))
+		prefix := hex.EncodeToString(sum[:3])
+		if other, ok := seen[prefix]; ok {
+			p, q = other, path
+		}
+		seen[prefix] = path
+	}
+	for _, dir := range []string{p, q} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	whole := func(path string) string {
+		sum := sha256.Sum256([]byte(path))
+		return "x-" + hex.EncodeToString(sum[:])
+	}
+	s := New(h, filepath.Join(h, ".codex"))
+	for _, added := range [][]string{{p, q}, {q, p}} {
+		s.Configure(Settings{Added: added})
+		got, _ := s.Accounts(ctx)
+		if got[1].Key != whole(added[0]) || got[2].Key != whole(added[1]) {
+			t.Fatalf("added %v: keys %v", added, keys(got))
+		}
+	}
+	for _, path := range []string{p, q} {
+		s.Configure(Settings{Added: []string{path}})
+		if got, _ := s.Accounts(ctx); got[1].Key != hashed("x", path) {
+			t.Fatalf("%s alone: keys %v", path, keys(got))
+		}
+	}
+}
+
+// A default home whose name ends in "-" and hex is hashed too.
+func TestHexEndedDefaultIsHashed(t *testing.T) {
+	h, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := filepath.Join(h, "codex-srv-0a1b2c")
+	got, _ := New(h, def).Accounts(ctx)
+	if got[0].Key != hashed("srv-0a1b2c", def) || got[0].Name != "srv-0a1b2c" {
+		t.Fatalf("default %+v", got[0])
+	}
+}

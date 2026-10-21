@@ -3,7 +3,9 @@ package server_test
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -290,6 +292,50 @@ func TestCodexProfileKeysStayWithTheirFolder(t *testing.T) {
 		if l.Account != nil && l.Account.Key == "a" && l.Plan != "codex-a" {
 			t.Fatalf("a's reading %+v", l)
 		}
+	}
+}
+
+// R1 of the #138 review, round 3: a folder named like another folder's
+// hashed key (~/.codex-a-<hash of ~/.codex-+a>) has a key of its own, kept
+// when ~/.codex-+a goes; the gone folder's key then names no profile.
+func TestCodexProfileKeysHashedAndPlainNeverMeet(t *testing.T) {
+	t.Parallel()
+	home := codexHomes(t, map[string]bool{".codex": true, ".codex-+a": true})
+	plusA := filepath.Join(home, ".codex-+a")
+	sum := sha256.Sum256([]byte(plusA))
+	gone := fmt.Sprintf("a-%x", sum[:3])
+	survivor := filepath.Join(home, ".codex-"+gone)
+	if err := os.Mkdir(survivor, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(survivor, "auth.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b := startBridge(t, filepath.Join(t.TempDir(), "world.db"), profilesOptions(home, &profileRunner{}))
+	c := b.connect(proto.Hello{})
+	keyOf := map[string]string{}
+	for _, p := range c.snapshot().World.CodexProfiles.Profiles {
+		keyOf[p.Path] = p.Key
+	}
+	sum = sha256.Sum256([]byte(survivor))
+	kept := fmt.Sprintf("%s-%x", gone, sum[:3])
+	if keyOf[plusA] != gone || keyOf[survivor] != kept {
+		t.Fatalf("keys %v, want %s: %s, %s: %s", keyOf, plusA, gone, survivor, kept)
+	}
+	for range 4 {
+		c.until(proto.EvLimitsUpdate)
+	}
+	if err := os.Remove(filepath.Join(plusA, "auth.json")); err != nil {
+		t.Fatal(err)
+	}
+	_, ack := c.mustAck(proto.CmdCodexProfilesGet, map[string]any{})
+	if p := profilesOf(t, ack.Data); keysOf(&p) != "codex,"+kept || p.Profiles[1].Name != gone {
+		t.Fatalf("profiles %+v", p)
+	}
+	c.mustError(proto.CmdCodexProfilesSet, proto.CodexProfilesSetArgs{Key: gone, Hidden: ptr(true)}, "not_found")
+	_, ack = c.mustAck(proto.CmdCodexProfilesGet, map[string]any{})
+	if p := profilesOf(t, ack.Data); p.Profiles[1].Hidden {
+		t.Fatalf("the survivor was hidden: %+v", p)
 	}
 }
 

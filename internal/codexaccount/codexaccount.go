@@ -37,13 +37,15 @@ const (
 // Account is one Codex profile.
 type Account struct {
 	// Key names the profile for good: it comes from its folder alone
-	// (~/.codex-work: "work"; a folder elsewhere, or one whose name had to
-	// be changed, gets a hash of its path too: /data/team "team-1a2b3c"),
-	// so neither a rename nor other folders coming and going change it.
+	// (~/.codex-work: "work"; a folder elsewhere, one whose name had to be
+	// changed, or one whose name ends in "-" and hex digits gets a hash of
+	// its path too: /data/team "team-1a2b3c"), so neither a rename nor
+	// other folders coming and going change it. Only two paths whose hashes
+	// start alike take the whole hash, both of them.
 	Key string
 	// Name is what the user calls it (default: its folder's name as in the
-	// Key, without a hash, when no other profile's folder has it; else the
-	// Key).
+	// Key, without a hash, when no other profile's folder has it and no
+	// other profile has it as its key; else the Key).
 	Name string
 	// Home is the Codex home folder, absolute, symlinks resolved.
 	Home string
@@ -184,15 +186,30 @@ func list(userHome, defaultHome string, set Settings) []Account {
 	for _, f := range homes {
 		bases[keyOf(f.home)]++
 	}
+	keys := make([]string, len(homes))
+	count := map[string]int{}
+	for i, f := range homes {
+		keys[i] = keyFor(f.home, f.def, userDir, defKey, 6)
+		count[keys[i]]++
+	}
+	// Two paths whose hashes start alike (the only keys that can meet):
+	// both take the whole hash, whichever is listed first.
+	taken := map[string]bool{}
+	for i, f := range homes {
+		if count[keys[i]] > 1 {
+			keys[i] = keyFor(f.home, f.def, userDir, defKey, 2*sha256.Size)
+		}
+		taken[keys[i]] = true
+	}
 	out := make([]Account, 0, len(homes))
-	keys := map[string]bool{}
 	stored := make([]bool, len(homes))
 	for i, f := range homes {
-		key := uniqueKey(keyFor(f.home, f.def, userDir, defKey), keys)
+		key := keys[i]
 		// A key with a path hash is named by its folder alone while no
-		// other profile's folder has that name.
+		// other profile's folder has that name and no other profile has it
+		// as its key.
 		name := key
-		if base := keyOf(f.home); bases[base] == 1 {
+		if base := keyOf(f.home); bases[base] == 1 && (base == key || !taken[base]) {
 			name = base
 		}
 		a := Account{Key: key, Name: name, Home: f.home, Default: f.def, Added: f.added, Exists: f.exists, SignedIn: f.auth}
@@ -284,32 +301,22 @@ func keyOf(home string) string {
 // keyFor is the key of home, from home alone, so that a folder keeps its
 // key whatever else is listed or comes and goes: the folder's name (keyOf)
 // for the default home and for ~/.codex-<key> (a name keyOf keeps as it is,
-// not the default's key), as no two other folders can have them; the name
-// and a hash of the path for any other folder. userDir is the user's home
-// folder, canonical.
-func keyFor(home string, def bool, userDir, defKey string) string {
+// not the default's key), as no two other folders can have them; for any
+// other folder, the name, "-" and the first digits (6, or all 64) hex
+// digits of the SHA-256 of the path. A name that itself ends in "-" and 6
+// or more hex digits is hashed too, so a key with a hash is never another
+// folder's name alone. userDir is the user's home folder, canonical.
+func keyFor(home string, def bool, userDir, defKey string, digits int) string {
 	key := keyOf(home)
-	if def {
-		return key
-	}
-	if userDir != "" && key != defKey && home == filepath.Join(userDir, ".codex-"+key) {
+	if !hashEnd.MatchString(key) && (def || userDir != "" && key != defKey && home == filepath.Join(userDir, ".codex-"+key)) {
 		return key
 	}
 	sum := sha256.Sum256([]byte(home))
-	return key + "-" + hex.EncodeToString(sum[:3])
+	return key + "-" + hex.EncodeToString(sum[:])[:digits]
 }
 
-// uniqueKey is key, or key-2, key-3… when it is taken (in listing order).
-// keyFor makes the keys unique but for a path hash that collides: this only
-// keeps two profiles from ever sharing a key.
-func uniqueKey(key string, taken map[string]bool) string {
-	k := key
-	for n := 2; taken[k]; n++ {
-		k = fmt.Sprintf("%s-%d", key, n)
-	}
-	taken[k] = true
-	return k
-}
+// hashEnd is how a key with a path hash ends.
+var hashEnd = regexp.MustCompile(`-[0-9a-f]{6,}$`)
 
 // Display is path for people: under the user's home folder it starts with
 // ~.
