@@ -27,7 +27,7 @@ import { effortsFor } from '../world/settings';
 import { isComplete, levelChipText, levelProblem, preselectLevel, type TaskLevelId } from '../world/taskLevels';
 import { exactProblem, instructionsBlocker, nudgeWanted, pickExact, presetChoiceText, type ExactProblem } from '../world/hirePresets';
 import type { WorldStore } from '../world/store';
-import { hireProfiles, pickProfile, profileBlocked, profileGoneText } from '../world/codexProfiles';
+import { hireProfiles, loneProfileGone, pickProfile, profileBlocked, profileGoneText } from '../world/codexProfiles';
 import { h, icon, ICON } from './dom';
 import { failureText } from './messages';
 import { hiredToast } from './hiredToast';
@@ -263,8 +263,13 @@ export function profileChips(name: string, list: readonly CodexProfile[], value:
     { class: 'dd-pick', 'data-pick': name, 'data-hook': 'codex-profile' },
     h('legend', {}, 'Codex profile'),
     row,
-    note ? h('p', { class: 'field-hint', 'data-hook': 'profile-gone' }, note) : null,
+    note ? h('p', { class: 'field-hint dd-profile-gone', 'data-hook': 'profile-gone' }, note) : null,
   );
+}
+
+/** #139: `profileChips`' note on its own, where there is no picker (`loneProfileGone`), in line with the chips. */
+export function profileGoneNote(note: string): HTMLElement {
+  return h('p', { class: 'field-hint dd-profile-gone dd-profile-gone--alone', 'data-hook': 'profile-gone' }, note);
 }
 
 /** The caps of a floor and the host, and what one more hire does to them: a line, or a callout past a cap. */
@@ -1014,7 +1019,7 @@ export class HireDialog {
     const fv = this.host.store.floorView(this.floor);
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const taken = this.takenBy();
-    const key = JSON.stringify([this.floor, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version, labelsOf(this.host.store.hireOptions, this.f.harness), this.levelMode, this.level, this.levelMode ? this.host.taskLevels?.version : null, this.exact, this.host.store.hirePresets?.known, this.addLines, this.host.store.hirePresets?.instructions, this.host.store.hirePresets?.version, this.host.pins?.version, this.profileChoice()]);
+    const key = JSON.stringify([this.floor, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version, labelsOf(this.host.store.hireOptions, this.f.harness), this.levelMode, this.level, this.levelMode ? this.host.taskLevels?.version : null, this.exact, this.host.store.hirePresets?.known, this.addLines, this.host.store.hirePresets?.instructions, this.host.store.hirePresets?.version, this.host.pins?.version, this.profileChoice(), this.loneGone()]);
     // Typing (task, label, folder) only needs the button; everything else re-renders.
     if (key === this.renderedKey) {
       this.renderActions();
@@ -1135,7 +1140,9 @@ export class HireDialog {
       this.bytesEl = null;
       if (lines !== null) nodes.push(this.instructionsControl(lines));
       // #139: with the rest of the choice, above the switch between task levels and models.
+      const lone = this.loneGone();
       if (prof) agent.insertBefore(this.profileField(prof), agent.querySelector(':scope > .dd-level-switch'));
+      else if (lone) agent.insertBefore(profileGoneNote(lone), agent.querySelector(':scope > .dd-level-switch'));
       nodes.push(agent, slot, ids);
 
       const g = this.gitView(this.prep.git);
@@ -1194,6 +1201,11 @@ export class HireDialog {
     if (!list) return null;
     const cur = this.profile !== null ? list.find((p) => p.key === this.profile && !profileBlocked(p)) : undefined;
     return cur ? { list, key: cur.key, gone: null } : { list, ...pickProfile(list, this.profileWant) };
+  }
+
+  /** #139: a preset's gone profile, with no picker to say so (`loneProfileGone`). */
+  private loneGone(): string | null {
+    return this.f.harness === 'codex' ? loneProfileGone(this.host.store.codexProfiles?.state ?? null, this.profileWant) : null;
   }
 
   private profileField(c: { list: CodexProfile[]; key: string; gone: string | null }): HTMLElement {

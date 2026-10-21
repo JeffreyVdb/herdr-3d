@@ -153,6 +153,20 @@ export function profileGoneText(state: CodexProfilesState | null, key: string, d
   return `This preset’s Codex profile “${name}” is gone: it hires on ${def}.`;
 }
 
+/**
+ * #139: the note of a preset whose profile is gone when there is no picker (only the default is left to hire on): the
+ * one exception to "nothing about profiles with one", so a preset never hires on another account without a word. Null
+ * with two or more (the picker says it), for a preset on the default, and from a bridge that hires on no profile.
+ */
+export function loneProfileGone(state: CodexProfilesState | null, want?: string): string | null {
+  if (!state?.hire || !want || hireProfiles(state)) return null;
+  const list = usableProfiles(state);
+  const { gone } = pickProfile(list, want);
+  if (!gone) return null;
+  const def = list.find((p) => p.default) ?? state.profiles.find((p) => p.default);
+  return profileGoneText(state, gone, def?.name ?? '');
+}
+
 /** #139: a profile's name now (a rename follows), or its key when it is not listed. */
 export function profileName(state: CodexProfilesState | null, key: string): string {
   return state?.profiles.find((p) => p.key === key)?.name ?? key;
@@ -160,13 +174,18 @@ export function profileName(state: CodexProfilesState | null, key: string): stri
 
 /**
  * #139: what the seat bar says about a Codex worker's profile, with two or more profiles shown (else null, as before
- * profiles): the one it was hired on by its current name, and what its hire or last wake found (`profile_note`; another
+ * profiles, but for a wake on the default because its profile was gone): the one it was hired on by its current name, and what its hire or last wake found (`profile_note`; another
  * account's sign-in needs you). A Codex worker with none (hired before profiles, or not by the bridge: write-code's)
  * runs on the default one.
  */
 export function profileNotice(w: Pick<Worker, 'codex' | 'harness' | 'agent_kind'>, state: CodexProfilesState | null): CodexNotice | null {
-  if (usableProfiles(state).length < 2 || (w.harness !== 'codex' && w.agent_kind !== 'codex' && !w.codex)) return null;
   const c = w.codex;
+  if (usableProfiles(state).length < 2) {
+    // A wake on the default because its profile was gone says so also with only the default left (its only note).
+    const def = state?.profiles.find((p) => p.default);
+    return c?.profile && c.profile_note && c.profile === def?.key ? { tone: 'note', text: c.profile_note } : null;
+  }
+  if (w.harness !== 'codex' && w.agent_kind !== 'codex' && !w.codex) return null;
   if (!c?.profile) {
     const def = state?.profiles.find((p) => p.default);
     return def ? { tone: 'note', text: `Runs on the default profile (${def.name}).` } : null;

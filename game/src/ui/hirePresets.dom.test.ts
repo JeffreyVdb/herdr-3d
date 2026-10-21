@@ -610,7 +610,7 @@ describe('HirePresetsDialog: Codex profile (#139)', () => {
     expect(sent.at(-1)).toEqual(['hire_preset.update', expect.objectContaining({ codex_profile: 'codex' })]);
   });
 
-  it('a gone profile shows the default and says so; one profile shows nothing and keeps the key; an older bridge gets none', async () => {
+  it('a gone profile shows the default and says so; with one profile no picker, the note, and the key kept; an older bridge gets none', async () => {
     const p = preset('Review', 'web', { codex_profile: 'old' });
     let { dlg, sent } = setup([p], null, { profiles: TWO });
     dlg.open('web', 0);
@@ -622,6 +622,7 @@ describe('HirePresetsDialog: Codex profile (#139)', () => {
     dlg.open('web', 0);
     click(`edit:${p.id}`);
     expect(document.querySelector('[data-pick="preset-profile"]')).toBeNull();
+    expect(document.querySelector('[data-hook="profile-gone"]')?.textContent).toBe('This preset’s Codex profile “old” is gone: it hires on codex.');
     await submit();
     expect(sent.at(-1)?.[1]).toMatchObject({ codex_profile: 'old' });
     document.body.replaceChildren();
@@ -629,6 +630,7 @@ describe('HirePresetsDialog: Codex profile (#139)', () => {
     dlg.open('web', 0);
     click(`edit:${p.id}`);
     expect(document.querySelector('[data-pick="preset-profile"]')).toBeNull();
+    expect(document.querySelector('[data-hook="profile-gone"]')).toBeNull();
     await submit();
     expect(sent.at(-1)?.[1]).not.toHaveProperty('codex_profile');
   });

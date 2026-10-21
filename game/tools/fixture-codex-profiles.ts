@@ -14,7 +14,8 @@
 // on its `codex` (`work`: its account confirmed, and the bare home's note; `spare`: refused, not signed in; an unknown
 // key: `not_found`). With `simcodexprofiles=2` the seeded Codex workers show the seat's profile line: Pixel (Desk 2 of
 // herdr-3d) on `work`, confirmed; Sprocket (Desk 4) woken on `codex` after its profile went; Bean (Desk 10) on `work`
-// signed in to another account; the others hired before profiles ("Runs on the default profile").
+// signed in to another account; the others hired before profiles ("Runs on the default profile"). Both modes start
+// with a global hire preset "Review on old-work" on a profile that is gone: its hire form says it hires on the default.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { CodexProfile, Limits, Worker, WorkerCodex } from '../src/net/protocol.ts';
@@ -61,6 +62,9 @@ export class CodexProfilesSim {
   private view(): Obj {
     return { profiles: this.profiles.map((p) => ({ ...p })), hire: true };
   }
+
+  /** #139: a global hire preset on a profile that is gone (`old-work`): the hire form and the preset editor say so. */
+  static readonly GONE_PRESET = { name: 'Review on old-work', prompt: 'Review the open pull requests.', harness: 'codex', model: 'gpt-6-sol', effort: 'low', codex_profile: 'old-work' };
 
   /** #139: the seeded Codex workers' profiles (`simcodexprofiles=2`; ids from fixtures/demo.jsonl). */
   seed(workers: Worker[]): void {

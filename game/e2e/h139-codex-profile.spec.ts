@@ -4,8 +4,10 @@ import { frames, openGame, shot, watchErrors } from './game';
 // #139: hiring a Codex worker on a chosen Codex profile against the fixture bridge (`simcodexprofiles=2`,
 // tools/fixture-codex-profiles.ts): the hire dialog's "Codex profile" (codex, the default, picked first; work; spare,
 // not signed in, shown and not pickable; the hidden old not offered), the hire sending the profile picked, and the seat
-// bar's profile line of the seeded workers (Pixel on work, Sprocket woken on codex after its profile went). With one
-// profile (`simcodexprofiles=1`) the dialog is as before. At 390 × 844 and desktop width, in both UI themes, Quiet and
+// bar's profile line of the seeded workers (Pixel on work, Sprocket woken on codex after its profile went), and the
+// seeded preset on a gone profile (old-work): its hire form and its editor say it hires on the default, the note under
+// the chips (not in the legend's column). With one profile (`simcodexprofiles=1`) the dialog is as before, but for that
+// preset's note. At 390 × 844 and desktop width, in both UI themes, Quiet and
 // Ubuntu (Settings → UI theme; the game's UI has no light theme and does not follow prefers-color-scheme).
 
 const SIM = 'play=none&sim=1&simms=150&simusage=0';
@@ -21,6 +23,8 @@ const THEMES = ['quiet', 'ubuntu'] as const;
 type Theme = (typeof THEMES)[number];
 
 const hireDlg = (page: Page) => page.locator('dialog.desk-dlg--hire');
+const presetsDlg = (page: Page) => page.locator('dialog.desk-dlg--hire-presets');
+const GONE_NOTE = 'This preset’s Codex profile “old-work” is gone: it hires on codex.';
 const chip = (page: Page, key: string) => hireDlg(page).locator(`label:has(> [data-key="${key}"])`);
 
 async function openHire(page: Page, desk: number): Promise<void> {
@@ -119,5 +123,74 @@ test(`the seat bar names the profile a Codex worker runs on, and says when it wo
     await page.keyboard.press('Escape');
     await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
   }
+  clean();
+});
+
+/** The note is one readable block: in the chips' column (or, with no chips, in line with where they would be), never the legend's. */
+async function noteFits(page: Page, dlg: ReturnType<typeof hireDlg>, size: (typeof SIZES)[number], chips: boolean): Promise<void> {
+  const note = dlg.locator('[data-hook="profile-gone"]');
+  await expect(note).toHaveText(GONE_NOTE);
+  await note.scrollIntoViewIfNeeded();
+  await expect(note).toBeInViewport();
+  const box = await note.boundingBox();
+  expect(box && box.x >= 0 && box.x + box.width <= size.width).toBe(true);
+  expect(box && box.width).toBeGreaterThan(size.width < 560 ? 250 : 300);
+  expect(box && box.height).toBeLessThan(60); // two lines at most, not a word per line
+  if (chips) {
+    const row = await dlg.locator('[data-hook="codex-profile"] .dd-chips').boundingBox();
+    expect(row && box && Math.abs(box.x - row.x)).toBeLessThan(2);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(size.width);
+}
+
+for (const theme of THEMES)
+test(`a preset on a gone profile says it hires on the default, under the chips, in its hire form and its editor (${theme})`, async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await boot(page, 2, theme);
+  await openHire(page, 5);
+  await hireDlg(page).locator('[data-key="tab:preset"]').click();
+  await expect(presetsDlg(page)).toBeVisible();
+  await presetsDlg(page).getByRole('button', { name: 'Edit Review on old-work' }).click();
+  await expect(presetsDlg(page).locator('[data-key="preset-profile:codex"]')).toBeChecked();
+  for (const size of SIZES) {
+    await page.setViewportSize(size);
+    await noteFits(page, presetsDlg(page), size, false);
+    await shot(page, `h139-preset-gone-${size.name}-${theme}`);
+  }
+  await page.keyboard.press('Escape');
+  await expect(presetsDlg(page).locator('[data-key="new"]')).toBeVisible();
+  await presetsDlg(page).getByRole('button', { name: 'Use Review on old-work' }).click();
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.dialog()))?.kind ?? null).toBe('hire');
+  await expect(hireDlg(page).locator('[data-key="codex-profile:codex"]')).toBeChecked();
+  for (const size of SIZES) {
+    await page.setViewportSize(size);
+    await noteFits(page, hireDlg(page), size, true);
+    await shot(page, `h139-hire-gone-${size.name}-${theme}`);
+  }
+  await hireDlg(page).locator('[data-key="hire"]').click();
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.sent())).find((c) => c.t === 'worker.hire')?.args ?? null).toMatchObject({
+    harness: 'codex',
+    codex_profile: 'codex',
+  });
+  clean();
+});
+
+test('with one profile, a preset on a gone profile still says it hires on the default, with no picker', async ({ page }) => {
+  const clean = watchErrors(page);
+  await boot(page, 1);
+  await openHire(page, 5);
+  await hireDlg(page).locator('[data-key="tab:preset"]').click();
+  await presetsDlg(page).getByRole('button', { name: 'Use Review on old-work' }).click();
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.dialog()))?.kind ?? null).toBe('hire');
+  await expect(hireDlg(page).locator('[data-pick="codex-profile"]')).toHaveCount(0);
+  for (const size of SIZES) {
+    await page.setViewportSize(size);
+    await noteFits(page, hireDlg(page), size, false);
+    await shot(page, `h139-hire-gone-alone-${size.name}`);
+  }
+  await hireDlg(page).locator('[data-key="hire"]').click();
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.sent())).find((c) => c.t === 'worker.hire')?.args ?? null).not.toBeNull();
+  expect((await page.evaluate(() => window.__h3d.sent())).find((c) => c.t === 'worker.hire')?.args).not.toHaveProperty('codex_profile');
   clean();
 });

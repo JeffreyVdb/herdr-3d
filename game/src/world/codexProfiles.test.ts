@@ -51,6 +51,13 @@ describe('#139 the seat’s Codex profile line', () => {
     expect(profileNotice({ ...codexW, codex: { mode: 'shared', profile: 'work' } }, { hire: true, profiles: [two.profiles[0]!] })).toBeNull();
     expect(profileNotice({ ...codexW }, null)).toBeNull();
   });
+  it('says a wake on the default because its profile was gone, also with only the default left', () => {
+    const gone = 'work is gone: woke on codex. Its Codex session stays in that folder, so a new one was started.';
+    const one: CodexProfilesState = { hire: true, profiles: [two.profiles[0]!] };
+    expect(profileNotice({ ...codexW, codex: { mode: 'legacy', profile: 'codex', profile_note: gone } }, one)).toEqual({ tone: 'note', text: gone });
+    expect(profileNotice({ ...codexW, codex: { mode: 'shared', profile: 'codex' } }, one)).toBeNull();
+    expect(profileNotice({ ...codexW, codex: { mode: 'shared', profile: 'work', profile_note: 'Could not confirm the account.' } }, one)).toBeNull();
+  });
   it('names the profile by its current name, with what its start found', () => {
     expect(profileNotice({ ...codexW, codex: { mode: 'shared', profile: 'work' } }, two)).toEqual({ tone: 'note', text: 'Work' });
     expect(

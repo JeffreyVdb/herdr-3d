@@ -187,6 +187,29 @@ describe('HireDialog: Codex profile (#139)', () => {
     expect(document.querySelector('[data-hook="profile-gone"]')?.textContent).toBe('This preset’s Codex profile “old” is gone: it hires on codex.');
   });
 
+  it('a preset whose profile is gone says so also with only the default left (no picker), and hires on it', async () => {
+    for (const state of [{ hire: true, profiles: [own] }, { hire: true, profiles: [own, prof('work', { hidden: true })] }]) {
+      const { dlg, hires, inner } = setup(state);
+      dlg.open('floor', 0, fromPreset('work'));
+      await tick();
+      expect(field()).toBeNull();
+      expect(document.querySelector('[data-hook="profile-gone"]')?.textContent).toBe('This preset’s Codex profile “work” is gone: it hires on codex.');
+      await inner.hire();
+      expect(hires.at(-1)).not.toHaveProperty('codex_profile');
+      dlg.close();
+      document.body.replaceChildren();
+    }
+    // Nothing for a preset on the default, nor from a bridge that hires on no profile.
+    for (const [state, want] of [[{ hire: true, profiles: [own] }, 'codex'], [{ profiles: [own] }, 'work']] as [CodexProfilesState, string][]) {
+      const { dlg } = setup(state);
+      dlg.open('floor', 0, fromPreset(want));
+      await tick();
+      expect(document.querySelector('[data-hook="profile-gone"]')).toBeNull();
+      dlg.close();
+      document.body.replaceChildren();
+    }
+  });
+
   it('“Save as preset…” hands the profile picked to the preset editor', async () => {
     const { dlg, savePreset } = setup(TWO);
     dlg.open('floor', 0);

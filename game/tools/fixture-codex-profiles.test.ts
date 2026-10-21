@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Limits, Worker } from '../src/net/protocol.ts';
+import type { HirePreset, Limits, Worker } from '../src/net/protocol.ts';
 import { loadFixture } from './fixture-server.ts';
 import { SimWorld } from './fixture-sim.ts';
 import { CodexProfilesSim } from './fixture-codex-profiles.ts';
@@ -105,7 +105,7 @@ describe('the fixture’s Codex profiles on a hire (#139)', () => {
       while (timers.length) (timers.shift() as () => void)();
       return out.find((m) => (m.t === 'ack' || m.t === 'error') && m.req_id === req_id);
     };
-    const snap = sim.snapshot() as unknown as { world: { workers: Worker[]; codex_profiles?: { hire?: boolean } } };
+    const snap = sim.snapshot() as unknown as { world: { workers: Worker[]; codex_profiles?: { hire?: boolean }; hire_presets?: HirePreset[] } };
     return { cmd, snap };
   }
   const hire = (desk: number, more: Record<string, unknown>) => ({ floor: 'herdr-3d', desk_index: desk, harness: 'codex', model: 'gpt-6-sol', effort: 'high', ...more });
@@ -118,6 +118,15 @@ describe('the fixture’s Codex profiles on a hire (#139)', () => {
     expect(by('Sprocket')?.profile_note).toContain('is gone: woke on codex');
     expect(by('Bean')).toMatchObject({ profile: 'work', account: 'mismatch' });
     expect(by('Pip')?.profile).toBeUndefined();
+  });
+
+  it('starts with a preset on a gone profile, with one profile or two; none without profiles', () => {
+    for (const n of [1, 2]) {
+      expect(world(n).snap.world.hire_presets?.filter((p) => p.codex_profile)).toEqual([
+        expect.objectContaining({ name: 'Review on old-work', harness: 'codex', codex_profile: 'old-work' }),
+      ]);
+    }
+    expect(world().snap.world.hire_presets?.some((p) => p.codex_profile)).toBe(false);
   });
 
   it('a hire on a profile carries it; not signed in fails, an unknown one is not found; an older bridge refuses the field', () => {

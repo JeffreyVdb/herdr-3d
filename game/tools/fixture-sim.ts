@@ -440,6 +440,7 @@ export class SimWorld {
     this.codexProfiles = o.codexProfiles ? new CodexProfilesSim({ emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: this.now }, o.codexProfiles) : null; // #138
     this.limits = new LimitsSim(o.limits ?? 'ok', o.fail !== 'no_m10', this.now, (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message), this.codexProfiles);
     this.codexProfiles?.seed(this.workers); // #139
+    if (this.codexProfiles) this.hirePresets.seed(CodexProfilesSim.GONE_PRESET); // #139: a preset whose profile is gone
     this.boards = new BoardSim(
       {
         floors: this.floors,

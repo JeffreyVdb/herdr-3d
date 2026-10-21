@@ -8,8 +8,8 @@ import { effortsFor } from '../world/settings';
 import { backdropPolicy } from './dismiss';
 import { deskTabs, PIN_ICON, pinIdOf, PRESET_ICON } from './deskTabs';
 import { h, icon, ICON, replaceKeepingFocus } from './dom';
-import { chips, modelField, profileChips, type DialogHost, type HirePresetSeed } from './hire';
-import { hireProfiles, pickProfile, profileGoneText } from '../world/codexProfiles';
+import { chips, modelField, profileChips, profileGoneNote, type DialogHost, type HirePresetSeed } from './hire';
+import { hireProfiles, loneProfileGone, pickProfile, profileGoneText } from '../world/codexProfiles';
 import type { HireModelPrefs } from './hireModelPrefs';
 import { deskPins, type HirePins } from './hirePins';
 import { failureText } from './messages';
@@ -508,6 +508,9 @@ export class HirePresetsDialog {
           this.render();
         }, note),
       );
+    } else if (d.harness === 'codex') {
+      const lone = loneProfileGone(this.host.store.codexProfiles?.state ?? null, d.profile || undefined);
+      if (lone) choice.push(profileGoneNote(lone));
     }
     const stale = this.stale(v);
     const nodes: Node[] = [];

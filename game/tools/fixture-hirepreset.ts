@@ -139,6 +139,14 @@ export class HirePresetSim {
     return true;
   }
 
+  /** #139: a preset the fixture starts with, checked as a create (once per key's group; none while presets are off). */
+  seed(a: Obj): void {
+    if (!this.enabled || [...this.group.presets.values()].some((p) => p.name === a.name)) return;
+    const now = this.h.now();
+    const p = this.check({ id: `hp_${(++serial).toString(16).padStart(16, '0')}`, created_at: now, updated_at: now }, a, null);
+    this.group.presets.set(p.id, p);
+  }
+
   /** A deleted virtual floor's own presets go with it (the global ones stay). */
   dropFloor(floor: string, send: Send): void {
     for (const p of [...this.group.presets.values()])
