@@ -966,24 +966,39 @@ func (a *agentLogs) close() {
 	a.order.Init()
 }
 
-// txLog is the log the tracker keeps for a watched worker.
+// txLog is the log the tracker keeps for a watched worker, or (#149) for
+// one watched lately.
 type txLog struct {
 	key string
 	log *transcript.Log
+	// #149: the worker's session (its tracker key, harness/session) and
+	// directory (its path images' root) the log was opened for, a child's
+	// native id ("": the worker's own), and when its last watch ended
+	// (zero: watched).
+	sess, cwd, native string
+	idle              time.Time
 }
 
 // syncTranscript keeps worker w's log while it is watched (before and
 // after its session's Poll: a transcript found in the Poll gets its log
-// then) and drops it when not (usage tracker goroutine).
-func (tr *usageTracker) syncTranscript(w usageWorker, s *usage.Session, key string) {
+// then) and, #149, while it is kept for a return visit; it drops it when
+// it no longer indexes the worker's transcript (usage tracker goroutine).
+func (tr *usageTracker) syncTranscript(w usageWorker, s *usage.Session, key string, now time.Time) {
 	cur := tr.logs[w.id]
-	if cur != nil && (!w.watched || cur.key != key || cur.log.Err() != nil) {
-		cur.log.Close()
-		delete(tr.logs, w.id)
-		if s != nil {
-			s.SetTap(nil)
-		}
+	if cur != nil && (cur.key != key || cur.log.Err() != nil || !cur.sameCwd(w.cwd, w.watched)) {
+		tr.dropLog(w.id, cur, s, keptInvalidated, now)
 		cur = nil
+	}
+	switch {
+	case cur == nil:
+	case !w.watched: // #149: kept, its session's tail still feeding it
+		tr.retain(cur, w.id, false, now)
+		return
+	case !cur.idle.IsZero(): // #149: watched again
+		if why := tr.reuse(cur, w.id, false, now); why != "" {
+			tr.dropLog(w.id, cur, s, why, now)
+			cur = nil
+		}
 	}
 	if !w.watched || s == nil || cur != nil || !transcript.Supported(w.harness) {
 		return
@@ -992,12 +1007,13 @@ func (tr *usageTracker) syncTranscript(w usageWorker, s *usage.Session, key stri
 	if path == "" {
 		return
 	}
-	log, err := transcript.Follow(w.harness, path, fi, next, tr.imageOptions(w.cwd)...)
+	log, err := tr.follow(w.harness, path, fi, next, tr.imageOptions(w.cwd)...)
 	if err != nil {
 		return // looked at again next round
 	}
-	tr.logs[w.id] = &txLog{key: key, log: log}
+	tr.logs[w.id] = &txLog{key: key, log: log, sess: key, cwd: w.cwd}
 	s.SetTap(log)
+	tr.noteBuilt(w.id, false, next)
 }
 
 // offers is the tracker's verdict for every watched worker after a round,
@@ -1060,20 +1076,38 @@ func (h *Hub) txKids(id string) []txKid {
 
 // syncKidTranscripts keeps a log of each watched child of worker w whose
 // transcript its session reads, fed by the session's own tail of it, and
-// drops the others (usage tracker goroutine, before and after the session's
-// Poll). Only children of the session the worker has now: another session's
-// child never reaches its log, nor does a child of another worker in the
-// same directory (its own session).
-func (tr *usageTracker) syncKidTranscripts(w usageWorker, s *usage.Session) {
+// (#149) keeps the logs of the children watched lately for a return visit;
+// it drops the others (usage tracker goroutine, before and after the
+// session's Poll). Only children of the session the worker has now:
+// another session's child never reaches its log, nor does a child of
+// another worker in the same directory (its own session).
+func (tr *usageTracker) syncKidTranscripts(w usageWorker, s *usage.Session, now time.Time) {
 	want := map[string]txKid{}
-	var natives []string
 	for _, k := range w.kids {
 		if k.native != "" && tr.keys[w.id] == k.harness+"/"+k.session {
 			want[k.key] = k
-			natives = append(natives, k.native)
 		}
 	}
-	tr.closeKidLogs(w.id, want)
+	var natives []string // the children whose taps the session keeps: the watched and the kept
+	for key, l := range tr.kidLogs[w.id] {
+		k, watched := want[key]
+		if l.sess != tr.keys[w.id] || l.log.Err() != nil || (watched && l.key != k.logKey()) || !l.sameCwd(w.cwd, watched) {
+			tr.dropKidLog(w.id, key, l, s, keptInvalidated, now)
+			continue
+		}
+		switch {
+		case !watched: // #149: kept, its session's tail still feeding it
+			tr.retain(l, w.id, true, now)
+			natives = append(natives, l.native)
+		case !l.idle.IsZero(): // #149: watched again
+			if why := tr.reuse(l, w.id, true, now); why != "" {
+				tr.dropKidLog(w.id, key, l, s, why, now)
+			}
+		}
+	}
+	for _, k := range want {
+		natives = append(natives, k.native)
+	}
 	if s == nil {
 		return
 	}
@@ -1090,30 +1124,24 @@ func (tr *usageTracker) syncKidTranscripts(w usageWorker, s *usage.Session) {
 		if k.harness == transcript.Codex {
 			opts = append(opts, transcript.CodexHistoryStart(f.HistoryStart)) // its parent's copied history is not its own
 		}
-		log, err := transcript.Follow(k.harness, f.Path, f.File, f.Next, opts...)
+		log, err := tr.follow(k.harness, f.Path, f.File, f.Next, opts...)
 		if err != nil {
 			continue
 		}
 		if tr.kidLogs[w.id] == nil {
 			tr.kidLogs[w.id] = map[string]*txLog{}
 		}
-		tr.kidLogs[w.id][key] = &txLog{key: k.logKey(), log: log}
+		tr.kidLogs[w.id][key] = &txLog{key: k.logKey(), log: log, sess: tr.keys[w.id], cwd: w.cwd, native: k.native}
 		s.SetChildTap(k.native, log)
+		tr.noteBuilt(w.id, true, f.Next)
 	}
 }
 
-// closeKidLogs closes worker id's child logs, but the ones keep still wants
-// (the same log, still running).
-func (tr *usageTracker) closeKidLogs(id string, keep map[string]txKid) {
+// closeKidLogs closes worker id's child logs (the worker went, or the
+// tracker stops).
+func (tr *usageTracker) closeKidLogs(id string, now time.Time) {
 	for key, l := range tr.kidLogs[id] {
-		if k, ok := keep[key]; ok && l.key == k.logKey() && l.log.Err() == nil {
-			continue
-		}
-		l.log.Close()
-		delete(tr.kidLogs[id], key)
-	}
-	if len(tr.kidLogs[id]) == 0 {
-		delete(tr.kidLogs, id)
+		tr.dropKidLog(id, key, l, nil, keptGone, now)
 	}
 }
 
