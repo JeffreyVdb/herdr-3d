@@ -71,7 +71,7 @@ export class CodexProfilesSim {
   }
 
   private view(): Obj {
-    return { profiles: this.profiles.map((p) => ({ ...p })), hire: true, auto: true, rules: this.rules.map((r) => ({ ...r })) };
+    return { profiles: this.profiles.map((p) => ({ ...p })), hire: true, auto: true, runs: true, rules: this.rules.map((r) => ({ ...r })) }; // #167: runs
   }
 
   /** #139: a global hire preset on a profile that is gone (`old-work`): the hire form and the preset editor say so. */

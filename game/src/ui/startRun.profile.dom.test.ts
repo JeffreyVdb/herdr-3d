@@ -21,6 +21,7 @@ const prof = (key: string, more: Partial<CodexProfile> = {}): CodexProfile => ({
 });
 const own = prof('codex', { default: true, name: 'Own', path: '/home/test/.codex' });
 const RUNS: CodexProfilesState = { hire: true, auto: true, runs: true, rules: [], profiles: [own, prof('work', { name: 'Work' })] };
+const { runs: _runs, ...NORUNS } = RUNS;
 
 function setup(state: CodexProfilesState | null, preset: Preset) {
   document.body.replaceChildren();
@@ -114,7 +115,7 @@ describe('Start a run: the orchestrator’s Codex profile (#167)', () => {
     for (const [state, orch] of [
       [RUNS, cl()],
       [{ ...RUNS, profiles: [own, prof('work', { hidden: true })] }, cx()],
-      [{ ...RUNS, runs: undefined }, cx('work')],
+      [NORUNS, cx('work')],
       [null, cx('work')],
     ] as const) {
       const t = setup(state as CodexProfilesState | null, { id: 'p_1', name: 'Team', roles: roles(orch) });
@@ -175,7 +176,7 @@ describe('Team presets: a Codex role’s profile (#167)', () => {
   });
 
   it('a bridge that takes no profile on runs: no chips, and none sent', async () => {
-    const t = setup({ ...RUNS, runs: undefined }, { id: 'p_1', name: 'Team', roles: roles(cx(), cx()) });
+    const t = setup(NORUNS, { id: 'p_1', name: 'Team', roles: roles(cx(), cx()) });
     t.panel.open();
     document.querySelectorAll<HTMLButtonElement>('[data-key="edit:p_1"]')[0]!.click();
     expect(document.querySelector('[data-role-profile]')).toBeNull();

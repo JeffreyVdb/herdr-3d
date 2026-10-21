@@ -12,11 +12,16 @@
 //   ORCH's choice, the label and the prompt as its first task; the ORCH gets
 //   `role: orch`, its `run` and `issue`, the floor its `last_preset`, and the
 //   ack the launch id and the prompt that was sent.
+// - #167 (with the Codex profiles sim, `runProfiles`): a preset role and a run's `orch` take `codex_profile` (Codex
+//   only; a key or "auto"); `run.start` hires the orchestrator on it (worker.hire's), resolves each Codex role's once
+//   (Auto as a hire's pick, from the floor's folder), refuses one that is gone or not signed in naming the role, and
+//   names the others' home and token in the prompt, as the bridge's TeamPrompt; its ack has `codex_team_reason` and
+//   `codex_team_note`.
 // - `simfail=no_m6` plays an M5 bridge: no `presets`, every command here is
 //   `unknown_command`.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
-import type { Floor, Hire, HireOptions, Preset, PresetRole, Worker } from '../src/net/protocol.ts';
+import type { CodexProfile, Floor, Hire, HireOptions, Preset, PresetRole, Worker } from '../src/net/protocol.ts';
 
 type Obj = Record<string, unknown>;
 type Send = (m: Obj) => void;
@@ -34,7 +39,16 @@ export interface StartDeps {
   /** M7: a card of the floor's board as an issue of the M6 path (null: not on the board, or no board). */
   /** A board card's ticket: a GitHub issue, or (#184) a provider's item as the tracker read it. */
   workItem?(session: string, wi: { provider?: unknown; id?: unknown }): { repo: string; number: number; url: string } | { item: ItemRef } | null;
+  /** #167: the Codex profiles as listed, and Auto's pick for a folder (absent: a bridge that takes no profile on runs). */
+  runProfiles?: { list(): CodexProfile[]; pick(cwd: string): { key: string; reason: string } };
 }
+
+/** #167: a Codex role's resolved profile off the default, by role. */
+type TeamProfiles = Partial<Record<PresetRole, { key: string; name: string; home: string }>>;
+
+/** #167: the bridge's profileLine, after the hiring lines when a role is on another profile than the default. */
+export const PROFILE_LINE =
+  'Start an agent whose team line names a Codex profile with CODEX_HOME set to that folder for its Codex: create its workspace with herdr workspace create --env CODEX_HOME=<folder> (or run export CODEX_HOME=<folder> in its pane before herdr agent start), and also tag that workspace with the token h3d_codex_profile=<key> its team line gives, in the same herdr workspace report-metadata call as its other h3d_ tokens: the floor then reads that agent\'s transcript in that profile\'s folder.';
 
 const ROLES: PresetRole[] = ['orch', 'coder', 'reviewer', 'ux', 'researcher'];
 
@@ -92,18 +106,23 @@ export const itemRef = (provider: string, it: ItemRef): string => it.url || `${p
  * The run's first prompt (contract §2.2), like the bridge's runPrompt: `ticket` is the issue URL (`isIssue`), an item's
  * reference (`itemRef`) or the free text; after the team the herdr hiring instructions for `floor` (the floor id).
  */
-export function composePrompt(orch: Hire, ticket: string, roles: Record<PresetRole, Hire>, floor: string, extra = '', isIssue = false): string {
+export function composePrompt(orch: Hire, ticket: string, roles: Record<PresetRole, Hire>, floor: string, extra = '', isIssue = false, profiles: TeamProfiles = {}): string {
+  const line = (r: PresetRole) => {
+    const p = roles[r].harness === 'codex' ? profiles[r] : undefined;
+    return roleLine(roles[r]) + (p ? `, Codex profile ${p.name} (CODEX_HOME=${p.home}, token h3d_codex_profile=${p.key})` : '');
+  };
   const lines = [
     `${orch.harness === 'codex' ? '$' : '/'}write-code ${ticket.trim()}`,
     '',
     'Team:',
-    `- coders: ${roleLine(roles.coder)}`,
-    `- reviewers: ${roleLine(roles.reviewer)}`,
-    `- ux reviewers: ${roleLine(roles.ux)}`,
-    `- researchers: ${roleLine(roles.researcher)}`,
+    `- coders: ${line('coder')}`,
+    `- reviewers: ${line('reviewer')}`,
+    `- ux reviewers: ${line('ux')}`,
+    `- researchers: ${line('researcher')}`,
     '',
     herdrInstructions(floor),
   ];
+  if (Object.keys(profiles).length) lines.push('', PROFILE_LINE);
   if (isIssue) lines.push('', ISSUE_STATUS_LINE);
   const x = extra.trim();
   if (x) lines.push('', x);
@@ -133,10 +152,13 @@ type Ticket =
   | { kind: 'item'; url: string; item: ItemRef; provider_name: string };
 
 /** A ticket's prompt, like the bridge's TicketPrompt: an item (#102) by its reference, with no status line. */
-function ticketPrompt(orch: Hire, t: Ticket, roles: Record<PresetRole, Hire>, floor: string, extra: string): string {
-  if (t.kind === 'item') return composePrompt(orch, itemRef(t.provider_name, t.item), roles, floor, extra);
-  return composePrompt(orch, t.kind === 'issue' ? t.url : t.text, roles, floor, extra, t.kind === 'issue');
+function ticketPrompt(orch: Hire, t: Ticket, roles: Record<PresetRole, Hire>, floor: string, extra: string, profiles: TeamProfiles = {}): string {
+  if (t.kind === 'item') return composePrompt(orch, itemRef(t.provider_name, t.item), roles, floor, extra, false, profiles);
+  return composePrompt(orch, t.kind === 'issue' ? t.url : t.text, roles, floor, extra, t.kind === 'issue', profiles);
 }
+
+/** #167: the team lines' roles and their words. */
+const TEAM: Array<[PresetRole, string]> = [['coder', 'coders'], ['reviewer', 'reviewers'], ['ux', 'ux reviewers'], ['researcher', 'researchers']];
 
 export class StartSim {
   private readonly presets = new Map<string, Preset>();
@@ -200,11 +222,48 @@ export class StartSim {
 
   private hireOf(v: unknown, what: string): Hire {
     if (!isObj(v) || typeof v.harness !== 'string' || typeof v.model !== 'string' || typeof v.effort !== 'string') throw this.bad(`${what} must be {harness, model, effort}`);
+    for (const k of Object.keys(v)) if (!['harness', 'model', 'effort', ...(this.d.runProfiles ? ['codex_profile'] : [])].includes(k)) throw this.bad(`json: unknown field "${k}"`);
     const o = this.d.hire[v.harness];
     if (!o) throw this.bad(`${what}: unknown harness ${v.harness}`);
     if (!o.models.includes(v.model)) throw this.bad(`${what}: ${v.harness} has no model ${v.model}`);
     if (![...o.efforts, ...(o.extra_efforts?.[v.model] ?? [])].includes(v.effort)) throw this.bad(`${what}: ${v.model} has no effort ${v.effort}`);
-    return { harness: v.harness, model: v.model, effort: v.effort };
+    const h: Hire = { harness: v.harness, model: v.model, effort: v.effort };
+    if (typeof v.codex_profile === 'string' && v.codex_profile) {
+      // #167: as checkProfileKey: Codex only, a listed key or Auto.
+      if (v.harness !== 'codex') throw this.bad(`${what}: codex_profile is for a Codex hire, not "${v.harness}"`);
+      if (v.codex_profile !== 'auto' && !this.d.runProfiles?.list().some((p) => p.key === v.codex_profile)) throw this.d.error('not_found', `${what}: not found: no Codex profile "${v.codex_profile}"`);
+      h.codex_profile = v.codex_profile;
+    }
+    return h;
+  }
+
+  /**
+   * #167: each Codex role's profile, once: Auto picked for `cwd`, a key as listed; one that cannot be used refuses
+   * (`strict`, run.start) or is left on the default (run.prepare's preview).
+   */
+  private team(roles: Record<PresetRole, Hire>, cwd: string, strict: boolean): { profiles: TeamProfiles; reasons: string[]; notes: string[] } {
+    const out = { profiles: {} as TeamProfiles, reasons: [] as string[], notes: [] as string[] };
+    const rp = this.d.runProfiles;
+    if (!rp) return out;
+    const list = rp.list();
+    for (const [r, what] of TEAM) {
+      const h = roles[r];
+      let key = h.codex_profile;
+      if (h.harness !== 'codex' || !key) continue;
+      if (key === 'auto') {
+        const pick = rp.pick(cwd);
+        key = pick.key;
+        out.reasons.push(`${what}: ${pick.reason}`);
+      }
+      const p = list.find((x) => x.key === key);
+      const why = !p || p.missing ? `no Codex profile "${key}"` : !p.default && !p.signed_in ? `${p.name} is not signed in. Run \`CODEX_HOME=${p.path} codex login\` in a terminal.` : '';
+      if (why && strict) throw this.bad(`the ${what}' Codex profile cannot be used: ${why}`);
+      if (why || !p || p.default) continue;
+      out.profiles[r] = { key: p.key, name: p.name, home: p.path };
+      out.notes.push(`${p.name} has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, so the bridge finds it by the worker's folder in ${p.name}'s sessions (for its usage, and at sleep, so a wake resumes it).`);
+    }
+    out.notes = [...new Set(out.notes)];
+    return out;
   }
 
   private rolesOf(v: unknown): Record<PresetRole, Hire> {
@@ -339,8 +398,9 @@ export class StartSim {
     const orch = a.orch !== undefined && a.orch !== null ? this.hireOf(a.orch, 'orch') : (p?.roles.orch ?? null);
     const extra = this.extraOf(a);
     const h = this.d.prepare(f.session, a.preview === true);
+    const team = p ? this.team(p.roles, h.cwd as string, false) : null; // #167
     return {
-      prompt: t && p && orch ? ticketPrompt(orch, t, p.roles, f.session, extra) : '',
+      prompt: t && p && orch ? ticketPrompt(orch, t, p.roles, f.session, extra, team?.profiles) : '',
       label: t ? runLabel(t) : '',
       ticket: t,
       preset: p?.id ?? '',
@@ -363,10 +423,13 @@ export class StartSim {
     if (a.prompt !== undefined && typeof a.prompt !== 'string') throw this.bad('prompt must be a string');
     // An empty prompt is none: the bridge composes it (an edited one goes through worker.hire's rules). The hiring
     // instructions are in it already: like the bridge's run.start, the hire carries no herdr_instructions.
-    const prompt = (a.prompt as string | undefined) || ticketPrompt(orch, t, p.roles, f.session, extra);
+    // #167: the team's profiles are resolved once, here, unless the prompt is the user's own.
+    const team = a.prompt ? null : this.team(p.roles, this.d.prepare(f.session, true).cwd as string, true);
+    const prompt = (a.prompt as string | undefined) || ticketPrompt(orch, t, p.roles, f.session, extra, team?.profiles);
     const label = (a.label as string | undefined) || runLabel(t);
     const worktree = a.worktree ?? true;
     const hire: Obj = { session: f.session, desk_index: a.desk_index, harness: orch.harness, model: orch.model, effort: orch.effort, label, worktree, prompt };
+    if (orch.codex_profile) hire.codex_profile = orch.codex_profile;
     const launch = `l_${(++this.launches).toString(16).padStart(16, '0')}`;
     this.d.hireWorker(
       hire,
@@ -393,7 +456,10 @@ export class StartSim {
           f.last_preset = p.id;
           this.d.emit(send, { t: 'floor.upsert', floor: f });
         }
-        ack({ ...d, launch_id: launch, prompt });
+        const extras: Obj = {};
+        if (team?.reasons.length) extras.codex_team_reason = team.reasons.join('; ');
+        if (team?.notes.length) extras.codex_team_note = team.notes.join(' ');
+        ack({ ...d, launch_id: launch, prompt, ...extras });
       },
       fail,
     );

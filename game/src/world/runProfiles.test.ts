@@ -11,13 +11,15 @@ const prof = (key: string, more: Partial<CodexProfile> = {}): CodexProfile => ({
 });
 const own = prof('codex', { default: true, name: 'Own', path: '/home/test/.codex' });
 const RUNS: CodexProfilesState = { hire: true, auto: true, runs: true, rules: [], profiles: [own, prof('work', { name: 'Work' }), prof('off', { signed_in: false })] };
+const { runs: _runs, ...NORUNS } = RUNS;
+const { auto: _auto, ...NOAUTO } = RUNS;
 const codex = (p?: string): Hire => ({ harness: 'codex', model: 'x', effort: 'low', ...(p === undefined ? {} : { codex_profile: p }) });
 const claude: Hire = { harness: 'claude', model: 'y', effort: 'low' };
 
 describe('roleProfileChoice', () => {
   it('is for a Codex role on a bridge with runs and two usable profiles', () => {
     expect(roleProfileChoice(RUNS, 'claude', undefined)).toBeNull();
-    expect(roleProfileChoice({ ...RUNS, runs: undefined }, 'codex', undefined)).toBeNull();
+    expect(roleProfileChoice(NORUNS, 'codex', undefined)).toBeNull();
     expect(roleProfileChoice({ ...RUNS, profiles: [own, prof('work', { hidden: true })] }, 'codex', undefined)).toBeNull();
     expect(roleProfileChoice(null, 'codex', undefined)).toBeNull();
     expect(roleProfileChoice(RUNS, 'codex', undefined)).toMatchObject({ key: 'codex', gone: null, auto: true });
@@ -25,7 +27,7 @@ describe('roleProfileChoice', () => {
   it('starts on the preset’s, a pick wins while it can be picked, Auto only when offered', () => {
     expect(roleProfileChoice(RUNS, 'codex', 'work')?.key).toBe('work');
     expect(roleProfileChoice(RUNS, 'codex', 'auto')?.key).toBe('auto');
-    expect(roleProfileChoice({ ...RUNS, auto: undefined }, 'codex', 'auto')?.key).toBe('codex');
+    expect(roleProfileChoice(NOAUTO, 'codex', 'auto')?.key).toBe('codex');
     expect(roleProfileChoice(RUNS, 'codex', 'work', 'auto')?.key).toBe('auto');
     expect(roleProfileChoice(RUNS, 'codex', 'work', 'off')?.key).toBe('work'); // not signed in: not pickable
     expect(roleProfileChoice(RUNS, 'codex', '', 'work')?.key).toBe('work');
@@ -36,7 +38,7 @@ describe('roleProfileChoice', () => {
     expect(roleGoneText(RUNS, c)).toBe('This preset’s Codex profile “lab” is gone: it runs on Own.');
     const lone: CodexProfilesState = { ...RUNS, profiles: [own, prof('lab', { hidden: true })] };
     expect(roleLoneGone(lone, 'codex', 'gone')).toBe('This preset’s Codex profile “gone” is gone: it runs on Own.');
-    expect(roleLoneGone({ ...lone, runs: undefined }, 'codex', 'gone')).toBeNull();
+    expect(roleLoneGone((({ runs: _r, ...x }) => x)(lone), 'codex', 'gone')).toBeNull();
     expect(roleLoneGone(lone, 'codex', undefined)).toBeNull();
   });
 });
@@ -53,7 +55,7 @@ describe('the profile on the wire', () => {
   it('rolesFor sends profiles only to a bridge with runs, and only on Codex roles', () => {
     const roles: PresetRoles = { orch: codex('work'), coder: { ...claude, codex_profile: 'work' }, reviewer: codex('auto'), ux: codex(), researcher: codex('') };
     expect(rolesFor(RUNS, roles)).toEqual({ orch: codex('work'), coder: claude, reviewer: codex('auto'), ux: codex(), researcher: codex() });
-    const old = rolesFor({ ...RUNS, runs: undefined }, roles);
+    const old = rolesFor(NORUNS, roles);
     expect(Object.values(old).some((h) => 'codex_profile' in h)).toBe(false);
   });
   it('presetPatch sees a profile change; the list line names a non-default profile', () => {
