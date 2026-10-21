@@ -1,5 +1,6 @@
 /**
- * #216: the application UI theme: what the menus, dialogs, bars, panels, boards and controls look like. Separate from
+ * #216: the application UI theme: what the menus, dialogs, bars, panels, boards and controls look like, and the
+ * office's walls, furniture and screens (their colours: render/palette.ts, `officePalette`). Separate from
  * the transcript and terminal presets (ui/themes.ts): the three are chosen independently and nothing here reads or
  * writes theirs. Two themes, hard-coded: Quiet (the default, the navy shell the app always had) and Ubuntu (aubergine
  * surfaces, orange actions, Ubuntu and Ubuntu Mono).
@@ -50,7 +51,7 @@ export const UI_THEMES: readonly [UiThemePreset, UiThemePreset] = [
 
 /** The picker's field label and its description. */
 export const UI_THEME_FIELD = 'UI theme';
-export const UI_THEME_HINT = 'Colors and fonts for menus, dialogs, bars, and controls. Transcript and terminal appearance are set separately.';
+export const UI_THEME_HINT = 'Colors and fonts for menus, dialogs, bars, and controls, and the colors of the office. Transcript and terminal appearance are set separately.';
 
 export function isUiThemeId(v: unknown): v is UiThemeId {
   return v === 'quiet' || v === 'ubuntu';

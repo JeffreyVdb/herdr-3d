@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Box3, Prop } from '../world/layout';
 import { FONT } from './cards/atlasCards';
 import { meshKit, reuse, type FloorPool, type PoolKit } from './floorPool';
-import { OFFICE } from './palette';
+import { OFFICE, type OfficePalette } from './palette';
 import { buildClock, type ClockMesh } from './clock';
 import { buildRadio, type RadioMesh } from './radio';
 import { buildOverviewScreen, type OverviewScreenMesh } from './overviewScreen';
@@ -123,7 +123,7 @@ function faceTexture(mesh: THREE.Mesh, tex: THREE.Texture, base: number): void {
 }
 
 /** Elevator doors on a south wall (frame, steel doors, the floor panel above): a lobby has one too. */
-export function elevatorMeshes(box: Box3, label: string, sub: string): { group: THREE.Group; texture: THREE.Texture } {
+export function elevatorMeshes(box: Box3, label: string, sub: string, P: Readonly<OfficePalette> = OFFICE): { group: THREE.Group; texture: THREE.Texture } {
   const group = new THREE.Group();
   const [x0, , z0] = box.min;
   const [x1, y1] = [box.max[0], box.max[1]];
@@ -138,8 +138,8 @@ export function elevatorMeshes(box: Box3, label: string, sub: string): { group: 
     new THREE.BoxGeometry((x1 - x0) / 2 - 0.01, y1, 0.06).translate(cx - (x1 - x0) / 4, y1 / 2, z0 + 0.04),
     new THREE.BoxGeometry((x1 - x0) / 2 - 0.01, y1, 0.06).translate(cx + (x1 - x0) / 4, y1 / 2, z0 + 0.04),
   ]);
-  group.add(new THREE.Mesh(doors, new THREE.MeshStandardMaterial({ color: OFFICE.steel, metalness: 0.6, roughness: 0.35 })));
-  const texture = signTexture(label, sub, '#101626', '#ffc233', 512, 170);
+  group.add(new THREE.Mesh(doors, new THREE.MeshStandardMaterial({ color: P.steel, metalness: 0.6, roughness: 0.35 })));
+  const texture = signTexture(label, sub, P.liftSign.ground, P.liftSign.text, 512, 170);
   const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.3).rotateY(Math.PI), new THREE.MeshBasicMaterial({ map: texture }));
   panel.position.set(cx, y1 + 0.42, z0 - 0.01);
   group.add(panel);
@@ -183,8 +183,8 @@ function plantKit(n: number): PoolKit & { pots: THREE.InstancedMesh; greens: THR
   return meshKit(n, [pots, greens], { pots, greens });
 }
 
-/** `pool`: the plants' and the rack LEDs' meshes from there (#141). */
-export function buildProps(props: readonly Prop[], layout: { width: number; depth: number; rug: { x0: number; z0: number; x1: number; z1: number } }, floorLabel: string, pool?: FloorPool): PropMeshes {
+/** `pool`: the plants' and the rack LEDs' meshes from there (#141). `P`: the office's colours (its UI theme's). */
+export function buildProps(props: readonly Prop[], layout: { width: number; depth: number; rug: { x0: number; z0: number; x1: number; z1: number } }, floorLabel: string, pool?: FloorPool, P: Readonly<OfficePalette> = OFFICE): PropMeshes {
   const group = new THREE.Group();
   group.name = 'props';
   const textures: THREE.Texture[] = [];
@@ -244,12 +244,12 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
 
   // #118: the floor overview on the lounge wall (render/overviewScreen.ts); the app feeds it the floor's tree.
   const ovProp = byId.get('screen.overview');
-  const overview = ovProp ? buildOverviewScreen(ovProp.box) : null;
+  const overview = ovProp ? buildOverviewScreen(ovProp.box, P.screens) : null;
   if (overview) group.add(overview.group);
 
   // #65: the departures board on the partition (render/departuresBoard.ts); the app ticks it with the schedules.
   const depProp = byId.get('board.departures');
-  const departures = depProp ? buildFloorDepartures(depProp.box) : null;
+  const departures = depProp ? buildFloorDepartures(depProp.box, P.screens) : null;
   if (departures) group.add(departures.group);
 
   // #74: the server rack: three draws (body, LEDs, screen); the app feeds it the host's frames.
@@ -308,7 +308,7 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
 
   const lounge = byId.get('lounge');
   if (lounge) {
-    const sofa = toon(OFFICE.sofa);
+    const sofa = toon(P.sofa);
     const [x0, , z0] = lounge.box.min;
     const [x1, , z1] = lounge.box.max;
     const cx = (x0 + x1) / 2;
@@ -321,7 +321,7 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
     add(new THREE.Mesh(geo, sofa));
     const cushions = new THREE.Mesh(
       mergeGeometries([0, 1, 2].map((i) => new THREE.BoxGeometry((x1 - x0 - 0.5) / 3 - 0.04, 0.1, z1 - z0 - 0.3).translate(x0 + 0.25 + ((x1 - x0 - 0.5) / 3) * (i + 0.5), 0.47, (z0 + z1) / 2 + 0.08))),
-      toon(0x27a3a3),
+      toon(P.cushion),
     );
     add(cushions);
     const table = mergeGeometries([
@@ -333,10 +333,10 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
         [2.8, 2.7],
       ].map(([x, z]) => new THREE.CylinderGeometry(0.03, 0.03, 0.4, 6).translate(x as number, 0.2, z as number)),
     ]);
-    add(new THREE.Mesh(table, toon(OFFICE.wood)));
+    add(new THREE.Mesh(table, toon(P.wood)));
     const counter = mergeGeometries([new THREE.BoxGeometry(0.6, 0.9, 1.4).translate(0.32, 0.45, 4.1)]);
-    add(new THREE.Mesh(counter, toon(OFFICE.wood)));
-    const machine = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.42, 0.34).translate(0.3, 1.11, 4.1), toon(0x2a3143));
+    add(new THREE.Mesh(counter, toon(P.wood)));
+    const machine = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.42, 0.34).translate(0.3, 1.11, 4.1), toon(P.chairBase));
     add(machine);
     const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6).translate(0.49, 1.2, 4.1), new THREE.MeshBasicMaterial({ color: 0xff5a4d }));
     add(lamp);
@@ -360,7 +360,7 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
   }
   const rug = new THREE.Mesh(
     new THREE.PlaneGeometry(layout.rug.x1 - layout.rug.x0, layout.rug.z1 - layout.rug.z0).rotateX(-Math.PI / 2),
-    toon(OFFICE.rug),
+    toon(P.rug),
   );
   rug.position.set((layout.rug.x0 + layout.rug.x1) / 2, 0.004, (layout.rug.z0 + layout.rug.z1) / 2);
   rug.receiveShadow = true;
@@ -379,7 +379,7 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
           new THREE.BoxGeometry(0.06, y1 - 0.2, 0.06).translate(x0 + 0.08, (y1 - 0.2) / 2, cz),
           new THREE.BoxGeometry(0.06, y1 - 0.2, 0.06).translate(x1 - 0.08, (y1 - 0.2) / 2, cz),
         ]),
-        toon(OFFICE.deskLeg),
+        toon(P.deskLeg),
       ),
     );
     const tray = mergeGeometries([
@@ -392,7 +392,7 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
     add(new THREE.Mesh(tray, toon(0x2fc46a)));
     const sign = new THREE.Mesh(
       new THREE.PlaneGeometry(0.9, 0.34),
-      new THREE.MeshBasicMaterial({ map: tex(signTexture('DROP ZONE', 'inbox · arrives in M11', '#1c2540', '#ffffff')), side: THREE.DoubleSide }),
+      new THREE.MeshBasicMaterial({ map: tex(signTexture('DROP ZONE', 'inbox · arrives in M11', P.sign.ground, '#ffffff')), side: THREE.DoubleSide }),
     );
     sign.position.set(cx, y1 + 0.24, cz);
     sign.rotation.y = Math.PI; // faces into the room
@@ -401,7 +401,7 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
 
   const lift = byId.get('elevator');
   if (lift) {
-    const e = elevatorMeshes(lift.box, floorLabel, 'elevator · press E');
+    const e = elevatorMeshes(lift.box, floorLabel, 'elevator · press E', P);
     textures.push(e.texture);
     e.group.traverse((o) => {
       if (o instanceof THREE.Mesh && !(o.material instanceof THREE.MeshBasicMaterial)) o.castShadow = o.receiveShadow = true;
