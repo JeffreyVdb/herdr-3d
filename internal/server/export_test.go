@@ -64,3 +64,7 @@ func (h *Hub) HoldScanSlots() (release func()) {
 		})
 	}
 }
+
+// AcceptOptions are the bridge's websocket options (#147), for the deflate
+// benchmarks.
+var AcceptOptions = acceptOptions
