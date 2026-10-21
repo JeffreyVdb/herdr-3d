@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 )
 
@@ -67,6 +68,11 @@ type Account struct {
 	// rule decides may land on it (off by default, the default profile's
 	// too).
 	Anything bool
+	// Share (#167): "Share setup with <default>" is on (never on the
+	// default). Drift is how its setup differs from the default's now
+	// (Service.Accounts checks a visible shared profile; nil: nothing).
+	Share bool
+	Drift *Drift
 }
 
 // Lister lists the Codex profiles, the bridge's own first, then the found
@@ -82,6 +88,7 @@ type Override struct {
 	Name     string `json:"name,omitempty"`
 	Hidden   bool   `json:"hidden,omitempty"`
 	Anything bool   `json:"anything,omitempty"` // #140
+	Share    bool   `json:"share,omitempty"`    // #167
 }
 
 // Settings are the user's: the overrides, the added folders (absolute,
@@ -118,6 +125,11 @@ type Service struct {
 
 	mu  sync.Mutex
 	set Settings
+
+	// files serializes the share steps (#167); now names their backups
+	// (nil: time.Now).
+	files sync.Mutex
+	now   func() time.Time
 }
 
 // New makes a service for the user's home folder and the bridge's own Codex
@@ -146,9 +158,25 @@ func clone(set Settings) Settings {
 }
 
 // Accounts detects the profiles now (a few stat calls and one read of the
-// user's home folder) and applies the settings.
+// user's home folder) and applies the settings; a visible profile that
+// shares the default's setup gets its drift (#167: read only).
 func (s *Service) Accounts(context.Context) ([]Account, error) {
-	return list(s.userHome, s.defaultHome, s.Settings()), nil
+	all := list(s.userHome, s.defaultHome, s.Settings())
+	var def Account
+	for _, a := range all {
+		if a.Default {
+			def = a
+		}
+	}
+	for i, a := range all {
+		if !a.Share || a.Hidden || !a.Exists || !def.Exists {
+			continue
+		}
+		if items := driftOf(def.Home, def.Name, a.Home, a.Name); len(items) > 0 {
+			all[i].Drift = &Drift{Items: items}
+		}
+	}
+	return all, nil
 }
 
 // found is a home before the settings apply.
@@ -232,6 +260,7 @@ func list(userHome, defaultHome string, set Settings) []Account {
 			}
 			a.Hidden = o.Hidden && !f.def
 			a.Anything = o.Anything
+			a.Share = o.Share && !f.def
 		}
 		out = append(out, a)
 	}
@@ -406,7 +435,7 @@ func override(set Settings, home string, fn func(*Override)) Settings {
 	for i, o := range set.Overrides {
 		if canonical(o.Path) == home {
 			fn(&set.Overrides[i])
-			if o := set.Overrides[i]; o.Name == "" && !o.Hidden && !o.Anything {
+			if o := set.Overrides[i]; o.Name == "" && !o.Hidden && !o.Anything && !o.Share {
 				set.Overrides = slices.Delete(set.Overrides, i, i+1)
 			}
 			return set
@@ -414,7 +443,7 @@ func override(set Settings, home string, fn func(*Override)) Settings {
 	}
 	o := Override{Path: home}
 	fn(&o)
-	if o.Name != "" || o.Hidden || o.Anything {
+	if o.Name != "" || o.Hidden || o.Anything || o.Share {
 		set.Overrides = append(set.Overrides, o)
 	}
 	return set
@@ -533,7 +562,7 @@ func (s *Service) Remove(ctx context.Context, key string) (Settings, error) {
 		return set, &SettingsError{"A profile the bridge found cannot be removed, only hidden."}
 	}
 	set.Added = slices.DeleteFunc(set.Added, func(p string) bool { return canonical(p) == a.Home })
-	return override(set, a.Home, func(o *Override) { o.Name, o.Hidden, o.Anything = "", false, false }), nil
+	return override(set, a.Home, func(o *Override) { o.Name, o.Hidden, o.Anything, o.Share = "", false, false, false }), nil
 }
 
 // Clean drops what stored settings cannot mean (a relative or empty path,
@@ -554,10 +583,10 @@ func Clean(set Settings) Settings {
 		if utf8.RuneCountInString(name) > MaxName {
 			name = ""
 		}
-		if o.Path == "" || !filepath.IsAbs(o.Path) || (name == "" && !o.Hidden && !o.Anything) {
+		if o.Path == "" || !filepath.IsAbs(o.Path) || (name == "" && !o.Hidden && !o.Anything && !o.Share) {
 			continue
 		}
-		out.Overrides = append(out.Overrides, Override{Path: filepath.Clean(o.Path), Name: name, Hidden: o.Hidden, Anything: o.Anything})
+		out.Overrides = append(out.Overrides, Override{Path: filepath.Clean(o.Path), Name: name, Hidden: o.Hidden, Anything: o.Anything, Share: o.Share})
 	}
 	for _, r := range set.Rules {
 		m, ok := normMatch(r.Match)
