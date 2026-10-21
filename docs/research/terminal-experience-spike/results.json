@@ -1,0 +1,134 @@
+{
+  "date": "2026-10-21",
+  "environment": "Linux; headless Playwright Chromium; 1280x900; local Python PTY fixture, not Herdr",
+  "results": [
+    {
+      "engine": "xterm",
+      "fixedFontOnSplit": true,
+      "full": {
+        "x": 90,
+        "y": 316,
+        "cw": 9.601769911504425,
+        "ch": 19,
+        "cols": 113,
+        "rows": 22
+      },
+      "split": {
+        "x": 90,
+        "y": 316,
+        "cw": 9.6,
+        "ch": 19,
+        "cols": 55,
+        "rows": 22
+      },
+      "selection": "Select this ",
+      "plainLink": true,
+      "osc8Link": true,
+      "links": [
+        "https://example.com/plain",
+        "https://example.com/osc8"
+      ],
+      "keyboard": true,
+      "bracketedPaste": true,
+      "pastePacket": "\u001b[200~PASTE ONE\rPASTE TWO\u001b[201~",
+      "scroll": {
+        "before": 128,
+        "after": 125
+      },
+      "mouse": {
+        "input": [
+          "\u001b[<0;8;5M",
+          "\u001b[<0;8;5m"
+        ],
+        "selected": true
+      },
+      "historyBeforeReset": 277,
+      "historyAfterReset": 22,
+      "errors": []
+    },
+    {
+      "engine": "ghostty",
+      "fixedFontOnSplit": true,
+      "full": {
+        "x": 90,
+        "y": 316,
+        "cw": 10,
+        "ch": 17,
+        "cols": 108,
+        "rows": 25
+      },
+      "split": {
+        "x": 90,
+        "y": 316,
+        "cw": 10,
+        "ch": 17,
+        "cols": 53,
+        "rows": 25
+      },
+      "selection": "Select this s",
+      "plainLink": true,
+      "osc8Link": false,
+      "links": [
+        "https://example.com/plain"
+      ],
+      "keyboard": true,
+      "bracketedPaste": false,
+      "pastePacket": "PASTE ONE\nPASTE TWO",
+      "scroll": {
+        "before": 0,
+        "after": 52.94117647058823
+      },
+      "mouse": {
+        "input": [],
+        "selected": false
+      },
+      "historyBeforeReset": 274,
+      "historyAfterReset": 25,
+      "errors": []
+    },
+    {
+      "engine": "ghostty-next",
+      "fixedFontOnSplit": true,
+      "full": {
+        "x": 90,
+        "y": 316,
+        "cw": 10,
+        "ch": 17,
+        "cols": 108,
+        "rows": 25
+      },
+      "split": {
+        "x": 90,
+        "y": 316,
+        "cw": 10,
+        "ch": 17,
+        "cols": 53,
+        "rows": 25
+      },
+      "selection": "Select this s",
+      "plainLink": true,
+      "osc8Link": true,
+      "links": [
+        "https://example.com/plain",
+        "https://example.com/osc8"
+      ],
+      "keyboard": true,
+      "bracketedPaste": true,
+      "pastePacket": "\u001b[200~PASTE ONE\nPASTE TWO\u001b[201~",
+      "scroll": {
+        "before": 0,
+        "after": 52.94117647058823
+      },
+      "mouse": {
+        "input": [
+          "\u001b[<0;8;5M",
+          "\u001b[<0;8;5m"
+        ],
+        "selected": true
+      },
+      "historyBeforeReset": 274,
+      "historyAfterReset": 25,
+      "errors": []
+    }
+  ]
+}

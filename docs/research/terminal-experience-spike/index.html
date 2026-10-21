@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Terminal experience spike</title>
+<style>
+  :root { font: 16px system-ui, sans-serif; color: #e5e9f0; background: #151b25; }
+  body { margin: 32px auto; padding: 0 24px; max-width: 1100px; }
+  h1 { font-size: 24px; margin-bottom: 8px; }
+  p { max-width: 90ch; line-height: 1.5; color: #b9c5d6; }
+  nav { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0; }
+  a { color: #8acbff; }
+  button { font: inherit; padding: 8px 12px; cursor: pointer; }
+  #terminal { width: 100%; height: 430px; background: #10162a; overflow: hidden; }
+  #terminal.narrow { width: 50%; }
+  #status { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .note { color: #ffc76a; }
+</style>
+<h1>Terminal experience spike</h1>
+<p>Compare browser terminals connected to a real, isolated PTY running a small test program. Text stays at 16px when the pane changes width. This does not connect to Herdr or your agents.</p>
+<nav aria-label="Terminal engine">
+  <a href="?engine=xterm">xterm 6.0.0</a>
+  <a href="?engine=ghostty">Ghostty stable 0.4.0</a>
+  <a href="?engine=ghostty-next">Ghostty prerelease</a>
+</nav>
+<nav aria-label="Fixture actions">
+  <button id="split">Toggle split width</button>
+  <button id="history">Write 140 lines</button>
+  <button id="menu">Open mouse menu</button>
+  <button id="reset">Restart fixture</button>
+</nav>
+<p class="note">Drag to select; Ctrl/⌘-click links. In the menu, click an option or press 1/2. Press q to leave. Stable Ghostty is included to expose its mouse-reporting gap.</p>
+<div id="terminal" aria-label="Test terminal"></div>
+<pre id="status" aria-live="polite">Loading…</pre>
+<script type="module" src="/main.js"></script>
+</html>
