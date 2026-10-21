@@ -72,6 +72,11 @@ export interface Hire {
   harness: string;
   model: string;
   effort: string;
+  /**
+   * #167: a team preset role's, and `run.prepare` / `run.start`'s orchestrator's, Codex profile (a key or "auto"), Codex
+   * only; absent: the default profile. Sent only to a bridge with `codex_profiles.runs` (an older one refuses the field).
+   */
+  codex_profile?: string;
 }
 
 export interface FloorSettings {
@@ -492,6 +497,8 @@ export interface CodexProfilesState {
   auto?: boolean;
   /** #140: the Auto hire's rules, in order (the first that matches wins). */
   rules?: CodexRule[];
+  /** #167: team preset roles and a run's orchestrator take `codex_profile` too, Auto included (absent: an older bridge). */
+  runs?: boolean;
 }
 
 /** #138: `codex_profiles.update`: the list, flat. */
@@ -2097,6 +2104,10 @@ export interface RunPrepare {
 export interface RunStartAck extends HireAck {
   launch_id: string;
   prompt: string;
+  /** #167: what Auto picked for the team's Codex roles and why ("reviewers: Account: work (rule acme/*)"; "; " between). */
+  codex_team_reason?: string;
+  /** #167: the notes of the team's Codex profiles whose home runs no herdr hook. */
+  codex_team_note?: string;
 }
 
 // M6 crew: write-code runs and freelancers (docs/protocol.md "Runs and freelancers"). All optional; an older bridge

@@ -379,6 +379,11 @@
   font-weight: 700;
   font-size: 13px;
 }
+/* #167: a Codex role's "Codex profile" chips, under its harness, model and effort. */
+.pp-profile {
+  grid-column: 2 / -1;
+  min-width: 0;
+}
 .dd-field-error {
   color: var(--error-text);
   font-weight: 700;
@@ -394,7 +399,8 @@
   .pp-tr {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-  .pp-role {
+  .pp-role,
+  .pp-profile {
     grid-column: 1 / -1;
   }
   .dd-tab {

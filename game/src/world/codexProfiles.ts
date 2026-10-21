@@ -45,6 +45,7 @@ export function codexProfilesOf(v: unknown): CodexProfilesState | null {
   if (!isObj(v) || !Array.isArray(v.profiles)) return null;
   const out: CodexProfilesState = { profiles: v.profiles.map(profileOf).filter((p): p is CodexProfile => p !== null) };
   if (v.hire === true) out.hire = true;
+  if (v.runs === true) out.runs = true; // #167
   if (v.auto === true) {
     out.auto = true;
     out.rules = Array.isArray(v.rules) ? v.rules.map(ruleOf).filter((r): r is CodexRule => r !== null) : [];

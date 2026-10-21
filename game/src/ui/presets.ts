@@ -10,6 +10,9 @@ import { h, icon, ICON, replaceKeepingFocus } from './dom';
 import { failureText } from './messages';
 import { backdropPolicy } from './dismiss';
 import type { HireModelPrefs } from './hireModelPrefs';
+// #167 run profiles
+import { profileChips, profileGoneNote } from './hire';
+import { keepProfile, roleGoneText, roleLoneGone, roleProfileChoice, rolesFor } from '../world/runProfiles';
 
 /**
  * Team presets (M6): list, create, edit (name and the five roles ×
@@ -152,7 +155,7 @@ export class PresetsPanel {
   private visibilityChanged(): void {
     const v = this.view;
     if (!this.dialog.open || v.kind !== 'edit' || v.saving) return;
-    for (const r of PRESET_ROLES) v.draft.roles[r] = resolveVisibleChoice(this.roleOptions(r, v.seen), v.draft.roles[r]);
+    for (const r of PRESET_ROLES) v.draft.roles[r] = keepProfile(resolveVisibleChoice(this.roleOptions(r, v.seen), v.draft.roles[r]), v.draft.roles[r]);
     this.render();
   }
 
@@ -192,7 +195,7 @@ export class PresetsPanel {
     for (const p of list) {
       const asking = confirm === p.id;
       const roles = h('dl', { class: 'pp-roles' });
-      for (const r of presetLines(p, this.host.store.hireOptions)) roles.append(h('dt', {}, r.role), h('dd', {}, r.line));
+      for (const r of presetLines(p, this.host.store.hireOptions, this.host.store.codexProfiles?.state ?? null)) roles.append(h('dt', {}, r.role), h('dd', {}, r.line));
       const tools = asking
         ? h(
             'div',
@@ -256,7 +259,7 @@ export class PresetsPanel {
       const models = modelsFor(options, c.harness);
       const names = modelEntries(c.harness, models, labelsOf(options, c.harness));
       const set = (p: Partial<Hire>) => {
-        v.draft.roles[r] = resolveVisibleChoice(options, { ...c, ...p });
+        v.draft.roles[r] = keepProfile(resolveVisibleChoice(options, { ...c, ...p }), c);
         if (v.error?.field === 'roles') v.error = null;
         this.render();
       };
@@ -270,6 +273,8 @@ export class PresetsPanel {
           h('span', { role: 'cell' }, select(`role:${r}:effort`, `${ROLE_LABEL[r]} effort`, effortsFor(options, c.harness, c.model), c.effort, (x) => set({ effort: x }))),
         ),
       );
+      const profile = this.roleProfile(r, v);
+      if (profile) table.append(h('div', { class: 'pp-tr pp-tr--profile', role: 'row', 'data-role-profile': r }, h('span', { role: 'cell', class: 'pp-profile' }, profile)));
     }
     replaceKeepingFocus(
       this.body,
@@ -284,6 +289,27 @@ export class PresetsPanel {
     const gone = !!v.id && !this.host.store.presets.get(v.id);
     const save = h('button', { class: 'btn btn--primary', type: 'submit', form: 'presets-form', 'data-key': 'save', 'aria-disabled': gone || v.saving ? 'true' : null, 'aria-busy': v.saving ? 'true' : null }, v.saving ? 'Saving…' : v.id ? 'Save preset' : 'Create preset');
     replaceKeepingFocus(this.actions, [back, save]);
+  }
+
+  /**
+   * #167: a Codex role's "Codex profile" chips under its row, as a Codex hire's (Auto included; none on a bridge that
+   * takes none or with one usable profile, but a gone one's note): the draft's, else the default.
+   */
+  private roleProfile(r: PresetRole, v: Extract<View, { kind: 'edit' }>): HTMLElement | null {
+    const state = this.host.store.codexProfiles?.state ?? null;
+    const c = v.draft.roles[r];
+    const choice = roleProfileChoice(state, c.harness, c.codex_profile);
+    if (!choice) {
+      const lone = roleLoneGone(state, c.harness, c.codex_profile);
+      return lone ? profileGoneNote(lone) : null;
+    }
+    const chips = profileChips(`role:${r}:profile`, choice.list, choice.key, (key) => {
+      v.draft.roles[r] = { ...v.draft.roles[r], codex_profile: key };
+      if (v.error?.field === 'roles') v.error = null;
+      this.render();
+    }, roleGoneText(state, choice), choice.auto);
+    chips.setAttribute('aria-label', `${ROLE_LABEL[r]} Codex profile`);
+    return chips;
   }
 
   private focusFirst(): void {
@@ -313,7 +339,7 @@ export class PresetsPanel {
     const book = this.host.store.presets;
     const base = p ?? book.defaultFor(undefined);
     const roles = Object.fromEntries(
-      PRESET_ROLES.map((r) => [r, resolveVisibleChoice(this.roleOptions(r, p), base?.roles[r] ?? null)]),
+      PRESET_ROLES.map((r) => [r, keepProfile(resolveVisibleChoice(this.roleOptions(r, p), base?.roles[r] ?? null), base?.roles[r])]),
     ) as PresetRoles;
     this.view = { kind: 'edit', id: p?.id ?? null, draft: { name: p?.name ?? '', roles }, error: null, saving: false, seen: p ? structuredClone(p) : null };
     this.setStatus('');
@@ -339,7 +365,7 @@ export class PresetsPanel {
     const name = v.draft.name.trim();
     let r: CommandResult;
     if (current) {
-      const patch = presetPatch(current, v.draft);
+      const patch = presetPatch(current, { ...v.draft, roles: rolesFor(this.host.store.codexProfiles?.state ?? null, v.draft.roles) });
       if (!patch) {
         this.setStatus('Nothing changed.');
         this.toList(current.id);
@@ -351,7 +377,7 @@ export class PresetsPanel {
     } else {
       v.saving = true;
       this.render();
-      r = await this.host.send('preset.create', { name, roles: structuredClone(v.draft.roles) });
+      r = await this.host.send('preset.create', { name, roles: rolesFor(this.host.store.codexProfiles?.state ?? null, structuredClone(v.draft.roles)) });
     }
     if (this.view !== v) return;
     v.saving = false;
