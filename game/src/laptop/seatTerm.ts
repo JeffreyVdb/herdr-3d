@@ -8,6 +8,28 @@ import type { ScreenTheme } from './paint';
 import { clampGrid, Debounce, linkHint, linkOpens, RESIZE_DEBOUNCE_MS, WheelLines, WHEEL_FLUSH_MS, wheelModifiers, xtermTheme } from './seatTermLogic';
 import { decodeFrame } from './terminal';
 
+/**
+ * The replies xterm's parser makes to a frame's query bytes (device attributes and status, mode and setting requests,
+ * window reports, OSC colour queries) are swallowed where they start, so none can become input, whatever reads
+ * `onData` later (#176 part 2's mouse). Colour sets (OSC 4/10/11/12 without `?`) still apply.
+ */
+export function swallowReplies(term: Terminal): IDisposable[] {
+  const swallow = () => true;
+  const p = term.parser;
+  return [
+    p.registerCsiHandler({ final: 'c' }, swallow),
+    p.registerCsiHandler({ prefix: '>', final: 'c' }, swallow),
+    p.registerCsiHandler({ prefix: '=', final: 'c' }, swallow),
+    p.registerCsiHandler({ final: 'n' }, swallow),
+    p.registerCsiHandler({ prefix: '?', final: 'n' }, swallow),
+    p.registerCsiHandler({ intermediates: '$', final: 'p' }, swallow),
+    p.registerCsiHandler({ prefix: '?', intermediates: '$', final: 'p' }, swallow),
+    p.registerCsiHandler({ final: 't' }, swallow),
+    p.registerDcsHandler({ intermediates: '$', final: 'q' }, swallow),
+    ...[4, 10, 11, 12].map((ident) => p.registerOscHandler(ident, (data) => data.includes('?'))),
+  ];
+}
+
 /** A grid the seated terminal fits in its area: the PTY's size, and a cell's size in CSS px. */
 export interface SeatGrid {
   cols: number;
@@ -127,21 +149,7 @@ export class SeatTerminal {
     term.loadAddon(new WebLinksAddon((e, uri) => this.activate(e, uri), { hover: (_e, uri) => (this.host.title = linkHint(uri, this.deps.mac)), leave: () => (this.host.title = '') }));
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = '11';
-    // Replies the parser would make (to a frame's query bytes) never become input: swallowed where they start.
-    const swallow = () => true;
-    const p = term.parser;
-    this.offs.push(
-      p.registerCsiHandler({ final: 'c' }, swallow),
-      p.registerCsiHandler({ prefix: '>', final: 'c' }, swallow),
-      p.registerCsiHandler({ prefix: '=', final: 'c' }, swallow),
-      p.registerCsiHandler({ final: 'n' }, swallow),
-      p.registerCsiHandler({ prefix: '?', final: 'n' }, swallow),
-      p.registerCsiHandler({ intermediates: '$', final: 'p' }, swallow),
-      p.registerCsiHandler({ prefix: '?', intermediates: '$', final: 'p' }, swallow),
-      p.registerCsiHandler({ final: 't' }, swallow),
-      p.registerDcsHandler({ intermediates: '$', final: 'q' }, swallow),
-      ...[4, 10, 11, 12].map((ident) => p.registerOscHandler(ident, (data) => data.includes('?'))),
-    );
+    this.offs.push(...swallowReplies(term));
     // Every key is the seat's (Esc, the lanes, IME through the seat's keyboard): the widget takes none.
     term.attachCustomKeyEventHandler(() => false);
     term.attachCustomWheelEventHandler((e) => this.onWheel(e));
