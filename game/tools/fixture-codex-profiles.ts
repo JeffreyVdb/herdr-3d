@@ -22,8 +22,16 @@
 // is picked as the bridge picks (rules first, the fixture's origin of a folder being `JeffreyVdb/<its name>`, then the
 // flagged profiles by their fresh 5-hour left, then the default) and its ack has `codex_profile_reason`.
 //
+// #167: the list says `share`. With `simcodexprofiles=2`, `work` shares the default's setup and has drifted (its
+// config.toml was replaced by a file, `sed -i` style, and the default's skills/ holds a real folder `infra`), the hidden
+// `old` shares and shows none, and `spare` does not share and holds its own config.toml. `codex_profiles.share` plays
+// the bridge: a dry run's plan (a config.toml in the way is a replace with its backup name), an apply refused unless
+// every replace is confirmed ("<folder> changed since you looked; look again."), its report, Fix (share again) clearing
+// the drift, and share off; `codex_profiles.move_skill` moves `infra` (only on the default) and its drift goes. A hire
+// on `work` says its shared setup drifted.
+//
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
-import type { CodexProfile, CodexRule, Limits, Worker, WorkerCodex } from '../src/net/protocol.ts';
+import type { CodexDrift, CodexProfile, CodexRule, CodexShareStep, Limits, Worker, WorkerCodex } from '../src/net/protocol.ts';
 
 type Obj = Record<string, unknown>;
 type Send = (m: Obj) => void;
@@ -43,6 +51,10 @@ export class CodexProfilesSim {
   private profiles: CodexProfile[];
   private rules: CodexRule[] = [];
   private readonly h: CodexProfilesHost;
+  /** #167: per profile, the entries that are regular files where a link to the default's would be. */
+  private readonly own = new Map<string, Set<string>>();
+  /** #167: the real skill folders in the default's skills/. */
+  private readonly skills = new Set<string>();
 
   constructor(h: CodexProfilesHost, n: number) {
     this.h = h;
@@ -63,7 +75,24 @@ export class CodexProfilesSim {
       this.profiles.push(p('work', { plan: 'team' }), p('old', { hidden: true }), p('spare', { path: '/srv/codex-spare', display: '/srv/codex-spare', signed_in: false, added: true }));
       this.profiles[0]!.anything = true;
       this.rules = [{ match: 'github.com/acme/*', profile: 'work' }];
+      this.profiles[1]!.share = this.profiles[2]!.share = true;
+      this.own.set('work', new Set(['config.toml']));
+      this.own.set('spare', new Set(['config.toml']));
+      this.skills.add('infra');
     }
+  }
+
+  /** #167: how a visible shared profile differs from the default, as the bridge words it. */
+  private drift(p: CodexProfile): CodexDrift[] {
+    if (!p.share || p.hidden || p.default) return [];
+    const def = this.profiles.find((x) => x.default)!.name;
+    const out: CodexDrift[] = [...(this.own.get(p.key) ?? [])].map((name) => ({
+      kind: 'link_replaced',
+      name,
+      text: `${name} is no longer a link: a file replaced it${name === 'config.toml' ? ` (MCP servers only on ${def}: alterlab, kaneo)` : ''}`,
+    }));
+    for (const s of this.skills) out.push({ kind: 'skill_only_default', name: s, text: `skill ${s} is only on ${def}` });
+    return out;
   }
 
   decorate(world: Obj): void {
@@ -71,7 +100,68 @@ export class CodexProfilesSim {
   }
 
   private view(): Obj {
-    return { profiles: this.profiles.map((p) => ({ ...p })), hire: true, auto: true, rules: this.rules.map((r) => ({ ...r })) };
+    const profiles = this.profiles.map((p) => {
+      const out: CodexProfile = { ...p };
+      const drift = this.drift(p);
+      if (drift.length) out.drift = drift;
+      return out;
+    });
+    return { profiles, hire: true, auto: true, rules: this.rules.map((r) => ({ ...r })), share: true };
+  }
+
+  /** #167: the plan of sharing `p` now (the fixture's default has config.toml, AGENTS.md and hooks.json). */
+  private plan(p: CodexProfile): CodexShareStep[] {
+    const stamp = new Date(this.h.now()).toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+    const own = this.own.get(p.key) ?? new Set<string>();
+    const entry = (name: string): CodexShareStep =>
+      own.has(name) ? { name, action: 'replace', was: 'file', backup: `${name}.before-share-${stamp}` } : { name, action: p.share ? 'keep' : 'link' };
+    return [entry('config.toml'), entry('AGENTS.md'), { name: 'AGENTS.override.md', action: 'skip' }, { name: 'rules/', action: 'skip' }, { name: 'hooks.json', action: p.share ? 'keep' : 'write' }];
+  }
+
+  /** #167: codex_profiles.share and .move_skill, as the bridge answers them. */
+  private share(t: string, a: Obj, send: Send): Obj {
+    const p = this.profiles.find((x) => x.key === a.key);
+    const def = this.profiles.find((x) => x.default)!;
+    const done = (steps: CodexShareStep[], report?: string): Obj => {
+      this.h.emit(send, { t: 'codex_profiles.update', ...this.view() });
+      return { ...this.view(), steps, ...(report ? { report } : {}) };
+    };
+    if (t === 'codex_profiles.move_skill') {
+      if (typeof a.key !== 'string' || !a.key || typeof a.skill !== 'string' || !a.skill) throw this.bad('key and skill are required');
+      if (!p) throw this.h.error('not_found', `not found: no Codex profile "${a.key}"`);
+      if (!p.default || !this.skills.has(a.skill)) throw this.bad(`${p.name} has no skill folder ${a.skill}.`);
+      this.skills.delete(a.skill);
+      return done([{ name: a.skill, action: 'move' }], `Moved the skill ${a.skill} to ~/.agents/skills/${a.skill} and left a link in ${p.name}'s skills/: every Codex home sees it now.`);
+    }
+    if (typeof a.key !== 'string' || !a.key) throw this.bad('key is required');
+    if (typeof a.share !== 'boolean') throw this.bad('share is required');
+    if (!a.share && (a.dry_run || a.replace)) throw this.bad('dry_run and replace are for share: true');
+    if (!p) throw this.h.error('not_found', `not found: no Codex profile "${a.key}"`);
+    if (p.default) throw this.bad('The default profile is the one the others share from.');
+    if (p.missing) throw this.h.error('not_found', `not found: the folder of the Codex profile "${p.name}" no longer exists`);
+    const plan = this.plan(p);
+    if (a.dry_run) return { ...this.view(), steps: plan };
+    if (!a.share) {
+      const copied = p.share ? plan.filter((x) => x.action === 'keep' && x.name !== 'hooks.json').map((x) => x.name) : [];
+      p.share = false;
+      delete p.drift;
+      return done(
+        copied.map((name) => ({ name, action: 'copy' })),
+        copied.length ? `Copied ${names(copied)} from ${def.name}: ${p.name} keeps them as its own and no longer follows ${def.name}. Its hooks.json stays.` : `${p.name} had no links to ${def.name} to copy. Its hooks.json stays.`,
+      );
+    }
+    const confirmed = Array.isArray(a.replace) ? a.replace : [];
+    if (plan.some((x) => x.action === 'replace' && !confirmed.includes(x.name))) throw this.bad(`${p.display} changed since you looked; look again.`);
+    const linked = plan.filter((x) => (x.action === 'link' || x.action === 'replace') && x.name !== 'hooks.json').map((x) => x.name);
+    const backups = plan.filter((x) => x.action === 'replace').map((x) => `the old ${x.name} to ${x.backup}`);
+    const wrote = plan.some((x) => x.name === 'hooks.json' && x.action === 'write');
+    const parts = [linked.length ? `linked ${names(linked)}` : '', wrote ? 'wrote hooks.json' : '', backups.length ? `backed up ${names(backups)}` : ''].filter(Boolean);
+    let report = parts.length ? `${parts.join(', ')}.` : `Nothing to change: ${p.name} already shares ${def.name}'s setup.`;
+    report = report[0]!.toUpperCase() + report.slice(1);
+    if (wrote) report += ` Codex will ask once to review the hooks of ${p.name}.`;
+    p.share = true;
+    this.own.delete(p.key);
+    return done(plan, report);
   }
 
   /** #139: a global hire preset on a profile that is gone (`old-work`): the hire form and the preset editor say so. */
@@ -100,12 +190,19 @@ export class CodexProfilesSim {
     const base = codex ?? { mode: 'shared' as const, server: 'running' as const };
     if (p.default) return { ...base, profile: key };
     if (!p.signed_in) throw this.h.error('hire_failed', `hire_failed: ${p.name} is not signed in. Run \`CODEX_HOME=${p.path} codex login\` in a terminal.`);
+    const drift = this.drift(p); // #167: what the bridge says of its setup first
+    const def = this.profiles.find((x) => x.default)!.name;
+    const setup = drift.length
+      ? `${p.name}'s shared setup has drifted from ${def}'s: ${drift.map((d) => d.text).join('; ')}. `
+      : p.share
+        ? ''
+        : `${p.name} does not share setup with ${def}: no MCP servers, no herdr hooks. `;
     return {
       ...base,
       profile: key,
       account: 'confirmed',
       plan: p.plan,
-      profile_note: `${p.name} has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, so the bridge takes its thread from the worker's own Codex server and does not follow a new session started in its terminal (/new).`,
+      profile_note: `${setup}${p.name} has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, so the bridge takes its thread from the worker's own Codex server and does not follow a new session started in its terminal (/new).`,
     };
   }
 
@@ -187,6 +284,10 @@ export class CodexProfilesSim {
   }
 
   handle(t: unknown, a: Obj, send: Send, ack: (d?: unknown) => void, base: () => Limits | undefined): boolean {
+    if (t === 'codex_profiles.share' || t === 'codex_profiles.move_skill') {
+      ack(this.share(t, a, send));
+      return true;
+    }
     if (t !== 'codex_profiles.get' && t !== 'codex_profiles.set') return false;
     if (t === 'codex_profiles.set') this.set(a, send, base);
     ack(this.view());
@@ -278,6 +379,9 @@ export class CodexProfilesSim {
     if (changed) this.h.emit(send, { t: 'limits.update', ...this.reading(changed, base() ?? emptyCodex(this.h.now()), this.h.now()) });
   }
 }
+
+/** "a", "a and b", "a, b and c". */
+const names = (list: string[]): string => (list.length < 2 ? (list[0] ?? '') : `${list.slice(0, -1).join(', ')} and ${list.at(-1)}`);
 
 const PIXEL = 'fc018d58-4789-46c2-afac-c062bc9fff9e';
 const SPROCKET = '0f5107ad-89da-4dd9-a49f-832839d2ca53';
