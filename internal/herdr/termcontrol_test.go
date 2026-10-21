@@ -61,10 +61,14 @@ func (f *fakeController) exit() {
 	})
 }
 
-func (f *fakeController) Stdout() io.Reader       { return f.out }
-func (f *fakeController) Stdin() io.WriteCloser   { return f.in }
-func (f *fakeController) Done() <-chan struct{}   { return f.done }
-func (f *fakeController) written() []string       { f.mu.Lock(); defer f.mu.Unlock(); return slices.Clone(f.lines) }
+func (f *fakeController) Stdout() io.Reader     { return f.out }
+func (f *fakeController) Stdin() io.WriteCloser { return f.in }
+func (f *fakeController) Done() <-chan struct{} { return f.done }
+func (f *fakeController) written() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.lines)
+}
 func (f *fakeController) frame(line string) error { _, err := io.WriteString(f.outW, line); return err }
 func (f *fakeController) Stop() error {
 	f.mu.Lock()
@@ -129,18 +133,20 @@ func TestControlTerminalCommands(t *testing.T) {
 
 	// Out of bounds: refused before anything is written.
 	for name, call := range map[string]func() error{
-		"narrow":       func() error { return ct.Resize(39, 40, 0, 0) },
-		"wide":         func() error { return ct.Resize(301, 40, 0, 0) },
-		"short":        func() error { return ct.Resize(80, 9, 0, 0) },
-		"tall":         func() error { return ct.Resize(80, 101, 0, 0) },
-		"cell":         func() error { return ct.Resize(80, 24, MaxCellPx+1, 10) },
-		"neg cell":     func() error { return ct.Resize(80, 24, -1, 10) },
-		"no lines":     func() error { return ct.Scroll(true, 0, 0, 0, 0) },
-		"many lines":   func() error { return ct.Scroll(true, MaxScrollLines+1, 0, 0, 0) },
-		"column":       func() error { return ct.Scroll(true, 1, MaxCols, 0, 0) },
-		"row":          func() error { return ct.Scroll(true, 1, 0, -1, 0) },
-		"modifiers":    func() error { return ct.Scroll(true, 1, 0, 0, 8) },
-		"huge command": func() error { return ct.(*controller).send(map[string]string{"text": strings.Repeat("x", maxControlLine)}) },
+		"narrow":     func() error { return ct.Resize(39, 40, 0, 0) },
+		"wide":       func() error { return ct.Resize(301, 40, 0, 0) },
+		"short":      func() error { return ct.Resize(80, 9, 0, 0) },
+		"tall":       func() error { return ct.Resize(80, 101, 0, 0) },
+		"cell":       func() error { return ct.Resize(80, 24, MaxCellPx+1, 10) },
+		"neg cell":   func() error { return ct.Resize(80, 24, -1, 10) },
+		"no lines":   func() error { return ct.Scroll(true, 0, 0, 0, 0) },
+		"many lines": func() error { return ct.Scroll(true, MaxScrollLines+1, 0, 0, 0) },
+		"column":     func() error { return ct.Scroll(true, 1, MaxCols, 0, 0) },
+		"row":        func() error { return ct.Scroll(true, 1, 0, -1, 0) },
+		"modifiers":  func() error { return ct.Scroll(true, 1, 0, 0, 8) },
+		"huge command": func() error {
+			return ct.(*controller).send(map[string]string{"text": strings.Repeat("x", maxControlLine)})
+		},
 	} {
 		if err := call(); !errors.Is(err, ErrNotAllowed) {
 			t.Errorf("%s: err = %v, want ErrNotAllowed", name, err)
