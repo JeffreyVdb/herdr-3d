@@ -57,10 +57,11 @@ const (
 	// (herdr answers the release with terminal.closed "detached" and the CLI
 	// exits) before it is stopped like an observer.
 	ReleaseGrace = time.Second
-	// writeWait bounds how long Paste and Click wait for their lines to be
-	// written to the controller's stdin.
-	writeWait = 5 * time.Second
 )
+
+// writeWait bounds how long Paste and Click wait for their turn on the
+// controller's stdin (see sendWritten; a variable for tests).
+var writeWait = 5 * time.Second
 
 // appliedWait bounds how long Paste and Click then wait for herdr's full
 // frame that shows it applied them (see sendWritten; a variable for tests).
@@ -80,6 +81,18 @@ var MouseButtons = []string{"left", "right", "middle"}
 // ErrControlClosed is returned by a command to a controller that was
 // released or stopped.
 var ErrControlClosed = errors.New("herdr: the terminal controller is closed")
+
+// ErrInputUnsent is a paste's or a click's error from before any of it was
+// written to the controller's stdin (see InputUnsent).
+var ErrInputUnsent = errors.New("herdr: the input was not sent")
+
+// InputUnsent reports whether a Paste's or a Click's error is from before any
+// of it was written to the controller's stdin: refused, given up while it was
+// still queued, dropped at Close. It never reaches herdr, later neither. Any
+// other error (a write that failed) may have left some of it with herdr.
+func InputUnsent(err error) bool {
+	return errors.Is(err, ErrInputUnsent) || errors.Is(err, ErrControlClosed) || errors.Is(err, ErrNotAllowed)
+}
 
 // ControlRefused reports whether a controller's terminal.closed reason is
 // herdr refusing it because another client owns the pane ("terminal <t>
@@ -115,12 +128,15 @@ type ControlStream interface {
 	// terminal.input, ESC[200~ … ESC[201~): herdr gives it to the application
 	// as a paste when it asked for that, as plain text otherwise; nothing is
 	// added, Enter neither. It returns once the line is on herdr's stdin, or
-	// fails: it is never dropped without a word.
+	// fails: it is never dropped without a word, and one that fails before it
+	// is written (InputUnsent: a cancel or a timeout while it is queued) is
+	// never written later. Once its line is being written it waits for that.
 	Paste(ctx context.Context, text string) error
 	// Click is a click of button (MouseButtons) on cell (col, row), 0-based,
 	// with modifier bits mods (Shift 1, Ctrl 2, Alt 4): terminal.mouse down,
 	// then up (herdr 0.9.2+; herdr drops it when the application has no
-	// mouse reporting on). It returns once both lines are on herdr's stdin.
+	// mouse reporting on). It returns once both lines are on herdr's stdin;
+	// a failure is as Paste's.
 	Click(ctx context.Context, button string, col, row, mods int) error
 	// RestoreOnRelease makes Close resize the PTY to cols × rows before it
 	// releases the pane (0, 0: release only).
@@ -230,7 +246,7 @@ func (ct *controller) write() {
 			return
 		}
 		if broken != nil {
-			c.finish(broken, 0) // drain: nothing more reaches herdr
+			c.finish(fmt.Errorf("%w: %w", ErrInputUnsent, broken), 0) // drain: nothing more reaches herdr
 			continue
 		}
 		if _, err := stdin.Write(c.line); err != nil {
@@ -313,6 +329,11 @@ func (ct *controller) send(kind ctlKind, cmd any) error {
 func (ct *controller) queueCmd(c ctlCmd) error {
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
+	return ct.queueLocked(c)
+}
+
+// queueLocked is queueCmd under mu.
+func (ct *controller) queueLocked(c ctlCmd) error {
 	if ct.closed {
 		return ErrControlClosed
 	}
@@ -366,10 +387,19 @@ func (ct *controller) Resize(cols, rows, cellW, cellH int) error {
 	case cellW < 0 || cellW > MaxCellPx || cellH < 0 || cellH > MaxCellPx:
 		return fmt.Errorf("%w: cell size %d×%d px", ErrNotAllowed, cellW, cellH)
 	}
+	c, err := command(kindResize, resizeCmd{"terminal.resize", cols, rows, cellW, cellH})
+	if err != nil {
+		return err
+	}
+	// The size with its place in the queue (see sendWritten); a refused
+	// resize changes neither.
 	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	if err := ct.queueLocked(c); err != nil {
+		return err
+	}
 	ct.size = [4]int{cols, rows, cellW, cellH}
-	ct.mu.Unlock()
-	return ct.send(kindResize, resizeCmd{"terminal.resize", cols, rows, cellW, cellH})
+	return nil
 }
 
 type resizeCmd struct {
@@ -449,18 +479,32 @@ func (ct *controller) Click(ctx context.Context, button string, col, row, mods i
 // controller's connection: so a resize to the size asked last goes with the
 // input, and sendWritten returns once herdr's full frame for it came (or
 // after appliedWait, the input written). A full queue makes room as a reset
-// does, else the input is refused; one dropped at Close says so.
+// does, else the input is refused; one dropped at Close says so. The
+// resize's size is the one current when the input is queued, under the same
+// lock as Resize's, so a resize at the same time is either before the input
+// (and that is the size) or after it: never undone. A cancel or writeWait
+// while the input is still queued takes it out (ErrInputUnsent: never
+// written later, behind what came after it); once the writer has it, they
+// wait for the write, which ends or fails (Close stops a wedged herdr).
 func (ct *controller) sendWritten(ctx context.Context, cmds ...any) error {
-	ct.mu.Lock()
-	sz := ct.size
-	ct.mu.Unlock()
-	c, err := command(kindInput, append(cmds, resizeCmd{"terminal.resize", sz[0], sz[1], sz[2], sz[3]})...)
+	c, err := command(kindInput, cmds...)
 	if err != nil {
 		return err
 	}
-	c.resizes = 1
 	c.done = make(chan written, 1)
-	if err := ct.queueCmd(c); err != nil {
+	ct.mu.Lock()
+	sz := ct.size
+	barrier, err := command(kindResize, resizeCmd{"terminal.resize", sz[0], sz[1], sz[2], sz[3]})
+	if err == nil {
+		c.line, c.resizes = append(c.line, barrier.line...), 1
+		if len(c.line) > maxControlLine {
+			err = fmt.Errorf("%w: a controller command of %d bytes (at most %d)", ErrNotAllowed, len(c.line), maxControlLine)
+		} else if err = ct.queueLocked(c); err != nil && !errors.Is(err, ErrControlClosed) {
+			err = fmt.Errorf("%w: %w", ErrInputUnsent, err)
+		}
+	}
+	ct.mu.Unlock()
+	if err != nil {
 		return err
 	}
 	timer := time.NewTimer(writeWait)
@@ -469,12 +513,18 @@ func (ct *controller) sendWritten(ctx context.Context, cmds ...any) error {
 	select {
 	case w = <-c.done:
 	case <-ctx.Done():
-		return ctx.Err()
+		if ct.withdraw(c.done) {
+			return fmt.Errorf("%w: %w", ErrInputUnsent, ctx.Err())
+		}
+		w = <-c.done
 	case <-timer.C:
-		return errors.New("herdr: the terminal controller is not reading its commands")
+		if ct.withdraw(c.done) {
+			return fmt.Errorf("%w: the terminal controller is not reading its commands", ErrInputUnsent)
+		}
+		w = <-c.done
 	}
 	switch {
-	case errors.Is(w.err, ErrControlClosed):
+	case InputUnsent(w.err):
 		return w.err
 	case w.err != nil:
 		return fmt.Errorf("herdr: writing to the terminal controller: %w", w.err)
@@ -485,19 +535,33 @@ func (ct *controller) sendWritten(ctx context.Context, cmds ...any) error {
 		ct.mu.Lock()
 		seen, full := ct.fulls, ct.full
 		ct.mu.Unlock()
-		if seen >= w.resizes+1 {
-			return nil
+		if seen >= w.resizes+1 || ctx.Err() != nil {
+			return nil // (cancelled: written, herdr's answer not waited for)
 		}
 		select {
 		case <-full:
 		case <-ctx.Done():
-			return ctx.Err()
 		case <-timer.C:
 			return nil // written; herdr's answer is late (or one frame answered two resizes)
 		case <-ct.p.Done():
 			return nil
 		}
 	}
+}
+
+// withdraw takes the input whose sender waits on done out of the queue,
+// keeping the rest in order; false when it is not there (the writer took it,
+// or Close dropped it: done gets its outcome).
+func (ct *controller) withdraw(done chan written) bool {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	for i, c := range ct.queue {
+		if c.done == done {
+			ct.queue = slices.Delete(ct.queue, i, i+1)
+			return true
+		}
+	}
+	return false
 }
 
 // PasteText is text as one bracketed paste: NUL and any paste marker in it

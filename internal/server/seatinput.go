@@ -112,17 +112,23 @@ func (h *Hub) startPaste(ctx context.Context, c *Client, cmd proto.Command) erro
 		}); derr != nil {
 			err = derr
 		}
+		unsent := err != nil // nothing reached the pane: its files go
 		if err == nil {
+			// Paste returns once herdr has it, or fails: never written
+			// later once it said so (InputUnsent), and it waits while
+			// the line is being written, so the lane's next input cannot
+			// overtake it.
 			if perr := cs.Paste(ctx, p.text); perr != nil {
-				err = fmt.Errorf("%w: %v", errInputFailed, perr)
+				err, unsent = fmt.Errorf("%w: %v", errInputFailed, perr), herdr.InputUnsent(perr)
 			}
 		}
 		if gate {
-			if err != nil {
-				h.unprotect(ctx, p)
-			} else {
+			switch {
+			case err == nil:
 				h.sentReview(p, owner)
-			}
+			case unsent:
+				h.unprotect(ctx, p)
+			} // else some of it may be with the pane: its files stay the worker's (gone with it)
 		}
 		if err != nil {
 			return nil, err

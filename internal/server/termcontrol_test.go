@@ -26,6 +26,9 @@ type fakeCtl struct {
 	mu       sync.Mutex
 	cmds     []string
 	released bool
+	// pasteErr (nil: none) is what Paste returns, recording nothing (#176
+	// part 2: a paste that failed).
+	pasteErr error
 }
 
 func (c *fakeCtl) cmd(format string, args ...any) error {
@@ -54,7 +57,21 @@ func (c *fakeCtl) Scroll(up bool, lines, col, row, mods int) error {
 func (c *fakeCtl) Live() error { return c.cmd("live") }
 
 // #176 part 2
-func (c *fakeCtl) Paste(_ context.Context, text string) error { return c.cmd("paste %q", text) }
+func (c *fakeCtl) Paste(_ context.Context, text string) error {
+	c.mu.Lock()
+	err := c.pasteErr
+	c.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return c.cmd("paste %q", text)
+}
+
+func (c *fakeCtl) failPastes(err error) {
+	c.mu.Lock()
+	c.pasteErr = err
+	c.mu.Unlock()
+}
 
 func (c *fakeCtl) Click(_ context.Context, button string, col, row, mods int) error {
 	return c.cmd("click %s at %d,%d mods %d", button, col, row, mods)

@@ -5,6 +5,8 @@ package server_test
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -236,5 +238,90 @@ func TestSeatPasteSecrets(t *testing.T) {
 		if strings.Contains(e.Args, sentinel) || strings.Contains(e.Result, sentinel) {
 			t.Fatalf("the secret is in the audit: %s %s", e.Cmd, e.Args)
 		}
+	}
+}
+
+// A reviewed paste that failed keeps its protected files only while it may
+// have reached herdr: one herdr says was never written takes them with it,
+// one whose write failed (some of it may be with the pane) leaves them.
+func TestSeatPasteFailureKeepsFilesOnlyIfItMayHaveLanded(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	dir := filepath.Join(base, "run", "secrets")
+	if err := os.Mkdir(filepath.Join(base, "run"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tb, ct := startCtlBridge(t, func(o *server.Options) { o.SecretsDir = dir }, agentW("w1", "claude", "idle"))
+	c := tb.connect(proto.Hello{Client: "game"})
+	snap := c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	id, k, _ := ownedSeat(t, ct, c, idOf(t, snap, "w1"), 0)
+	files := func(sentinel string) int {
+		n := 0
+		_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+			if err == nil && d.Type().IsRegular() {
+				if b, _ := os.ReadFile(p); string(b) == sentinel {
+					n++
+				}
+			}
+			return nil
+		})
+		return n
+	}
+	for _, tc := range []struct {
+		name, sentinel string
+		err            error
+		kept           int
+	}{
+		{"unsent", "Rq-Unsent-93xQ!", fmt.Errorf("%w: context canceled", herdr.ErrInputUnsent), 0},
+		{"closed", "Rq-Closed-93xQ!", herdr.ErrControlClosed, 0},
+		{"write failed", "Rq-Broken-93xQ!", fmt.Errorf("herdr: writing to the terminal controller: %w", io.ErrClosedPipe), 1},
+	} {
+		k.failPastes(tc.err)
+		text := "deploy with PASSWORD=" + tc.sentinel + "\nthen check"
+		_, sm := c.command(proto.CmdPromptSecretsScan, "scan", proto.PromptSecretsScanArgs{Text: text})
+		s := ackData[proto.PromptSecretsScan](t, sm)
+		c.mustError(proto.CmdWorkerPaste, proto.WorkerPasteArgs{ID: id, Text: text, Secrets: &proto.SecretsReview{Revision: s.Revision,
+			Decisions: []proto.SecretDecision{{Candidate: "c1", Action: proto.SecretProtect}}}}, proto.ErrInputFailed)
+		if n := files(tc.sentinel); n != tc.kept {
+			t.Errorf("%s: %d protected files left, want %d", tc.name, n, tc.kept)
+		}
+	}
+}
+
+// #176 part 2 P2: the game strips NUL and paste markers before the review,
+// as the bridge does before its scan, so a marker-wrapped secret's review
+// holds; a review of the text with its markers is of another text (stale).
+func TestSeatPasteReviewOfStrippedMarkers(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	dir := filepath.Join(base, "run", "secrets")
+	if err := os.Mkdir(filepath.Join(base, "run"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tb, ct := startCtlBridge(t, func(o *server.Options) { o.SecretsDir = dir }, agentW("w1", "claude", "idle"))
+	c := tb.connect(proto.Hello{Client: "game"})
+	snap := c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	id, k, _ := ownedSeat(t, ct, c, idOf(t, snap, "w1"), 0)
+	const sentinel = "Rq-Sentinel-93xQ!"
+	raw := "\x1b[200~deploy PASSWORD=" + sentinel + "\nthen check\x1b[201~\x00"
+	review := func(text string) *proto.SecretsReview {
+		_, sm := c.command(proto.CmdPromptSecretsScan, "scan", proto.PromptSecretsScanArgs{Text: text})
+		s := ackData[proto.PromptSecretsScan](t, sm)
+		if len(s.Candidates) != 1 {
+			t.Fatalf("candidates of %q: %+v", text, s.Candidates)
+		}
+		return &proto.SecretsReview{Revision: s.Revision, Decisions: []proto.SecretDecision{{Candidate: "c1", Action: proto.SecretProtect}}}
+	}
+	c.mustError(proto.CmdWorkerPaste, proto.WorkerPasteArgs{ID: id, Text: raw, Secrets: review(raw)}, proto.ErrSecretsReviewStale)
+	clean := herdr.PasteStrip(raw)
+	_, m := c.command(proto.CmdWorkerPaste, "p", proto.WorkerPasteArgs{ID: id, Text: clean, Secrets: review(clean)})
+	pr := ackData[proto.PasteResult](t, m)
+	if pr.Protected != 1 || strings.Contains(pr.Sent, sentinel) || strings.Contains(pr.Sent, "\x1b[20") {
+		t.Fatalf("ack %s", m.raw)
+	}
+	if cmds := k.commands(); !slices.Contains(cmds, "paste "+strconv.Quote(pr.Sent)) {
+		t.Fatalf("controller = %q", cmds)
 	}
 }

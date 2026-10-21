@@ -805,3 +805,119 @@ func TestControlTerminalInputInAFullQueue(t *testing.T) {
 		}
 	})
 }
+
+// A paste or a click whose wait fails while it is still queued is taken out
+// of the queue and says it was not written: it never reaches herdr later,
+// behind what came after it.
+func TestControlTerminalInputGivenUpIsNotWritten(t *testing.T) {
+	appliedWait = 10 * time.Millisecond // no frames here
+	t.Cleanup(func() { appliedWait = 2 * time.Second })
+	for name, call := range map[string]func(t *testing.T, ct ControlStream) error{
+		"write timeout": func(t *testing.T, ct ControlStream) error {
+			writeWait = 30 * time.Millisecond
+			t.Cleanup(func() { writeWait = 5 * time.Second })
+			return ct.Paste(context.Background(), "LATE_PASTE")
+		},
+		"cancelled": func(_ *testing.T, ct ControlStream) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+			defer cancel()
+			return ct.Click(ctx, "left", 7, 7, 0)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, ct := stalled(t, 2)
+			if err := call(t, ct); !errors.Is(err, ErrInputUnsent) {
+				t.Fatalf("err = %v, want ErrInputUnsent", err)
+			}
+			k := ct.(*controller)
+			k.mu.Lock()
+			queued := len(k.queue)
+			k.mu.Unlock()
+			if queued != 2 {
+				t.Fatalf("%d commands queued, want the two scrolls", queued)
+			}
+			p.release()
+			if err := ct.Paste(context.Background(), "NEXT"); err != nil {
+				t.Fatal(err)
+			}
+			ct.Close()
+			got := strings.Join(p.written(), "\n")
+			if strings.Contains(got, "LATE_PASTE") || strings.Contains(got, `"column":7`) {
+				t.Fatalf("the input given up reached herdr:\n%s", got)
+			}
+			if !strings.Contains(got, "NEXT") {
+				t.Fatalf("the next paste is missing:\n%s", got)
+			}
+		})
+	}
+}
+
+// Once the writer took a paste, a timeout or a cancel does not give up on
+// it: it may still land, so Paste waits for the write, and says so.
+func TestControlTerminalInputBeingWrittenIsWaitedFor(t *testing.T) {
+	appliedWait = 10 * time.Millisecond
+	writeWait = 20 * time.Millisecond
+	t.Cleanup(func() { appliedWait, writeWait = 2*time.Second, 5*time.Second })
+	p := newStalledController() // its first write (the paste) stalls
+	c := &Control{Duplex: func([]string) (DuplexProc, error) { return p, nil }}
+	ct, err := c.ControlTerminal(context.Background(), "h3d-it-1", "w1:p1", 120, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- ct.Paste(ctx, "IN_FLIGHT") }()
+	<-p.entered
+	select {
+	case err := <-done:
+		t.Fatalf("Paste returned while its line was being written: %v", err)
+	case <-time.After(100 * time.Millisecond): // past writeWait and the cancel
+	}
+	p.release()
+	if err := <-done; err != nil {
+		t.Fatalf("a paste written after its wait ran out: %v", err)
+	}
+	ct.Close()
+	if n := strings.Count(strings.Join(p.written(), "\n"), "IN_FLIGHT"); n != 1 {
+		t.Fatalf("the paste was written %d times", n)
+	}
+}
+
+// The same-size resize that follows a paste is the size current when the
+// paste is queued: a Resize at the same time is either before the paste
+// (and the paste's resize is its size) or after it, never undone.
+func TestControlTerminalBarrierKeepsTheLatestSize(t *testing.T) {
+	sizes := regexp.MustCompile(`"cols":(\d+),"rows":(\d+)`)
+	text := strings.Repeat("x", MaxMessage) // long to encode: the window a race needs
+	for i := range 2000 {
+		ct := &controller{size: [4]int{120, 40, 0, 0}}
+		ct.more = sync.NewCond(&ct.mu)
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { _ = ct.Paste(ctx, text); close(done) }()
+		runtime.Gosched()
+		if err := ct.Resize(150, 45, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			ct.mu.Lock()
+			n := len(ct.queue)
+			ct.mu.Unlock()
+			if n == 2 {
+				break
+			}
+			runtime.Gosched()
+		}
+		ct.mu.Lock()
+		last := ct.queue[len(ct.queue)-1]
+		size := ct.size
+		ct.mu.Unlock()
+		m := sizes.FindAllStringSubmatch(string(last.line), -1)
+		if got := m[len(m)-1][1] + "x" + m[len(m)-1][2]; got != fmt.Sprintf("%dx%d", size[0], size[1]) {
+			t.Fatalf("iteration %d: the last resize queued is %s, the size asked last %dx%d", i, got, size[0], size[1])
+		}
+		cancel()
+		<-done
+	}
+}
