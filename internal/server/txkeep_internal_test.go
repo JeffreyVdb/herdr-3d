@@ -512,3 +512,35 @@ func TestKeptChildLogTruncated(t *testing.T) {
 		t.Fatalf("rebuilt: %v, %d items", got.log.Err(), got.log.Len())
 	}
 }
+
+// A kept child's log is evicted by the bounds as a worker's: closed, and
+// its session's tail of the child no longer feeds it.
+func TestKeptChildLogEvicted(t *testing.T) {
+	t.Parallel()
+	const (
+		sess = "0a0b0c0d-1491-4491-8491-149149149161"
+		a    = "a1491000000000021"
+		key  = "w\x00c-a"
+	)
+	r := newKeepRig(t, UsageConfig{IdleLogTTL: time.Minute})
+	keepAppend(t, r.path(sess), 0, 2)
+	keepAppend(t, r.kidPath(sess, a), 0, 3)
+	w := claudeWorker("w", sess, false)
+	w.kids = []txKid{{key: key, native: a, session: sess, harness: usage.Claude, avail: proto.TranscriptAvailable}}
+	r.at(0, w)
+	l := r.tr.kidLogs["w"][key].log
+	ready(t, l)
+	w.kids = nil
+	r.at(time.Second, w)
+	s := r.tr.sessions["w"]
+	if s.ChildTap(a) != l {
+		t.Fatal("not kept")
+	}
+	r.at(time.Second+time.Minute, w)
+	if !errors.Is(l.Err(), transcript.ErrClosed) || len(r.tr.kidLogs) != 0 || s.ChildTap(a) != nil {
+		t.Fatalf("not evicted: %v, %v, tap %v", l.Err(), r.tr.kidLogs, s.ChildTap(a))
+	}
+	if ev := r.events(); len(ev) != 1 || ev[0] != "evicted w ttl" || !r.tr.logEvents[0].child {
+		t.Fatalf("events = %q", ev)
+	}
+}
