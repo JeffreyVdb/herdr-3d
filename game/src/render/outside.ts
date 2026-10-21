@@ -7,6 +7,8 @@ import { Baker, bakedMaterial } from './bake';
 import type { Look } from './daylook';
 import { LobbyView } from './lobby';
 import { canvasTexture } from './props';
+import { officePalette } from './palette';
+import { DEFAULT_UI_THEME, type UiThemeId } from '../ui/uiTheme';
 
 /**
  * The building from outside and the street around it, in absolute
@@ -59,6 +61,8 @@ export interface BuildingLook {
   tint: number;
   /** Ground floor first. */
   floors: Array<{ id: string; name: string; asleep: boolean }>;
+  /** The UI theme the lobby is dressed in (`officePalette`; the street and the facade keep their look); none: Quiet. */
+  theme?: UiThemeId;
 }
 
 const color = new THREE.Color();
@@ -83,6 +87,8 @@ const v = (x: number, y: number, z: number): V => ({ x, y, z });
 export class OutsideView {
   readonly group = new THREE.Group();
   readonly lobby: LobbyView;
+  /** The UI theme the lobby was built in: another one is a rebuild. */
+  readonly theme: UiThemeId;
   private readonly baked: THREE.Mesh;
   private readonly panes: THREE.Mesh;
   /** M17: lamp globes and lit neighbour windows, the lobby's interior, and the lamps' pools of light. */
@@ -106,6 +112,7 @@ export class OutsideView {
     look: BuildingLook,
   ) {
     this.group.name = 'outside';
+    this.theme = look.theme ?? DEFAULT_UI_THEME;
     const b = new Baker();
     const panes = new Baker();
     const glow = new Baker();
@@ -116,7 +123,7 @@ export class OutsideView {
     this.buildFireEscape(b);
     this.buildStreet(b, glow, pools);
     this.buildNeighbours(b, glow);
-    this.lobby = new LobbyView(plan, b, inner, look.name, tint, look.floors.map((f) => ({ id: f.id, name: f.name })));
+    this.lobby = new LobbyView(plan, b, inner, look.name, tint, look.floors.map((f) => ({ id: f.id, name: f.name })), officePalette(this.theme));
     this.baked = new THREE.Mesh(b.build(), bakedMaterial());
     this.baked.name = 'outside.baked';
     this.panes = new THREE.Mesh(panes.build(), this.paneMaterial());

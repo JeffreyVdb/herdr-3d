@@ -175,6 +175,8 @@ export interface H3DDebug {
   officeRebuilds(): number;
   /** The UI theme the office you are in is dressed in (null: no office). */
   officeTheme(): string | null;
+  /** The UI theme the building's lobby (its outside) is dressed in (null: not in a building). */
+  lobbyTheme(): string | null;
   /** M16: the seated view's mode, its transcript watches and items, the overlay's box (null: hidden) and whether the view is mounted. */
   transcript(): ReturnType<import('./laptop').Laptops['transcriptState']> | null;
   /** M16 phase 2: the prints on the desks near you (per desk: worker, prints with tray/blank/loaded/slot x,z), the textures' ledger, the transcript watches and lightboxes opened from prints. */
@@ -490,6 +492,7 @@ const h3d: H3DDebug = {
   seated: () => app?.laptops.seated ?? null,
   officeRebuilds: () => app?.rebuilds ?? 0,
   officeTheme: () => app?.office?.theme ?? null,
+  lobbyTheme: () => app?.lobbyTheme() ?? null,
   sitAt: (id) => app?.sitAt(id) ?? false,
   screenText: (id) => app?.laptops.text(id) ?? null,
   frozenInk: (id) => app?.laptops.frozenInk(id) ?? null,
