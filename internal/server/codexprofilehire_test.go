@@ -674,3 +674,33 @@ func TestProfileLegacyWakeFallback(t *testing.T) {
 	}
 	pb.balanced(t)
 }
+
+// A Codex worker on a profile whose session herdr never learned (a bare
+// home runs no herdr hook) is not backfilled at sleep: a session found by
+// its folder in --codex-sessions (the default's) would be another one's. A
+// worker on the default profile still is.
+func TestProfileSleepSkipsBackfill(t *testing.T) {
+	t.Parallel()
+	pb := startProfileBridge(t, false, "")
+	ackData[proto.HireResult](t, func() msg { m, _ := pb.hire(t, 1, "team"); return m }())
+	ackData[proto.HireResult](t, func() msg { m, _ := pb.hire(t, 2, "codex"); return m }())
+	fh := pb.fl.fakeHerdr
+	fh.onStop = func() {
+		pb.fl.mu.Lock()
+		awake := slices.Clone(pb.fl.workers)
+		pb.fl.mu.Unlock()
+		pb.floorAt("s", false, withStatus(awake, "unknown"))
+	}
+	before := len(pb.fl.Calls())
+	pb.c.mustAck(proto.CmdFloorSleep, proto.FloorArgs{Session: "s"})
+	for _, c := range pb.fl.Calls()[before:] {
+		if strings.HasPrefix(c, "report s w1:p1") {
+			t.Fatalf("the worker on team was backfilled: %q", c)
+		}
+	}
+	row := auditRow(t, pb.bridge, proto.CmdFloorSleep)
+	if !strings.Contains(row.Result, `"pane":"w1:p1","skipped":"its sessions are in its Codex profile's folder`) ||
+		!strings.Contains(row.Result, `"pane":"w2:p1","skipped":"no codex rollout`) {
+		t.Fatalf("sleep audit = %+v", row)
+	}
+}

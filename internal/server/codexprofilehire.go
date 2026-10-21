@@ -308,3 +308,16 @@ func (h *Hub) exportProfileHome(ctx context.Context, session, id, pane string) e
 	}
 	return h.opts.Herdr.ExportCodexHome(ctx, session, pane, p.home)
 }
+
+// onOtherProfile reports whether a worker runs on a Codex profile other
+// than the default (hub goroutine): its sessions are in that profile's
+// folder, which the sleep's backfill (by folder, in --codex-sessions) does
+// not read. A profile no longer listed counts as another.
+func (h *Hub) onOtherProfile(id string) bool {
+	l, ok := h.cx.launches[id]
+	if !ok || l.Profile == "" {
+		return false
+	}
+	a, listed := h.codexAccount(l.Profile)
+	return !listed || !a.Default
+}

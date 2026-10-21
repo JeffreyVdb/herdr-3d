@@ -2515,7 +2515,8 @@ every Codex process it starts. Nothing is switched: two workers on two profiles 
   (its thread is in the gone folder, which no other home can resume): `profile` becomes the default's key and
   `profile_note` says "`<old name>` is gone: woke on `<default name>`. Its Codex session stays in that folder, so a new
   one was started." A worker on a profile without a server of its own that herdr's own resume did not bring back gets
-  the export before the floor's resume fallback types `codex resume <id>`.
+  the export before the floor's resume fallback types `codex resume <id>`; `floor.sleep` does not backfill its session
+  id (`backfills[].skipped`: its sessions are in its profile's folder, not in `--codex-sessions`).
 
 ```json
 {"t":"worker.hire","req_id":"h7","args":{"floor":"herdr-3d","desk_index":5,"harness":"codex","model":"gpt-6-sol","effort":"high","codex_profile":"work"}}

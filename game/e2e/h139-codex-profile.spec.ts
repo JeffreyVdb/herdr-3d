@@ -5,7 +5,8 @@ import { frames, openGame, shot, watchErrors } from './game';
 // tools/fixture-codex-profiles.ts): the hire dialog's "Codex profile" (codex, the default, picked first; work; spare,
 // not signed in, shown and not pickable; the hidden old not offered), the hire sending the profile picked, and the seat
 // bar's profile line of the seeded workers (Pixel on work, Sprocket woken on codex after its profile went). With one
-// profile (`simcodexprofiles=1`) the dialog is as before. At 390 × 844 and desktop width, light and dark.
+// profile (`simcodexprofiles=1`) the dialog is as before. At 390 × 844 and desktop width, in both UI themes, Quiet and
+// Ubuntu (Settings → UI theme; the game's UI has no light theme and does not follow prefers-color-scheme).
 
 const SIM = 'play=none&sim=1&simms=150&simusage=0';
 const PIXEL = 'fc018d58-4789-46c2-afac-c062bc9fff9e';
@@ -14,6 +15,10 @@ const SIZES = [
   { name: '390', width: 390, height: 844 },
   { name: 'desktop', width: 1280, height: 800 },
 ] as const;
+
+const UBUNTU = { 'h3d.theme.ui': 'ubuntu', 'h3d.theme.transcript': 'ubuntu', 'h3d.theme.terminal': 'ubuntu' };
+const THEMES = ['quiet', 'ubuntu'] as const;
+type Theme = (typeof THEMES)[number];
 
 const hireDlg = (page: Page) => page.locator('dialog.desk-dlg--hire');
 const chip = (page: Page, key: string) => hireDlg(page).locator(`label:has(> [data-key="${key}"])`);
@@ -26,7 +31,8 @@ async function openHire(page: Page, desk: number): Promise<void> {
   }, { timeout: 15_000 }).toBe('ready');
 }
 
-async function boot(page: Page, profiles: number): Promise<void> {
+async function boot(page: Page, profiles: number, theme: Theme = 'quiet'): Promise<void> {
+  if (theme === 'ubuntu') await page.addInitScript((kv) => Object.entries(kv).forEach(([k, v]) => localStorage.setItem(k, v)), UBUNTU);
   await page.addInitScript(() => {
     try {
       localStorage.setItem('h3d.hire.goto', 'off');
@@ -39,10 +45,11 @@ async function boot(page: Page, profiles: number): Promise<void> {
   await frames(page, 2);
 }
 
-test('the hire dialog’s Codex profile: listed with two, the default first; a hire sends the one picked', async ({ page }) => {
+for (const theme of THEMES)
+test(`the hire dialog’s Codex profile: listed with two, the default first; a hire sends the one picked (${theme})`, async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
-  await boot(page, 2);
+  await boot(page, 2, theme);
   await openHire(page, 5);
   await chip(page, 'harness:codex').click();
   const field = hireDlg(page).locator('[data-pick="codex-profile"]');
@@ -52,19 +59,16 @@ test('the hire dialog’s Codex profile: listed with two, the default first; a h
   await expect(field.locator('[data-key="codex-profile:codex"]')).toBeChecked();
   await expect(field.locator('[data-key="codex-profile:spare"]')).toBeDisabled();
   await expect(field.locator('[data-key="codex-profile:old"]')).toHaveCount(0);
+  if (theme === 'ubuntu') await expect(page.locator('html')).toHaveAttribute('data-ui-theme', 'ubuntu');
   for (const size of SIZES) {
     await page.setViewportSize(size);
-    for (const colorScheme of ['light', 'dark'] as const) {
-      await page.emulateMedia({ colorScheme });
-      await field.scrollIntoViewIfNeeded();
-      await expect(field).toBeInViewport();
-      const box = await field.boundingBox();
-      expect(box && box.x >= 0 && box.x + box.width <= size.width).toBe(true);
-      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(size.width);
-      await shot(page, `h139-hire-profile-${size.name}-${colorScheme}`);
-    }
+    await field.scrollIntoViewIfNeeded();
+    await expect(field).toBeInViewport();
+    const box = await field.boundingBox();
+    expect(box && box.x >= 0 && box.x + box.width <= size.width).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(size.width);
+    await shot(page, `h139-hire-profile-${size.name}-${theme}`);
   }
-  await page.emulateMedia({ colorScheme: null });
   await chip(page, 'codex-profile:work').click();
   await expect(field.locator('[data-key="codex-profile:work"]')).toBeChecked();
   await hireDlg(page).locator('[data-key="hire"]').click();
@@ -88,10 +92,11 @@ test('with one profile the hire dialog has no Codex profile, and sends none', as
   clean();
 });
 
-test('the seat bar names the profile a Codex worker runs on, and says when it woke on the default', async ({ page }) => {
+for (const theme of THEMES)
+test(`the seat bar names the profile a Codex worker runs on, and says when it woke on the default (${theme})`, async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
-  await boot(page, 2);
+  await boot(page, 2, theme);
   const seat = page.locator('.seat');
   const line = seat.locator('.seat-profile');
   for (const [id, text, tone] of [
@@ -105,16 +110,12 @@ test('the seat bar names the profile a Codex worker runs on, and says when it wo
     await expect(line).toHaveAttribute('data-tone', tone);
     for (const size of SIZES) {
       await page.setViewportSize(size);
-      for (const colorScheme of ['light', 'dark'] as const) {
-        await page.emulateMedia({ colorScheme });
-        await expect(line).toBeVisible();
-        const box = await line.boundingBox();
-        expect(box && box.x >= 0 && box.x + box.width <= size.width).toBe(true);
-        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(size.width);
-        await shot(page, `h139-seat-profile-${id === PIXEL ? 'pixel' : 'sprocket'}-${size.name}-${colorScheme}`);
-      }
+      await expect(line).toBeVisible();
+      const box = await line.boundingBox();
+      expect(box && box.x >= 0 && box.x + box.width <= size.width).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(size.width);
+      await shot(page, `h139-seat-profile-${id === PIXEL ? 'pixel' : 'sprocket'}-${size.name}-${theme}`);
     }
-    await page.emulateMedia({ colorScheme: null });
     await page.keyboard.press('Escape');
     await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
   }

@@ -215,7 +215,11 @@ func (h *Hub) startFloorOp(ctx context.Context, c *Client, cmd proto.Command) er
 		if w.AgentSession != "" {
 			known[w.AgentSession] = true
 		} else if w.AgentKind == "codex" && w.PaneID != "" && w.Cwd != "" {
-			backfills = append(backfills, backfill{Worker: id, Pane: w.PaneID, cwd: w.Cwd})
+			b := backfill{Worker: id, Pane: w.PaneID, cwd: w.Cwd}
+			if h.onOtherProfile(id) { // #139: a session found by its folder would be another one's
+				b.Skipped = "its sessions are in its Codex profile's folder, not in --codex-sessions"
+			}
+			backfills = append(backfills, b)
 		}
 	}
 	h.wg.Add(1)
@@ -630,6 +634,10 @@ func (h *Hub) runSleep(ctx context.Context, op *floorOp, shared []sharedSleep, b
 		report.Shared = append(report.Shared, s)
 	}
 	for _, b := range backfills {
+		if b.Skipped != "" {
+			report.Backfills = append(report.Backfills, b)
+			continue
+		}
 		switch id, err := h.codexSession(b.cwd, known); {
 		case err != nil:
 			b.Error = "finding the codex session: " + err.Error()
