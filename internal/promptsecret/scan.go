@@ -104,22 +104,32 @@ func detect(text string, refs []span) []span {
 		spans = append(spans, span{start: m.Start, end: m.End, kind: "gitleaks:" + m.Rule, rank: rank, shaped: true})
 	}
 	spans = append(spans, structural(text, refs)...)
-	return append(spans, entropyKept(entropySpans(text, refs), spans)...)
+	return append(spans, entropyKept(text, entropySpans(text, refs), spans)...)
 }
 
 // entropyKept are the entropy spans that no other detector found a part of:
 // the entropy rule fills the gaps, and every other finding keeps its bytes
 // and its kinds (the same range found twice would add a kind to it). One
 // exception: a Gitleaks generic rule's finding is no known format, only a
-// value after a name (its value runs on through a sentence's '.' and '='),
-// and a run that stands as a whole word replaces it at the run's exact bytes
-// (rankEntropy comes before rankGeneric); the same range stays the generic
-// rule's.
-func entropyKept(found, others []span) []span {
+// value after a name, and its value runs on through a sentence's '.'
+// ("<tok>." and "<tok>..."): where the bytes it has past the run are only
+// that punctuation, and it starts where the run does, the run replaces it at
+// the run's exact bytes (rankEntropy comes before rankGeneric). Any other
+// overlap keeps the generic finding whole and drops the run: a prefix
+// ("foo=<tok>", where the run starts after the '='), a longer value, a
+// generic span inside the run, a partial overlap; so does "foo=<tok>." (the
+// finding is the whole value, period included, as before). The same range
+// stays the generic rule's.
+func entropyKept(text string, found, others []span) []span {
 	return slices.DeleteFunc(found, func(e span) bool {
 		return slices.ContainsFunc(others, func(o span) bool {
-			return o.start < e.end && e.start < o.end &&
-				(o.rank != rankGeneric || o.start == e.start && o.end == e.end)
+			if o.start >= e.end || e.start >= o.end {
+				return false
+			}
+			if o.rank != rankGeneric {
+				return true
+			}
+			return !(o.start == e.start && o.end > e.end && strings.Trim(text[e.end:o.end], ".!?:") == "")
 		})
 	})
 }

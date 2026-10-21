@@ -4,7 +4,8 @@ package promptsecret
 // no introduction ("Actually, token is this one: <64 letters>") that no
 // known format, name or phrase finds, proposed because it looks random:
 // language independent, no model. It adds to the other detectors and never
-// replaces one (entropySpans, detect).
+// replaces one, but a generic finding's sentence period (entropySpans,
+// detect, entropyKept).
 //
 // The lexical run. A candidate is one maximal run of the ASCII bytes
 // [A-Za-z0-9] and '_' '-' '+' '/' (base64, url-safe base64, snake and kebab
@@ -54,7 +55,9 @@ package promptsecret
 import (
 	"math"
 	"regexp"
+	"slices"
 	"strings"
+	"unicode"
 )
 
 // KindEntropy is the kind of a candidate the entropy rule found.
@@ -224,9 +227,28 @@ var (
 	shaWord = regexp.MustCompile(`^sha\d+$`)
 )
 
+// introWords are the words that say a value is a credential (not "key"
+// alone: "public key" is the public half). A "public" beside one describes
+// that credential ("public API key", "public repo's token"), not a public
+// value.
+var introWords = map[string]bool{"api": true, "apikey": true, "token": true, "tokens": true, "secret": true,
+	"secrets": true, "password": true, "passwd": true, "passphrase": true, "passcode": true, "pass": true, "pin": true,
+	"access": true, "auth": true, "authorization": true, "bearer": true, "credential": true, "credentials": true,
+	"private": true, "session": true, "login": true, "cookie": true,
+	// Dutch, French, German, Spanish: key, secret, password, token.
+	"sleutel": true, "geheim": true, "wachtwoord": true, "toegang": true, "clé": true, "cle": true, "jeton": true,
+	"mot": true, "passe": true, "schlüssel": true, "geheimnis": true, "passwort": true, "kennwort": true,
+	"clave": true, "llave": true, "contraseña": true, "contrasena": true}
+
 // publicContext reports a run that the words right before it, on its line
 // and in its part, call a hash, a public key or a public id: "sha256: ",
 // "the build id is ", "public key: ", an "ssh-ed25519 " type word, "h1:".
+// A word that says what the value is stops it from being one of those: when
+// a credential word stands between "public" and the run, or within two words
+// before "public" ("my public API key <tok>", "API key public: <tok>"), the
+// value is introduced as a credential and is not excluded. The other words
+// (hash, build id, ...) are only read as the nearest word: "the build token
+// <tok>" and "commit token <tok>" name a token, not a hash or an id.
 func publicContext(text string, a, s int) bool {
 	frag := text[max(a, s-80):s]
 	if k := strings.LastIndexByte(frag, '\n'); k >= 0 {
@@ -235,19 +257,20 @@ func publicContext(text string, a, s int) bool {
 	if f := strings.Fields(frag); len(f) > 0 && sshPublic.MatchString(strings.Trim(f[len(f)-1], "\"'`(,")) {
 		return true
 	}
-	words := strings.FieldsFunc(strings.ToLower(frag), func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
-	})
-	var last []string // the last three words that are no filler, nearest first
-	for i := len(words) - 1; i >= 0 && len(last) < 3; i-- {
+	words := strings.FieldsFunc(strings.ToLower(frag), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	var last []string // the last five words that are no filler, nearest first
+	for i := len(words) - 1; i >= 0 && len(last) < 5; i-- {
 		if !fillers[words[i]] {
 			last = append(last, words[i])
 		}
 	}
-	for k, w := range last {
+	for k, w := range last[:min(3, len(last))] {
 		switch {
 		case w == "public":
-			return true
+			// between public and the run, and the two words before public
+			if !slices.ContainsFunc(last[:min(k+3, len(last))], func(b string) bool { return introWords[b] }) {
+				return true
+			}
 		case k == 0 && (publicWords[w] || shaWord.MatchString(w)):
 			return true
 		case k == 0 && (w == "id" || w == "ids") && len(last) > 1 && publicOf[last[1]]:
