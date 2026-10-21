@@ -575,15 +575,27 @@ func (h *Hub) fallback(ctx, phase context.Context, op *floorOp, p pendingWait) {
 		note = "no fallback: the pane is not at its shell prompt"
 	case !herdr.CanResume(p.harness):
 		note = fmt.Sprintf("no fallback: cannot resume %q", p.harness)
-	case p.harness == "codex" && h.exportProfileHome(phase, op.session, p.id, p.pane) != nil:
-		note = "no fallback: its Codex profile's home could not be exported in its pane"
 	default:
+		run := func(ctx context.Context) error {
+			return h.opts.Herdr.ResumeAgent(ctx, op.session, p.pane, p.harness, p.agentSession)
+		}
+		how := "fallback: ran the resume command"
+		if p.harness == "codex" { // #139: its Codex profile
+			start, gone, err := h.legacyWake(phase, op.session, p.id, p.pane)
+			if err != nil {
+				note = "no fallback: " + err.Error()
+				break
+			}
+			if start != nil {
+				run, how = start, "fallback: "+gone
+			}
+		}
 		_ = h.doWait(ctx, func() {
 			if w := op.waits[p.id]; w != nil {
 				w.fallback = true
 			}
 		})
-		if err := h.opts.Herdr.ResumeAgent(phase, op.session, p.pane, p.harness, p.agentSession); err != nil {
+		if err := run(phase); err != nil {
 			note = "fallback failed: " + err.Error()
 			_ = h.doWait(ctx, func() {
 				if w := op.waits[p.id]; w != nil {
@@ -591,7 +603,7 @@ func (h *Hub) fallback(ctx, phase context.Context, op *floorOp, p pendingWait) {
 				}
 			})
 		} else {
-			note = "fallback: ran the resume command"
+			note = how
 			h.log.Info("resuming agent with the fallback", "session", op.session, "pane", p.pane, "harness", p.harness)
 		}
 	}

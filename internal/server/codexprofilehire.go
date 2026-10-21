@@ -13,6 +13,7 @@ package server
 // account's workspace policy lets it run as herdr-3d hires it.
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -291,26 +292,68 @@ func (h *Hub) hireOnProfile(ctx context.Context, op *hireOp, pane, dir string, a
 	return h.opts.Hire.StartAgent(ctx, op.session, pane, op.agent, a)
 }
 
-// exportProfileHome exports a Codex worker's profile home in its pane
-// before the floor's resume fallback types `codex resume <id>` there
-// (#139: a worker on a profile without its own server, whose session is in
-// that home; herdr's own resume, which takes no env, looks in the default
-// one). Nothing for a worker on the default profile or none.
-func (h *Hub) exportProfileHome(ctx context.Context, session, id, pane string) error {
+// legacyWake readies a Codex worker without its own server for the
+// floor's resume fallback (off the hub goroutine; #139). On a profile, its
+// home is checked again, as at its hire (checkHomeProfile), and exported
+// in its pane before `codex resume <id>` is typed there: its session is in
+// that home, and herdr's own resume, which takes no env, looks in the
+// default one. A refusal is the error, and its seat's note. A profile that
+// is gone wakes on the default with a new Codex session, as a shared
+// worker does (wakeProfile): start starts it, and note says so. Nothing
+// for a worker on the default profile or none (start nil: resume).
+func (h *Hub) legacyWake(ctx context.Context, session, id, pane string) (start func(ctx context.Context) error, note string, err error) {
 	rec, err := query(ctx, h, func() store.CodexLaunch { return h.cx.launches[id] })
 	if err != nil || rec.Profile == "" {
-		return nil
+		return nil, "", nil
 	}
 	p, release, err := h.prepareProfile(ctx, rec.Profile)
-	defer release()
-	if err != nil {
+	defer func() { release() }()
+	var nf *codexaccount.NotFoundError
+	switch {
+	case errors.As(err, &nf):
+		_, release2, gone, err := h.wakeOnDefault(ctx, id, rec, nf)
+		release = joinRelease(release, release2)
+		if err != nil {
+			return nil, "", err
+		}
+		return func(ctx context.Context) error { return h.startLegacy(ctx, session, pane, rec) }, gone, nil
+	case err != nil:
 		h.log.Warn("the codex profile of a resumed worker could not be prepared", "worker", id, "profile", rec.Profile, "err", err)
-		return err
+		return nil, "", fmt.Errorf("preparing its Codex profile %s failed: %v", cmp.Or(rec.ProfileName, rec.Profile), err)
+	case p.def:
+		return nil, "", nil
 	}
-	if p.def {
+	checked := rec
+	if err := h.checkHomeProfile(ctx, &p, &checked); err != nil {
+		_ = h.doWait(ctx, func() {
+			h.updateLaunch(ctx, id, func(l *store.CodexLaunch) { l.ProfileNote = "The wake did not resume it: " + err.Error() })
+		})
+		return nil, "", err
+	}
+	_ = h.doWait(ctx, func() {
+		h.updateLaunch(ctx, id, func(l *store.CodexLaunch) {
+			l.ProfileName, l.Account, l.Plan, l.ProfileNote = checked.ProfileName, checked.Account, checked.Plan, checked.ProfileNote
+		})
+	})
+	if err := h.opts.Herdr.ExportCodexHome(ctx, session, pane, p.home); err != nil {
+		return nil, "", fmt.Errorf("exporting CODEX_HOME for its Codex profile %s failed: %v", p.name, err)
+	}
+	return nil, "", nil
+}
+
+// startLegacy starts a new Codex session in a legacy worker's pane, as its
+// hire did, its trust dialog answered as a hire answers it.
+func (h *Hub) startLegacy(ctx context.Context, session, pane string, rec store.CodexLaunch) error {
+	if h.opts.Hire == nil {
+		return errors.New("this bridge cannot start agents")
+	}
+	err := h.opts.Hire.StartAgent(ctx, session, pane, rec.AgentName, herdr.Agent{Harness: "codex", Model: rec.Model, Effort: rec.Effort})
+	var api *herdr.APIError
+	if errors.As(err, &api) && api.Code == "agent_not_ready" {
+		h.answerTrust(ctx, &hireOp{session: session, harness: "codex"}, pane, rec.Cwd)
 		return nil
 	}
-	return h.opts.Herdr.ExportCodexHome(ctx, session, pane, p.home)
+	return err
 }
 
 // onOtherProfile reports whether a worker runs on a Codex profile other

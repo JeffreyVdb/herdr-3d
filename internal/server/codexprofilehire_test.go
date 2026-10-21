@@ -650,15 +650,14 @@ func TestProfileHirePreset(t *testing.T) {
 	}
 }
 
-// A Codex worker on a profile without its own server (the switch off)
-// that herdr's own resume did not bring back on wake: the floor's fallback
-// exports its profile's home in its pane before it types `codex resume`.
-func TestProfileLegacyWakeFallback(t *testing.T) {
-	t.Parallel()
-	const th = "01a11172-ac09-7aa0-ab6b-84485199ada3"
-	pb := startProfileBridge(t, false, "")
-	m, _ := pb.hire(t, 1, "team")
-	ackData[proto.HireResult](t, m)
+// legacyAsleep hires a Codex worker on key without its own server (the
+// switch off), gives it the session th and puts its floor to sleep; the
+// wake brings the floor back with its pane at its shell (herdr's own
+// resume looked in the default home).
+func (pb *profileBridge) legacyAsleep(t *testing.T, key, th string) proto.HireResult {
+	t.Helper()
+	m, _ := pb.hire(t, 1, key)
+	res := ackData[proto.HireResult](t, m)
 	pb.fl.update("w1", func(w *world.WorkerObs) { w.AgentSession = th })
 	fh := pb.fl.fakeHerdr
 	var awake []world.WorkerObs
@@ -671,13 +670,129 @@ func TestProfileLegacyWakeFallback(t *testing.T) {
 	pb.c.mustAck(proto.CmdFloorSleep, proto.FloorArgs{Session: "s"})
 	fh.onStart = func() {
 		fh.setUp("sock-s", true)
-		fh.setProcs("w1:p1", atShell()) // herdr's own resume looked in the default home
+		fh.setProcs("w1:p1", atShell())
 		pb.floorAt("s", true, withStatus(awake, "idle"))
 	}
+	return res
+}
+
+// A Codex worker on a profile without its own server (the switch off)
+// that herdr's own resume did not bring back on wake: the floor's fallback
+// checks its profile's home again (R2), exports it in its pane and types
+// `codex resume` there.
+func TestProfileLegacyWakeFallback(t *testing.T) {
+	t.Parallel()
+	const th = "01a11172-ac09-7aa0-ab6b-84485199ada3"
+	pb := startProfileBridge(t, false, "")
+	pb.legacyAsleep(t, "team", th)
+	before := len(pb.host.Checks())
 	calls, _ := pb.wakeResumes(t)
 	i := slices.Index(calls, "codex-home w1:p1 "+pb.team)
 	if i < 0 || i+1 >= len(calls) || calls[i+1] != "resume s w1:p1 codex "+th {
 		t.Fatalf("wake calls = %q", calls)
+	}
+	if checks := pb.host.Checks()[before:]; !slices.Equal(checks, []string{"home CODEX_HOME=" + pb.team}) {
+		t.Fatalf("wake checks = %q", checks)
+	}
+	pb.balanced(t)
+}
+
+// R2: a Codex worker without its own server whose profile no longer lets
+// it run (signed out, or a workspace policy that refuses) is not resumed
+// on wake: the check's reason is on its seat.
+func TestProfileLegacyWakeRefused(t *testing.T) {
+	t.Parallel()
+	const th = "01a11172-ac09-7aa0-ab6b-84485199ada3"
+	for name, tc := range map[string]struct {
+		home func([]string) (codexapp.Account, codexapp.Requirements, error)
+		want string
+	}{
+		"not signed in": {func([]string) (codexapp.Account, codexapp.Requirements, error) {
+			return codexapp.Account{Answered: true}, codexapp.Requirements{}, nil
+		}, "team is not signed in. Run `CODEX_HOME=%s codex login` in a terminal."},
+		"policy refuses": {func([]string) (codexapp.Account, codexapp.Requirements, error) {
+			return codexapp.Account{Answered: true, SignedIn: true}, codexapp.Requirements{Present: true, Approvals: []string{"on-request"}}, nil
+		}, "team does not allow workers that run without asking. Its workspace policy limits approvals to on-request."},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			pb := startProfileBridge(t, false, "")
+			a := pb.legacyAsleep(t, "team", th)
+			pb.host.mu.Lock()
+			pb.host.home = tc.home
+			pb.host.mu.Unlock()
+			before := len(pb.host.Checks())
+			calls, resumes := pb.wakeResumes(t)
+			if checks := pb.host.Checks()[before:]; !slices.Equal(checks, []string{"home CODEX_HOME=" + pb.team}) {
+				t.Fatalf("wake checks = %q", checks)
+			}
+			for _, c := range calls {
+				if strings.HasPrefix(c, "resume s w1:p1") || strings.HasPrefix(c, "start-agent") || strings.HasPrefix(c, "codex-home") {
+					t.Fatalf("wake calls = %q", calls)
+				}
+			}
+			if resumes[a.ID] == proto.ResumeFallback || resumes[a.ID] == proto.ResumeConfirmed {
+				t.Fatalf("resumes = %+v", resumes)
+			}
+			want := strings.ReplaceAll(tc.want, "%s", pb.team)
+			l := pb.launches(t)[a.ID]
+			if l.Profile != "team" || !strings.Contains(l.ProfileNote, want) {
+				t.Fatalf("launch after wake = %+v", l)
+			}
+			w := workersOf(pb.world(func(w proto.World) bool {
+				x := workersOf(w, "s")["w1"]
+				return x.Codex != nil && strings.Contains(x.Codex.ProfileNote, want)
+			}), "s")["w1"]
+			if w.Codex.Profile != "team" {
+				t.Fatalf("worker codex = %+v", w.Codex)
+			}
+			if row := auditRow(t, pb.bridge, proto.CmdFloorWake); !strings.Contains(row.Result, want) {
+				t.Fatalf("wake audit = %+v", row)
+			}
+			pb.balanced(t)
+		})
+	}
+}
+
+// R1: a Codex worker without its own server whose profile is gone (its
+// folder removed while the floor slept) wakes on the default profile with
+// a new Codex session, as a shared worker does, and its seat says so.
+func TestProfileLegacyWakeGone(t *testing.T) {
+	t.Parallel()
+	const th = "01a11172-ac09-7aa0-ab6b-84485199ada3"
+	pb := startProfileBridge(t, false, "")
+	a := pb.legacyAsleep(t, "team", th)
+	if err := os.RemoveAll(pb.team); err != nil {
+		t.Fatal(err)
+	}
+	calls, resumes := pb.wakeResumes(t)
+	if resumes[a.ID] != proto.ResumeFallback {
+		t.Fatalf("resumes = %+v", resumes)
+	}
+	for _, c := range calls {
+		if strings.HasPrefix(c, "codex-home") || strings.HasPrefix(c, "resume s w1:p1") {
+			t.Fatalf("wake calls = %q", calls)
+		}
+	}
+	if !slices.ContainsFunc(calls, func(c string) bool {
+		return strings.HasPrefix(c, "start-agent w1:p1 ") && strings.Contains(c, " codex gpt-6-sol low ")
+	}) {
+		t.Fatalf("no new session: %q", calls)
+	}
+	const note = "team is gone: woke on codex. Its Codex session stays in that folder, so a new one was started."
+	l := pb.launches(t)[a.ID]
+	if l.Mode != store.CodexLegacy || l.Profile != "codex" || l.ProfileNote != note || l.Account != "" {
+		t.Fatalf("launch after wake = %+v", l)
+	}
+	w := workersOf(pb.world(func(w proto.World) bool {
+		x := workersOf(w, "s")["w1"]
+		return x.Codex != nil && x.Codex.ProfileNote == note
+	}), "s")["w1"]
+	if w.Codex.Profile != "codex" {
+		t.Fatalf("worker codex = %+v", w.Codex)
+	}
+	if row := auditRow(t, pb.bridge, proto.CmdFloorWake); !strings.Contains(row.Result, note) {
+		t.Fatalf("wake audit = %+v", row)
 	}
 	pb.balanced(t)
 }

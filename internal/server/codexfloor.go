@@ -367,24 +367,11 @@ func (h *Hub) wakeProfile(ctx context.Context, session, id, pane string, rec sto
 	var nf *codexaccount.NotFoundError
 	switch {
 	case errors.As(err, &nf):
-		old := cmp.Or(nf.Name, rec.ProfileName, rec.Profile)
-		def, release2, derr := h.prepareProfile(ctx, "")
+		def, release2, gone, err := h.wakeOnDefault(ctx, id, rec, nf)
 		release = joinRelease(release, release2)
-		if derr != nil {
-			return nil, release, "", fmt.Errorf("its Codex profile %s is gone and the default one cannot be prepared: %v", old, derr)
+		if err != nil {
+			return nil, release, "", err
 		}
-		if a, ok := h.listedProfile(ctx, ""); ok {
-			def.key = a.Key
-		}
-		gone = fmt.Sprintf("%s is gone: woke on %s. Its Codex session stays in that folder, so a new one was started.", old, def.name)
-		_ = h.doWait(ctx, func() {
-			delete(h.cx.questions, id) // #156: the old thread's questions go with it
-			h.forgetSends(ctx, id)
-			h.updateLaunch(ctx, id, func(l *store.CodexLaunch) {
-				profileOnRecord(&def, l)
-				l.Thread, l.ProfileNote = "", gone
-			})
-		})
 		return &def, release, gone, nil
 	case err != nil:
 		return nil, release, "", fmt.Errorf("preparing its Codex profile %s failed: %v", cmp.Or(rec.ProfileName, rec.Profile), err)
@@ -395,6 +382,32 @@ func (h *Hub) wakeProfile(ctx context.Context, session, id, pane string, rec sto
 		}
 	}
 	return &p, release, "", nil
+}
+
+// wakeOnDefault moves a Codex worker whose profile is gone (nf) to the
+// default profile on wake (off the hub goroutine): its record takes the
+// default and forgets its thread, which stays in the gone folder, with its
+// questions and sends; gone says so, for its seat. release is never nil.
+func (h *Hub) wakeOnDefault(ctx context.Context, id string, rec store.CodexLaunch, nf *codexaccount.NotFoundError) (def codexProfileRun,
+	release func(), gone string, err error) {
+	old := cmp.Or(nf.Name, rec.ProfileName, rec.Profile)
+	def, release, err = h.prepareProfile(ctx, "")
+	if err != nil {
+		return def, release, "", fmt.Errorf("its Codex profile %s is gone and the default one cannot be prepared: %v", old, err)
+	}
+	if a, ok := h.listedProfile(ctx, ""); ok {
+		def.key = a.Key
+	}
+	gone = fmt.Sprintf("%s is gone: woke on %s. Its Codex session stays in that folder, so a new one was started.", old, def.name)
+	_ = h.doWait(ctx, func() {
+		delete(h.cx.questions, id) // #156: the old thread's questions go with it
+		h.forgetSends(ctx, id)
+		h.updateLaunch(ctx, id, func(l *store.CodexLaunch) {
+			profileOnRecord(&def, l)
+			l.Thread, l.ProfileNote = "", gone
+		})
+	})
+	return def, release, gone, nil
 }
 
 // joinRelease is both releases.
