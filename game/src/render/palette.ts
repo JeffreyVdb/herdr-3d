@@ -91,9 +91,29 @@ export const WALL_UBUNTU: Readonly<WallPalette> = {
   font: `"Ubuntu", ${FONT}`,
 };
 
+/** The lobby's own colours: the room, the reception's feature wall and desk, the canopy and the directory. */
+export interface LobbyPalette {
+  floor: number;
+  /** The terrazzo's border. */
+  border: number;
+  wall: number;
+  ceiling: number;
+  /** The ceiling's light panels: light, whatever the theme. */
+  panel: number;
+  /** The feature wall, the desk, the skirting, the doors' frames, the canopy's slab, the bench's legs; the mat inside the door. */
+  navy: number;
+  mat: number;
+  /** The canopy's and the directory's ground. */
+  ink: string;
+  /** The wall's rule, the desk's stripe and bell, the signs' rules (fills). */
+  accent: number;
+  /** The same on a dark ground as words and rules on the signs. */
+  accentText: string;
+}
+
 /**
- * The office's colours. The street, the city's windows and the lobby always draw with `OFFICE` (Quiet's); a floor's
- * interior takes the UI theme's (`officePalette`), so Ubuntu's office is aubergine and orange like its menus.
+ * The office's colours. The street and the city's windows always draw with `OFFICE` (Quiet's); a floor's interior and
+ * the lobby take the UI theme's (`officePalette`), so Ubuntu's office is aubergine and orange like its menus.
  */
 export interface OfficePalette {
   floor: number;
@@ -124,6 +144,8 @@ export interface OfficePalette {
   liftSign: { readonly ground: string; readonly text: string };
   /** The wall boards' title strips (Issues, Pull requests, Services): the notes and the cork are the boards' own. */
   boardStrip: string;
+  /** The lobby (its carpet is `rug`, its elevator `steel` and `liftSign`). */
+  reception: Readonly<LobbyPalette>;
   /** Its screens: the floor overview on the lounge wall, the departures board on the partition. */
   screens: Readonly<WallPalette>;
 }
@@ -152,6 +174,18 @@ export const OFFICE: Readonly<OfficePalette> = {
   sign: { ground: '#1c2540', text: '#ffc233' },
   liftSign: { ground: '#101626', text: '#ffc233' },
   boardStrip: '#1c2540',
+  reception: {
+    floor: 0xece5d7,
+    border: 0xd7cdb8,
+    wall: 0xf4f1ea,
+    ceiling: 0xfbfcff,
+    panel: 0xfff6dd,
+    navy: 0x24406e,
+    mat: 0x2c3a5e,
+    ink: '#1c2540',
+    accent: 0xffc233,
+    accentText: '#ffc233',
+  },
   screens: WALL,
 };
 
@@ -181,6 +215,18 @@ export const OFFICE_UBUNTU: Readonly<OfficePalette> = {
   sign: { ground: '#2c001e', text: '#ff9b76' },
   liftSign: { ground: '#2c001e', text: '#ff9b76' },
   boardStrip: '#2c001e',
+  reception: {
+    floor: 0xeee7e1,
+    border: 0xcdc5bc,
+    wall: 0xf7f3f0,
+    ceiling: 0xfdfbfa,
+    panel: 0xfff6dd,
+    navy: 0x5e2750,
+    mat: 0x3b1330,
+    ink: '#2c001e',
+    accent: 0xe95420,
+    accentText: '#ff9b76',
+  },
   screens: WALL_UBUNTU,
 };
 
