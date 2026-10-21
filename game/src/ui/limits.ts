@@ -2,6 +2,7 @@ import type { CommandResult } from '../net/client';
 import type { LimitBook, ProviderView, WindowView } from '../world/limits';
 import type { LimitTarget } from '../world/limits';
 import { harnessViews, limitsView, warningOf, windowName } from '../world/limits';
+import { profileDrift, type CodexProfilesBook } from '../world/codexProfiles';
 import { CornerWatch, READING, SCREEN, SEATED } from './corner';
 import { h, icon, ICON } from './dom';
 import { LimitsPrefs } from './limitsPrefs';
@@ -57,8 +58,14 @@ function windowChip(w: WindowView): HTMLElement {
 
 const providerTape = (v: ProviderView) => h('span', { class: `tape lm-tape lm-tape--${v.provider}` }, v.name);
 
-/** #138: with two or more Codex profiles, the row's profile name; the bridge's own home is marked "default". */
-const profileTag = (v: ProviderView): HTMLElement | null =>
+/** #167: a Codex profile row's drifted shared setup (null: none, or a bridge without sharing). */
+type Drift = { text: string } | null;
+
+/**
+ * #138: with two or more Codex profiles, the row's profile name; the bridge's own home is marked "default". #167: a
+ * profile whose shared setup drifted is marked "drifted" (its words on hover; the panel says them and where to fix it).
+ */
+const profileTag = (v: ProviderView, drift: Drift = null): HTMLElement | null =>
   v.profile === null
     ? null
     : h(
@@ -66,6 +73,7 @@ const profileTag = (v: ProviderView): HTMLElement | null =>
         { class: 'lm-acct', 'data-default': v.isDefault ? 'true' : null, title: v.isDefault ? `${v.profile}: the bridge’s own Codex home` : `Codex profile ${v.profile}` },
         h('span', { class: 'lm-acct-name' }, v.profile),
         v.isDefault ? h('span', { class: 'lm-acct-def' }, 'default') : null,
+        drift ? h('span', { class: 'lm-acct-drift', 'data-hook': 'drift-badge', title: drift.text }, 'drifted') : null,
       );
 
 /** The attributes a row carries: its provider (and with profiles its profile's key), stale, reached. */
@@ -78,14 +86,14 @@ const rowAttrs = (v: ProviderView, cls: string) => ({
 });
 
 /** The collapsed line of one provider; a dialog's line (`models`) adds the per-model windows that count for it. */
-function providerLine(v: ProviderView, models = false): HTMLElement {
+function providerLine(v: ProviderView, models = false, drift: Drift = null): HTMLElement {
   const shown = models ? [...v.windows, ...v.models] : v.windows;
   const wins = shown.length ? shown.map(windowChip) : [h('span', { class: 'lm-none' }, v.problem ?? 'No reading yet')];
   return h(
     'div',
     rowAttrs(v, 'lm-line'),
     providerTape(v),
-    profileTag(v),
+    profileTag(v, drift),
     v.plan ? h('span', { class: 'lm-plan' }, v.plan) : null,
     h('span', { class: 'lm-wins' }, ...wins),
     v.asOf ? h('em', { class: 'lm-asof' }, v.asOf) : null,
@@ -97,15 +105,16 @@ function windowRow(w: WindowView): HTMLElement {
   return h('li', { class: 'lm-row', 'data-sev': w.severity }, h('span', { class: 'lm-rowlab' }, windowName(w)), bar(w), h('b', { class: 'lm-pct' }, w.pctText), h('span', { class: 'lm-rs' }, w.resets ? ['resets ', w.resets].join('') : ''));
 }
 
-function providerSection(v: ProviderView): HTMLElement {
+function providerSection(v: ProviderView, drift: Drift = null): HTMLElement {
   return h(
     'section',
     rowAttrs(v, 'lm-sec'),
-    h('header', {}, providerTape(v), profileTag(v), v.plan ? h('span', { class: 'lm-plan' }, v.plan) : null, v.reached ? h('strong', { class: 'lm-hit' }, 'Limit reached') : null),
+    h('header', {}, providerTape(v), profileTag(v, drift), v.plan ? h('span', { class: 'lm-plan' }, v.plan) : null, v.reached ? h('strong', { class: 'lm-hit' }, 'Limit reached') : null),
     v.windows.length || v.models.length ? h('ul', { class: 'lm-rows' }, ...v.windows.map(windowRow), ...v.models.map(windowRow)) : null,
     v.credits !== null ? h('p', { class: 'lm-meta' }, h('span', {}, 'Credits'), h('b', {}, v.credits)) : null,
     v.problem ? h('p', { class: 'lm-problem' }, v.problem) : null,
     v.readNote ? h('p', { class: 'lm-read' }, v.readNote) : null,
+    drift ? h('p', { class: 'lm-problem lm-drift', 'data-hook': 'drift' }, drift.text) : null,
   );
 }
 
@@ -138,6 +147,8 @@ export class LimitsWidget {
     private readonly book: LimitBook,
     private readonly host: LimitsHost,
     readonly prefs: LimitsPrefs = new LimitsPrefs(),
+    /** #167: the Codex profiles, for a drifted shared setup's mark on its row (absent: none). */
+    private readonly profiles?: CodexProfilesBook,
   ) {
     this.strip = h('button', { class: 'lm-strip', 'aria-expanded': 'false', 'aria-controls': 'lm-panel', title: 'Plan limits: click for details (Shift+L)' }, this.lines, h('span', { class: 'lm-title' }, 'Plan limits'), icon(ICON.chevron));
     this.strip.lastElementChild?.classList.add('lm-chev');
@@ -156,7 +167,12 @@ export class LimitsWidget {
     this.panel.append(this.body, this.foot);
     parent.append(this.root);
     this.home = parent;
-    this.off = this.prefs.onChange(() => this.sync());
+    const offPrefs = this.prefs.onChange(() => this.sync());
+    const offProfiles = this.profiles?.onChange(() => this.render());
+    this.off = () => {
+      offPrefs();
+      offProfiles?.();
+    };
     // The snug tab's room depends on the UI theme (its size): a live switch places the tab again.
     this.themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-ui-theme'] }); // dataset[UI_THEME_ATTR]
     this.keepOnTop();
@@ -376,8 +392,10 @@ export class LimitsWidget {
     const now = this.host.now();
     const views = limitsView(this.book, now);
     const open = this.isOpen;
+    const drift = (v: ProviderView): Drift => (v.profile !== null && v.account ? profileDrift(this.profiles?.state ?? null, v.account) : null);
+    const drifts = views.map(drift);
     // Everything that shows, and nothing else: no reading changing, no re-render.
-    const key = JSON.stringify([views.map((v) => [v.key, v.profile, v.isDefault, v.plan, v.windows, v.models, v.stale, v.reached, v.asOf, v.problem, v.credits, open ? v.readNote : '']), open, this.refreshing]);
+    const key = JSON.stringify([views.map((v) => [v.key, v.profile, v.isDefault, v.plan, v.windows, v.models, v.stale, v.reached, v.asOf, v.problem, v.credits, open ? v.readNote : '']), drifts, open, this.refreshing]);
     if (key === this.key) return;
     this.key = key;
     this.root.dataset.reached = views.some((v) => v.reached) ? 'true' : 'false';
@@ -387,11 +405,11 @@ export class LimitsWidget {
     this.tabPct.textContent = views.some((v) => v.windows.length || v.models.length) ? `${Math.round(worst)}%` : '–';
     this.tabBar.style.setProperty('--frac', (Math.min(100, Math.max(0, worst)) / 100).toFixed(3));
     this.tab.setAttribute('aria-label', `Plan limits. ${summary(views)}. Show details (Shift+L).`);
-    this.lines.replaceChildren(...(views.length ? views.map((v) => providerLine(v)) : [h('div', { class: 'lm-line lm-line--wait' }, h('span', { class: 'lm-none' }, 'Plan limits · reading…'))]));
+    this.lines.replaceChildren(...(views.length ? views.map((v, i) => providerLine(v, false, drifts[i])) : [h('div', { class: 'lm-line lm-line--wait' }, h('span', { class: 'lm-none' }, 'Plan limits · reading…'))]));
     if (!open) return;
     this.refreshBtn.disabled = this.refreshing;
     this.refreshBtn.querySelector('span')!.textContent = this.refreshing ? 'Reading…' : 'Refresh';
-    this.body.replaceChildren(...views.map(providerSection));
+    this.body.replaceChildren(...views.map((v, i) => providerSection(v, drifts[i])));
   }
 
   private async refresh(): Promise<void> {

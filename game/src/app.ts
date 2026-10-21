@@ -573,6 +573,7 @@ export class App {
       this.store.limits,
       { now: () => Date.now(), refresh: () => this.send('limits.refresh', {}), toast: (m) => this.hud.toast(m, 3600, 'info') },
       this.limitsPrefs,
+      this.store.codexProfiles, // #167: a drifted shared setup's mark
     );
     // Nothing re-renders it between readings but a reading turning stale.
     setInterval(() => this.limitsWidget.tick(), 30_000);

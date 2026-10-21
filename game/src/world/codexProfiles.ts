@@ -5,7 +5,7 @@
  * seat says about its profile. Pure.
  */
 
-import type { CodexProfile, CodexProfilesState, CodexRule, Worker } from '../net/protocol';
+import type { CodexDrift, CodexProfile, CodexProfilesState, CodexRule, Worker } from '../net/protocol';
 import type { CodexNotice } from './codexServer';
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -33,6 +33,11 @@ function profileOf(v: unknown): CodexProfile | null {
   };
   if (v.missing === true) p.missing = true;
   if (v.anything === true) p.anything = true;
+  if (v.share === true) p.share = true;
+  if (Array.isArray(v.drift)) {
+    const drift = v.drift.filter((d): d is CodexDrift => isObj(d) && typeof d.kind === 'string' && typeof d.name === 'string' && typeof d.text === 'string').map((d) => ({ kind: d.kind, name: d.name, text: d.text }));
+    if (drift.length && p.share && !p.hidden) p.drift = drift;
+  }
   return p;
 }
 
@@ -45,6 +50,7 @@ export function codexProfilesOf(v: unknown): CodexProfilesState | null {
   if (!isObj(v) || !Array.isArray(v.profiles)) return null;
   const out: CodexProfilesState = { profiles: v.profiles.map(profileOf).filter((p): p is CodexProfile => p !== null) };
   if (v.hire === true) out.hire = true;
+  if (v.share === true) out.share = true;
   if (v.auto === true) {
     out.auto = true;
     out.rules = Array.isArray(v.rules) ? v.rules.map(ruleOf).filter((r): r is CodexRule => r !== null) : [];
@@ -290,4 +296,16 @@ export function profileNotice(w: Pick<Worker, 'codex' | 'harness' | 'agent_kind'
   const name = profileName(state, c.profile);
   const text = c.profile_note ? `${name}. ${c.profile_note}` : name;
   return { tone: c.account === 'mismatch' ? 'down' : 'note', text };
+}
+
+/**
+ * #167: what the limits meter says of profile `key`'s shared setup when it drifted (only from a bridge with sharing):
+ * the plain list, and where to fix it (Settings → Codex profiles, which has Fix). null: nothing to say.
+ */
+export function profileDrift(state: CodexProfilesState | null, key: string): { text: string } | null {
+  if (!state?.share) return null;
+  const p = state.profiles.find((x) => x.key === key);
+  if (!p?.drift?.length) return null;
+  const def = state.profiles.find((x) => x.default);
+  return { text: `${p.name}’s shared setup differs from ${def?.name ?? 'the default'}’s: ${p.drift.map((d) => d.text).join('; ')}. Fix it in Settings → Codex profiles.` };
 }

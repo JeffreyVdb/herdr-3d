@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CodexProfile, CodexProfilesState } from '../net/protocol';
-import { codexProfilesOf, hireProfiles, loneProfileGone, pickProfile, profileGoneText, profileNotice, ruleMatchProblem, ruleProfileProblem, ruleRefusal, rulesProblem } from './codexProfiles';
+import { codexProfilesOf, hireProfiles, loneProfileGone, pickProfile, profileGoneText, profileDrift, profileNotice, ruleMatchProblem, ruleProfileProblem, ruleRefusal, rulesProblem } from './codexProfiles';
 
 const prof = (key: string, more: Partial<CodexProfile> = {}): CodexProfile => ({
   key,
@@ -125,5 +125,31 @@ describe('#140 Auto and its rules', () => {
     expect(ruleProfileProblem('out', list)).toBe('out is not signed in: Auto passes this rule over.');
     expect(ruleProfileProblem('lost', list)).toBe('lost is gone: Auto passes this rule over.');
     expect(ruleProfileProblem('nope', list)).toBe('nope is gone: Auto passes this rule over.');
+  });
+});
+
+describe('#167 sharing a profile’s setup', () => {
+  const d = { kind: 'hooks_missing', name: 'hooks.json', text: 'hooks.json is missing' };
+  it('reads share and drift, drift only on a visible shared profile; an older bridge has neither', () => {
+    const s = codexProfilesOf({
+      share: true,
+      profiles: [
+        prof('codex', { default: true }),
+        { ...prof('work'), share: true, drift: [d, { kind: 'x' }] },
+        { ...prof('old'), hidden: true, share: true, drift: [d] },
+        { ...prof('solo'), drift: [d] },
+      ],
+    })!;
+    expect(s.share).toBe(true);
+    expect(s.profiles.map((p) => [p.key, p.share ?? false, p.drift?.length ?? 0])).toEqual([
+      ['codex', false, 0],
+      ['work', true, 1],
+      ['old', true, 0],
+      ['solo', false, 0],
+    ]);
+    expect(profileDrift(s, 'work')?.text).toBe('work’s shared setup differs from codex’s: hooks.json is missing. Fix it in Settings → Codex profiles.');
+    expect(profileDrift(s, 'codex')).toBeNull();
+    expect(profileDrift({ profiles: s.profiles }, 'work')).toBeNull();
+    expect(codexProfilesOf({ profiles: [] })!.share).toBeUndefined();
   });
 });

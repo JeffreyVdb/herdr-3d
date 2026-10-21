@@ -1,4 +1,4 @@
-import type { CodexProfile, CodexProfilesState, CodexRule, CommandArgs, CommandName } from '../net/protocol';
+import type { CodexProfile, CodexProfilesState, CodexRule, CodexShareAck, CodexShareStep, CommandArgs, CommandName } from '../net/protocol';
 import type { CommandResult } from '../net/client';
 import {
   codexProfilesFailureText,
@@ -51,6 +51,10 @@ const MATCH_HINT = 'github.com/<owner>/*, github.com/<owner>/<repo>, or a folder
  * #140, on a bridge with Auto: under each folder, "May be used for anything" (one change, sent at once); under the
  * list, the Auto rules: an ordered list edited as a draft (each row a match and the profile it hires on; add, move,
  * remove), saved whole with one `codex_profiles.set` so a new order lands at once, the bridge's refusal under its row.
+ * #167, on a bridge with sharing: under each other profile's folder, "Share setup with <default>". Turning it on (and
+ * Fix) asks the bridge for the plan first; anything in the way is listed with the name it is backed up to, and only a
+ * confirmed list is sent. The report of what was done, a "Setup drifted" badge with the plain list of what differs and
+ * Fix, and "Move to ~/.agents/skills" (its own confirm) on a skill, go under the row.
  */
 export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTMLElement, section: SectionControl) => SectionHandle {
   return (body, section) => {
@@ -127,6 +131,12 @@ export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTM
     let ruleError: { index: number | null; text: string } | null = null;
     let rulesNote: { text: string; error: boolean } | null = null;
     let savingRules = false;
+    /** #167: a row's share flow: the plan to confirm (on, or a Fix), a skill move to confirm, or the report of the last. */
+    type ShareView =
+      | { kind: 'confirm'; steps: CodexShareStep[]; fix: boolean }
+      | { kind: 'move'; skill: string; home: string }
+      | { kind: 'report'; text: string; error: boolean };
+    const shares = new Map<string, ShareView>();
 
     const st = (): CodexProfilesState | null => host.book.state;
 
@@ -136,6 +146,12 @@ export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTM
       if (p.hidden) out.push(badge('Hidden', 'off'));
       if (p.missing) out.push(badge('Folder not found', 'invalid'));
       else out.push(p.signed_in ? badge('Signed in', 'ready') : badge('Not signed in', 'incomplete'));
+      if (st()?.share && p.drift?.length) {
+        const d = badge('Setup drifted', 'incomplete');
+        d.dataset.hook = 'drift-badge';
+        d.title = `${p.name}’s shared setup differs from the default’s: see below`;
+        out.push(d);
+      }
       return out;
     }
 
@@ -177,8 +193,188 @@ export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTM
       where.title = p.path;
       li.append(line, where);
       if (st()?.auto) li.append(anythingSwitch(p, waiting));
+      const def = all.find((x) => x.default);
+      if (st()?.share && def && !p.default) {
+        li.append(shareSwitch(p, def, waiting));
+        const panel = sharePanel(p, def, all, waiting);
+        if (panel) li.append(panel);
+      }
       if (rename?.key === p.key) li.append(renameForm(p, all));
       return li;
+    }
+
+    /** #167: "Share setup with <default>": on asks for the plan first (sharePlan); off copies the links back at once. */
+    function shareSwitch(p: CodexProfile, def: CodexProfile, waiting: boolean): HTMLElement {
+      const sw = el('label', 'settings-switch settings-cp-anything settings-cp-share');
+      const box = el('input');
+      box.type = 'checkbox';
+      box.checked = p.share === true;
+      box.disabled = waiting || !!p.missing || shares.get(p.key)?.kind === 'confirm';
+      box.dataset.key = `share:${p.key}`;
+      box.addEventListener('change', () => {
+        const on = box.checked;
+        box.checked = p.share === true; // until the bridge says it is done
+        if (on) void sharePlan(p, false);
+        else void shareSend(p, { key: p.key, share: false }, `share:${p.key}`);
+      });
+      sw.append(box, el('span', '', `Share setup with ${def.name}`));
+      sw.title = `Link config.toml, AGENTS.md, AGENTS.override.md and rules/ to ${def.name}’s and give ${p.name} its own hooks.json with the same commands`;
+      return sw;
+    }
+
+    /** #167: under a shared row: the confirm list, the skill move's confirm, the last report, and the drift with Fix. */
+    function sharePanel(p: CodexProfile, def: CodexProfile, all: readonly CodexProfile[], waiting: boolean): HTMLElement | null {
+      const view = shares.get(p.key);
+      const drift = p.drift ?? [];
+      if (!view && !drift.length) return null;
+      const box = el('div', 'settings-cp-share-panel');
+      box.setAttribute('role', 'group');
+      box.setAttribute('aria-label', `${p.name}’s shared setup`);
+      box.dataset.profile = p.key;
+      if (view?.kind === 'confirm') {
+        const replaced = view.steps.filter((x) => x.action === 'replace');
+        box.append(el('p', 'settings-field-hint settings-cp-share-ask', `These are in the way in ${p.display}. Each is renamed, never deleted:`));
+        const ul = el('ul', 'settings-cp-share-list');
+        ul.dataset.hook = 'share-confirm';
+        for (const x of replaced) {
+          const li = el('li');
+          li.append(el('code', 'settings-cp-path', x.name), ` (a ${x.was ?? 'file'}) is kept as `, el('code', 'settings-cp-path', x.backup ?? ''));
+          ul.append(li);
+        }
+        const tools = el('div', 'settings-cp-share-tools');
+        const go = button(waiting ? 'Sharing…' : view.fix ? 'Back up and fix' : 'Back up and share', `share-confirm:${p.key}`, 'btn btn--sm btn--primary');
+        go.disabled = waiting;
+        go.addEventListener('click', () => void shareSend(p, { key: p.key, share: true, replace: replaced.map((x) => x.name) }, view.fix ? `fix:${p.key}` : `share:${p.key}`));
+        const cancel = button('Cancel', `share-cancel:${p.key}`);
+        cancel.disabled = waiting;
+        cancel.addEventListener('click', () => {
+          shares.delete(p.key);
+          sync();
+          focusByKey(view.fix ? `fix:${p.key}` : `share:${p.key}`);
+        });
+        tools.append(go, cancel);
+        box.append(ul, tools);
+        return box;
+      }
+      if (view?.kind === 'move') {
+        const where = all.find((x) => x.key === view.home)?.name ?? view.home;
+        box.append(el('p', 'settings-field-hint settings-cp-share-ask', `Move the skill ${view.skill} out of ${where}’s skills/ into ~/.agents/skills, where every Codex home reads it, and leave a link in its place?`));
+        const tools = el('div', 'settings-cp-share-tools');
+        const go = button(waiting ? 'Moving…' : 'Move skill', `move-confirm:${p.key}`, 'btn btn--sm btn--primary');
+        go.disabled = waiting;
+        go.addEventListener('click', () => void moveSkill(p, view.home, view.skill));
+        const cancel = button('Cancel', `move-cancel:${p.key}`);
+        cancel.disabled = waiting;
+        cancel.addEventListener('click', () => {
+          shares.delete(p.key);
+          sync();
+          focusByKey(`move:${p.key}:${view.skill}`);
+        });
+        tools.append(go, cancel);
+        box.append(tools);
+        return box;
+      }
+      if (view?.kind === 'report') {
+        const r = el('p', `settings-field-hint settings-cp-share-report${view.error ? ' settings-field-error' : ''}`, view.text);
+        r.dataset.hook = 'share-report';
+        box.append(r);
+      }
+      if (drift.length) {
+        box.append(el('p', 'settings-field-hint settings-cp-share-ask', `Differs from ${def.name}’s setup:`));
+        const ul = el('ul', 'settings-cp-share-list settings-cp-drift');
+        ul.dataset.hook = 'drift';
+        for (const d of drift) {
+          const li = el('li');
+          li.dataset.kind = d.kind;
+          li.append(el('span', '', d.text));
+          if (d.kind === 'skill_only_default' || d.kind === 'skill_only_profile') {
+            const home = d.kind === 'skill_only_default' ? def.key : p.key;
+            const mv = button('Move to ~/.agents/skills', `move:${p.key}:${d.name}`);
+            mv.disabled = waiting;
+            mv.title = `Move ${d.name} into ~/.agents/skills (a link stays in its place), so every Codex home has it`;
+            mv.addEventListener('click', () => {
+              shares.set(p.key, { kind: 'move', skill: d.name, home });
+              sync();
+              focusByKey(`move-confirm:${p.key}`);
+            });
+            li.append(mv);
+          }
+          ul.append(li);
+        }
+        box.append(ul);
+        if (drift.some((d) => !d.kind.startsWith('skill_'))) {
+          const tools = el('div', 'settings-cp-share-tools');
+          const fix = button(waiting ? 'Fixing…' : 'Fix', `fix:${p.key}`, 'btn btn--sm btn--primary');
+          fix.disabled = waiting;
+          fix.title = `Link and write again what differs; anything in the way is listed first and backed up`;
+          fix.addEventListener('click', () => void sharePlan(p, true));
+          tools.append(fix);
+          box.append(tools);
+        }
+      }
+      return box;
+    }
+
+    /** #167: asks for the plan; with something in the way, the confirm list, else it applies at once. */
+    async function sharePlan(p: CodexProfile, fix: boolean): Promise<void> {
+      if (busy.has(p.key)) return;
+      busy.add(p.key);
+      shares.delete(p.key);
+      note = null;
+      sync();
+      const res = await host.send('codex_profiles.share', { key: p.key, share: true, dry_run: true });
+      busy.delete(p.key);
+      if (!res.ok) {
+        shares.set(p.key, { kind: 'report', text: codexProfilesFailureText(res.code, res.message), error: true });
+        sync();
+        focusByKey(fix ? `fix:${p.key}` : `share:${p.key}`);
+        return;
+      }
+      const ack = res.data as CodexShareAck;
+      host.book.upsert(ack);
+      const steps = Array.isArray(ack.steps) ? ack.steps : [];
+      if (steps.some((x) => x.action === 'replace')) {
+        shares.set(p.key, { kind: 'confirm', steps, fix });
+        sync();
+        focusByKey(`share-confirm:${p.key}`);
+        return;
+      }
+      await shareSend(p, { key: p.key, share: true, replace: [] }, fix ? `fix:${p.key}` : `share:${p.key}`);
+    }
+
+    /** #167: one share command; its report (or the refusal) goes under the row. */
+    async function shareSend(p: CodexProfile, args: CommandArgs['codex_profiles.share'], focus: string): Promise<void> {
+      if (busy.has(p.key)) return;
+      busy.add(p.key);
+      note = null;
+      sync();
+      const res = await host.send('codex_profiles.share', args);
+      busy.delete(p.key);
+      reported(p, res);
+      focusByKey(focus);
+      if (!document.activeElement || document.activeElement === document.body) focusByKey(`share:${p.key}`);
+    }
+
+    async function moveSkill(p: CodexProfile, home: string, skill: string): Promise<void> {
+      if (busy.has(p.key)) return;
+      busy.add(p.key);
+      sync();
+      const res = await host.send('codex_profiles.move_skill', { key: home, skill });
+      busy.delete(p.key);
+      reported(p, res);
+      focusByKey(`share:${p.key}`);
+    }
+
+    function reported(p: CodexProfile, res: CommandResult): void {
+      if (res.ok) {
+        const ack = res.data as CodexShareAck;
+        host.book.upsert(ack);
+        shares.set(p.key, { kind: 'report', text: ack.report ?? 'Done.', error: ack.failed === true });
+      } else {
+        shares.set(p.key, { kind: 'report', text: codexProfilesFailureText(res.code, res.message), error: true });
+        if (res.code === 'not_found') void host.send('codex_profiles.get', {}).then((r) => r.ok && host.book.upsert(r.data));
+      }
+      sync();
     }
 
     /** #140: "May be used for anything": sent at once, like Hide. */
@@ -538,6 +734,7 @@ export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTM
       section.setHidden(!s);
       if (!s) return;
       if (rename && !s.profiles.some((p) => p.key === rename!.key)) rename = null;
+      for (const k of shares.keys()) if (!s.profiles.some((p) => p.key === k)) shares.delete(k);
       const had = document.activeElement instanceof HTMLElement && list.contains(document.activeElement) ? document.activeElement.dataset.key : undefined;
       const typing = !!rename && document.activeElement === rename.input;
       list.replaceChildren(...s.profiles.map((p) => rowItem(p, s.profiles)));
@@ -576,6 +773,7 @@ export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTM
         note = null;
         addError = null;
         rename = null;
+        shares.clear();
         draft = null;
         ruleError = null;
         rulesNote = null;
