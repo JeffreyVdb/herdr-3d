@@ -33,7 +33,7 @@ func TestGeneratedRules(t *testing.T) {
 	if len(compiledRules) != 217 || len(compiledGlobal) != 1 || gitleaksVersion != "v8.30.1" {
 		t.Fatalf("%d rules, %d global allowlists, %s", len(compiledRules), len(compiledGlobal), gitleaksVersion)
 	}
-	if RulesVersion != "gitleaks-v8.30.1+structural-1" {
+	if RulesVersion != "gitleaks-v8.30.1+structural-1+entropy-1" {
 		t.Fatalf("rules version %q", RulesVersion)
 	}
 }

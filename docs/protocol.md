@@ -4133,9 +4133,12 @@ decides every one.
 answers `{"revision", "candidates"}`. `candidates` (never null) are in text order and **never overlap**: `id`
 (`c1`, `c2`, … stable for that revision), `start`, `end` (**`[start, end)` in UTF-16 code units** of `text`, as
 pack up's `removed`: JavaScript's string indexes), `kinds` (what found it: `gitleaks:<rule id>`, `pem`,
-`auth-header`, `url-password`, `url-query`, `assignment`, `yaml-block`, `prose`, `fenced`, `repeat`) and `encoded`
+`auth-header`, `url-password`, `url-query`, `assignment`, `yaml-block`, `prose`, `fenced`, `entropy`, `repeat`) and `encoded`
 (its bytes hold a JSON or shell backslash escape, percent-encoding or a YAML block's indentation: the file keeps
-them **as typed**, which the review should say). `revision` is opaque: an HMAC, keyed by a random key the bridge
+them **as typed**, which the review should say). `entropy` (#163) is a whole word of 32–512 ASCII letters, digits
+and `_-+/` (up to two `=` of base64 padding included) that looks random (at least 4.5 bits per byte) and that no
+other rule found: a token with no prefix and no introduction, in any language. Hex ids, UUIDs, public keys, lockfile
+hashes and paths are left out. `revision` is opaque: an HMAC, keyed by a random key the bridge
 process keeps in memory, over the text, the rule set and the candidates. It is never a plain hash of the text.
 `secrets_review_off` while the switch is off.
 
