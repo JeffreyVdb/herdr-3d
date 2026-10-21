@@ -94,6 +94,8 @@ import { InboxChip, type InboxEntry } from './ui/inbox';
 import { HirePrefs } from './ui/hirePrefs';
 import { HireCoordinator } from './ui/hireCoordinator';
 import { HireModelPrefs } from './ui/hireModelPrefs';
+import { HirePins } from './ui/hirePins';
+import { pinTab } from './ui/deskTabs';
 import { harnessModelsSection } from './ui/harnessModelsSection';
 import { TaskLevels } from './ui/taskLevels';
 import { taskLevelsSection } from './ui/taskLevelsSection';
@@ -234,6 +236,8 @@ export class App {
   readonly hirePrefs = new HirePrefs(); // #116
   /** #194: the models the Hire dialog shows, per harness (none hidden until the player hides one). */
   readonly hireModelPrefs = new HireModelPrefs();
+  /** Hire presets pinned to the desk dialogs' tab bar, per browser. */
+  readonly hirePins = new HirePins();
   /** #248: Settings → Task levels (per browser). */
   readonly taskLevels = new TaskLevels();
   /** #116: cancels the go-to still waiting for its new hire. */
@@ -762,6 +766,11 @@ export class App {
       this.hirePresets.open(s, d);
       this.hirePresets.focusTab();
     };
+    // A preset pinned to the desk dialogs' tab bar: hire with it as Use does; focus on its tab of the hire form.
+    const usePinned = (s: string, d: number, id: string) => {
+      this.hirePresets.usePinned(s, d, id);
+      if (this.hire.isOpen) this.hire.focusTab(pinTab(id));
+    };
     this.hire = new HireDialog(o.host, {
       ...hireHost,
       hirePrefs: this.hirePrefs,
@@ -769,11 +778,15 @@ export class App {
       goTo: (id) => this.goToNewHire(id),
       orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ floor: s, desk: d }, true) },
       presetsAt,
+      pins: this.hirePins,
+      usePinned,
       savePreset: (seed, from) => this.hirePresets.create(seed, from),
     });
     this.hirePresets = new HirePresetsDialog(o.host, {
       ...dialogHost,
       modelPrefs: this.hireModelPrefs,
+      pins: this.hirePins,
+      usePinned,
       hireAt: (s, d) => {
         this.hire.open(s, d);
         this.hire.focusTab();
@@ -809,6 +822,8 @@ export class App {
         this.hire.focusTab();
       },
       presetsAt,
+      pins: this.hirePins,
+      usePinned,
       openPresets: (from) => this.presetsPanel.open(from),
       started: (id, item) => {
         this.followOrch(id);
@@ -1038,6 +1053,8 @@ export class App {
     this.panels.refresh();
     this.palette.refresh(); // #147
     this.dictation.refresh(); // #213
+    // A preset deleted (here, elsewhere or while away) leaves the tab bars' pins too; an older bridge keeps none to check.
+    if (this.store.hirePresets.known) this.hirePins.prune((id) => this.store.hirePresets.get(id) !== null);
     this.hire.refresh();
     this.hireReview.refresh();
     this.sendHome.refresh();

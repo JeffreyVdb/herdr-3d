@@ -4,6 +4,7 @@ import type { HireOptions, HirePreset } from '../net/protocol';
 import { HirePresetBook } from '../world/hirePresets';
 import { HirePresetsDialog, type HirePresetsHost, type HirePresetsSummary } from './hirePresets';
 import { HireModelPrefs } from './hireModelPrefs';
+import { HirePins } from './hirePins';
 
 // #93: the "Hire preset" tab: this floor's presets and the global ones, Use (asking before an unsent task goes), and
 // create / edit / delete with scoped names and live changes from other clients. Fixture slugs only.
@@ -68,6 +69,7 @@ function setup(list: HirePreset[] | null = [], unsent: { text: string; images: n
     toast: (m) => void toasts.push(m),
     now: () => 0,
     modelPrefs: new HireModelPrefs(memory()),
+    pins: new HirePins(memory()),
     hireAt: vi.fn(),
     use: vi.fn(),
     unsent: vi.fn(() => unsent),
@@ -555,5 +557,85 @@ describe('HirePresetsDialog: herdr hiring instructions (#95)', () => {
     dlg.open('web', 0);
     click('new');
     expect(document.querySelector('[data-hook="hp-instructions-off"]')?.textContent).toBe('This herdr-world can’t add hiring instructions yet. Update the bridge to use it.');
+  });
+});
+
+describe('HirePresetsDialog pins', () => {
+  beforeEach(() => {
+    n = 0;
+    HTMLDialogElement.prototype.showModal = function () {
+      this.setAttribute('open', '');
+    };
+    HTMLDialogElement.prototype.close = function () {
+      this.removeAttribute('open');
+      this.dispatchEvent(new Event('close'));
+    };
+    vi.stubGlobal('CSS', { escape: (s: string) => s });
+  });
+  afterEach(() => {
+    document.body.replaceChildren();
+    vi.unstubAllGlobals();
+  });
+
+  const tabKeys = () => [...document.querySelectorAll<HTMLElement>('[role="tab"]')].map((t) => t.dataset.key);
+
+  it('pins and unpins a preset from its row, and the tab bar follows: this floor’s and the global pins, in pin order', () => {
+    const { dlg, host } = setup([preset('Deploy', 'web'), preset('Global', null), preset('Other floor', 'api')]);
+    host.pins!.pin('hp_3');
+    dlg.open('web', 0);
+    const pinBtn = () => document.querySelector<HTMLElement>('[data-key="pin:hp_1"]')!;
+    expect(pinBtn().getAttribute('aria-pressed')).toBe('false');
+    pinBtn().focus();
+    pinBtn().click();
+    click('pin:hp_2');
+    expect(summary(dlg).pins).toEqual(['hp_1', 'hp_2']);
+    expect(summary(dlg).groups.floor[0]?.pinned).toBe(true);
+    expect(pinBtn().getAttribute('aria-pressed')).toBe('true');
+    expect((document.activeElement as HTMLElement).dataset.key).toBe('pin:hp_1');
+    expect(tabKeys()).toEqual(['tab:worker', 'tab:preset', 'tab:pin:hp_1', 'tab:pin:hp_2']);
+    pinBtn().click();
+    expect(summary(dlg).pins).toEqual(['hp_2']);
+    expect(host.pins!.ids).toEqual(['hp_3', 'hp_2']);
+  });
+
+  it('a pinned tab hires with its preset as Use does, straight to the hire form when the desk has no unsent task', () => {
+    const { dlg, host } = setup([preset('Deploy', 'web')]);
+    host.pins!.pin('hp_1');
+    dlg.open('web', 3);
+    click('tab:pin:hp_1');
+    expect(dlg.isOpen).toBe(false);
+    expect(host.use).toHaveBeenCalledWith('web', 3, expect.objectContaining({ id: 'hp_1', name: 'Deploy' }), false);
+    // From another dialog's tab bar, the list never opens.
+    dlg.usePinned('web', 1, 'hp_1');
+    expect(dlg.isOpen).toBe(false);
+    expect(host.use).toHaveBeenLastCalledWith('web', 1, expect.objectContaining({ id: 'hp_1' }), false);
+  });
+
+  it('a pinned tab of this dialog goes through the app’s hook when it has one (the hire form’s tab takes the focus)', () => {
+    const { dlg, host } = setup([preset('Deploy', 'web')]);
+    host.pins!.pin('hp_1');
+    host.usePinned = vi.fn();
+    dlg.open('web', 3);
+    click('tab:pin:hp_1');
+    expect(host.usePinned).toHaveBeenCalledWith('web', 3, 'hp_1');
+    expect(host.use).not.toHaveBeenCalled();
+  });
+
+  it('a pinned tab on a desk with an unsent task asks first, in the list', () => {
+    const { dlg, host } = setup([preset('Deploy', 'web')], { text: 'my own task', images: 0 });
+    dlg.usePinned('web', 2, 'hp_1');
+    expect(dlg.isOpen).toBe(true);
+    expect(summary(dlg).replacing).toBe('hp_1');
+    expect(host.use).not.toHaveBeenCalled();
+    click('replace:hp_1');
+    expect(host.use).toHaveBeenCalledWith('web', 2, expect.objectContaining({ id: 'hp_1' }), true);
+  });
+
+  it('a pinned preset deleted meanwhile says so and opens nothing', () => {
+    const { dlg, host, toasts } = setup([]);
+    dlg.usePinned('web', 0, 'hp_gone');
+    expect(dlg.isOpen).toBe(false);
+    expect(host.use).not.toHaveBeenCalled();
+    expect(toasts).toEqual(['That hire preset is gone.']);
   });
 });
