@@ -222,3 +222,74 @@ describe('the book', () => {
     expect(b.version).toBe(0);
   });
 });
+
+describe('Codex profiles (#138)', () => {
+  const own = { key: 'codex', name: 'codex', plan: 'prolite', default: true };
+  const acct = (key: string, name = key) => ({ key, name, plan: 'team', default: false });
+
+  it('keys Codex readings by profile: two homes never overwrite each other, the same one replaces itself', () => {
+    const b = new LimitBook();
+    b.upsert(codex({ account: own }));
+    b.upsert(codex({ account: acct('work'), plan: 'team' }));
+    b.upsert(codex({ account: acct('work'), plan: 'team', windows: [] }));
+    expect(b.list()).toHaveLength(2);
+    expect(b.get('codex', 'work')?.windows).toEqual([]);
+    expect(b.get('codex')?.account?.key).toBe('codex');
+  });
+
+  it('orders Claude, the default profile, then the others by name, whatever came first', () => {
+    const b = new LimitBook();
+    b.reset([codex({ account: acct('zed', 'Zed') }), codex({ account: acct('alpha', 'beta') }), codex({ account: own }), claude(), codex({ account: acct('b', 'Alpha') })]);
+    expect(b.list().map((l) => l.account?.key ?? l.provider)).toEqual(['claude', 'codex', 'b', 'alpha', 'zed']);
+  });
+
+  it('a reading without an account (an older bridge) is the default profile', () => {
+    const b = new LimitBook();
+    b.reset([codex({ account: acct('work') }), codex(), claude()]);
+    expect(b.list().map((l) => l.account?.key ?? l.provider)).toEqual(['claude', 'codex', 'work']);
+    expect(b.get('codex')?.account).toBeUndefined();
+    const views = limitsView(b, NOW);
+    expect(views.map((v) => [v.profile, v.isDefault])).toEqual([
+      [null, true],
+      ['default', true],
+      ['work', false],
+    ]);
+    expect(harnessViews(b, ['codex'], NOW).map((v) => [v.account, v.profile])).toEqual([[null, null]]);
+  });
+
+  it('names a row only when its provider has two or more; one profile is "Codex" as before', () => {
+    const b = new LimitBook();
+    b.reset([claude(), codex({ account: own })]);
+    expect(limitsView(b, NOW).map((v) => [v.name, v.profile])).toEqual([
+      ['Claude', null],
+      ['Codex', null],
+    ]);
+    b.upsert(codex({ account: acct('work', 'Work seat') }));
+    expect(limitsView(b, NOW).map((v) => [v.name, v.profile, v.isDefault])).toEqual([
+      ['Claude', null, true],
+      ['Codex', 'codex', true],
+      ['Codex', 'Work seat', false],
+    ]);
+  });
+
+  it('keeps the account from the wire (never more), and drops a malformed one', () => {
+    expect(limitsOf({ ...codex(), account: { key: 'work', name: 'Work', plan: 'team', default: false, email: 'x@y' } })?.account).toEqual({ key: 'work', name: 'Work', plan: 'team', default: false });
+    expect(limitsOf({ ...codex(), account: { name: 'no key' } })?.account).toBeUndefined();
+  });
+
+  it('the store drops a profile hidden or removed elsewhere when codex_profiles.update says so', () => {
+    const store = new WorldStore();
+    const p = (key: string, hidden = false) => ({ key, name: key, path: `/h/.codex-${key}`, display: `~/.codex-${key}`, plan: '', signed_in: true, default: key === 'codex', hidden, added: false });
+    store.applySnapshot({
+      t: 'world.snapshot',
+      seq: 1,
+      world: { buildings: [], unassigned: [], floors: [], workers: [], limits: [claude(), codex({ account: own }), codex({ account: acct('work') })], codex_profiles: { profiles: [p('codex'), p('work')] } },
+    });
+    expect(store.limits.list()).toHaveLength(3);
+    const ev = { t: 'codex_profiles.update', seq: 2, profiles: [p('codex'), p('work', true)] };
+    expect(isWorldEvent(ev as never)).toBe(true);
+    store.applyEvent(ev as never);
+    expect(store.codexProfiles.state?.profiles[1]?.hidden).toBe(true);
+    expect(store.limits.list().map((l) => l.account?.key ?? l.provider)).toEqual(['claude', 'codex']);
+  });
+});

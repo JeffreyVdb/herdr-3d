@@ -10,9 +10,11 @@ import (
 	"os"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/codex"
+	"github.com/JeffreyVdb/herdr-3d/internal/codexaccount"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
 
@@ -25,14 +27,14 @@ const (
 )
 
 // probeCodex asks `codex app-server` (JSON-RPC over stdio) for the rate
-// limits.
-func (c *Config) probeCodex(ctx context.Context) (proto.Limits, error) {
+// limits of a Codex profile (nil: of the environment's own home).
+func (c *Config) probeCodex(ctx context.Context, a *codexaccount.Account) (proto.Limits, error) {
 	dir, err := os.MkdirTemp("", "h3d-limits-")
 	if err != nil {
 		return proto.Limits{}, err
 	}
 	defer os.RemoveAll(dir)
-	s, err := startSession(c.Runner, Cmd{Path: c.CodexBin, Args: codexArgs, Dir: dir, Env: probeEnv(c.Env())}, c.timing())
+	s, err := startSession(c.Runner, Cmd{Path: c.CodexBin, Args: codexArgs, Dir: dir, Env: codexEnv(probeEnv(c.Env()), a)}, c.timing())
 	if err != nil {
 		return proto.Limits{}, err
 	}
@@ -248,14 +250,25 @@ const rolloutTail = 1 << 20
 // maxRollouts is how many of the newest rollouts the fallback looks in.
 const maxRollouts = 40
 
+// codexEnv is env for reading profile a: CODEX_HOME is a's home, whatever
+// the bridge's was. The default profile's home that is not there (Codex
+// refuses a CODEX_HOME that is not) is left as the environment has it.
+func codexEnv(env []string, a *codexaccount.Account) []string {
+	if a == nil || (a.Default && !a.Exists) {
+		return env
+	}
+	out := slices.DeleteFunc(slices.Clone(env), func(kv string) bool { return strings.HasPrefix(kv, "CODEX_HOME=") })
+	return append(out, "CODEX_HOME="+a.Home)
+}
+
 // fromTranscript is the fallback: the last token_count rate_limits any of
-// the newest rollouts recorded, at the time it recorded them. It only
-// reads.
-func (c *Config) fromTranscript() (proto.Limits, bool) {
-	if c.CodexSessions == "" {
+// the newest rollouts in sessions recorded, at the time it recorded them.
+// It only reads.
+func fromTranscript(sessions string) (proto.Limits, bool) {
+	if sessions == "" {
 		return proto.Limits{}, false
 	}
-	for _, path := range codex.NewestRollouts(c.CodexSessions, maxRollouts) {
+	for _, path := range codex.NewestRollouts(sessions, maxRollouts) {
 		if l, ok := rolloutLimits(path); ok {
 			return l, true
 		}

@@ -23,6 +23,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/claudechild"
 	"github.com/JeffreyVdb/herdr-3d/internal/codex"
+	"github.com/JeffreyVdb/herdr-3d/internal/codexaccount"
 	"github.com/JeffreyVdb/herdr-3d/internal/codexchild"
 	"github.com/JeffreyVdb/herdr-3d/internal/execpath"
 	"github.com/JeffreyVdb/herdr-3d/internal/fileindex"
@@ -928,7 +929,15 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	opts.Boards = cfg.Boards                                    // M7 boards
 	opts.BoardWatchPoll, opts.BoardIdlePoll, opts.BoardRefreshMin, opts.BoardTick =
 		cfg.BoardWatchPoll, cfg.BoardIdlePoll, cfg.BoardRefreshMin, cfg.BoardTick
-	opts.Limits = cfg.Limits                                                                             // M10 limits
+	opts.Limits = cfg.Limits // M10 limits
+	// #138: the Codex profiles, the bridge's own home first; the limits are read per profile.
+	userHome, _ := os.UserHomeDir()
+	opts.CodexProfiles = codexaccount.New(userHome, codex.DefaultHome())
+	if cfg.Limits != nil {
+		lim := *cfg.Limits
+		lim.Accounts = opts.CodexProfiles
+		opts.Limits = &lim
+	}
 	opts.ScreenDir, opts.ScreenTimeout, opts.ScreenTTL = cfg.ScreenDir, cfg.ScreenTimeout, cfg.ScreenTTL // M13 screen
 	opts.SecretsDir = cfg.SecretsDir                                                                     // #108
 	if cfg.CodexRun != "" && cfg.Control != nil {                                                        // #155

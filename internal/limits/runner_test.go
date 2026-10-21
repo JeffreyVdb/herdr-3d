@@ -33,7 +33,7 @@ func TestPollerFindsUserLocalCLIs(t *testing.T) {
 	p := New(Config{Now: func() time.Time { return t0 }, Timeout: time.Second, Grace: time.Second})
 	for _, name := range providers {
 		t.Run(name, func(t *testing.T) {
-			l := p.read(context.Background(), name, t0)
+			l := p.read(context.Background(), target{provider: name}, t0)
 			if l.Error != "" || l.Stale || l.Source != proto.LimitsProbe || len(l.Windows) == 0 {
 				t.Fatalf("installed CLI reported unavailable: %+v", l)
 			}

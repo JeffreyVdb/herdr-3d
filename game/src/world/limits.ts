@@ -3,9 +3,13 @@
  * snapshot's `limits`, and everything the widget and the dialogs say about
  * them, as plain data (colours, stale, reset times). The widget only turns
  * these views into DOM, so what matters is covered by vitest.
+ *
+ * #138: Codex is read once per Codex profile (a Codex home folder): a reading is keyed by its provider and its
+ * `account.key`; one without an account (an older bridge) is the bridge's own home's, the default. With two or more
+ * Codex readings the meter names each by its profile; with one it looks as it did before profiles.
  */
 
-import type { LimitCredits, Limits, LimitWindow } from '../net/protocol';
+import type { LimitCredits, Limits, LimitsAccount, LimitWindow } from '../net/protocol';
 
 /** Amber from here, red from HIGH_PCT (also where the dialogs warn). */
 export const WARN_PCT = 60;
@@ -53,10 +57,21 @@ export function limitsOf(v: unknown): Limits | null {
     if (typeof v.credits.balance === 'string') c.balance = v.credits.balance;
     l.credits = c;
   }
+  const a = v.account;
+  if (isObj(a) && typeof a.key === 'string' && a.key) {
+    const acct: LimitsAccount = { key: a.key, name: typeof a.name === 'string' && a.name ? a.name : a.key, plan: typeof a.plan === 'string' ? a.plan : '', default: a.default === true };
+    l.account = acct;
+  }
   return l;
 }
 
-/** The latest reading of each provider. */
+/** A reading's key in the book: its provider, and its Codex profile's key. */
+export const limitsKey = (l: Pick<Limits, 'provider' | 'account'>): string => (l.account ? `${l.provider}:${l.account.key}` : l.provider);
+
+/** The reading is its provider's default: no profile (an older bridge), or the bridge's own Codex home. */
+export const isDefaultReading = (l: Limits): boolean => !l.account || l.account.default;
+
+/** The latest reading of each provider (and of each Codex profile). */
 export class LimitBook {
   private readonly map = new Map<string, Limits>();
   /** The bridge sent a `limits` list (an M10 bridge): the widget belongs on screen. */
@@ -70,7 +85,7 @@ export class LimitBook {
     if (Array.isArray(list))
       for (const v of list) {
         const l = limitsOf(v);
-        if (l) this.map.set(l.provider, l);
+        if (l) this.map.set(limitsKey(l), l);
       }
     this.version++;
   }
@@ -79,22 +94,47 @@ export class LimitBook {
     const l = limitsOf(v);
     if (!l) return false;
     this.known = true;
-    this.map.set(l.provider, l);
+    this.map.set(limitsKey(l), l);
     this.version++;
     return true;
   }
 
-  get(provider: string): Limits | undefined {
-    return this.map.get(provider);
+  /** A provider's default reading, or (with `account`) a Codex profile's. */
+  get(provider: string, account?: string): Limits | undefined {
+    if (account !== undefined) return this.map.get(`${provider}:${account}`);
+    const all = [...this.map.values()].filter((l) => l.provider === provider);
+    return all.find(isDefaultReading) ?? all[0];
   }
 
-  /** Claude first, then Codex, then any other provider by name. */
+  /**
+   * #138: keeps only the Codex profiles in `keys` (the visible ones, as `codex_profiles` says): a profile hidden or
+   * removed takes its row off the meter at once. A reading without an account stays.
+   */
+  retainProfiles(keys: ReadonlySet<string>): void {
+    let changed = false;
+    for (const [k, l] of this.map)
+      if (l.account && !keys.has(l.account.key)) {
+        this.map.delete(k);
+        changed = true;
+      }
+    if (changed) this.version++;
+  }
+
+  /** Claude first, then Codex (the default profile, then the others by name), then any other provider by name. */
   list(): Limits[] {
     const rank = (p: string) => {
       const i = (PROVIDERS as readonly string[]).indexOf(p);
       return i < 0 ? PROVIDERS.length : i;
     };
-    return [...this.map.values()].sort((a, b) => rank(a.provider) - rank(b.provider) || a.provider.localeCompare(b.provider));
+    const name = (l: Limits) => l.account?.name ?? '';
+    return [...this.map.values()].sort(
+      (a, b) =>
+        rank(a.provider) - rank(b.provider) ||
+        a.provider.localeCompare(b.provider) ||
+        Number(isDefaultReading(b)) - Number(isDefaultReading(a)) ||
+        name(a).localeCompare(name(b), undefined, { sensitivity: 'base' }) ||
+        limitsKey(a).localeCompare(limitsKey(b)),
+    );
   }
 }
 
@@ -157,7 +197,16 @@ export interface WindowView {
 
 export interface ProviderView {
   provider: string;
+  /** The row's identity: the provider, and a Codex profile's key. */
+  key: string;
+  /** The provider's name ("Codex"). */
   name: string;
+  /** #138: the Codex profile's name when there are two or more Codex rows; null otherwise (the row looks as before profiles). */
+  profile: string | null;
+  /** #138: the Codex profile's key (null: no profile, an older bridge or Claude). */
+  account: string | null;
+  /** #138: the profile is the bridge's own Codex home (marked when `profile` is set). */
+  isDefault: boolean;
   plan: string;
   /** The plan's own windows, then the per-model ones. */
   windows: WindowView[];
@@ -197,7 +246,7 @@ function creditsText(c: LimitCredits | undefined): string | null {
 /** How one reading shows at `now`. */
 export function providerView(l: Limits, now: number, tz?: string): ProviderView {
   const view = (w: LimitWindow, i: number): WindowView => ({
-    key: `${l.provider}:${w.model ?? ''}:${w.label}:${i}`,
+    key: `${limitsKey(l)}:${w.model ?? ''}:${w.label}:${i}`,
     label: w.label,
     model: w.model ?? null,
     pct: w.pct,
@@ -215,7 +264,11 @@ export function providerView(l: Limits, now: number, tz?: string): ProviderView 
   const read = readText(l.at, now, tz);
   return {
     provider: l.provider,
+    key: limitsKey(l),
     name: PROVIDER_NAME[l.provider] ?? l.provider,
+    profile: null,
+    account: l.account?.key ?? null,
+    isDefault: isDefaultReading(l),
     plan: l.plan,
     windows,
     models,
@@ -231,9 +284,15 @@ export function providerView(l: Limits, now: number, tz?: string): ProviderView 
   };
 }
 
-/** Every provider's view, in display order. */
+/** Every provider's view, in display order; with two or more readings of one provider, each names its profile. */
 export function limitsView(book: LimitBook, now: number, tz?: string): ProviderView[] {
-  return book.list().map((l) => providerView(l, now, tz));
+  const list = book.list();
+  const count = new Map<string, number>();
+  for (const l of list) count.set(l.provider, (count.get(l.provider) ?? 0) + 1);
+  return list.map((l) => {
+    const v = providerView(l, now, tz);
+    return (count.get(l.provider) ?? 0) > 1 ? { ...v, profile: l.account?.name ?? 'default' } : v;
+  });
 }
 
 /** What a dialog is about: a harness and, once chosen, its model (`claude-opus-5-5`). */
@@ -277,8 +336,10 @@ export function harnessViews(book: LimitBook, targets: ReadonlyArray<string | Li
     const p = providerOf(harness);
     chosen.set(p, [...(chosen.get(p) ?? []), model]);
   }
+  // #138: the dialogs hire on the bridge's own Codex home: its profile's limits only.
   return limitsView(book, now, tz)
-    .filter((v) => chosen.has(v.provider))
+    .filter((v) => chosen.has(v.provider) && v.isDefault)
+    .map((v) => ({ ...v, profile: null }))
     .map((v) => scopedView(v, chosen.get(v.provider)!));
 }
 

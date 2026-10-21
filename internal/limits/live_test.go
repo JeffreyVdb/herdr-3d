@@ -39,7 +39,7 @@ func TestIntegrationProbesCreateNoSession(t *testing.T) {
 		} else {
 			t.Logf("claude probe: %v", err)
 		}
-		if l, err := c.probeCodex(ctx); err == nil {
+		if l, err := c.probeCodex(ctx, nil); err == nil {
 			codexOK++
 			t.Logf("codex %s: %+v", l.Plan, l.Windows)
 		} else {
@@ -82,9 +82,7 @@ func readHead(path string) (string, error) {
 
 // TestIntegrationCodexTranscript reads the newest real rollouts.
 func TestIntegrationCodexTranscript(t *testing.T) {
-	c := Config{CodexSessions: codex.DefaultSessionsDir()}
-	c.defaults()
-	l, ok := c.fromTranscript()
+	l, ok := fromTranscript(codex.DefaultSessionsDir())
 	if !ok {
 		t.Skip("no rate_limits in the newest Codex rollouts")
 	}

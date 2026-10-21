@@ -37,6 +37,8 @@ import { KaneoSim, type KaneoDetail, type KaneoMode } from './fixture-kaneo.ts';
 import { TelegramSim, type TelegramMode } from './fixture-telegram.ts';
 // M10: the plan limits (`limits.refresh`, `simlimits=<scenario>`, `simfail=no_m10`).
 import { LimitsSim } from './fixture-limits.ts';
+// #138: the Codex profiles (`codex_profiles.*`, `simcodexprofiles=<n>`).
+import { CodexProfilesSim } from './fixture-codex-profiles.ts';
 // #92: the AI integration (`ai.*`, `simjev=<url>`, `simai=off`, `simfail=no_ai`).
 import { AiSim } from './fixture-ai.ts';
 // #90: follow-up questions (`followups.*`, `worker.answer_followup`, `sim.turn`).
@@ -108,6 +110,8 @@ export interface SimOptions {
   modelFixture?: 'packup' | 'hiring';
   /** M10: which readings the plan limits show (tools/fixture-limits.ts; default `ok`). */
   limits?: string;
+  /** #138: this many Codex profiles (`simcodexprofiles=<n>`; tools/fixture-codex-profiles.ts; absent: a bridge before them). */
+  codexProfiles?: number;
   /** #74: the host stats' scripted numbers (`simhost=ok|hot|noupdates|busy`) and their period (`simhostms=<ms>`, default 5000; tools/fixture-host.ts). */
   host?: string;
   hostMs?: number;
@@ -433,7 +437,8 @@ export class SimWorld {
       this.now,
       (code, message) => new CmdError(code, message),
     );
-    this.limits = new LimitsSim(o.limits ?? 'ok', o.fail !== 'no_m10', this.now, (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message));
+    this.codexProfiles = o.codexProfiles ? new CodexProfilesSim({ emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: this.now }, o.codexProfiles) : null; // #138
+    this.limits = new LimitsSim(o.limits ?? 'ok', o.fail !== 'no_m10', this.now, (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message), this.codexProfiles);
     this.boards = new BoardSim(
       {
         floors: this.floors,
@@ -501,6 +506,8 @@ export class SimWorld {
   private readonly activitySettings: ActivitySettingsSim;
   /** #155: the shared Codex server switch (tools/fixture-codex-server.ts). */
   private readonly codexServer: CodexServerSim;
+  /** #138: the Codex profiles (null: a bridge before them). */
+  private readonly codexProfiles: CodexProfilesSim | null;
   /** #247: repositories on other floors (tools/fixture-repos.ts). */
   private readonly repos: ReposSim;
   /** #108: prompt secrets (tools/fixture-secrets.ts). */
@@ -653,6 +660,7 @@ export class SimWorld {
     this.digest.decorate(world); // #118
     this.activitySettings.decorate(world); // #98
     this.codexServer.decorate(world); // #155
+    this.codexProfiles?.decorate(world); // #138
     this.repos.decorate(world); // #247
     this.secrets.decorate(world); // #108
     this.hirePresets.decorate(world); // #93
@@ -818,6 +826,7 @@ export class SimWorld {
       if (this.ai.handle(m.t, a, send, ack, fail)) return; // #92
       if (this.activitySettings.handle(m.t, a, send, ack)) return; // #98
       if (this.codexServer.handle(m.t, a, send, ack)) return; // #155
+      if (this.codexProfiles?.handle(m.t, a, send, ack, () => this.limits.codexBase())) return; // #138
       if (this.repos.handle(m.t, a, send, ack)) return; // #247
       if (this.hirePresets.handle(m.t, a, send, ack)) return; // #93
       if (this.inbox.handle(m.t, a, send, ack)) return; // #106

@@ -1372,6 +1372,106 @@ dialog.settings {
   }
 }
 
+/* #138: Codex profiles. A ruled list like the scanned folders': each profile a column (its name, state tags and tools
+ * on one line, its folder in the code face under it, then room for per-profile options later). The name is the
+ * player's own, in the body face; the folder is a path on the bridge host, typed as such. */
+/* The command and the folders are typed text: no ligature may turn "-<" into an arrow. */
+.settings-cp-cmd,
+.settings-cp-path {
+  font-variant-ligatures: none;
+}
+.settings-cp-cmd {
+  overflow-wrap: anywhere;
+}
+.settings-cp-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+.settings-cp-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.settings-cp-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.settings-cp-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-cp-row[data-hidden] .settings-cp-name {
+  color: var(--text-2);
+}
+.settings-cp-states {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.settings-cp-tools {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+.settings-cp-tools .btn:disabled,
+.settings-cp-edit .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.settings-cp-where {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.settings-cp-path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-code);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-cp-plan {
+  flex: none;
+}
+.settings-cp-edit {
+  margin-top: 6px;
+}
+.settings-cp .settings-status {
+  margin: -6px 0 0;
+}
+.settings-cp .settings-field input[type='text']:not(.settings-cp-input) {
+  font-family: var(--font-code);
+  font-size: 12.5px;
+}
+@media (max-width: 600px) {
+  .settings-cp .btn--sm {
+    min-height: 44px;
+  }
+  .settings-cp-line {
+    flex-wrap: wrap;
+  }
+}
+
 /* #11: Telegram. Three steps in their order (the token, the account, the test), each a block with its state, then
  * the switch and its options. The pairing code is the one thing to read off the screen and type on a phone: large,
  * spaced, in the code face (no 0/O or 1/I in its alphabet), in a well of its own with when it expires under it. */

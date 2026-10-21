@@ -8,10 +8,12 @@
 //   from a session log: stale, "as of"), `noplan` (Claude: no plan), `none` (`limits: []`, nothing read yet), `model` (Claude week
 //   61 % but its Opus week 96 %);
 // - `simlimits=off` plays `herdr-world --no-limits`: no `limits` key in the snapshot, `limits.refresh` is `unsupported`;
-// - `simfail=no_m10` plays a bridge before M10: no `limits` in the snapshot, `limits.refresh` is `unknown_command`.
+// - `simfail=no_m10` plays a bridge before M10: no `limits` in the snapshot, `limits.refresh` is `unknown_command`;
+// - #138 `simcodexprofiles=<n>`: a Codex reading per visible Codex profile (tools/fixture-codex-profiles.ts).
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { Limits } from '../src/net/protocol.ts';
+import type { CodexProfilesSim } from './fixture-codex-profiles.ts';
 
 type Obj = Record<string, unknown>;
 type Send = (m: Obj) => void;
@@ -77,6 +79,7 @@ export class LimitsSim {
   private readonly now: () => number;
   private readonly emit: (send: Send, m: Obj) => void;
   private readonly error: (code: string, message: string) => Error;
+  private readonly profiles: CodexProfilesSim | null;
 
   constructor(
     scenario: string,
@@ -84,16 +87,30 @@ export class LimitsSim {
     now: () => number,
     emit: (send: Send, m: Obj) => void,
     error: (code: string, message: string) => Error,
+    profiles: CodexProfilesSim | null = null,
   ) {
     this.scenario = scenario;
     this.on = on;
     this.now = now;
     this.emit = emit;
     this.error = error;
+    this.profiles = profiles;
+  }
+
+  /** The scenario's readings, with #138 a Codex reading per visible profile in place of its one. */
+  private readings(scenario: string, now: number): Limits[] {
+    const list = readings(scenario, now);
+    const p = this.profiles;
+    return p ? list.flatMap((l) => (l.provider === 'codex' ? p.readings(l, now) : [l])) : list;
+  }
+
+  /** The scenario's own Codex reading now (the default profile's). */
+  codexBase(): Limits | undefined {
+    return readings(this.scenario, this.now()).find((l) => l.provider === 'codex');
   }
 
   decorate(world: Obj): void {
-    if (this.on && this.scenario !== 'off') world.limits = readings(this.scenario, this.now());
+    if (this.on && this.scenario !== 'off') world.limits = this.readings(this.scenario, this.now());
   }
 
   handle(t: unknown, send: Send, ack: (data?: unknown) => void): boolean {
@@ -104,7 +121,7 @@ export class LimitsSim {
     const queued = now - this.lastRefresh >= 20_000;
     if (queued) {
       this.lastRefresh = now;
-      for (const l of readings(this.scenario === 'none' ? 'ok' : this.scenario, now)) this.emit(send, { t: 'limits.update', ...l });
+      for (const l of this.readings(this.scenario === 'none' ? 'ok' : this.scenario, now)) this.emit(send, { t: 'limits.update', ...l });
     }
     ack({ queued });
     return true;

@@ -3,7 +3,9 @@ package proto
 // M10 limits: the Claude and Codex plan limits (5-hour and weekly windows),
 // read by the bridge from the two CLIs. limits.update is an ordinary event
 // (seq, replay ring) with the fields of Limits flat in it; the snapshot
-// carries the latest of each provider in World.Limits.
+// carries the latest of each provider in World.Limits. #138: Codex is read
+// once per visible Codex profile, each reading with its Account: a reading
+// is keyed by (provider, account key).
 
 // EvLimitsUpdate carries one provider's limits (the fields of Limits).
 const EvLimitsUpdate = "limits.update"
@@ -54,6 +56,19 @@ type Limits struct {
 	Reached string `json:"reached,omitempty"`
 	// Credits are Codex's credits.
 	Credits *LimitCredits `json:"credits,omitempty"`
+	// Account is the Codex profile read (#138; Codex only). A reading
+	// without one is the bridge's own home's (a bridge before #138).
+	Account *LimitsAccount `json:"account,omitempty"`
+}
+
+// LimitsAccount is the Codex profile a reading is of: never an email.
+type LimitsAccount struct {
+	Key  string `json:"key"`
+	Name string `json:"name"`
+	// Plan is the reading's plan (as Limits.Plan).
+	Plan string `json:"plan"`
+	// Default: the bridge's own Codex home.
+	Default bool `json:"default"`
 }
 
 // LimitWindow is one usage window.

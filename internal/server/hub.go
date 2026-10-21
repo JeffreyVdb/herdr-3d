@@ -21,6 +21,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/activity"
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/childagents"
+	"github.com/JeffreyVdb/herdr-3d/internal/codexaccount"
 	"github.com/JeffreyVdb/herdr-3d/internal/digest"
 	"github.com/JeffreyVdb/herdr-3d/internal/followup"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
@@ -269,6 +270,11 @@ type Options struct {
 	// worker.repos lists the floors only). NewHub configures it from the
 	// stored settings.
 	RepoDiscovery *repodisc.Service
+	// #138: the Codex profiles (nil: the codex_profiles.* commands fail
+	// with unsupported and the snapshot has no codex_profiles). NewHub
+	// configures it from the stored settings. Limits.Accounts is the same
+	// service when the limits are read per profile.
+	CodexProfiles *codexaccount.Service
 	// #90 follow-up questions: FollowupsEnabled is the environment's toggle
 	// (HERDR_WORLD_FOLLOWUPS_ENABLED; nil: not set), FollowupDebounce how
 	// long an ended turn and herdr's not-working status hold before the
@@ -476,9 +482,10 @@ type Hub struct {
 	boards boardsState // M7 boards
 
 	// M10 limits
-	limits       map[string]proto.Limits // by provider, as last published
+	limits       map[string]proto.Limits // by limitsKey (provider, Codex profile), as last published
 	limitsPoller *limits.Poller
-	nclients     atomic.Int32 // len(clients), for the poller
+	cp           codexProfilesState // #138 Codex profiles
+	nclients     atomic.Int32       // len(clients), for the poller
 
 	screen screenState // M13 screen share
 
@@ -800,6 +807,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if err := h.initRepoDiscovery(ctx); err != nil { // #54
 		return nil, err
 	}
+	if err := h.initCodexProfiles(ctx); err != nil { // #138
+		return nil, err
+	}
 	if err := h.initDigest(ctx); err != nil { // #118
 		return nil, err
 	}
@@ -1053,6 +1063,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startRevokeSecrets
 		case proto.CmdRepoDiscoveryGet, proto.CmdRepoDiscoverySet, proto.CmdRepoDiscoveryRefresh: // #54
 			start = h.startRepoDiscovery
+		case proto.CmdCodexProfilesGet, proto.CmdCodexProfilesSet: // #138
+			start = h.startCodexProfiles
 		// M5 term
 		case proto.CmdTerminalWatch:
 			start = h.startWatch
@@ -2301,6 +2313,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	w.RepoRefs = h.repoRefsView()                       // #247
 	w.PromptSecrets = h.promptSecretsView()             // #108
 	w.RepoDiscovery = h.repoDiscoveryView()             // #54
+	w.CodexProfiles = h.codexProfilesView()             // #138
 	w.Schedules = h.schedulesView()                     // #62
 	w.HirePresets = h.hirePresetViews()                 // #93
 	w.HerdrInstructions = true                          // #95

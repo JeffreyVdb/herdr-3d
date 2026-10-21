@@ -234,9 +234,11 @@ when no model has a name; the Codex fallback catalog names its models as `model/
 and shows any other id as it is.
 
 `limits` (M10) is the latest reading of each provider's plan limits, Claude first (see [Plan limits](#plan-limits));
-`[]` before the first reading. A bridge that does not read limits (`--no-limits`) leaves the key out, as a bridge from
-before M10 does: a client shows no limits widget without it (and none inline in the hire and start-run dialogs), and
-"Plan limits · reading…" only while the key is there and `[]`.
+`[]` before the first reading. #138: Codex has one reading per visible Codex profile, each with its `account`, the
+default profile's first, then the others by name (see [Codex profiles](#codex-profiles)). A bridge that does not read
+limits (`--no-limits`) leaves the key out, as a bridge from before M10 does: a client shows no limits widget without
+it (and none inline in the hire and start-run dialogs), and "Plan limits · reading…" only while the key is there and
+`[]`.
 
 `ai` (#92) is the AI integration's state, never a key (see [AI integration](#ai-integration)); the key is left out by a
 bridge without the service, as by one from before #92: a client's Settings then says the bridge has no AI integration.
@@ -277,6 +279,9 @@ client reads that as `{}`.
 
 `repo_discovery` (#54) is repository discovery's settings and status, `{"roots", "interval_minutes", "status"}` (see
 [Repository discovery](#repository-discovery)); a bridge from before #54, or one that cannot run git, leaves it out.
+
+`codex_profiles` (#138) is the Codex profiles, `{"profiles": [...]}`: the Codex home folders whose plan limits the
+bridge reads, hidden ones included (see [Codex profiles](#codex-profiles)); a bridge from before #138 leaves it out.
 
 `kaneo` (#184) is the Kaneo connection, never a key (see [Kaneo](#kaneo)); a bridge without the settings, or from
 before #184, leaves it out.
@@ -867,7 +872,7 @@ and remember the last `seq` applied.
 | `worker.removed` | `id`, `session`, `floor_id`, `workspace_id`, `reason`? | the workspace closed, the session was deleted, or the identity changed. `reason` is `"sent_home"` when the removal comes from `worker.fire` or a wrap-up's CLEAN (#83; the game plays the walk-out); absent otherwise. |
 | `worker.usage` | `id`, `session`, `usage` | the worker's `usage` changed; at most once per 5 s per worker (see [Usage and cost](#usage-and-cost)) |
 | `whiteboard.updated` | `floor`, `version`, `author`, `at`, `render_version`, `render`, `stale`, `stale_pins` | M13: a floor's whiteboard has a new version (a save, a clear, an agent's pin; flat in the event, see [Whiteboard](#whiteboard)) |
-| `limits.update` | `provider`, `plan`, `windows`, `at`, `stale`, `error`?, `source`?, `reached`?, `credits`? | a provider's plan limits were read (flat in the event, see [Plan limits](#plan-limits)); one per provider per read, about every 2 minutes while a client is connected |
+| `limits.update` | `provider`, `plan`, `windows`, `at`, `stale`, `error`?, `source`?, `reached`?, `credits`?, `account`? | a provider's plan limits were read (flat in the event, see [Plan limits](#plan-limits)); one per provider per read, about every 2 minutes while a client is connected. #138: one per visible Codex profile, keyed by `provider` + `account.key`; a profile renamed is sent again with its new `account.name` |
 | `ai.update` | `classifier`, `llm`, `last_error`? | #92: the AI integration's state changed (a role saved or cleared, a test passed or failed, a key rejected); the whole state, flat in the event (see [AI integration](#ai-integration)) |
 | `followups.update` | `enabled`, `threshold`, `state`, `missing`?, `roles`, `env`, `tested` | #90: the follow-up questions' state changed (a setting, a passing test, a model's state); the whole state, flat in the event (see [Follow-up questions](#follow-up-questions)) |
 | `schedule_suggestions.update` | `enabled`, `threshold`, `state`, `missing`?, `roles`, `env`, `zone`? | #66: the schedule suggestions' state changed (a setting, the zone, a model's state); the whole state, flat in the event: decode it by its `t` (see [Schedule suggestions](#schedule-suggestions)) |
@@ -884,6 +889,7 @@ and remember the last `seq` applied.
 | `codex_server.update` | `enabled`, `available`, `allow_unverified` | #155: the shared Codex server switch changed (flat in the event, see [Shared Codex server](#shared-codex-server)) |
 | `repo_refs.update` | `all_buildings` | #247: the "Repositories from other buildings" switch changed (flat in the event, see [Repositories on other floors](#repositories-on-other-floors)) |
 | `prompt_secrets.update` | `enabled`, `available`, `dir`? | #108: the "Review prompt secrets before sending" switch changed (flat in the event: decode it by its `t`, see [Prompt secrets](#prompt-secrets)) |
+| `codex_profiles.update` | `profiles` | #138: the Codex profiles changed: a setting, a folder found or gone (listed again while a client is connected), or a profile's plan; flat in the event (see [Codex profiles](#codex-profiles)). A profile no longer in it, or `hidden`, has no reading any more: a client drops its row |
 | `repo_discovery.update` | `roots`, `interval_minutes`, `status` | #54: repository discovery's settings or a scan's status changed (a scan started, progressed, ended); flat in the event. `status.revision` moves only when the discovered repositories did (see [Repository discovery](#repository-discovery)) |
 | `handoff.added` | `floor_id`, `session`, `handoff`, `handoff_count` | #223: a handoff was filed: its file is complete and indexed (#58: `floor_id` is its floor, `session` that floor's session; before #58 `session` was the floor, which it still is for a real floor; `handoff_count` the floor's count now; see [Handoffs](#handoffs)) |
 | `handoff.removed` | `floor_id`, `session`, `handoff_id`, `handoff_count` | #223: a handoff was deleted (its file is in the trash) |
@@ -995,7 +1001,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `preset.delete` | `{"id": string}` | — | `preset.removed`, then `floor.upsert` for the floors whose `last_preset` it was |
 | `run.prepare` | `{"floor"|"session", "issue"? \| "text"? \| "work_item"?, "preset"?, "orch"?, "extra"?, "preview"?: bool}` (#134 `preview` as `hire.prepare`'s) | what the start-run dialog shows: `{"prompt", "label", "ticket", "preset", "orch", "cwd", "git", "capacity"}` | — |
 | `run.start` | `{"floor"|"session", "desk_index", "issue" \| "text" \| "work_item", "orch", "preset", "extra"?, "worktree"?, "label"?, "prompt"?, "secrets"?: {"text"?, "extra"?, "prompt"?: SecretsReview}}` | `worker.hire`'s ack plus `{"launch_id", "prompt"}` | `worker.hire`'s, then the orchestrator's `worker.upsert` with `issue` and `work_item`, and `floor.upsert` with `last_preset` |
-| `limits.refresh` | `{}` | `{"queued": bool}`: `false` when the last refresh was less than 20 s ago | `limits.update` for both providers when queued (see [Plan limits](#plan-limits)) |
+| `limits.refresh` | `{}` | `{"queued": bool}`: `false` when the last refresh was less than 20 s ago | `limits.update` for both providers (Codex: each visible profile, listed again first) when queued (see [Plan limits](#plan-limits)) |
 | `ai.get` | `{}` | the AI state (see [AI integration](#ai-integration)) | — |
 | `ai.models` | `{"role", "key"?, "base_url"?}` | `{"models": [{"id", "description"?}], "base_url"?}` | — |
 | `ai.test` | `{"role", "key"?, "base_url"?, "model"?, "extra_body"?}` | `{"ok": true, "latency_ms", "json_mode"?, "base_url"?, "score"?}` | `ai.update` when it changes the role in use |
@@ -1040,6 +1046,8 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `prompt_secrets.set` | `{"enabled": bool}` | the switch; a change makes every review made before it stale | `prompt_secrets.update` (before the ack) when it changes |
 | `prompt_secrets.scan` | `{"text": string}` (at most 32 KiB) | `{"revision", "candidates": [{"id", "start", "end", "kinds", "encoded"?}…]}`; `secrets_review_off` while the switch is off | — |
 | `prompt_secrets.revoke` | `{"worker": string}` (round 5) | `{"removed": int}`: every protected file the worker held (its own and those it held by a lease) is gone, for every holder; the worker keeps running; with the switch on or off; `not_found` (a worker the bridge does not show and that holds no file: one it does not show that holds files is revoked the same way), `secrets_unavailable` (no private runtime directory) | the worker's `worker.upsert` without `secret_files` (before the ack), and of every other holder that lost a file |
+| `codex_profiles.get` | `{}` | `{"profiles"}` (see [Codex profiles](#codex-profiles)), listed afresh | `codex_profiles.update` when the list changed |
+| `codex_profiles.set` | one change: `{"add": path}`, or `{"key", "name": string}`, `{"key", "hidden": bool}`, `{"key", "remove": true}` | the list | `codex_profiles.update` (and `limits.update` for a renamed profile's reading) before the ack |
 | `repo_discovery.get` | `{}` | `{"roots", "interval_minutes", "status"}` (see [Repository discovery](#repository-discovery)) | — |
 | `repo_discovery.set` | `{"roots"?: [absolute path…], "interval_minutes"?: 1–1440}` (at least one) | the state; a change of roots scans at once | `repo_discovery.update` (before the ack) when it changes |
 | `repo_discovery.refresh` | `{}` | the state; a scan starts (after the one in flight) | `repo_discovery.update` (before the ack) |
@@ -2380,6 +2388,7 @@ each (Claude, then Codex; a provider not read yet is absent):
 | `source` | `probe`, or `transcript` |
 | `reached` | Codex's `rateLimitReachedType` of the account's own limit, present while it is reached. The `rateLimitReachedType` of a model's own limit (`rateLimitsByLimitId`) is not here: it is `reached` on that limit's windows, so a client warns about it only for that model. A model limit with no windows has nothing to carry it and is dropped. |
 | `credits` | Codex's `{"has_credits","unlimited","balance"}` |
+| `account` | #138, Codex only: the Codex profile read, `{"key","name","plan","default"}` (never an email). `key` is stable across a rename; `default` is the bridge's own Codex home. A reading without it (a bridge before #138) is the default profile's. |
 
 Unknown keys of the CLIs are ignored; the fields above are only ever added to.
 
@@ -2402,6 +2411,64 @@ Unknown keys of the CLIs are ignored; the fields above are only ever added to.
   key, `[]` at first, exactly when the bridge reads limits). A refresh acknowledged while a read is running is not lost:
   when that read ends, both providers are read again at once (the read that was running may predate the request).
   A Codex CLI that is missing still falls back to the rollouts, when there are any.
+- **Codex profiles** (#138, see [Codex profiles](#codex-profiles)): every visible profile is its own reading, read with
+  `CODEX_HOME=<its folder>` (an inherited `CODEX_HOME` is replaced, never added to), one after the other within a poll
+  (Claude beside them), each published as it is taken, each with its own schedule, failures and backoff. The
+  transcript fallback of a profile reads its own `<folder>/sessions`; the default profile's is `--codex-sessions`, as
+  before. A profile with no `auth.json` whose probe fails (not a timeout, not a missing CLI) is `no_plan`. A hidden
+  profile, and an added folder that is gone, are not read. The default profile's folder that does not exist is read in
+  the bridge's environment as it is (Codex refuses a `CODEX_HOME` that is not there). The profiles are listed again
+  every 2 minutes and on `limits.refresh`, only while a client is connected, so a new `~/.codex-x` with an `auth.json`
+  shows without a restart. The plan is what the probe reports (`prolite`, `team`…), never mapped to a marketing name.
+- **Compatibility**: readings keep `provider: "codex"`. A client from before #138 keys by `provider` and shows one
+  Codex row, whichever profile's reading came last; nothing in it breaks. A client that knows profiles keys Codex
+  readings by `provider` + `account.key`, names each by its profile when there are two or more, and looks as before
+  with one; the hire and start-run dialogs show the default profile's only.
+
+### Codex profiles
+
+#138 (the redesign of epic #135's account switching; #136, `docs/research/codex-accounts.md`, is the NO-GO on a global
+switch). A Codex account is a **Codex profile**: a Codex home folder with its own sign-in. The bridge never switches
+an account, never reads a token and never runs codex-auth: it only looks at folders.
+
+- **Found**: the bridge's own home (`$CODEX_HOME` of its environment, else `~/.codex`: the folder whose `sessions/`
+  `--codex-sessions` defaults to), always first and the **default**; then every `~/.codex-*` folder that has an
+  `auth.json` (stat only: the file is never opened, logged, stored or sent), by name; then the folders the user added,
+  in the order added. Paths are absolute with symlinks resolved, and a folder is listed once (a `$CODEX_HOME` that
+  is a `~/.codex-*` folder is the default only). A folder without an `auth.json` is a profile all the same, "not signed
+  in" (Codex can also keep the sign-in in the keyring; a reading with a plan counts as signed in).
+- **Key**: from the folder alone, so it never moves to another folder when folders come and go, and does not change
+  on a rename. The folder's name, lower case, without leading dots and `codex-`: `~/.codex` is `codex`,
+  `~/.codex-work` is `work`. Only the default and a `~/.codex-<key>` folder whose name is already that (`.codex-Work`
+  is not; nor is `~/.codex-codex` beside a default `codex`) have the name alone; any other folder adds `-` and the
+  first 6 hex digits of the SHA-256 of its path: `/data/team-codex` is `team-codex-32b74a`, `~/.codex-Work`
+  `work-<hash>`. A name that itself ends in `-` and 6 or more hex digits is hashed too (`~/.codex-a-812dc0` is
+  `a-812dc0-<hash>`), so a name alone never ends like a hash and never equals another folder's hashed key. Two paths
+  whose 6 digits are the same both take all 64, whichever is listed first: no key depends on the listing order. The
+  default name is the folder's name without the hash when no other profile's folder has that name and no other
+  profile has it as its key, else the key.
+- **Settings** (SQLite `codex_profiles_settings`, one row, a JSON object: per folder a `name` and `hidden`, and the
+  added folders). `codex_profiles.set` takes **one** change and answers the list:
+  - `{"key", "name"}`: trimmed, 1–40 characters, no control characters, no other profile's name or key in any case
+    (`bad_request` with the reason); the key itself as name clears it.
+  - `{"key", "hidden": bool}`: a hidden profile is not read and has no reading in `limits`; the default cannot be
+    hidden.
+  - `{"add": path}`: an absolute path or `~/…` on the bridge host, an existing folder, not a profile already (found or
+    added), at most 16 added folders.
+  - `{"key", "remove": true}`: an added folder only (a found one can only be hidden); what was set for it goes too.
+  - An unknown key is `not_found`; anything else (no change, two changes, `add` with a `key`) is `bad_request`.
+- **View** (`codex_profiles.get`'s and `.set`'s ack, the snapshot's `codex_profiles`, flat in `codex_profiles.update`):
+
+```json
+{"t":"codex_profiles.update","seq":2301,"profiles":[
+  {"key":"codex","name":"codex","path":"/home/me/.codex","display":"~/.codex","plan":"prolite","signed_in":true,"default":true,"hidden":false,"added":false},
+  {"key":"work","name":"Work seat","path":"/home/me/.codex-work","display":"~/.codex-work","plan":"team","signed_in":true,"default":false,"hidden":false,"added":false},
+  {"key":"spare-306ceb","name":"spare","path":"/srv/codex-spare","display":"/srv/codex-spare","plan":"","signed_in":false,"default":false,"hidden":true,"added":true,"missing":true}]}
+```
+
+  `display` is `path` with `~` for the bridge user's home; `plan` is the profile's latest reading's (`""` unknown);
+  `missing` marks an added folder that is not there (not read). The list is published again when a setting changes,
+  when listing finds a folder appeared or went, and when a profile's plan changes.
 
 ### AI integration
 
