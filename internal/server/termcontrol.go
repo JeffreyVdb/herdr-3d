@@ -33,6 +33,10 @@ const (
 	// historySettle is how long after a scroll the offset is read: herdr has
 	// applied the scroll by then.
 	historySettle = 80 * time.Millisecond
+	// After a scroll the offset is read historyBurst times, historyBurstGap
+	// apart (a wheel's lines may land over several of herdr's ticks).
+	historyBurst    = 4
+	historyBurstGap = 150 * time.Millisecond
 	// historyCallTimeout bounds one pane.get.
 	historyCallTimeout = 2 * time.Second
 )
@@ -406,38 +410,45 @@ func (h *Hub) toLive(id string) {
 	}
 }
 
-// followHistory reads a control watch's history offset (pane.get) after a
-// scroll and every HistoryPoll while the view is above the live bottom,
-// and sends it when it changed, until the watch ends.
+// followHistory reads a control watch's history offset (pane.get) a few
+// times after a scroll (herdr may not have applied it at the first read) and
+// every HistoryPoll while the view is above the live bottom, and sends it
+// when it changed, until the watch ends.
 func (h *Hub) followHistory(ctx context.Context, w *watch) {
 	read := h.opts.PaneScroll
 	if read == nil {
 		return
 	}
-	poll := h.opts.HistoryPoll
-	tick := time.NewTicker(poll)
-	defer tick.Stop()
+	timer := time.NewTimer(h.opts.HistoryPoll)
+	defer timer.Stop()
+	burst := 0 // reads left after the last poke
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-w.ctl.poke:
-			sleepCtx(ctx, historySettle)
-		case <-tick.C:
-			h.term.mu.Lock()
-			idle := w.ctl.hist.Offset == 0 && w.ctl.histSent
-			h.term.mu.Unlock()
-			if idle {
-				continue
+			burst = historyBurst
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
 			}
+			timer.Reset(historySettle)
+			continue
+		case <-timer.C:
 		}
-		if ctx.Err() != nil {
-			return
+		next := h.opts.HistoryPoll
+		if burst > 0 {
+			burst--
+			next = historyBurstGap
 		}
+		timer.Reset(next)
 		h.term.mu.Lock()
 		owned := w.ctl.mode == proto.ControlOwned && w.ctl.stream != nil
+		idle := w.ctl.hist.Offset == 0 && w.ctl.histSent && next == h.opts.HistoryPoll
 		h.term.mu.Unlock()
-		if !owned {
+		if !owned || idle {
 			continue
 		}
 		cctx, cancel := context.WithTimeout(ctx, historyCallTimeout)
