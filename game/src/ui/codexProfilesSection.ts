@@ -95,7 +95,12 @@ export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTM
     const status = el('p', 'settings-status');
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
-    block.append(head, summary, list, addField, status);
+    // #167: a share's, Fix's, unshare's or move's outcome, said once (it is shown under its row).
+    const shareLive = el('p', 'visually-hidden');
+    shareLive.setAttribute('role', 'status');
+    shareLive.setAttribute('aria-live', 'polite');
+    shareLive.dataset.hook = 'share-live';
+    block.append(head, summary, list, addField, status, shareLive);
 
     // #140: the Auto rules.
     const rulesBlock = el('div', 'settings-role settings-cp settings-cp-auto');
@@ -233,7 +238,7 @@ export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTM
       box.dataset.profile = p.key;
       if (view?.kind === 'confirm') {
         const replaced = view.steps.filter((x) => x.action === 'replace');
-        box.append(el('p', 'settings-field-hint settings-cp-share-ask', `These are in the way in ${p.display}. Each is renamed, never deleted:`));
+        box.append(el('p', 'settings-field-hint settings-cp-share-ask', `These are in the way in ${p.display}. Each is renamed, never deleted (its new name has the time you apply):`));
         const ul = el('ul', 'settings-cp-share-list');
         ul.dataset.hook = 'share-confirm';
         for (const x of replaced) {
@@ -366,15 +371,19 @@ export function codexProfilesSection(host: CodexProfilesSectionHost): (body: HTM
     }
 
     function reported(p: CodexProfile, res: CommandResult): void {
+      let text: string;
       if (res.ok) {
         const ack = res.data as CodexShareAck;
         host.book.upsert(ack);
-        shares.set(p.key, { kind: 'report', text: ack.report ?? 'Done.', error: ack.failed === true });
+        text = ack.report ?? 'Done.';
+        shares.set(p.key, { kind: 'report', text, error: ack.failed === true });
       } else {
-        shares.set(p.key, { kind: 'report', text: codexProfilesFailureText(res.code, res.message), error: true });
+        text = codexProfilesFailureText(res.code, res.message);
+        shares.set(p.key, { kind: 'report', text, error: true });
         if (res.code === 'not_found') void host.send('codex_profiles.get', {}).then((r) => r.ok && host.book.upsert(r.data));
       }
       sync();
+      shareLive.textContent = `${p.name}: ${text}`;
     }
 
     /** #140: "May be used for anything": sent at once, like Hide. */

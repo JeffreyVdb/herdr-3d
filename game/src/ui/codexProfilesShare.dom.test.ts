@@ -113,7 +113,7 @@ describe('sharing a Codex profile’s setup (#167)', () => {
     expect((m.key('share:work') as HTMLInputElement).checked).toBe(false);
     const list = m.row('work').querySelector('[data-hook="share-confirm"]')!;
     expect([...list.querySelectorAll('li')].map((l) => l.textContent)).toEqual(['config.toml (a file) is kept as config.toml.before-share-20261021-151002']);
-    expect(m.row('work').querySelector('.settings-cp-share-ask')?.textContent).toBe('These are in the way in ~/.codex-work. Each is renamed, never deleted:');
+    expect(m.row('work').querySelector('.settings-cp-share-ask')?.textContent).toBe('These are in the way in ~/.codex-work. Each is renamed, never deleted (its new name has the time you apply):');
     expect(document.activeElement).toBe(m.key('share-confirm:work'));
     (m.key('share-cancel:work') as HTMLButtonElement).click();
     expect(m.row('work').querySelector('[data-hook="share-confirm"]')).toBeNull();
@@ -127,6 +127,7 @@ describe('sharing a Codex profile’s setup (#167)', () => {
     await m.flush();
     expect(m.sent.at(-1)!.args).toEqual({ key: 'work', share: true, replace: ['config.toml'] });
     expect(m.row('work').querySelector('[data-hook="share-report"]')?.textContent).toBe('Linked config.toml, wrote hooks.json.');
+    expect(document.querySelector('[data-hook="share-live"]')?.textContent).toBe('work: Linked config.toml, wrote hooks.json.'); // UX-R1: said once
   });
 
   it('shows the bridge’s refusal under the row (the home changed since the plan)', async () => {
@@ -140,6 +141,8 @@ describe('sharing a Codex profile’s setup (#167)', () => {
     const r = m.row('work').querySelector('[data-hook="share-report"]')!;
     expect(r.textContent).toBe('~/.codex-work changed since you looked; look again.');
     expect(r.classList.contains('settings-field-error')).toBe(true);
+    const live = document.querySelector('[data-hook="share-live"]')!;
+    expect([live.getAttribute('role'), live.textContent]).toEqual(['status', 'work: ~/.codex-work changed since you looked; look again.']);
   });
 
   it('turns sharing off at once, with its report', async () => {
