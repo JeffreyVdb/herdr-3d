@@ -167,6 +167,7 @@ export class SeatTerminal {
       this.deps.keyboard();
     });
     this.host.addEventListener('mousedown', this.onPress, { capture: true });
+    this.host.addEventListener('focus', this.onHostFocus);
     this.host.addEventListener('paste', this.onPaste, { capture: true });
     // xterm knows its cell size only once it has rendered: a fit that found none is tried again then.
     this.offs.push(term.onRender(() => {
@@ -185,6 +186,12 @@ export class SeatTerminal {
 
   private readonly onPress = () => {
     this.scrollAt = [this.host.scrollLeft, this.host.scrollTop];
+  };
+
+  // Read only, the host is focusable for its arrows (Tab); a click beside the cells gives the keyboard back to the seat,
+  // or Enter would go nowhere.
+  private readonly onHostFocus = () => {
+    if (!this.host.matches(':focus-visible')) this.deps.keyboard();
   };
 
   private readonly onPaste = (e: ClipboardEvent) => {
@@ -351,6 +358,7 @@ export class SeatTerminal {
     this.dpr?.removeEventListener('change', this.onDpr);
     this.host.removeEventListener('paste', this.onPaste, { capture: true });
     this.host.removeEventListener('mousedown', this.onPress, { capture: true });
+    this.host.removeEventListener('focus', this.onHostFocus);
     for (const d of this.offs.splice(0)) d.dispose();
     this.term?.dispose();
     this.term = null;

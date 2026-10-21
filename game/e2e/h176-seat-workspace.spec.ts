@@ -323,8 +323,10 @@ test('read only in a narrow window: the pane keeps its size and scrolls inside t
   await page.mouse.move(box.x + box.width / 2, box.y + 60);
   await page.mouse.wheel(200, 0);
   await expect.poll(async () => (await scroll()).left).toBeGreaterThan(0);
+  await page.mouse.wheel(0, 200);
+  await expect.poll(() => host.evaluate((e) => e.scrollTop)).toBeGreaterThan(0);
   expect(await sent(page, 'terminal.scroll')).toEqual([]);
-  await host.evaluate((e) => (e.scrollLeft = 0));
+  await host.evaluate((e) => e.scrollTo(0, 0));
   // The keyboard: tabbed to (a focusable region), the arrows scroll it; letters still go to the pane.
   await host.focus();
   await expect(host).toHaveAttribute('aria-label', /read only/);
@@ -354,6 +356,21 @@ test('read only in a narrow window: the pane keeps its size and scrolls inside t
   // The press kept the pane where it was scrolled, and the keyboard is the seat's again.
   expect((await scroll()).left).toBe(at);
   await expect(page.locator('.seat-input')).toBeFocused();
+  // A click beside the cells (a wide window: the pane is narrower than the area) leaves the keyboard the seat's: Enter
+  // still types.
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await frames(page, 3);
+  const beside = await page.evaluate(() => {
+    const x = (document.querySelector('.seat-term .xterm') as HTMLElement).getBoundingClientRect();
+    const h = (document.querySelector('.seat-term') as HTMLElement).getBoundingClientRect();
+    return { x: (x.right + h.right) / 2, y: h.top + 80, room: h.right - x.right };
+  });
+  expect(beside.room).toBeGreaterThan(40);
+  await page.mouse.click(beside.x, beside.y);
+  await expect(page.locator('.seat-input')).toBeFocused();
+  const enters = await page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.keys').length);
+  await page.keyboard.press('Enter');
+  await expect.poll(() => page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.keys').length)).toBeGreaterThan(enters);
   // The font never changed for it, and nothing was resized.
   expect((await term(page))!.font!.px).toBe(px);
   expect(await sent(page, 'terminal.resize')).toEqual([]);
