@@ -89,6 +89,11 @@ func startThrowaway(t *testing.T) *throwaway {
 	if err != nil {
 		t.Skip("herdr is not installed")
 	}
+	return startThrowawayBin(t, bin)
+}
+
+// startThrowawayBin is startThrowaway with that herdr executable.
+func startThrowawayBin(t *testing.T, bin string) *throwaway {
 	var rnd [4]byte
 	_, _ = rand.Read(rnd[:])
 	s := &throwaway{t: t, bin: bin, env: herdr.CleanEnv(os.Environ()), name: "h3d-it-" + hex.EncodeToString(rnd[:])}
