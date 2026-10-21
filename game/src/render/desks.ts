@@ -391,8 +391,9 @@ export function deskGeometries(): Record<'top' | 'legs' | 'chair' | 'chairBase' 
       new THREE.BoxGeometry(DESK_W - 0.16, 0.3, 0.025).translate(0, 0.33, SEAT_OFFSET + DESK_D / 2 - 0.05),
     ]),
     chair: mergeGeometries([
-      new THREE.BoxGeometry(0.46, 0.06, 0.44).translate(0, 0.42, 0),
-      new THREE.BoxGeometry(0.44, 0.4, 0.05).translate(0, 0.71, -0.24),
+      new THREE.BoxGeometry(0.56, 0.06, 0.7).translate(0, 0.42, -0.07),
+      // Clear the capsule, trousers, hood and scarf in the relaxed pose's -0.2 rad lean.
+      new THREE.BoxGeometry(0.54, 0.4, 0.05).rotateX(-0.2).translate(0, 0.71, -0.4),
     ]),
     chairBase: mergeGeometries([
       new THREE.CylinderGeometry(0.028, 0.028, 0.36, 8).translate(0, 0.21, 0),
