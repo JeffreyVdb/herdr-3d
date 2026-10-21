@@ -63,8 +63,8 @@ type CodexProfilesUpdate struct {
 	CodexProfiles
 }
 
-// CodexProfilesSetArgs are the args of codex_profiles.set: either Add
-// alone, or Key with Name and/or Hidden, or Key with Remove.
+// CodexProfilesSetArgs are the args of codex_profiles.set, one change a
+// command: Add alone, or Key with one of Name, Hidden and Remove.
 type CodexProfilesSetArgs struct {
 	Key    string  `json:"key,omitempty"`
 	Name   *string `json:"name,omitempty"`
