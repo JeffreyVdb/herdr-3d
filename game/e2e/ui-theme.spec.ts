@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, openMenu, settingsSection, shot, watchErrors } from './game';
+import { frames, openGame, openMenu, settingsSection, sheetSettled, shot, watchErrors } from './game';
 import { boot, DESKTOP, NARROW, seed, SIM, sitAtTofu, SURFACES, type Themes, type UiTheme } from './ui-surfaces';
 import { strays, targets, textSamples } from './ui-theme-probe';
 
@@ -498,7 +498,8 @@ test('transcript zoom 100 → 200 leaves the seated widgets (prompt box, Send, j
     page.evaluate(
       (sels) =>
         sels.map((s) => {
-          const e = document.querySelector(`.seat-transcript ${s}`);
+          // #187: the answer controls are in the questions' sheet, outside the laptop's screen.
+          const e = document.querySelector(`${s.startsWith('.tx-ask') ? 'dialog.tx-qsheet' : '.seat-transcript'} ${s}`);
           if (!e) return `${s}: missing`;
           const r = e.getBoundingClientRect();
           return `${s}: ${getComputedStyle(e).fontSize} ${Math.round(r.height)}px`;
@@ -511,11 +512,18 @@ test('transcript zoom 100 → 200 leaves the seated widgets (prompt box, Send, j
     await sitAtTofu(page, 'transcript', 'Pebble', 0);
     // A question (the simulator's AskUserQuestion, as m16-ask): its card's answer controls, the prompt box under it.
     await page.evaluate(() => window.__h3d.simAsk({ id: 'cf1db588-9a66-4307-adfa-1bbe4306c2f3', ask: { tool_use_id: 'toolu_zoom', agent: 'claude', questions: [{ header: 'Color', question: 'Which color?', multi: false, other: true, options: [{ label: 'Red', description: 'Warm' }, { label: 'Blue', description: 'Cool' }] }] } }));
-    await expect(page.locator('.seat-transcript .tx-ask .tx-ask-opt').first()).toBeVisible();
+    await expect(page.locator('dialog.tx-qsheet .tx-ask .tx-ask-opt').first()).toBeVisible();
+    await sheetSettled(page);
     const at100 = await measure();
     expect(at100.filter((m) => m.endsWith('missing'))).toEqual([]);
+    // The sheet hidden for the zoom keys (they are the conversation's), then open again to measure.
+    await page.keyboard.press('Escape');
+    await expect(page.locator('dialog.tx-qsheet')).toBeHidden();
     await page.locator('.seat-transcript .tx-scroll').focus();
     await zoomTo(page, 200);
+    await page.locator('.seat-transcript .tx-qbtn').click();
+    await expect(page.locator('dialog.tx-qsheet .tx-ask .tx-ask-opt').first()).toBeVisible();
+    await sheetSettled(page);
     const at200 = await measure();
     if (ui === 'ubuntu') {
       expect(at200, 'Ubuntu: the widgets do not zoom').toEqual(at100);
