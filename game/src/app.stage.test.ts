@@ -18,6 +18,16 @@ interface Inside {
   stageCity(): Promise<void>;
 }
 
+/** What a cold floor ride's compile (`App.warmUp`, #141) reads and sets. */
+interface Ride {
+  office: { root: THREE.Object3D };
+  walk: { scene: THREE.Scene };
+  fpCam: THREE.PerspectiveCamera;
+  staging: boolean;
+  warming: boolean;
+  warmUp(): Promise<void>;
+}
+
 /** Two furniture groups of two meshes each, one culled; compileAsync records what was visible when it picked. */
 function harness() {
   const groups = [0, 1].map(() => {
@@ -109,9 +119,59 @@ describe('App.stageCity (#146)', () => {
 
   it('the city counts as drawn only in the city view', async () => {
     const h = harness();
-    void h.inside.stageCity();
+    const done = h.inside.stageCity();
     h.inside.mode = 'floor';
     h.inside.frames = 2;
     expect(h.app.cityDrawn).toBe(false);
+    for (const f of h.finish) f();
+    await done; // its disposal hold ends
+  });
+
+  /** The harness with an office to ride to; each compile (the city's and the floor's) ends on its `finish`. */
+  function rideHarness() {
+    const h = harness();
+    const material = new THREE.MeshBasicMaterial();
+    const office = new THREE.Group();
+    office.add(new THREE.Mesh(new THREE.BoxGeometry(), material));
+    const ride = h.inside as Inside & Ride;
+    Object.assign(ride, {
+      office: { root: office },
+      walk: { scene: new THREE.Scene() },
+      fpCam: new THREE.PerspectiveCamera(),
+    });
+    ride.r.compileAsync = () => new Promise<void>((res, rej) => h.finish.push((err) => (err ? rej(err) : res())));
+    return { ...h, ride, material };
+  }
+
+  it('a cold ride whose compile starts during it and ends after it still has its disposals fired again', async () => {
+    const { ride, material, finish } = rideHarness();
+    const city = ride.stageCity();
+    // The doors closed while the start-up city still compiled; the floor's compile starts.
+    const floor = ride.warmUp();
+    expect(finish).toHaveLength(3);
+    expect([ride.staging, ride.warming]).toEqual([true, true]);
+    finish[0]!();
+    finish[1]!();
+    await city;
+    expect([ride.staging, ride.warming]).toEqual([false, true]);
+    // The world disposes what the floor's compile picked, before it builds it (and listens for its dispose).
+    material.dispose();
+    let late = 0;
+    material.addEventListener('dispose', () => late++);
+    finish[2]!();
+    await floor;
+    expect(ride.warming).toBe(false);
+    expect(late).toBe(1);
+  });
+
+  it('a cold ride alone has its disposals fired again', async () => {
+    const { ride, material, finish } = rideHarness();
+    const floor = ride.warmUp();
+    material.dispose();
+    let late = 0;
+    material.addEventListener('dispose', () => late++);
+    finish[0]!();
+    await floor;
+    expect(late).toBe(1);
   });
 });
