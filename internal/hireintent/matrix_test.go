@@ -564,8 +564,11 @@ func runCase(t *testing.T, f *failures, cat hireintent.Catalog, c mcase) {
 
 // A follow-up reply re-resolves the pending proposal with the visibility
 // sent with it: every form and LLM answer, every pair of visibilities
-// (first, reply), every classifier state. The reply fills the effort; the
-// model is what the first sentence said, under the reply's visibility.
+// (first, reply), every classifier state. The reply fills the effort. The
+// first sentence is checked against its own oracle; the reply's model is
+// the one the first took (expect, never the result) while it is still
+// shown, else asked among the visible ones (#190 D2); a model the first
+// could not take is what its words say under the reply's visibility.
 func TestMatrixFollowUpVisibility(t *testing.T) {
 	cat := matrixCatalog()
 	f := &failures{t: t}
@@ -587,29 +590,34 @@ func TestMatrixFollowUpVisibility(t *testing.T) {
 						}
 						text := first.sentence()
 						r := matrixInterpret(text, nil, cat, v1.hidden, cls1, first.answer())
+						w1 := expect(cat, first)
+						f.add(first, text, check(first, w1, r, cls1))
 						if r.Hire == nil {
-							f.add(first, text, fmt.Sprintf("first: %+v", r))
 							continue
 						}
 						pending := roundTrip(t, r.Hire)
-						// A harness named with nothing to hire is not carried (#211).
+						// A harness said binds while it has models to hire (#190); with none,
+						// it is not carried (#211).
 						h := first.harness
-						if h.answer != "" && len(visibleModels(cat, v1, h.answer)) == 0 {
+						if h.answer != "" && len(visibleModels(cat, v2, h.answer)) == 0 {
 							h.answer = ""
 						}
-						// A model taken is sent back as its id: that is what is read again.
-						rl := lm
-						if m := r.Hire.Model; m.Valid() {
-							rl = llmModel{"pending " + m.Value, func(form) (string, bool) { return m.Value, true }}
+						reply := mcase{phrasing: first.phrasing, harness: h, form: fm, llm: lm, vis: v2, effort: effortSaid{"high", "high"}, llmEffort: "level", task: task, cls: cs}
+						w := expect(cat, reply)
+						if w1.model != "" {
+							w = want{effort: "high"}
+							if v2.shown(w1.model) {
+								w.model = w1.model
+							} else if w.choices = visibleModels(cat, v2, "codex"); w.choices == nil {
+								w.choices = visibleModels(cat, v2, "")
+							}
 						}
-						reply := mcase{phrasing: first.phrasing, harness: h, form: fm, llm: rl, vis: v2, effort: effortSaid{"high", "high"}, llmEffort: "level", task: task, cls: cs}
 						var cls2 *ai.FakeClassifier
 						if cs.make != nil {
 							cls2 = cs.make()
 						}
 						got := matrixInterpret("Use high effort.", pending, cat, v2.hidden, cls2, ans("hire", "", "", "high", ""))
-						w := expect(cat, reply)
-						f.add(followUp{reply}, text+" / Use high effort.", check(reply, w, got, cls2))
+						f.add(followUp{reply, v1}, text+" / Use high effort.", check(reply, w, got, cls2))
 					}
 				}
 			}
@@ -618,9 +626,14 @@ func TestMatrixFollowUpVisibility(t *testing.T) {
 	f.done()
 }
 
-type followUp struct{ mcase }
+type followUp struct {
+	mcase
+	first visibility
+}
 
-func (f followUp) String() string { return "follow-up " + f.mcase.String() }
+func (f followUp) String() string {
+	return "follow-up (first vis=" + f.first.name + ") " + f.mcase.String()
+}
 
 // The screenshot's sentence (AC1), word for word, with every LLM answer for
 // the model: gpt-6.1-sol, high, the task with its period.
