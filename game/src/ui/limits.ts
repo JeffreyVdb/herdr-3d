@@ -186,16 +186,26 @@ export class LimitsWidget {
   /** What takes the corner away (corner.ts): a change re-places the plate, and a dialog that opened puts it back on top. */
   private readonly corner = new CornerWatch((opened) => {
     this.root.dataset.beside = this.corner.beside;
-    this.update();
+    this.relayout();
     if (opened) this.raise();
   });
   private readonly themeWatch = new MutationObserver(() => {
-    if (this.screenOpen()) this.update();
+    if (this.screenOpen()) this.relayout();
   });
   /** A screen dialog may have more or less room beside it after a resize. */
   private readonly onResize = () => {
-    if (this.screenOpen()) this.update();
+    if (this.screenOpen()) this.relayout();
   };
+  /**
+   * #144: where the plate goes may have changed since `sync` placed it (the corner's watch, a resize, the theme, a peek,
+   * the prefs): `update` places it again. Placing asks the corner and measures the tab (a forced layout), too much for
+   * every world event.
+   */
+  private moved = true;
+  /** #144: what placing the plate read besides the page: the book's `known` (a bridge with limits shows it) and the prefs. */
+  private placed = '';
+  /** #144: what the last render read besides the time: the book's version, the profiles, open, refreshing. */
+  private rendered: [number, unknown, boolean, boolean] | null = null;
   private readonly onOutside = (e: Event) => {
     if (!(e.target instanceof Node) || !this.root.contains(e.target)) this.setPeek(false);
   };
@@ -272,7 +282,7 @@ export class LimitsWidget {
     this.peekOwner = on ? this.topScreen() : null;
     this.watchOutside(on);
     this.key = '';
-    this.update();
+    this.relayout();
     if (had || toFocus) (on ? this.strip : this.tab).focus({ preventScroll: true });
   }
 
@@ -326,11 +336,13 @@ export class LimitsWidget {
       this.prefs.open = true;
       this.prefs.hidden = false;
     } else this.toggle();
-    this.update();
+    this.relayout();
   }
 
   /** Brings the widget back or takes it away (from Settings, or the panel's Hide). */
   private sync(): void {
+    this.moved = false;
+    this.placed = this.placedKey();
     this.root.hidden = this.prefs.hidden || !this.book.known;
     const folded = this.folded;
     const screen = this.screenOpen();
@@ -352,10 +364,24 @@ export class LimitsWidget {
     this.root.dataset.open = String(open);
   }
 
-  /** The bridge sent a reading (or a snapshot): render. */
+  /**
+   * The world changed (App.applyChange, every event but a usage one): render what changed. #144: the plate is placed
+   * again only when where it goes may have moved, the bridge's `known` flipped or the prefs changed, and the limits are
+   * read again only when the book (or the profiles, open, refreshing) changed; time alone is `tick`'s.
+   */
   update(): void {
-    this.sync();
-    this.render();
+    if (this.moved || this.placed !== this.placedKey()) this.sync();
+    this.render(false);
+  }
+
+  private placedKey(): string {
+    return `${this.book.known} ${this.prefs.hidden} ${this.prefs.open}`;
+  }
+
+  /** The corner may have moved (a dialog, the seat, a resize, the theme, a peek): place the plate again and render. */
+  private relayout(): void {
+    this.moved = true;
+    this.update();
   }
 
   /** Time passed: re-render only when a reading has crossed into stale (or a shown "ago" changed). */
@@ -387,11 +413,16 @@ export class LimitsWidget {
     };
   }
 
-  private render(): void {
+  /** `timed`: the time may have changed what shows (`tick`, a refresh, the profiles); else only the inputs `rendered` keeps. */
+  private render(timed = true): void {
     if (this.root.hidden) return;
+    const open = this.isOpen;
+    const inputs: [number, unknown, boolean, boolean] = [this.book.version, this.profiles?.state ?? null, open, this.refreshing];
+    const same = !!this.rendered && inputs.every((x, i) => x === this.rendered![i]);
+    if (!timed && same && this.key) return;
+    this.rendered = inputs;
     const now = this.host.now();
     const views = limitsView(this.book, now);
-    const open = this.isOpen;
     const drift = (v: ProviderView): Drift => (v.profile !== null && v.account ? profileDrift(this.profiles?.state ?? null, v.account) : null);
     const drifts = views.map(drift);
     // Everything that shows, and nothing else: no reading changing, no re-render.

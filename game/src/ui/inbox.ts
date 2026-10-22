@@ -110,19 +110,28 @@ export class InboxChip {
 
   /** Who is in the inbox, in its order; empty hides the chip. */
   set(entries: readonly InboxEntry[]): void {
+    // #144: on every world event: the corner (`sync`) is asked again only when the chip comes or goes with its rows.
+    const had = this.entries.length > 0;
     this.entries = entries;
     const n = entries.length;
     const blocked = entries.some((e) => e.blocked);
-    this.count.textContent = String(n);
-    this.root.dataset.blocked = String(blocked);
-    if (n) {
-      const why = blocked ? 'someone needs you' : 'finished work to look at';
-      this.chip.setAttribute('aria-label', `Inbox: ${n}, ${why}.`);
-      this.chip.title = `Inbox: ${why}. Click for who and where (${keyName('inbox')}).`;
+    const key = `${n} ${blocked} ${keyName('inbox')}`;
+    if (key !== this.chipKey) {
+      this.chipKey = key;
+      this.count.textContent = String(n);
+      this.root.dataset.blocked = String(blocked);
+      if (n) {
+        const why = blocked ? 'someone needs you' : 'finished work to look at';
+        this.chip.setAttribute('aria-label', `Inbox: ${n}, ${why}.`);
+        this.chip.title = `Inbox: ${why}. Click for who and where (${keyName('inbox')}).`;
+      }
     }
-    this.sync();
+    if (had !== n > 0) this.sync();
     if (this.open) this.draw();
   }
+
+  /** #144: what the chip last said (its count, red or not, the key in its title). */
+  private chipKey = '';
 
   /** Settings → Display "Show inbox". */
   set enabled(on: boolean) {

@@ -313,3 +313,64 @@ describe('the plan-limits plate over Settings (#49)', () => {
     w.dispose();
   });
 });
+
+describe('the plan-limits plate on every world event (#144)', () => {
+  it('seated, does not measure or ask the corner again until where it goes may have changed; a new reading still shows', async () => {
+    let now = NOW;
+    const book = new LimitBook();
+    book.upsert({ provider: 'claude', plan: 'team', windows: [{ label: '5h', pct: 73, resets_at: NOW + 3600_000, window_mins: 300 }], at: NOW, stale: false, source: 'probe' });
+    const parent = document.createElement('div');
+    document.body.append(parent);
+    const reads = vi.fn(() => now);
+    const w = new LimitsWidget(parent, book, { now: reads, refresh: async () => ({ ok: true }) as never, toast: () => undefined }, new LimitsPrefs());
+    document.documentElement.setAttribute('data-seated', String(WIDTH - 60));
+    await settle();
+    expect([w.root.dataset.dock, w.root.dataset.fit]).toEqual(['tab', 'full']);
+    // The geometry the tab reads (a forced layout in a browser): the viewport's width, a screen's bounds.
+    const width = vi.fn(() => WIDTH);
+    Object.defineProperty(document.documentElement, 'clientWidth', { get: width, configurable: true });
+    const rect = vi.mocked(Element.prototype.getBoundingClientRect);
+    const measured = () => width.mock.calls.length + rect.mock.calls.length;
+    rect.mockClear();
+    reads.mockClear();
+    const q = vi.spyOn(document, 'querySelector');
+    const all = vi.spyOn(document, 'querySelectorAll');
+    for (let i = 0; i < 5; i++) w.update();
+    // Nothing changed: no forced layout, no corner query, and no view of the limits built (it reads the time first).
+    expect(measured()).toBe(0);
+    expect(q).not.toHaveBeenCalled();
+    expect(all).not.toHaveBeenCalled();
+    expect(reads).not.toHaveBeenCalled();
+    // A new reading renders (the tab says it) without measuring again.
+    book.upsert({ provider: 'claude', plan: 'team', windows: [{ label: '5h', pct: 91, resets_at: NOW + 3600_000, window_mins: 300 }], at: NOW, stale: false, source: 'probe' });
+    w.update();
+    expect(w.summary().lines[0]?.windows[0]?.pct).toBe('91%');
+    expect(w.root.querySelector('.lm-tab-pct')?.textContent).toBe('91%');
+    expect(measured()).toBe(0);
+    // Time alone is `tick`'s: a reading that went stale shows on it.
+    now = NOW + 11 * 60_000;
+    w.update();
+    expect(w.summary().lines[0]?.stale).toBe(false);
+    w.tick();
+    expect(w.summary().lines[0]?.stale).toBe(true);
+    // The glass moved (its edge on the page): measured again, and the tab follows.
+    document.documentElement.setAttribute('data-seated', String(WIDTH - 30));
+    await settle();
+    expect(measured()).toBeGreaterThan(0);
+    expect(w.root.dataset.fit).toBe('snug');
+    // So does a resize.
+    width.mockClear();
+    window.dispatchEvent(new Event('resize'));
+    expect(width).toHaveBeenCalled();
+    // A bridge that had no limits comes with them: the plate shows (a snapshot's `known`).
+    document.documentElement.removeAttribute('data-seated');
+    await settle();
+    book.reset(undefined);
+    w.update();
+    expect(w.isHidden).toBe(true);
+    book.reset([]);
+    w.update();
+    expect(w.isHidden).toBe(false);
+    w.dispose();
+  });
+});
