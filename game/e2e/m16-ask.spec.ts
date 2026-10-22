@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import type { Ask, Worker } from '../src/net/protocol';
-import { frames, openGame, seatMode, shot, watchErrors } from './game';
+import { frames, leftInTerminal, openGame, seatMode, sheetSettled, shot, watchErrors } from './game';
 
 // #57: an agent's structured question (Claude's AskUserQuestion, Codex's request_user_input) on demo-m5 with sim=1.
 // The simulator's `sim.ask` plays the bridge reading it from the transcript: the worker (idle, as herdr calls a
@@ -361,6 +361,7 @@ for (const [width, height, phone] of [
     await page.evaluate((a) => window.__h3d.simAsk({ id: 'cf1db588-9a66-4307-adfa-1bbe4306c2f3', ask: a }), four);
     await expect(card).toBeVisible();
     await expect(sheet).toHaveAttribute('open', '');
+    await sheetSettled(page);
     const box = await sheet.boundingBox();
     expect(box, 'the sheet').toBeTruthy();
     if (box) {
@@ -428,10 +429,13 @@ test('where you stand: digits answer a one-pick ask, a richer one sends you to t
   await frames(page, 5);
   expect(await sent(page, 'worker.answer_ask')).toHaveLength(1);
 
-  // Seated in terminal mode: the seat bar says so, T switches to the transcript view with the card.
+  // Seated in terminal mode (left there last time): the seat bar says so, T switches to the transcript view, and the
+  // ask opens the questions' sheet as it shows (#187: never over the terminal).
+  await leftInTerminal(page, w.id);
   expect(await page.evaluate((id) => window.__h3d.sitAt(id), w.id)).toBe(true);
   await frames(page, 10);
-  if ((await page.evaluate(() => window.__h3d.seat().mode)) !== 'terminal') await page.keyboard.press('Control+Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seat().mode)).toBe('terminal');
+  await expect(sheetOf(page)).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => window.__h3d.seat().ask ?? null)).toBe('Question Claude is asking a question. T to answer in the transcript view.');
   await page.keyboard.press('t');
   await expect(sheetOf(page).locator('.tx-ask')).toBeVisible(); // #187: the conversation shown, the sheet opens

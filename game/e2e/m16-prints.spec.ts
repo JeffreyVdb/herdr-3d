@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, seatMode, shot, watchErrors } from './game';
+import { frames, hideQuestions, openGame, seatMode, shot, watchErrors } from './game';
 
 // M16 phase 2: prints on the desk, for real on the WebGL2 path. demo-m5 with the simulating fixture server (sim=1): its
 // transcript has real PNGs (tools/fixture-transcript.ts): the user's two screenshots (one sent twice) and one outside the
@@ -143,6 +143,8 @@ test('walking away takes every print, texture and watch with it; 20 sit / stand 
     await loadedPrints(page, id);
     expect(await page.evaluate((w) => window.__h3d.sitAt(w), id)).toBe(true);
     await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
+    // #187: Tofu's question opens the questions' sheet once (the first seat; Esc would close it, not stand up).
+    if (i === 0) await hideQuestions(page, id);
     await frames(page, 2);
     // Sitting there: the conversation’s own watch (not a few items any more) and the same prints: the seated desk's
     // and the two nearest the seat at most (laptops/prints.ts), six pictures each.

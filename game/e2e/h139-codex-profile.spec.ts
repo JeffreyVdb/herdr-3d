@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, hideQuestions, openGame, shot, watchErrors } from './game';
 
 // #139: hiring a Codex worker on a chosen Codex profile against the fixture bridge (`simcodexprofiles=2`,
 // tools/fixture-codex-profiles.ts): the hire dialog's "Codex profile" (codex, the default, picked first; work; spare,
@@ -113,6 +113,7 @@ test(`the seat bar names the profile a Codex worker runs on, and says when it wo
     expect(await page.evaluate((w) => window.__h3d.sitAt(w), id)).toBe(true);
     await expect(line).toHaveText(text);
     await expect(line).toHaveAttribute('data-tone', tone);
+    await hideQuestions(page, id); // #187: Sprocket's question opened the questions' sheet (Esc would close it, not stand up)
     for (const size of SIZES) {
       await page.setViewportSize(size);
       await expect(line).toBeVisible();

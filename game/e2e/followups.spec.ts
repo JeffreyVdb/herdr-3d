@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, seatMode, settingsSection, shot, watchErrors, openMenu } from './game';
+import { frames, openGame, seatMode, settingsSection, sheetSettled, shot, watchErrors, openMenu } from './game';
 
 // #90: follow-up questions against the fixture bridge (`sim=1`, tools/fixture-followup.ts), whose AI integration
 // calls fake Jev and OpenAI-compatible servers started here on OS-leased loopback ports. Set up both models, pass
@@ -308,6 +308,7 @@ test('on a phone the questions open in a bottom sheet with room for the question
     };
     /** A bottom sheet: the phone's whole width, on its bottom edge. */
     const bottomSheet = async () => {
+      await sheetSettled(page);
       const b = await box(sheet);
       expect(b.width).toBeGreaterThanOrEqual(359);
       expect(Math.abs(b.y + b.height - 800)).toBeLessThanOrEqual(1);

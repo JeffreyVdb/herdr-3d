@@ -106,6 +106,11 @@ export async function hideQuestions(page: Page, worker?: string): Promise<void> 
   await expect(sheet).toBeHidden();
 }
 
+/** #187: the questions' sheet as it rests: its entrance (a slide-up on a phone, a fade and scale on a desktop) done. */
+export async function sheetSettled(page: Page): Promise<void> {
+  await page.locator('dialog.tx-qsheet').evaluate((d) => Promise.all(d.getAnimations({ subtree: true }).filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined))));
+}
+
 /** Seated: switches with Ctrl+Esc and waits for the requested view, including the conversation's lazy renderer. */
 export async function seatMode(page: Page, mode: 'terminal' | 'transcript'): Promise<void> {
   if ((await page.evaluate(() => window.__h3d.seat().mode)) !== mode) await page.keyboard.press('Control+Escape');

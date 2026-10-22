@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Usage } from '../src/net/protocol';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, hideQuestions, openGame, shot, watchErrors } from './game';
 
 // #101: the context meter in the transcript bar, for real: demo-m5's usage numbers (Tofu is a Claude worker: an
 // assumed window; a Codex worker shows its own and the baseline note). Every preset, 80-200% zoom (the strip does not
@@ -37,6 +37,7 @@ async function sitAt(page: Page, names: string | string[], storage: Record<strin
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
   await expect(page.locator('.seat')).toBeVisible();
   await expect(page.locator('.tx')).toBeVisible();
+  await hideQuestions(page, id); // #187: a waiting worker's question opened the questions' sheet
   await frames(page, 20);
   return { id, name };
 }

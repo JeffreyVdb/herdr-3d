@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import type { Ask, Worker } from '../src/net/protocol';
-import { frames, openGame, seatMode, shot, watchErrors } from './game';
+import { frames, openGame, seatMode, sheetSettled, shot, watchErrors } from './game';
 
 // #157: a shared Codex worker's async questions against the fixture bridge (demo-m5, sim=1, `simcodex=ask`: Pixel's
 // running turn asked "Which fixture color?" (Green / Blue) and "Any context for the fixture?" (free text); herdr says
@@ -211,7 +211,7 @@ test('a refused answer keeps what you wrote; the terminal’s answer shows; a re
     message: 'the reconnected bridge has replayed the terminal watch', timeout: 20_000,
   }).toBeGreaterThan(0);
   // The snapshot brings the batch back (this simulated bridge starts afresh): one card, the draft in it.
-  if (!(await sheetOf(page).getAttribute('open'))) await calmButton(page).click();
+  if (!(await sheetOf(page).isVisible())) await calmButton(page).click();
   await expect(card).toBeVisible();
   await expect(page.locator('.tx-aq')).toHaveCount(1);
   await expect(card.locator('.tx-aq-batch')).toHaveCount(1);
@@ -245,6 +245,7 @@ test('an answer the turn ended before reading is kept to send again; on a phone 
   await shot(page, 'h157-async-phone-button');
   await calmButton(page).tap();
   await expect(card).toBeVisible();
+  await sheetSettled(page);
   const box = await sheet.boundingBox();
   expect(box && box.width >= 389 && Math.abs(box.y + box.height - 844) <= 1, 'a bottom sheet: the whole width, on the bottom edge').toBe(true);
   for (const l of [card.locator('.tx-ask-question').first(), card.locator('.tx-ask-send'), card.locator('.tx-aq-hide').first()]) {

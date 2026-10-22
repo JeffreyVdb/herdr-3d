@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, hideQuestions, openGame, shot, watchErrors } from './game';
 
 // #183: your answer to a Codex async question in the conversation, for real, on the WebGL2 path: the simulating fixture
 // server (sim=1) at Tofu's seat, with answer items pushed through `simTranscript` in the bridge's shape (`answers`, and
@@ -22,6 +22,7 @@ async function sitAt(page: Page, name: string): Promise<void> {
   expect(await page.evaluate((w) => window.__h3d.sitAt(w), id)).toBe(true);
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
   await frames(page, 30);
+  await hideQuestions(page, id); // #187: Tofu's question opened the questions' sheet
 }
 
 test('#183: an async answer reads as a question and its answer, wraps at a narrow window and 200%, keeps the raw reply collapsed', async ({ page }) => {
