@@ -607,7 +607,9 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   CSS only). It lives on `document.body` in the top layer, sized to the viewport, never inside `.tx`. Esc, its close
   button, a backdrop press (`dismiss.ts`'s `sheet` policy) and `close()` each report one `onClose` with their reason;
   keydown stops at the dialog so the game and the laptop never see the keys, while listeners inside it (the cards' keys,
-  routed by `QuestionSheet`) do. While open it follows `visualViewport` so the on-screen keyboard does not cover the
+  routed by `QuestionSheet`) do. While the sheet is open `QuestionSheet` keeps the keyboard on a card's control whatever
+  the cards become (one emptied or replaced under it, a send refused): the card it was on, else the first up, else the
+  dialog itself while that card's controls are off, whose keys then go to that card. While open it follows `visualViewport` so the on-screen keyboard does not cover the
   focused field (`decisions.md` "#187").
 - **Workers**: original procedural rigid-part characters (capsule body, goggle + strap, tiny limbs), one `InstancedMesh`
   per part, animation in code. Measured on M2 Max at 3024×1890 with shadows: **240 workers 1.2 ms/frame pipelined,
