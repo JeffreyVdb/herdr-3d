@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { THEMES } from './themes';
 import { DEFAULT_UI_THEME, isUiThemeId, UI_THEME_FIELD, UI_THEME_HINT, UI_THEME_KEY, UI_THEMES, uiThemeById } from './uiTheme';
 
 const css = readFileSync(resolve(import.meta.dirname, 'uiTheme.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
@@ -121,6 +122,61 @@ describe('UI themes (#216)', () => {
       for (const g of ['--surface', '--chrome', '--raised']) expect(ratio(p(k), p(g)), `${k} on ${g}`).toBeGreaterThanOrEqual(4.5);
     }
   });
+});
+
+/** The hue of an opaque #rrggbb colour, in degrees. */
+function hue(h: string): number {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255) as [number, number, number];
+  const max = Math.max(r, g, b);
+  const d = max - Math.min(r, g, b);
+  if (!d) return 0;
+  const h6 = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return (h6 * 60 + 360) % 360;
+}
+const hueGap = (a: string, b: string) => Math.min(Math.abs(hue(a) - hue(b)), 360 - Math.abs(hue(a) - hue(b)));
+
+// #187: the questions button's two lanes. It sits in the transcript's prompt form (`--ctl-bar`) at a laptop whose
+// conversation wears either transcript preset, and its colours are the lanes' marks in the questions sheet (`--surface`,
+// `--raised`): every UI theme × preset pairing, read from the real tokens.
+describe('the questions lanes’ colours (#187)', () => {
+  const themes = { quiet, ubuntu };
+  const presets = THEMES.map((t) => t.palette);
+  for (const [name, t] of Object.entries(themes)) {
+    /** A token's colour, through its `var(--…)` aliases (Quiet's `--surface` is `var(--ink)`). */
+    const v = (k: string): string => {
+      const alias = /^var\((--[\w-]+)\)$/.exec(t[k] ?? '');
+      if (alias) return v(alias[1]!);
+      expect(t[k], `${name} sets ${k}`).toMatch(/^#[0-9a-f]{6}$/);
+      return t[k] as string;
+    };
+    /** Every ground the button or a lane mark can sit on under this UI theme, whatever the transcript preset. */
+    const grounds = () => [
+      ...['--ctl-bar', '--ctl-raised', '--ctl-hover', '--ctl-well', '--surface', '--raised'].map((k) => [k, v(k)]),
+      ...presets.flatMap((p) => (['bg', 'bg-2', 'bg-3'] as const).map((k) => [`--tx-${k}`, p[k]])),
+    ];
+
+    it(`${name}: the label is 4.5:1 on each lane's fill`, () => {
+      expect(ratio(v('--ctl-q-urgent-text'), v('--ctl-q-urgent'))).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(v('--ctl-q-optional-text'), v('--ctl-q-optional'))).toBeGreaterThanOrEqual(4.5);
+    });
+
+    it(`${name}: each lane's fill and ring are 3:1 on every ground, in both transcript presets`, () => {
+      for (const lane of ['--ctl-q-urgent', '--ctl-q-optional']) {
+        for (const [g, c] of grounds()) expect(ratio(v(lane), c!), `${lane} on ${g} ${c}`).toBeGreaterThanOrEqual(3);
+      }
+    });
+
+    it(`${name}: urgent is red, optional is calm, neither is the accent or the sun`, () => {
+      const urgent = v('--ctl-q-urgent');
+      const optional = v('--ctl-q-optional');
+      expect(hueGap(urgent, '#ff0000'), 'urgent reads red').toBeLessThanOrEqual(12);
+      for (const k of ['--ctl-accent', '--action', '--sun']) {
+        expect(hueGap(urgent, v(k)), `urgent vs ${k}`).toBeGreaterThanOrEqual(18);
+        expect(hueGap(optional, v(k)), `optional vs ${k}`).toBeGreaterThanOrEqual(25);
+      }
+      expect(hueGap(urgent, optional)).toBeGreaterThanOrEqual(120);
+    });
+  }
 });
 
 // #42: index.html's inline script puts a saved Ubuntu on the root before the first frame (the e2e checks the frames of a
