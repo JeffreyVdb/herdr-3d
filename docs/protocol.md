@@ -4933,7 +4933,9 @@ first (its sources, its task's span against them, its fields' shape, a valid har
 error `bad_pending`, no call) and its values are resolved again against the **current** catalog without the models
 hidden **on this call** (#190: the bridge keeps no visibility either). A pending model is that very id: still visible
 (and of the harness said), it is kept; one that left the catalog, or is hidden now, is `invalid` again (asked in the
-words first said, among the visible models), never another version of its family. A pending model that was not valid
+words first said, among the visible models), never another version of its family. Only the reply's own words outside
+the task (a model's name, family, version or a near miss of one) change a pending model, whatever the LLM answers; it
+is then a selection from the reply's words alone. A pending model that was not valid
 goes through the rules again in its words: a family that now names several visible models is asked among them, one
 that names one visible model is that model. A harness with no models left is asked too (its model question offering
 every visible model).
