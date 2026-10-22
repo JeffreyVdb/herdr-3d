@@ -9,7 +9,7 @@ const state = (s: Partial<QuestionsState>): QuestionsState => ({ ...none, ...s }
 
 function make(controls?: string) {
   const onOpen = vi.fn();
-  const b = new QuestionsButton({ onOpen, controls });
+  const b = new QuestionsButton(controls === undefined ? { onOpen } : { onOpen, controls });
   document.body.append(b.el, b.live);
   return { b, onOpen };
 }
