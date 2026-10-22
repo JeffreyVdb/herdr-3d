@@ -1036,7 +1036,7 @@ export class App {
       const firstWorld = this.city.isEmpty;
       this.city.build(city());
       if (firstWorld) this.frameCity(false);
-      if (this.mode === 'floor') this.syncWalk();
+      if (this.mode === 'floor') this.syncWalk(city);
       this.syncLogos();
     } else {
       for (const id of c.workers) {
@@ -2326,18 +2326,21 @@ export class App {
 
   // ---- the building around you -------------------------------------------------------
 
-  /** The building a floor is in (the unassigned lot's floors make one too). */
-  private buildingFor(floor: string): BuildingCtx | null {
-    return this.store.floors.has(floor) ? this.buildingById(this.panels.buildingOf(floor)) : null;
+  /**
+   * The building a floor is in (the unassigned lot's floors make one too). `city`: the city it is tinted from, #144:
+   * `applyChange`'s one per change (`cityOnce`); else the store's as it is.
+   */
+  private buildingFor(floor: string, city: () => BuildingView[] = () => this.store.city()): BuildingCtx | null {
+    return this.store.floors.has(floor) ? this.buildingById(this.panels.buildingOf(floor), city) : null;
   }
 
-  private buildingById(id: string | null): BuildingCtx | null {
+  private buildingById(id: string | null, city: () => BuildingView[] = () => this.store.city()): BuildingCtx | null {
     const store = this.store;
     if (id !== null && !store.buildings.has(id)) return null;
     const floors = id === null ? store.stack(null) : store.stack(id).reverse();
     if (!floors.length) return null;
     // The city view's colour for it, so the facade matches the dollhouse.
-    const bi = store.city().findIndex((b) => (b.building?.id ?? null) === id);
+    const bi = city().findIndex((b) => (b.building?.id ?? null) === id);
     const tint = id === null ? LOT_TINT : (BUILDING_TINTS[Math.max(0, bi) % BUILDING_TINTS.length] ?? 0xffb8b0);
     const outline = outlineOf(floors.map((f) => f.desks));
     const openings = openingsFor(outline.width, outline.depth);
@@ -2499,17 +2502,20 @@ export class App {
     this.retired.push(o);
   }
 
-  /** The world changed while walking: follow the building (floors moved, added, resized, asleep). */
-  private syncWalk(): void {
+  /**
+   * The world changed while walking: follow the building (floors moved, added, resized, asleep). `city`: as in
+   * `buildingFor`; a pin here changes the lists, and the reader builds them again.
+   */
+  private syncWalk(city: () => BuildingView[] = () => this.store.city()): void {
     const floor = this.office?.id ?? null;
-    const ctx = floor ? this.buildingFor(floor) : this.building ? this.buildingById(this.building.id) : null;
+    const ctx = floor ? this.buildingFor(floor, city) : this.building ? this.buildingById(this.building.id, city) : null;
     const fv = floor ? this.store.floorView(floor) : null;
     // #58: the floor with the interior left its building's stack (hidden and empty, not pinned; its building may have
     // no other): list it again (you are on it or by it) rather than put you on no storey; still out of it, it is gone.
     const storey = fv && ctx ? ctx.floors.findIndex((f) => f.id === fv.id) : -1;
     if (fv && storey < 0 && this.store.pin(fv.id)) {
-      this.city.build(this.store.city());
-      this.syncWalk();
+      this.city.build(city());
+      this.syncWalk(city);
       return;
     }
     if (!ctx || (floor && (!fv || storey < 0))) {
@@ -2552,7 +2558,7 @@ export class App {
     }
     // #187: the world moved you (the floor's storey, a nudge out of a new chair), not your feet: a seat stays.
     this.laptops.rebase(this.walker);
-    this.updatePlace(false, true);
+    this.updatePlace(false, true, city);
     this.cameraMoved = true;
   }
 
@@ -2624,8 +2630,9 @@ export class App {
    * Where the walker is now, and what follows from it: a landing gives its
    * floor the interior (its door opens onto it), the lobby needs none;
    * crossing the lobby's front door is what the receptionist hears about.
+   * `city`: as in `buildingFor` (#144: `syncWalk`'s, from `applyChange`).
    */
-  private updatePlace(walked: boolean, force = false): void {
+  private updatePlace(walked: boolean, force = false, city: () => BuildingView[] = () => this.store.city()): void {
     const ctx = this.building;
     if (!ctx) return;
     const prev = this.place;
@@ -2640,11 +2647,11 @@ export class App {
     if (walked && prev.area === 'lobby' && next.area === 'street') this.receptionEvent('leave-front');
     if (next.area !== 'floor' && this.planOpen) this.setPlan(false);
     this.hud.setArea(next.area);
-    this.refreshTopbar();
+    this.refreshTopbar(city);
     this.updateHint();
     this.panels.refresh();
     this.statusDirty = true;
-    this.pinHere();
+    this.pinHere(city);
   }
 
   /**
@@ -2653,11 +2660,11 @@ export class App {
    * the street the last one stays, so the building does not change shape under the stairs. When the lists change, the
    * city is rebuilt and the walk follows the building (`syncWalk`, whose own `updatePlace` finds the pin as it is).
    */
-  private pinHere(): void {
+  private pinHere(city: () => BuildingView[] = () => this.store.city()): void {
     const here = this.place.area === 'floor' ? (this.office?.id ?? null) : this.place.area === 'lobby' ? null : undefined;
     if (here === undefined || !this.store.pin(here)) return;
-    this.city.build(this.store.city());
-    if (this.mode === 'floor') this.syncWalk();
+    this.city.build(city());
+    if (this.mode === 'floor') this.syncWalk(city);
   }
 
   /** #58: the id of the floor you are on (inside it), else null. */
