@@ -156,9 +156,15 @@ export interface Change {
   floors: Set<string>;
   /** Workers whose shown state (status, title, …) changed without moving desks. */
   workers: Set<string>;
+  /**
+   * #144: a `worker.usage` and nothing else: the workers whose usage (tokens, cost, context) changed, in no other set
+   * (no floor's counts, no list, no status show usage); only what shows usage follows it (App.applyChange). Null for
+   * every other change, a snapshot's and an upsert's included.
+   */
+  usage: Set<string> | null;
 }
 
-const emptyChange = (): Change => ({ structure: false, floors: new Set(), workers: new Set() });
+const emptyChange = (): Change => ({ structure: false, floors: new Set(), workers: new Set(), usage: null });
 
 /** `world.hire_options` of an older bridge: the lists in the M3 contract. */
 export const DEFAULT_HIRE_OPTIONS: HireOptions = {
@@ -415,13 +421,13 @@ export class WorldStore {
         c.floors.add(old.floor);
         break;
       }
-      // M5: usage and cost changed; the rest of the worker stays.
+      // M5: usage and cost changed; the rest of the worker stays. #144: a usage-only change (an unknown worker's: of nobody).
       case 'worker.usage': {
+        c.usage = new Set();
         const old = this.workers.get(e.id);
         if (!old) break;
         this.workers.set(e.id, { ...old, usage: e.usage });
-        c.workers.add(e.id);
-        c.floors.add(old.floor);
+        c.usage.add(e.id);
         break;
       }
       // M6 start: presets are no part of the scene; dialogs re-render on `presets.version`.

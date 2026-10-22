@@ -38,7 +38,7 @@ describe('worker.activity', () => {
     const s = store([worker('a', { status: 'working', activity: testing, status_since: 900 })]);
     expect(s.workers.get('a')?.activity).toEqual(testing);
     const c = s.applyEvent(ev('a', { ...testing, kind: 'writing', detail: 'store.ts' }), 5_000);
-    expect(c).toEqual({ structure: false, floors: new Set(['top']), workers: new Set(['a']) });
+    expect(c).toEqual({ structure: false, floors: new Set(['top']), workers: new Set(['a']), usage: null });
     expect(s.workers.get('a')?.activity?.kind).toBe('writing');
     expect(s.workers.get('a')?.status).toBe('working');
     expect(s.workerView('a')?.since).toBe(900);
@@ -52,7 +52,7 @@ describe('worker.activity', () => {
 
   it('ignores the event for an unknown worker', () => {
     const s = store([worker('a')]);
-    expect(s.applyEvent(ev('nobody', testing))).toEqual({ structure: false, floors: new Set(), workers: new Set() });
+    expect(s.applyEvent(ev('nobody', testing))).toEqual({ structure: false, floors: new Set(), workers: new Set(), usage: null });
   });
 
   it('keeps the activity across a worker.status (the bridge clears it with its own event)', () => {

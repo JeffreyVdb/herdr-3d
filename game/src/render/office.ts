@@ -481,6 +481,16 @@ export class OfficeView {
     this.setSeat(v.desk, v);
   }
 
+  /**
+   * #144: a worker's usage changed, nothing else: only the looked-at worker's card shows usage (`cardOf`), so only that
+   * desk is drawn again; another keeps the new view for its next redraw (a look at it, an away, a lean).
+   */
+  updateUsage(v: WorkerView): void {
+    if (this.seats[v.desk]?.worker.id !== v.worker.id) return;
+    if (v.worker.id === this.focusId) this.setSeat(v.desk, v);
+    else this.seats[v.desk] = v;
+  }
+
   /** M5: the worker you look at: its card adds its usage line (null: nobody). */
   setFocus(id: string | null): void {
     if (id === this.focusId) return;

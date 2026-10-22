@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { isWorldEvent, parseMessage, type ServerMessage, type Snapshot, type Usage, type Worker } from '../net/protocol';
 import { WorldStore } from './store';
 
@@ -24,17 +24,42 @@ describe('WorldStore usage and questions (M5)', () => {
     expect(s.workers.get('a')?.question).toBeUndefined();
   });
 
-  it('applies worker.usage to the worker, keeping everything else, as a shown-state change', () => {
+  it('applies worker.usage to the worker, keeping everything else, as a usage-only change (#144)', () => {
     const s = new WorldStore(0);
     s.applySnapshot(snap(worker({ title: 'Wire the HUD', usage: usage(1000) })));
+    const list = vi.spyOn(s.floorList, 'refresh');
     const c = s.applyEvent({ t: 'worker.usage', seq: 11, id: 'a', session: 'top', usage: usage(2000) });
+    // Usage is no floor's, no count's and no list's: the worker is in `usage` alone.
     expect(c).toMatchObject({ structure: false });
-    expect([...c.workers]).toEqual(['a']);
-    expect([...c.floors]).toEqual(['top']);
+    expect([...(c.usage ?? [])]).toEqual(['a']);
+    expect(c.workers.size + c.floors.size).toBe(0);
+    expect(list).not.toHaveBeenCalled();
     expect(s.workers.get('a')).toMatchObject({ title: 'Wire the HUD', status: 'working', usage: { tokens: 2000 } });
+    expect(s.workerView('a')?.worker.usage?.tokens).toBe(2000);
+    expect(s.floorView('top')?.workers[0]?.worker.usage?.tokens).toBe(2000);
     expect(s.seq).toBe(11);
-    // An unknown worker is ignored.
-    expect(s.applyEvent({ t: 'worker.usage', seq: 12, id: 'zz', usage: usage(1) }).workers.size).toBe(0);
+    // An unknown worker is ignored: still a usage-only change, of nobody.
+    const none = s.applyEvent({ t: 'worker.usage', seq: 12, id: 'zz', usage: usage(1) });
+    expect(none.usage?.size).toBe(0);
+    expect(none.workers.size + none.floors.size).toBe(0);
+  });
+
+  it('#144: every other change is no usage-only one, usage in it or not', () => {
+    const s = new WorldStore(0);
+    const first = s.applySnapshot(snap(worker({ usage: usage(1000) })));
+    expect(first.usage).toBeNull();
+    // A snapshot (new usage and a new status in one): the full path.
+    const again = s.applySnapshot(snap(worker({ status: 'idle', usage: usage(3000) })));
+    expect(again).toMatchObject({ structure: true, usage: null });
+    // An upsert that changes usage and status together.
+    const up = s.applyEvent({ t: 'worker.upsert', seq: 11, worker: worker({ status: 'done', usage: usage(4000) }) });
+    expect(up.usage).toBeNull();
+    expect([...up.workers]).toEqual(['a']);
+    expect(s.workers.get('a')?.usage?.tokens).toBe(4000);
+    // A status, an activity, a preset: as before.
+    expect(s.applyEvent({ t: 'worker.status', seq: 12, id: 'a', status: 'working', prev_status: 'done' } as never)).toMatchObject({ usage: null, workers: new Set(['a']) });
+    expect(s.applyEvent({ t: 'worker.activity', seq: 13, id: 'a', activity: { kind: 'tool', text: 'Read' } } as never).usage).toBeNull();
+    expect(s.applyEvent({ t: 'limits.update', seq: 14, provider: 'claude', plan: '', windows: [], at: 1, stale: false } as never)).toMatchObject({ structure: false, usage: null, workers: new Set() });
   });
 });
 
