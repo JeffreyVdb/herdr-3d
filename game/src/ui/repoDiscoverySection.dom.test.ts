@@ -44,6 +44,7 @@ function mount(s: RepoDiscoveryState | null, refuse?: (args: Record<string, unkn
     }),
     { store: 'bridge', group: 'integrations' },
   );
+  dialog.renderSections(); // #146: what the dialog's first open does
   const root = document.querySelector<HTMLElement>('[data-section="repo-discovery"]')!;
   const q = <T extends HTMLElement>(sel: string) => root.querySelector<T>(sel)!;
   const text = (sel: string) => root.querySelector<HTMLElement>(sel)?.textContent ?? '';

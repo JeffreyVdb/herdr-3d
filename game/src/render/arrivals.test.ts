@@ -172,14 +172,22 @@ describe('Arrivals', () => {
 
   it('draws the props as one InstancedMesh per part, one instance per walker, hidden when nobody walks', () => {
     const a = new Arrivals(false);
+    // #146: nothing is built before the first walk (nobody sees it), and nothing is drawn.
+    const before: THREE.Object3D[] = [];
+    a.group.traverse((o) => o instanceof THREE.Mesh && before.push(o));
+    expect(before).toEqual([]);
+    expect(a.group.visible).toBe(false);
+    a.update(0, 0);
+    a.clear();
+    expect(a.group.children).toEqual([]);
+    a.start(spec('w0', 'out'), 0);
     const meshes: THREE.Object3D[] = [];
     a.group.traverse((o) => o instanceof THREE.Mesh && meshes.push(o));
     expect(meshes.length).toBeGreaterThan(10);
     expect(meshes.every((m) => m instanceof THREE.InstancedMesh)).toBe(true);
-    expect(a.group.visible).toBe(false);
     const props = meshes.filter((m) => m.name.startsWith('arrivals.')) as THREE.InstancedMesh[];
     expect(props.map((m) => m.name).sort()).toEqual(['body', 'flaps', 'fold', 'foldEdge', 'laptop', 'mug', 'notebook', 'pens', 'photo', 'plant', 'puff', 'shadow', 'sticker', 'tape'].map((k) => `arrivals.${k}`).sort());
-    for (let i = 0; i < 8; i++) a.start(spec(`w${i}`, 'out'), 0);
+    for (let i = 1; i < 8; i++) a.start(spec(`w${i}`, 'out'), 0);
     // A ninth walker at once is skipped (the desk resolves at once), with no new objects.
     expect(a.start(spec('w8', 'out'), 0)).toBe(false);
     a.update(1, 1);

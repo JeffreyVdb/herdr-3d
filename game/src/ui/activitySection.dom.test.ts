@@ -39,6 +39,7 @@ function mount(s: Record<string, unknown> | null, answers: Record<string, (args:
     }),
     { store: 'bridge', group: 'ai' },
   );
+  dialog.renderSections(); // #146: what the dialog's first open does
   const root = document.querySelector<HTMLElement>('[data-section="activity"]')!;
   const box = () => root.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
   const field = (label: string) => {

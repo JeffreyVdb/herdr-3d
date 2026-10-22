@@ -287,7 +287,8 @@ export class App {
   /** Reception events the app detected, in order (test hook), and the receptionist once coder B's module is in. */
   readonly receptionEvents: Array<{ ev: ReceptionEvent; at: number; building: string | null }> = [];
   readonly audio: GameAudio;
-  readonly reception: Reception;
+  /** #146: the receptionist, built where it is first seen (a lobby, as its building is set up), not with the game. */
+  private receptionist: Reception | null = null;
   /** M15: the office radio (E and R on it, fades with where you are, toast, display). */
   readonly radio: RadioLink;
   /** M13: the screen share and the TV that shows it. */
@@ -585,7 +586,6 @@ export class App {
       this.inbox.enabled = this.inboxPrefs.settings.show;
       this.inbox.set(this.inboxEntries());
     });
-    this.reception = createReception({ audio: this.audio, overlay: this.hud.root, shadows: this.shadows });
     this.radio = new RadioLink({ music: this.audio.music, toast: (m, ms, soft) => this.hud.toast(m, ms, 'info', soft), hudRadio: (n) => this.hud.setRadio(n) });
     this.city = new CityView(
       this.hud.floorList,
@@ -2619,6 +2619,11 @@ export class App {
   /** #58: the id of the floor you are on (inside it), else null. */
   hereFloor(): string | null {
     return this.mode === 'floor' && this.place.area === 'floor' && this.office ? this.office.id : null;
+  }
+
+  /** #146: built on first use, as a building's lobby is set up (`setBuilding`). */
+  get reception(): Reception {
+    return (this.receptionist ??= createReception({ audio: this.audio, overlay: this.hud.root, shadows: this.shadows }));
   }
 
   private receptionEvent(ev: ReceptionEvent): void {

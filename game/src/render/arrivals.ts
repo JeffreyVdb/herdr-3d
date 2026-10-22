@@ -192,15 +192,19 @@ function boxGeometry(): { body: THREE.BufferGeometry; flaps: THREE.BufferGeometr
   return { body, flaps, tape };
 }
 
+/** The walkers' figures and the props' InstancedMeshes (only shown while someone walks). */
+interface Kit {
+  crowd: Crowd;
+  parts: Record<PropKey, THREE.InstancedMesh>;
+  tints: Record<'photo' | 'notebook', THREE.InstancedBufferAttribute>;
+  rim: THREE.InstancedBufferAttribute;
+  logo: THREE.InstancedBufferAttribute;
+}
+
 export class Arrivals {
   readonly group = new THREE.Group();
-  private readonly crowd: Crowd;
-  /** The props' InstancedMeshes (only shown while someone walks). */
-  private readonly props = new THREE.Group();
-  private readonly parts: Record<PropKey, THREE.InstancedMesh>;
-  private readonly tints: Record<'photo' | 'notebook', THREE.InstancedBufferAttribute>;
-  private readonly rim: THREE.InstancedBufferAttribute;
-  private readonly logo: THREE.InstancedBufferAttribute;
+  /** #146: built on the first walk (`kit`), not with the game: nobody sees it before. */
+  private built: Kit | null = null;
   /** Walks in the order they started, oldest first. */
   private readonly active: Active[] = [];
   private readonly free: number[] = Array.from({ length: CAPACITY }, (_, i) => CAPACITY - 1 - i);
@@ -235,11 +239,19 @@ export class Arrivals {
   private readonly b = { p: new THREE.Vector3(), q: new THREE.Quaternion(), s: new THREE.Vector3() };
   private rate = 1;
 
-  constructor(shadows: boolean) {
+  constructor(private readonly shadows: boolean) {
     this.group.name = 'arrivals';
-    this.crowd = new Crowd(CAPACITY, shadows);
-    this.props.name = 'arrivals.props';
-    this.group.add(this.crowd.group, this.props);
+    this.showIfWalking();
+  }
+
+  /** The figures and props, built on first use (the same as when they were built with the game). */
+  private get kit(): Kit {
+    if (this.built) return this.built;
+    const shadows = this.shadows;
+    const crowd = new Crowd(CAPACITY, shadows);
+    const props = new THREE.Group();
+    props.name = 'arrivals.props';
+    this.group.add(crowd.group, props);
     const b = boxGeometry();
     const geo: Record<PropKey, THREE.BufferGeometry> = {
       ...b,
@@ -255,16 +267,16 @@ export class Arrivals {
       fold: folderGeometry(),
       foldEdge: edgeGeometry(),
     };
-    this.tints = {
+    const tints = {
       photo: new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY * 2 * 3), 3),
       notebook: new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY * 3), 3),
     };
-    geo.photo.setAttribute('aTint', this.tints.photo);
-    geo.notebook.setAttribute('aTint', this.tints.notebook);
-    this.rim = new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY * 3), 3);
-    this.logo = new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY), 1);
-    geo.sticker.setAttribute('aRim', this.rim);
-    geo.sticker.setAttribute('aLogo', this.logo);
+    geo.photo.setAttribute('aTint', tints.photo);
+    geo.notebook.setAttribute('aTint', tints.notebook);
+    const rim = new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY * 3), 3);
+    const logo = new THREE.InstancedBufferAttribute(new Float32Array(CAPACITY), 1);
+    geo.sticker.setAttribute('aRim', rim);
+    geo.sticker.setAttribute('aLogo', logo);
     const stickerMat = new THREE.MeshToonNodeMaterial();
     const t = texture(stickerAtlas(), vec2(attribute('aLogo', 'float').add(uv().x).div(STICKER_LOGOS.length), uv().y));
     stickerMat.colorNode = mix(attribute('aRim', 'vec3'), t.rgb, t.a);
@@ -294,11 +306,11 @@ export class Arrivals {
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       for (let i = 0; i < mesh.count; i++) mesh.setMatrixAt(i, ZERO);
       if (key === 'mug' || key === 'pens' || key === 'foldEdge') for (let i = 0; i < mesh.count; i++) mesh.setColorAt(i, this.color.set(0xffffff));
-      this.props.add(mesh);
+      props.add(mesh);
       parts[key] = mesh;
     }
-    this.parts = parts as Record<PropKey, THREE.InstancedMesh>;
-    this.showIfWalking();
+    this.built = { crowd, parts: parts as Record<PropKey, THREE.InstancedMesh>, tints, rim, logo };
+    return this.built;
   }
 
   /** Test hook: plays every walk `k` times as fast (1 = real time), from where each one is now (s). */
@@ -334,18 +346,19 @@ export class Arrivals {
       spec.kind === 'deliver' && d
         ? deliveryTimeline(spec.route, spec.seatYaw, { handYaw: d.handYaw, swivels: d.swivels })
         : timeline(spec.kind, spec.route, spec.seatYaw, carry, kit?.items.length ?? 0, spec.standing === true);
+    const { rim, logo, tints, parts } = this.kit;
     this.color.set(spec.cue.color);
-    this.rim.setXYZ(slot, this.color.r, this.color.g, this.color.b);
-    this.logo.setX(slot, STICKER_LOGOS.indexOf(stickerLogo(spec.harness)));
-    this.rim.needsUpdate = this.logo.needsUpdate = true;
+    rim.setXYZ(slot, this.color.r, this.color.g, this.color.b);
+    logo.setX(slot, STICKER_LOGOS.indexOf(stickerLogo(spec.harness)));
+    rim.needsUpdate = logo.needsUpdate = true;
     kit?.items.forEach((item) => {
       this.color.set(item.tint);
-      if (item.kind === 'photo') this.tints.photo.setXYZ(slot * 2 + item.n, this.color.r, this.color.g, this.color.b);
-      else if (item.kind === 'notebook') this.tints.notebook.setXYZ(slot, this.color.r, this.color.g, this.color.b);
-      else if (item.kind === 'mug') this.parts.mug.setColorAt(slot, this.color);
+      if (item.kind === 'photo') tints.photo.setXYZ(slot * 2 + item.n, this.color.r, this.color.g, this.color.b);
+      else if (item.kind === 'notebook') tints.notebook.setXYZ(slot, this.color.r, this.color.g, this.color.b);
+      else if (item.kind === 'mug') parts.mug.setColorAt(slot, this.color);
     });
-    this.tints.photo.needsUpdate = this.tints.notebook.needsUpdate = true;
-    if (this.parts.mug.instanceColor) this.parts.mug.instanceColor.needsUpdate = true;
+    tints.photo.needsUpdate = tints.notebook.needsUpdate = true;
+    if (parts.mug.instanceColor) parts.mug.instanceColor.needsUpdate = true;
     this.active.push({ spec, tl, t0: now, slot, last: null, kit, yielded: false, kept: null, landed: false, then: null });
     this.showIfWalking();
     return true;
@@ -429,9 +442,10 @@ export class Arrivals {
   private finish(i: number, played: boolean): void {
     const a = this.active[i] as Active;
     this.active.splice(i, 1);
-    this.crowd.set(a.slot, null);
+    const { crowd, parts } = this.kit;
+    crowd.set(a.slot, null);
     this.free.push(a.slot);
-    for (const key of Object.keys(PER) as PropKey[]) for (let k = 0; k < PER[key]; k++) this.parts[key].setMatrixAt(a.slot * PER[key] + k, ZERO);
+    for (const key of Object.keys(PER) as PropKey[]) for (let k = 0; k < PER[key]; k++) parts[key].setMatrixAt(a.slot * PER[key] + k, ZERO);
     this.flag();
     this.showIfWalking();
     // A delivery that ends before its folder landed (cancelled): it never will; the caller says where it went.
@@ -453,7 +467,7 @@ export class Arrivals {
   }
 
   private flag(): void {
-    for (const key of Object.keys(PER) as PropKey[]) this.parts[key].instanceMatrix.needsUpdate = true;
+    for (const key of Object.keys(PER) as PropKey[]) this.kit.parts[key].instanceMatrix.needsUpdate = true;
   }
 
   /**
@@ -509,7 +523,7 @@ export class Arrivals {
       walking.push({ floor: s.floor, desk: s.desk, away: p.desk === 'free' ? null : { show: p.desk, display: s.display, cue: s.cue.color, harness: s.harness, packed } });
     }
     if (this.active.length) this.flag();
-    this.crowd.update(t);
+    this.built?.crowd.update(t);
     const out = deskOwners(ended, walking);
     // A drop that just ended hands its figure back to the chair even when an older walk still owns that desk; M6c: so does a delivery.
     for (const e of ended) {
@@ -547,10 +561,10 @@ export class Arrivals {
   /** M6b: the landing shadow on the seat while it falls, the dust puffing out round the chair as it lands. */
   private drawDrop(a: Active, p: ArrivalPose): void {
     const seat = a.tl.route[0] ?? { x: 0, y: 0, z: 0 };
-    const sh = this.parts.shadow;
+    const sh = this.kit.parts.shadow;
     if (p.shadow > 0) sh.setMatrixAt(a.slot, this.m.compose(this.v.set(seat.x, seat.y + 0.457, seat.z), this.q.identity(), this.scl.setScalar(p.shadow)));
     else sh.setMatrixAt(a.slot, ZERO);
-    const puff = this.parts.puff;
+    const puff = this.kit.parts.puff;
     for (let k = 0; k < PUFFS; k++) {
       if (p.puff === null) {
         puff.setMatrixAt(a.slot * PUFFS + k, ZERO);
@@ -570,7 +584,7 @@ export class Arrivals {
   /** M6c: a freelancer walking its report over: the walker with the folder, and the folder flying to the tray. */
   private drawDeliver(a: Active, p: ArrivalPose, d: DeliverSpec): void {
     const s = a.spec;
-    this.crowd.set(a.slot, {
+    this.kit.crowd.set(a.slot, {
       x: p.x,
       y: p.y,
       z: p.z,
@@ -584,7 +598,7 @@ export class Arrivals {
       ...(s.crew ? { crew: { ...s.crew, life: null, turn: 0 } } : {}),
       ...(p.folder === 'carry' || p.folder === 'out' ? { folder: p.folder } : {}),
     });
-    const P = this.parts;
+    const P = this.kit.parts;
     for (const key of Object.keys(PER) as PropKey[]) if (key !== 'fold' && key !== 'foldEdge') for (let k = 0; k < PER[key]; k++) P[key].setMatrixAt(a.slot * PER[key] + k, ZERO);
     if (p.folder !== 'flight') {
       P.fold.setMatrixAt(a.slot, ZERO);
@@ -628,7 +642,7 @@ export class Arrivals {
 
   private draw(a: Active, p: ArrivalPose): void {
     const s = a.spec;
-    this.crowd.set(a.slot, {
+    this.kit.crowd.set(a.slot, {
       x: p.x,
       y: p.y,
       z: p.z,
@@ -646,7 +660,7 @@ export class Arrivals {
       briefcase: p.briefcase === 'hand',
       wave: p.wave,
     });
-    const P = this.parts;
+    const P = this.kit.parts;
     const slotM = this.slotMatrix(a, this.slotM);
     // The box: on the keyboard while packing, else carried in front.
     if (p.box === 'desk') {
@@ -733,8 +747,8 @@ export class Arrivals {
 
   dispose(): void {
     this.clear();
-    this.crowd.dispose();
-    for (const mesh of Object.values(this.parts)) {
+    this.built?.crowd.dispose();
+    for (const mesh of Object.values(this.built?.parts ?? {})) {
       mesh.geometry.dispose();
       (mesh.material as THREE.Material).dispose();
       mesh.dispose();

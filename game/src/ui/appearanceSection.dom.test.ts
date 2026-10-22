@@ -8,6 +8,7 @@ function mount(prefs = new ViewPrefs(null)) {
   document.body.replaceChildren();
   const dialog = new SettingsDialog(document.body);
   const remove = dialog.addSection('appearance', 'Appearance', appearanceSection(prefs), { store: 'browser', group: 'general' });
+  dialog.renderSections(); // #146: what the dialog's first open does
   const section = document.querySelector<HTMLElement>('[data-section="appearance"]')!;
   const radios = () => [...section.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
   return { dialog, prefs, section, radios, remove };

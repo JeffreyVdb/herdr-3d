@@ -48,6 +48,7 @@ function mount(s: CodexProfilesState | null, refuse?: (args: Record<string, unkn
     }),
     { store: 'bridge', group: 'workers' },
   );
+  dialog.renderSections(); // #146: what the dialog's first open does
   const root = document.querySelector<HTMLElement>('[data-section="codex-profiles"]')!;
   const text = (sel: string) => root.querySelector<HTMLElement>(sel)?.textContent ?? '';
   const btn = (name: string) => [...root.querySelectorAll<HTMLButtonElement>('button')].find((b) => (b.getAttribute('aria-label') ?? b.textContent) === name);

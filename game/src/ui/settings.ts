@@ -56,7 +56,10 @@ export interface SectionControl {
   setHidden(hidden: boolean): void;
 }
 
-/** Fills `body` (under the section's heading and storage label) once, when the section is added. */
+/**
+ * Fills `body` (under the section's heading and storage label) once: #146, when the dialog first opens (or, added after
+ * that, when the section is added). It derives what it shows, and whether it hides itself, from the state at that time.
+ */
 export type SectionRender = (body: HTMLElement, section: SectionControl) => SectionHandle | void;
 
 /** The navigator's groups (#49): every section is in exactly one. */
@@ -78,6 +81,8 @@ interface Section {
   tab: HTMLButtonElement;
   option: HTMLOptionElement;
   handle: SectionHandle;
+  /** #146: its content, until the dialog first opens (then null: rendered). */
+  render: (() => SectionHandle | void) | null;
   /** Taken out by the section itself (`setHidden`): no panel, tab or choice. */
   unavailable: boolean;
   /** Where the content scroller was when another section took over (#49): restored on the way back. */
@@ -97,6 +102,9 @@ let serial = 0;
  * section's DOM stays put: a switch only hides and shows, so half-typed fields, errors and pending tests survive it
  * and no section is told anything (its `open` is the dialog's opening, once).
  *
+ * #146: the sections' content is rendered when the dialog first opens, every section at once (before anything shows,
+ * so one that hides itself is never offered), not when the game starts.
+ *
  * It holds inputs, so the backdrop never closes it (`none`, #51): the close button and Esc do, and Esc is the
  * platform's. A modal `<dialog>`; the game's keys do nothing while it is open.
  */
@@ -114,6 +122,8 @@ export class SettingsDialog {
   private remembered: Section | null = null;
   private opener: HTMLElement | null = null;
   private readonly serial = ++serial;
+  /** #146: opened at least once: the sections added from now on render at once. */
+  private rendered = false;
 
   constructor(parent: HTMLElement) {
     const head = el('header', 'panel-head');
@@ -219,7 +229,7 @@ export class SettingsDialog {
     const option = el('option', '', title);
     option.value = id;
 
-    const section: Section = { id, group: opts.group, root, heading: h, tab, option, handle: {}, unavailable: false, scrollTop: 0 };
+    const section: Section = { id, group: opts.group, root, heading: h, tab, option, handle: {}, render: null, unavailable: false, scrollTop: 0 };
     this.sections.push(section);
     group.box.append(tab);
     group.optgroup.append(option);
@@ -227,7 +237,8 @@ export class SettingsDialog {
     // Before render: a section may hide itself while it fills its body.
     const control: SectionControl = { setHidden: (hidden) => this.setUnavailable(section, hidden) };
     this.sync();
-    section.handle = render(content, control) ?? {};
+    section.render = () => render(content, control);
+    if (this.rendered) this.renderSection(section);
     return () => {
       const i = this.sections.indexOf(section);
       if (i < 0) return;
@@ -250,6 +261,7 @@ export class SettingsDialog {
    * whatever was showing before; it is what the next open shows too. Callers open the dialog first.
    */
   reveal(id: string): void {
+    this.renderSections();
     const sec = this.sections.find((x) => x.id === id);
     if (!sec || sec.unavailable) return;
     this.choose(sec);
@@ -275,6 +287,7 @@ export class SettingsDialog {
   open(from: HTMLElement | null = null): void {
     if (this.dialog.open) return;
     this.opener = from ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    this.renderSections();
     for (const s of this.sections) s.handle.open?.();
     // The section chosen last, when the bridge still offers it; else whatever shows now (or the first).
     const want = this.remembered && !this.remembered.unavailable ? this.remembered : (this.active ?? this.navOrder()[0] ?? null);
@@ -293,6 +306,22 @@ export class SettingsDialog {
     this.active = this.remembered = null;
     this.close();
     this.dialog.remove();
+  }
+
+  /**
+   * #146: renders every section not rendered yet, in the order added (the first `open` and `reveal` do); from then on a
+   * section added renders at once.
+   */
+  renderSections(): void {
+    this.rendered = true;
+    for (const s of [...this.sections]) this.renderSection(s);
+  }
+
+  private renderSection(s: Section): void {
+    const render = s.render;
+    if (!render) return;
+    s.render = null;
+    s.handle = render() ?? {};
   }
 
   /** The sections that can show, in the navigator's order: by group, then in the order added. */
