@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import { frames, leftInTerminal, openGame, openMenu, seatMode, settingsSection } from './game';
+import { frames, hideQuestions, leftInTerminal, openGame, openMenu, seatMode, settingsSection } from './game';
 import { board as boardState, enter, faceBoard, waitNotes, wall } from './m7';
 import { fakeHelper } from './bridges';
 
@@ -69,7 +69,10 @@ async function pinnedPresets(page: Page): Promise<void> {
   await expect(dlg.locator('.dd-tab--pin')).toHaveCount(2);
 }
 
-/** Sits at Tofu (or another worker of demo-m5) and leaves its conversation or terminal up. Tofu waits on a question: its composer is off. */
+/**
+ * Sits at Tofu (or another worker of demo-m5) and leaves its conversation or terminal up. Tofu waits on a question: its
+ * composer is off, and (#187) the question opened the questions' sheet, hidden here (its urgent button keeps it).
+ */
 export async function sitAtTofu(page: Page, mode: 'transcript' | 'terminal' = 'transcript', name = 'Tofu', minItems = 10): Promise<string> {
   await onFloor(page);
   const id = await page.evaluate((n) => window.__h3d.world().flatMap((f) => f.workers).find((w) => w.name === n)?.id ?? '', name);
@@ -84,6 +87,7 @@ export async function sitAtTofu(page: Page, mode: 'transcript' | 'terminal' = 't
   if (mode === 'transcript') {
     await expect.poll(async () => (await page.evaluate(() => window.__h3d.transcript()))?.items ?? 0).toBeGreaterThan(minItems);
     await expect(page.locator('.seat-transcript .tx')).toBeVisible();
+    await hideQuestions(page, id);
   }
   await page.evaluate(() => window.__h3d.themeLoaded());
   await frames(page, 6);
@@ -1131,6 +1135,55 @@ export const SURFACES: Surface[] = [
     extra: '&prints=0',
     open: async (page) => void (await sitAtTofu(page, 'transcript')),
     root: '.seat-transcript',
+  },
+  {
+    // #187: the urgent questions button in the prompt box: Tofu waits on its screen's question, the sheet hidden.
+    name: 'seat-questions-button',
+    fixture: 'demo-m5',
+    extra: '&prints=0',
+    open: async (page) => {
+      await sitAtTofu(page, 'transcript');
+      await expect(page.locator('.seat-transcript .tx-qbtn[data-lane="urgent"]')).toBeVisible();
+    },
+    root: '.seat-transcript .tx-prompt',
+  },
+  {
+    // #187: the questions' sheet with the screen's question (a centred dialog; a bottom sheet at 390 px).
+    name: 'seat-questions-sheet',
+    fixture: 'demo-m5',
+    extra: '&prints=0',
+    open: async (page) => {
+      await sitAtTofu(page, 'transcript');
+      await page.locator('.seat-transcript .tx-qbtn').click();
+      await expect(page.locator('dialog.tx-qsheet .tx-bq')).toBeVisible();
+    },
+    root: 'dialog.tx-qsheet',
+  },
+  {
+    // #187: the calm questions button: Pixel's Codex async questions (`simcodex=ask`), which never open the sheet.
+    name: 'seat-questions-calm',
+    fixture: 'demo-m5',
+    extra: '&prints=0',
+    wsQuery: `${SIM}&simcodex=ask`,
+    open: async (page) => {
+      await sitAtTofu(page, 'transcript', 'Pixel', 0);
+      await expect(page.locator('.seat-transcript .tx-qbtn[data-lane="optional"]')).toBeVisible();
+    },
+    root: '.seat-transcript .tx-prompt',
+  },
+  {
+    // #187: both lanes in the sheet: an ask (urgent, first) over Pixel's async questions (calm), each under its name.
+    name: 'seat-questions-lanes',
+    fixture: 'demo-m5',
+    extra: '&prints=0',
+    wsQuery: `${SIM}&simcodex=ask`,
+    open: async (page) => {
+      const id = await sitAtTofu(page, 'transcript', 'Pixel', 0);
+      const ask = { tool_use_id: 'call_ui_lanes', agent: 'codex', questions: [{ header: 'Mode', question: 'Run the migration now?', multi: false, other: true, options: [{ label: 'Yes', description: 'Run it on staging first' }, { label: 'No', description: '' }] }] };
+      await page.evaluate(([w, a]) => window.__h3d.simAsk({ id: w, ask: a }), [id, ask] as const);
+      await expect(page.locator('dialog.tx-qsheet[data-lanes]')).toBeVisible();
+    },
+    root: 'dialog.tx-qsheet',
   },
   {
     // The composer's completion popup in the seated prompt box: `/` lists the worker's commands, `@comp` its files.

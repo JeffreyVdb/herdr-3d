@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { frames, leftInTerminal, openGame, seatMode, shot, watchErrors } from './game';
+import { frames, hideQuestions, leftInTerminal, openGame, seatMode, shot, watchErrors } from './game';
 
 // #59 (#172): the two presets (Ubuntu and Quiet), picked apart for the transcript (fonts and colours; the limits widget's mono follows it) and
 // for the terminal (its canvas's font and colours), "Hide tools" and each view's text zoom, for real on the WebGL2 path: demo-m5 with the simulating fixture server (the demo
@@ -59,6 +59,7 @@ async function openTranscript(page: Page, id: string): Promise<Locator> {
   await page.keyboard.press('Control+Escape');
   const tx = page.locator('.seat-transcript .tx');
   await expect(tx).toBeVisible();
+  await hideQuestions(page, id); // #187: Tofu's question opened the sheet
   const r = await page.evaluate(
     (w) =>
       window.__h3d.simTranscript({
@@ -100,8 +101,10 @@ async function checkFonts(page: Page, tx: Locator, id: Id): Promise<void> {
   }
   const monoSel = ['.tx-md pre code', '.tx-md p code', '.tx-diff-body', '.tx-diff-path', '.tx-tool-name', '.tx-tool-sum', '.tx-out', '.tx-imgcard-path'];
   const proseSel = ['.tx-assistant .tx-md p', '.tx-bubble', '.tx-thinking-body', '.tx-notice-text', '.tx-tool-status', '.tx-tool-dur', '.tx-thinking-tag', '.tx-diff-stat'];
-  // #216: the app's widgets inside the transcript (the strip's count, Send, the answer choices) are the UI theme's: Quiet UI's prose, whatever the preset.
-  const widgetSel = ['.tx-count', '.tx-send', '.tx-choice', '.tx-banner-text'];
+  // #216: the app's widgets inside the transcript (the strip's count, Send) and its questions' sheet (#187: the screen
+  // question's choices and text) are the UI theme's: Quiet UI's prose, whatever the preset.
+  const widgetSel = ['.tx-count', '.tx-send'];
+  const sheetSel = ['.tx-choice', '.tx-banner-text'];
   for (const s of monoSel) expect(await family(tx.locator(s)), `${id}: ${s} is mono`).toContain(mono);
   for (const s of proseSel) {
     const f = await pseudoFamily(tx.locator(s));
@@ -111,6 +114,10 @@ async function checkFonts(page: Page, tx: Locator, id: Id): Promise<void> {
   for (const sel of widgetSel) {
     const f = await pseudoFamily(tx.locator(sel));
     expect(f, `${id}: ${sel} is the UI theme's prose (Quiet UI)`).toContain('Atkinson');
+  }
+  for (const sel of sheetSel) {
+    const f = await pseudoFamily(page.locator('dialog.tx-qsheet').locator(sel));
+    expect(f, `${id}: the sheet's ${sel} is the UI theme's prose (Quiet UI)`).toContain('Atkinson');
   }
   // No ligatures in code (JetBrains Mono's are contextual alternates).
   expect(await tx.locator('.tx-out').first().evaluate((e) => getComputedStyle(e).fontVariantLigatures)).toBe('none');

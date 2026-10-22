@@ -206,9 +206,9 @@ test('at a seat: the transcript prompt and an ask card’s Other keep every char
 
   // The ask card's Other: a text input inside the seated transcript.
   await page.evaluate(([id, a]) => window.__h3d.simAsk({ id: id as string, ask: a as Record<string, unknown> }), [w.id, one] as const);
-  const card = tx.locator('.tx-ask');
+  // #187: in the questions' sheet, opened by the ask with the keyboard in it.
+  const card = page.locator('dialog.tx-qsheet .tx-ask');
   await expect(card).toBeVisible();
-  await tx.locator('.tx-scroll').focus();
   await page.keyboard.press('3');
   const other = card.locator('.tx-ask-other-input');
   await expect(other).toBeFocused();

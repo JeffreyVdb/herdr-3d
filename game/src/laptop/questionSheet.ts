@@ -93,8 +93,9 @@ export class QuestionSheet {
     this.optionalLane = lane('optional', 'Optional', cards.followup.el, cards.asyncq.el);
     this.cardsEl = h('div', { class: 'tx-qcards' }, this.urgentLane, this.optionalLane);
     this.sheet.body.append(this.cardsEl);
-    // Capture: a card's text box stops its own Esc before it bubbles here.
+    // Capture: a card's text box stops its own Esc before it bubbles here. Any other key or a press is not an Esc.
     this.sheet.el.addEventListener('keydown', (e) => (this.escaping = isEsc(e) && !e.ctrlKey && !e.metaKey), true);
+    this.sheet.el.addEventListener('pointerdown', () => (this.escaping = false), true);
     this.sheet.el.addEventListener('keydown', (e) => this.onKey(e));
   }
 
@@ -105,11 +106,6 @@ export class QuestionSheet {
   /** The button shows (something waits) and the conversation is on the screen: `Q` opens the sheet. */
   get canOpen(): boolean {
     return !this.destroyed && this.visible && !this.button.el.hidden;
-  }
-
-  /** The sheet's dialog (test hook; in `document.body` once it has opened). */
-  get el(): HTMLDialogElement {
-    return this.sheet.el;
   }
 
   /** The id of the mandatory question up (null: none). */
@@ -140,7 +136,7 @@ export class QuestionSheet {
     const name = urgent ? 'Answer to continue' : followup.shown && asyncq.shown ? 'Questions for you' : optName;
     this.optionalLane.setAttribute('aria-label', optName);
     this.optionalLane.querySelector('.tx-qlane-head')!.textContent = optName;
-    this.sheet.setLabel(urgent && optional ? `Answer to continue, and ${optName.toLowerCase()}` : name, name);
+    this.sheet.setLabel(urgent && optional ? `Answer to continue, and ${optName.replace(/^Open/, 'open')}` : name, name);
     // The urgent lane's last question went (answered, withdrawn): the sheet goes with it; so it does with nothing left.
     if (this.sheet.isOpen && ((this.hadUrgent && !urgent) || (!urgent && !optional))) this.sheet.close();
     this.hadUrgent = urgent;

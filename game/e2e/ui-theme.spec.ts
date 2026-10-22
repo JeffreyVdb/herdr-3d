@@ -1090,7 +1090,7 @@ const AUDIT_SIZES: Record<AuditSize, { label: string; size: { width: number; hei
 };
 /** The family representatives every functional run audits (Settings and Hire, the seat's transcript and terminal, board and overview, the whiteboard); the rest are @visual only. */
 const AUDITED: Record<AuditSize, string[]> = {
-  desktop: ['settings', 'hire', 'seat-transcript', 'seat-terminal', 'board-issues', 'overview', 'whiteboard'],
+  desktop: ['settings', 'hire', 'seat-transcript', 'seat-questions-sheet', 'seat-terminal', 'board-issues', 'overview', 'whiteboard'],
   narrow: ['hire'],
   zoomed: ['settings'],
 };

@@ -1,14 +1,16 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import type { Ask, Worker } from '../src/net/protocol';
 import { frames, openGame, seatMode, shot, watchErrors } from './game';
 
 // #57: an agent's structured question (Claude's AskUserQuestion, Codex's request_user_input) on demo-m5 with sim=1.
 // The simulator's `sim.ask` plays the bridge reading it from the transcript: the worker (idle, as herdr calls a
-// hire's question) needs you; at its laptop the transcript view pins a card above the prompt box (its questions
-// stacked: the open one, the others folded to their answer), answered with the keyboard or clicks, where Enter never
-// sends: only Send or Ctrl+Enter does; where you stand a one-pick question takes a digit; the terminal says T answers it.
+// hire's question) needs you; at its laptop the ask opens the questions' sheet by itself, once (#187: a dialog, a
+// bottom sheet on a phone; its questions stacked: the open one, the others folded to their answer), answered with the
+// keyboard or clicks, where Enter never sends: only Send or Ctrl+Enter does. Hidden (Esc), the questions button in the
+// prompt box keeps it and Q opens it again; the conversation keeps its whole height. Where you stand a one-pick question
+// takes a digit; the terminal says T answers it.
 
 const SIM = 'play=none&sim=1&simms=300&simusage=0';
 
@@ -67,6 +69,20 @@ const one: Partial<Ask> = {
 
 const sent = (page: Page, t: string) => page.evaluate((x) => window.__h3d.sent().filter((c) => c.t === x), t);
 
+/** #187: the questions' sheet (on the page, outside the laptop's screen). */
+const sheetOf = (page: Page): Locator => page.locator('dialog.tx-qsheet');
+/** #187: the urgent questions button in the prompt box (its text runs label and count together: by its name). */
+const urgentButton = (page: Page): Locator => page.locator('.seat-transcript .tx-prompt').getByRole('button', { name: /^Answer to continue/ });
+
+/** #187 AC1: the timeline's bottom edge meets the prompt box: no question sits between them. */
+async function fullHeight(page: Page): Promise<void> {
+  const tx = page.locator('.seat-transcript .tx');
+  const [m, f] = await Promise.all([tx.locator('.tx-main').boundingBox(), tx.locator('.tx-prompt').boundingBox()]);
+  expect(m && f, 'the timeline and the prompt box').toBeTruthy();
+  if (m && f) expect(Math.abs(m.y + m.height - f.y), 'the timeline meets the prompt box').toBeLessThanOrEqual(1);
+  expect(await tx.locator('.tx-ask, .tx-fu, .tx-aq, .tx-bq').count()).toBe(0);
+}
+
 async function sitAtTranscript(page: Page, w: Worker): Promise<void> {
   await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
   await frames(page, 3);
@@ -80,7 +96,7 @@ async function sitAtTranscript(page: Page, w: Worker): Promise<void> {
   await expect.poll(() => page.evaluate(async () => (await window.__h3d.simTranscripts())?.watches ?? 0)).toBeGreaterThan(0);
 }
 
-test('a two-question ask: needs you while herdr says idle, a pinned card, answered from the keyboard, recorded in the timeline', { tag: '@smoke' }, async ({ page }) => {
+test('a two-question ask: needs you while herdr says idle, opens the sheet, answered from the keyboard, recorded in the timeline', { tag: '@smoke' }, async ({ page }) => {
   const clean = watchErrors(page);
   const w = demoWorker('Pebble'); // idle: herdr never said blocked
   await openGame(page, 'demo-m5', '', SIM);
@@ -89,14 +105,18 @@ test('a two-question ask: needs you while herdr says idle, a pinned card, answer
 
   expect((await page.evaluate(() => window.__h3d.simAsk({ id: 'cf1db588-9a66-4307-adfa-1bbe4306c2f3', ask: null }))).ok).toBe(true); // nothing to end: fine
   await page.evaluate((a) => window.__h3d.simAsk({ id: 'cf1db588-9a66-4307-adfa-1bbe4306c2f3', ask: a }), two);
-  const card = tx.locator('.tx-ask');
+  const sheet = sheetOf(page);
+  const card = sheet.locator('.tx-ask');
   await expect(card).toBeVisible();
   // It needs you (N's queue, the look of its card), idle or not.
   await expect.poll(() => page.evaluate((id) => window.__h3d.needs().some((n) => n.id === id && n.reason === 'blocked'), w.id)).toBe(true);
-  // Pinned above the prompt box, which is off; the timeline has the call, waiting.
-  const [cb, pb] = await Promise.all([card.boundingBox(), tx.locator('.tx-prompt').boundingBox()]);
-  expect(cb && pb && cb.y + cb.height <= pb.y + 1).toBe(true);
+  // #187: the sheet opened by itself, named for its lane, the keyboard on the open question's first option; the prompt
+  // box is off; the timeline has the call, waiting.
+  await expect(sheet).toHaveAttribute('open', '');
+  await expect(sheet).toHaveAccessibleName('Answer to continue');
+  await expect(card.locator('button.tx-ask-opt[data-n="1"]')).toBeFocused();
   await expect(tx.locator('.tx-input')).toBeDisabled();
+  await expect(tx.locator('.tx-input')).toHaveAttribute('data-placeholder', 'Answer the questions first (button above, or in the terminal)');
   await expect(tx.locator('.tx-ask-item[data-outcome="pending"]')).toContainText('Which extras should be enabled?');
   await expect(tx.locator('.tx-ask-item .tx-ask-input > summary')).toHaveText('Input');
   // Stacked: Extras open (checkboxes, pick several), Color folded under it; Send off until both are answered.
@@ -108,17 +128,29 @@ test('a two-question ask: needs you while herdr says idle, a pinned card, answer
   await expect(card.locator('.tx-ask-send')).toHaveAttribute('aria-disabled', 'true');
   await expect(card.locator('.tx-ask-wait')).toHaveText(/^waiting \d+s$/);
   await shot(page, 'm16-ask-card');
-  await tx.locator('.tx-scroll').focus(); // the bare screenshot hides the HUD, and that drops the focus
+  await card.locator('button.tx-ask-opt[data-n="1"]').focus(); // the bare screenshot may drop the focus
 
-  // No click: 1 and 3 tick Logs and Traces, 4 goes to Other; Esc there leaves it (the timeline has the keys again).
+  // No click: 1 and 3 tick Logs and Traces, 4 goes to Other; Esc there closes the sheet (the timeline has the keys
+  // again, you are still seated), the button keeps the question, the conversation its whole height; Q opens it again.
   await page.keyboard.press('1');
   await page.keyboard.press('3');
   await expect(card.locator('[role="checkbox"][aria-checked="true"]')).toHaveCount(2);
   await page.keyboard.press('4');
   await expect(card.locator('.tx-ask-other-input')).toBeFocused();
   await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
   await expect(tx.locator('.tx-scroll')).toBeFocused();
-  expect(await page.evaluate(() => window.__h3d.seated())).not.toBeNull(); // Esc in the card does not stand you up
+  expect(await page.evaluate(() => window.__h3d.seated())).not.toBeNull(); // Esc in the sheet does not stand you up
+  await expect(urgentButton(page)).toBeVisible();
+  await expect(urgentButton(page)).toHaveAccessibleName('Answer to continue: 2 questions');
+  await expect(urgentButton(page)).toHaveAttribute('aria-expanded', 'false');
+  await expect(tx.locator('.tx-input')).toBeDisabled();
+  await fullHeight(page);
+  await shot(page, 'm16-ask-hidden');
+  await tx.locator('.tx-scroll').focus();
+  await page.keyboard.press('q');
+  await expect(sheet).toHaveAttribute('open', '');
+  await expect(card.locator('[role="checkbox"][aria-checked="true"]')).toHaveCount(2); // kept
   await page.keyboard.press('4');
   await page.keyboard.type('Custom dashboards');
   // Enter in the text takes it and moves on to Color (the question itself has the keyboard); nothing is sent.
@@ -156,10 +188,13 @@ test('a two-question ask: needs you while herdr says idle, a pinned card, answer
   await expect(card.locator('.tx-ask-send')).toHaveAttribute('aria-disabled', 'false');
   expect(await sent(page, 'worker.answer_ask')).toHaveLength(0);
   await shot(page, 'm16-ask-card-filled');
-  await tx.locator('.tx-scroll').focus(); // the screenshot dropped the focus again
+  await card.locator('.tx-ask-send').focus(); // the screenshot may drop the focus
 
-  // From the timeline Enter takes the keyboard back to the card (to Send), and sends nothing; Enter on Send sends.
-  await page.keyboard.press('Enter');
+  // Closed and opened again (the button this time): the answers are kept, Send has the keyboard; nothing went meanwhile.
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+  await urgentButton(page).click();
+  await expect(card.locator('.tx-ask-row .tx-ask-row-text')).toHaveText(['Logs, Metrics, Traces, Custom dashboards', 'Green']);
   await expect(card.locator('.tx-ask-send')).toBeFocused();
   expect(await sent(page, 'worker.answer_ask')).toHaveLength(0);
   expect(await page.evaluate(() => window.__h3d.seated())).not.toBeNull();
@@ -176,6 +211,8 @@ test('a two-question ask: needs you while herdr says idle, a pinned card, answer
     ],
   });
   await expect(card).toBeHidden();
+  await expect(sheet).toBeHidden();
+  await expect(urgentButton(page)).toBeHidden();
   const item = tx.locator('.tx-ask-item[data-outcome="answered"]');
   await expect(item.locator('.tx-ask-answers li')).toHaveText([
     '●You answered: Which extras should be enabled? → Logs, Metrics, Traces, Custom dashboards',
@@ -203,7 +240,7 @@ test('a click on the first question, then Enter, sends nothing: the next one has
   await openGame(page, 'demo-m5', '', SIM);
   await sitAtTranscript(page, w);
   const tx = page.locator('.seat-transcript .tx');
-  const card = tx.locator('.tx-ask');
+  const card = sheetOf(page).locator('.tx-ask');
   await page.evaluate((a) => window.__h3d.simAsk({ id: 'cf1db588-9a66-4307-adfa-1bbe4306c2f3', ask: a }), twoPicks);
   await expect(card).toBeVisible();
   await card.locator('button.tx-ask-opt[data-n="1"]').click();
@@ -235,7 +272,7 @@ test('a stale answer is refused and the card updates; answered in the terminal, 
   await openGame(page, 'demo-m5', '', SIM);
   await sitAtTranscript(page, w);
   const tx = page.locator('.seat-transcript .tx');
-  const card = tx.locator('.tx-ask');
+  const card = sheetOf(page).locator('.tx-ask');
   await page.evaluate((a) => window.__h3d.simAsk({ id: 'cf1db588-9a66-4307-adfa-1bbe4306c2f3', ask: a }), one);
   await expect(card).toBeVisible();
   await expect(card.locator('.tx-ask-question')).toContainText('How should the laptop upload');
@@ -259,13 +296,13 @@ test('a stale answer is refused and the card updates; answered in the terminal, 
   clean();
 });
 
-test('another question while an answer is sent: the old ack leaves it pinned, the prompt stays off', async ({ page }) => {
+test('another question while an answer is sent: the old ack leaves it up, the prompt stays off', async ({ page }) => {
   const clean = watchErrors(page);
   const w = demoWorker('Pebble');
   await openGame(page, 'demo-m5', '', 'play=none&sim=1&simms=1500&simusage=0'); // slow acks: the new ask comes first
   await sitAtTranscript(page, w);
   const tx = page.locator('.seat-transcript .tx');
-  const card = tx.locator('.tx-ask');
+  const card = sheetOf(page).locator('.tx-ask');
   await page.evaluate((a) => window.__h3d.simAsk({ id: 'cf1db588-9a66-4307-adfa-1bbe4306c2f3', ask: a }), one);
   await card.locator('[data-n="2"]').click();
   await card.locator('.tx-ask-send').click();
@@ -306,35 +343,49 @@ const four: Partial<Ask> = {
   })),
 };
 
-for (const [width, height] of [
-  [1280, 720],
-  [960, 600],
-  [390, 844],
+for (const [width, height, phone] of [
+  [1280, 720, false],
+  [960, 600, false],
+  [390, 844, true],
 ] as const) {
-  test(`a four-question card fits the laptop's screen at ${width}×${height}: every question and option reachable, Send clickable`, async ({ page }) => {
+  test(`a four-question ask at ${width}×${height}${phone ? ' (a phone: a bottom sheet)' : ' (a dialog)'}: in the viewport, every question and option reachable, Send clickable; hidden, the conversation keeps its height`, async ({ browser }) => {
+    // #187: the sheet is sized to the page's viewport, not to the laptop's screen (a phone's can be under 200px tall).
+    const ctx = await browser.newContext({ viewport: { width, height }, hasTouch: phone, isMobile: phone });
+    const page = await ctx.newPage();
     const clean = watchErrors(page);
-    await page.setViewportSize({ width, height });
     const w = demoWorker('Pebble');
     await openGame(page, 'demo-m5', '', SIM);
     await sitAtTranscript(page, w);
-    const tx = page.locator('.seat-transcript .tx');
-    const card = tx.locator('.tx-ask');
+    const sheet = sheetOf(page);
+    const card = sheet.locator('.tx-ask');
     await page.evaluate((a) => window.__h3d.simAsk({ id: 'cf1db588-9a66-4307-adfa-1bbe4306c2f3', ask: a }), four);
     await expect(card).toBeVisible();
-    // The card's parts are inside it (nothing cut by its edge), the body keeps room for the question and an option.
-    const inside = async (sel: string) => {
-      const [c, b] = await Promise.all([card.boundingBox(), card.locator(sel).first().boundingBox()]);
-      expect(c && b, sel).toBeTruthy();
-      if (!c || !b) return;
-      expect(b.y, `${sel} top`).toBeGreaterThanOrEqual(c.y - 0.5);
-      expect(b.y + b.height, `${sel} bottom`).toBeLessThanOrEqual(c.y + c.height + 0.5);
-    };
-    await inside('.tx-ask-foot');
-    await inside('.tx-ask-send');
-    await inside('.tx-ask-dismiss');
-    const body = await card.locator('.tx-ask-body').boundingBox();
-    expect(body && body.height, 'the question and options have room').toBeGreaterThanOrEqual(36);
+    await expect(sheet).toHaveAttribute('open', '');
+    const box = await sheet.boundingBox();
+    expect(box, 'the sheet').toBeTruthy();
+    if (box) {
+      expect(box.x).toBeGreaterThanOrEqual(-0.5);
+      expect(box.y).toBeGreaterThanOrEqual(-0.5);
+      expect(box.x + box.width).toBeLessThanOrEqual(width + 0.5);
+      expect(box.y + box.height).toBeLessThanOrEqual(height + 0.5);
+      if (phone) {
+        // A bottom sheet: the whole width, on the bottom edge.
+        expect(box.width).toBeGreaterThanOrEqual(width - 1);
+        expect(Math.abs(box.y + box.height - height)).toBeLessThanOrEqual(1);
+      } else {
+        // A dialog: centred, with the page around it.
+        expect(Math.abs(box.x + box.width / 2 - width / 2)).toBeLessThanOrEqual(1);
+        expect(box.y).toBeGreaterThan(0);
+      }
+    }
     await shot(page, `m16-ask-fit-${width}x${height}`);
+    // Hidden: the conversation keeps its whole height; the button opens it again.
+    await sheet.locator('.sheet-close').click();
+    await expect(sheet).toBeHidden();
+    await fullHeight(page);
+    await shot(page, `m16-ask-hidden-${width}x${height}`);
+    await urgentButton(page).click();
+    await expect(sheet).toHaveAttribute('open', '');
     // Every question answered with clicks (each option scrolled to, not hidden under an edge), then Send: a single-pick
     // answer moves on by itself, the pick-several one is left with a click on the next folded question.
     for (const header of ['Storage', 'Delivery', 'Observability', 'Migration']) {
@@ -347,6 +398,7 @@ for (const [width, height] of [
     await expect.poll(async () => (await sent(page, 'worker.answer_ask')).length).toBe(1);
     await expect(card).toBeHidden();
     clean();
+    await ctx.close();
   });
 }
 
@@ -382,9 +434,13 @@ test('where you stand: digits answer a one-pick ask, a richer one sends you to t
   if ((await page.evaluate(() => window.__h3d.seat().mode)) !== 'terminal') await page.keyboard.press('Control+Escape');
   await expect.poll(() => page.evaluate(() => window.__h3d.seat().ask ?? null)).toBe('Question Claude is asking a question. T to answer in the transcript view.');
   await page.keyboard.press('t');
-  await expect(page.locator('.seat-transcript .tx .tx-ask')).toBeVisible();
+  await expect(sheetOf(page).locator('.tx-ask')).toBeVisible(); // #187: the conversation shown, the sheet opens
+  await expect(sheetOf(page)).toHaveAttribute('open', '');
   expect(await sent(page, 'worker.keys')).toHaveLength(0); // T never reached the terminal
+  // Ctrl+Esc in the sheet: the terminal, the sheet closed (not over the terminal).
   await page.keyboard.press('Control+Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seat().mode)).toBe('terminal');
+  await expect(sheetOf(page)).toBeHidden();
   // Typed into the terminal since: T is a letter again, Ctrl+Esc it says.
   await page.keyboard.press('x');
   await expect.poll(() => page.evaluate(() => window.__h3d.seat().ask ?? null)).toBe('Question Claude is asking a question. CtrlEsc to answer in the transcript view.');

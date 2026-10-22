@@ -91,6 +91,21 @@ export async function leftInTerminal(page: Page, ...ids: string[]): Promise<void
   }, ids);
 }
 
+/**
+ * #187: a blocked worker's question (or an ask) opens the questions' sheet by itself as its conversation shows. A test
+ * of the timeline under it waits for it and hides it (Esc, once: the urgent button in the prompt box keeps it), the
+ * keyboard back where it was before the sheet opened (the conversation, as you sat). With `worker`: only when that
+ * worker waits on a question.
+ */
+export async function hideQuestions(page: Page, worker?: string): Promise<void> {
+  // A worker that waits on nothing: no sheet.
+  if (worker && !(await page.evaluate((w) => !!(window.__h3d.worker(w)?.question || window.__h3d.worker(w)?.ask), worker))) return;
+  const sheet = page.locator('dialog.tx-qsheet');
+  await expect(sheet).toHaveAttribute('open', '');
+  await sheet.press('Escape');
+  await expect(sheet).toBeHidden();
+}
+
 /** Seated: switches with Ctrl+Esc and waits for the requested view, including the conversation's lazy renderer. */
 export async function seatMode(page: Page, mode: 'terminal' | 'transcript'): Promise<void> {
   if ((await page.evaluate(() => window.__h3d.seat().mode)) !== mode) await page.keyboard.press('Control+Escape');
