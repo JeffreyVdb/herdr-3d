@@ -306,9 +306,9 @@ type Options struct {
 	PackupEnabled *bool
 	PackupTimeout time.Duration
 	PackupRoles   packup.Roles
-	// #211 dictated hiring: HireIntentRoles the LLM of hire.interpret
-	// (default AI; tests pass fakes), HireIntentTimeout its bound (default
-	// hireintent.DefaultTimeout).
+	// #211 dictated hiring: HireIntentRoles the LLM and classifier (#190)
+	// of hire.interpret (default AI; tests pass fakes), HireIntentTimeout its
+	// bound (default hireintent.DefaultTimeout).
 	HireIntentRoles   hireintent.Roles
 	HireIntentTimeout time.Duration
 	// #95 hire_preset.check: HirePresetRoles the classifier (default AI;

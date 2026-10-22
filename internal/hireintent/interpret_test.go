@@ -179,17 +179,23 @@ func TestContradictionsAsk(t *testing.T) {
 			}
 		})
 	}
-	// A bare family name is not a model: four Claude models share it.
-	for _, family := range []string{"Opus", "Sonnet", "Claude", "GPT"} {
+	// #190: a bare family name is the one model of the catalog that has it,
+	// and asks among exactly those that share it: four Claude models share
+	// "Claude".
+	for family, want := range map[string]string{"Opus": "claude-opus-5-5", "Sonnet": "claude-sonnet-5-5", "GPT": "gpt-6.1-sol"} {
 		in := mustHire(t, interpret(t, "Hire an agent on "+family+" with high effort. Task: fix it.", nil, cat, ans("hire", "", family, "high", "fix it.")))
-		if in.Model.Provenance != hireintent.Invalid || in.Model.Said != family || in.Harness.Provenance != hireintent.Missing || len(in.Questions[0].Choices) != 5 {
-			t.Fatalf("%s: %s %+v", family, fields(in), in.Questions[0])
+		if in.Model.Provenance != hireintent.Resolved || in.Model.Value != want || in.Model.Said != family || in.Harness.Provenance != hireintent.Resolved || !in.ReadyForReview {
+			t.Fatalf("%s: %s %+v", family, fields(in), in.Questions)
 		}
+	}
+	in := mustHire(t, interpret(t, "Hire an agent on Claude with high effort. Task: fix it.", nil, cat, ans("hire", "", "Claude", "high", "fix it.")))
+	if in.Model.Provenance != hireintent.Invalid || in.Model.Said != "Claude" || in.Harness.Provenance != hireintent.Missing || len(in.Questions[0].Choices) != 4 {
+		t.Fatalf("Claude: %s %+v", fields(in), in.Questions[0])
 	}
 	// The parser's selection_unclear asks even when every value validates.
 	a := ans("hire", "claude", "claude-haiku-5-5", "high", "fix it.")
 	a["selection_unclear"] = true
-	in := mustHire(t, interpret(t, "Hire a Claude agent on Haiku 5.5 or maybe Opus, high effort. Task: fix it.", nil, cat, a))
+	in = mustHire(t, interpret(t, "Hire a Claude agent on Haiku 5.5 or maybe Opus, high effort. Task: fix it.", nil, cat, a))
 	if in.ReadyForReview || !slices.Equal(asks(in), []string{"selection"}) {
 		t.Fatalf("asks %q ready=%v", asks(in), in.ReadyForReview)
 	}
@@ -443,8 +449,9 @@ type roles struct {
 	llm   ai.LLM
 }
 
-func (r roles) State(ai.Role) ai.State { return r.state }
-func (r roles) LLM() ai.LLM            { return r.llm }
+func (r roles) State(ai.Role) ai.State    { return r.state }
+func (r roles) LLM() ai.LLM               { return r.llm }
+func (r roles) Classifier() ai.Classifier { return nil }
 
 // pendingOf is the proposal of text with answer a.
 func pendingOf(t *testing.T, text string, cat hireintent.Catalog, a any) *hireintent.Interpretation {

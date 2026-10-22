@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,10 +19,17 @@ import (
 type hiRoles struct {
 	state ai.State
 	llm   *ai.FakeLLM
+	cls   *ai.FakeClassifier // nil: no classifier
 }
 
 func (r *hiRoles) State(ai.Role) ai.State { return r.state }
 func (r *hiRoles) LLM() ai.LLM            { return r.llm }
+func (r *hiRoles) Classifier() ai.Classifier {
+	if r.cls == nil {
+		return nil
+	}
+	return r.cls
+}
 
 // hiCatalog is the bridge's catalog in these tests (Options.HireOptions).
 var hiCatalog = proto.HireOptions{
@@ -91,7 +99,7 @@ func TestHireInterpretNeverHires(t *testing.T) {
 
 	res = interpretCmd(t, c, "i2", proto.HireInterpretArgs{Text: "high", Pending: in})
 	if res.Hire == nil || !res.Hire.ReadyForReview || res.Hire.Task.Value != "fix the login bug." || res.Hire.Effort.Value != "high" {
-		t.Fatalf("follow-up: %+v", res)
+		t.Fatalf("follow-up: %+v %+v", res.Hire, res.Hire.Questions)
 	}
 	// The same reply without the pending proposal: the bridge kept nothing.
 	res = interpretCmd(t, c, "i3", proto.HireInterpretArgs{Text: "high"})
@@ -169,5 +177,85 @@ func TestHireInterpretArgs(t *testing.T) {
 		Task: hireintent.Task{Provenance: hireintent.Dictated, Value: "fix everything.", Span: &hireintent.Span{Start: 0, End: 3}}}})
 	if res.Error == nil || res.Error.Code != hireintent.CodeBadPending || len(roles.llm.Calls()) != 0 {
 		t.Fatalf("%+v", res)
+	}
+}
+
+// #190: hidden_models narrows what hire.interpret reads to the models the
+// user sees: the LLM's catalog, the family a word names, the question's
+// choices. A follow-up is read again with the list sent with it. Unknown
+// ids and harnesses are ignored, a malformed list is a bad request, and
+// nothing outside the bridge's catalog is ever offered.
+func TestHireInterpretHiddenModels(t *testing.T) {
+	t.Parallel()
+	cat := proto.HireOptions{
+		Claude: hiCatalog.Claude,
+		Codex: proto.HarnessOptions{Models: []string{"gpt-6.1-sol", "gpt-6-sol", "gpt-5.6-sol"}, Efforts: []string{"low", "medium", "high", "xhigh"},
+			ModelLabels: map[string]string{"gpt-6.1-sol": "GPT-6.1-Sol", "gpt-6-sol": "GPT-6-Sol", "gpt-5.6-sol": "GPT-5.6-Sol"}},
+	}
+	const text = "Please spawn a GPT Sol agent on high reasoning to solve the issue with the frontend."
+	model := "GPT Sol"
+	llm := &ai.FakeLLM{Func: func(_ context.Context, req ai.Request) (string, error) {
+		if strings.Contains(req.Messages[1].Content, `"pending_hire"`) {
+			return `{"intent":"hire","harness":null,"model":null,"effort":"high","task":null,"multiple":false,"selection_unclear":false}`, nil
+		}
+		return `{"intent":"hire","harness":null,"model":"` + model + `","effort":"high","task":"solve the issue with the frontend.","multiple":false,"selection_unclear":false}`, nil
+	}}
+	roles := &hiRoles{state: ai.StateReady, llm: llm, cls: &ai.FakeClassifier{Score: 0.95}}
+	hb := startHireBridge(t, func(o *server.Options) {
+		o.HireOptions = &cat
+		o.HireIntentRoles = roles
+	}, linkedWorker("w1", "h3d/pixel-a1b2c3"))
+	c := hb.c
+	oneSol := hireintent.Hidden{"codex": {"gpt-6-sol", "gpt-5.6-sol", "gpt-9-nova"}, "gemini": {"g-1"}}
+	choiceIDs := func(q hireintent.Question) string {
+		var ids []string
+		for _, ch := range q.Choices {
+			ids = append(ids, ch.Model)
+		}
+		return strings.Join(ids, ",")
+	}
+
+	// Every Sol shown: "GPT Sol" names three, asked among exactly those.
+	res := interpretCmd(t, c, "h1", proto.HireInterpretArgs{Text: text})
+	if in := res.Hire; in == nil || in.ReadyForReview || in.Model.Provenance != hireintent.Invalid || choiceIDs(in.Questions[0]) != "gpt-6.1-sol,gpt-6-sol,gpt-5.6-sol" {
+		t.Fatalf("all shown: %+v", res)
+	}
+	// One shown: that one, ready for review; the LLM read only it.
+	res = interpretCmd(t, c, "h2", proto.HireInterpretArgs{Text: text, HiddenModels: oneSol})
+	in := res.Hire
+	if in == nil || !in.ReadyForReview || in.Model.Value != "gpt-6.1-sol" || in.Harness.Value != "codex" || in.Effort.Value != "high" || in.Task.Value != "solve the issue with the frontend." {
+		t.Fatalf("one shown: %+v", res)
+	}
+	payload := llm.Calls()[len(llm.Calls())-1].Messages[1].Content
+	if strings.Contains(payload, "gpt-6-sol") || strings.Contains(payload, "GPT-5.6-Sol") || !strings.Contains(payload, "gpt-6.1-sol") {
+		t.Fatalf("the LLM read %s", payload)
+	}
+	// A near miss goes to the classifier (ready, picking).
+	model = "GPT soul"
+	if res := interpretCmd(t, c, "h3", proto.HireInterpretArgs{Text: text, HiddenModels: oneSol}); res.Hire == nil || !res.Hire.ReadyForReview ||
+		res.Hire.Model.Value != "gpt-6.1-sol" || len(roles.cls.Calls()) != 1 {
+		t.Fatalf("near miss: %+v, %d classifier calls", res, len(roles.cls.Calls()))
+	}
+	model = "GPT Sol"
+	// The follow-up comes with another list: 6.1 hidden now, the pending
+	// model is asked again among the Sols shown.
+	res = interpretCmd(t, c, "h4", proto.HireInterpretArgs{Text: "high", Pending: in, HiddenModels: hireintent.Hidden{"codex": {"gpt-6.1-sol"}}})
+	if f := res.Hire; f == nil || f.ReadyForReview || f.Model.Provenance != hireintent.Invalid || choiceIDs(f.Questions[0]) != "gpt-6-sol,gpt-5.6-sol" ||
+		f.Model.Said != "GPT Sol" || f.Task.Value != in.Task.Value || *f.Task.Span != *in.Task.Span {
+		t.Fatalf("follow-up: %+v %+v", res.Hire, res.Hire.Questions)
+	}
+	// Every Codex model hidden: Codex has nothing to hire.
+	res = interpretCmd(t, c, "h5", proto.HireInterpretArgs{Text: text, HiddenModels: hireintent.Hidden{"codex": cat.Codex.Models}})
+	if f := res.Hire; f == nil || f.ReadyForReview || choiceIDs(f.Questions[0]) != "claude-haiku-5-5" {
+		t.Fatalf("all hidden: %+v", res)
+	}
+	// Malformed lists.
+	c.mustError(proto.CmdHireInterpret, map[string]any{"text": text, "hidden_models": map[string]any{"codex": "gpt-6-sol"}}, proto.ErrBadRequest)
+	c.mustError(proto.CmdHireInterpret, map[string]any{"text": text, "hidden_models": []string{"gpt-6-sol"}}, proto.ErrBadRequest)
+	c.mustError(proto.CmdHireInterpret, proto.HireInterpretArgs{Text: text, HiddenModels: hireintent.Hidden{"codex": {""}}}, proto.ErrBadRequest)
+	c.mustError(proto.CmdHireInterpret, proto.HireInterpretArgs{Text: text, HiddenModels: hireintent.Hidden{"codex": slices.Repeat([]string{"x"}, hireintent.MaxHiddenModels+1)}}, proto.ErrBadRequest)
+	c.mustError(proto.CmdHireInterpret, proto.HireInterpretArgs{Text: text, HiddenModels: hireintent.Hidden{"codex": {strings.Repeat("x", hireintent.MaxHiddenIDBytes+1)}}}, proto.ErrBadRequest)
+	if calls := hb.fl.Calls(); len(calls) != 0 {
+		t.Fatalf("herdr control calls: %q", calls)
 	}
 }

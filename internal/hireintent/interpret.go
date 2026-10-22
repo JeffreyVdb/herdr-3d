@@ -50,19 +50,30 @@ type Request struct {
 	Pending *Interpretation
 	// Catalog is the bridge's current hire catalog.
 	Catalog Catalog
+	// Hidden are the models the user hides (#190, CheckHidden): the LLM and
+	// the rules read Catalog without them. nil: none.
+	Hidden Hidden
+	// Classifier is asked about near misses (Select); nil: never, they are
+	// asked of the user.
+	Classifier ai.Classifier
 }
 
 // Roles is what the package needs of the AI integration: *ai.Service.
 type Roles interface {
 	State(r ai.Role) ai.State
 	LLM() ai.LLM
+	Classifier() ai.Classifier
 }
 
-// Run interprets req with the roles' LLM within timeout (0: none). An LLM
-// that is not ready is a not_ready failure, and no call is made.
+// Run interprets req with the roles' LLM within timeout (0: none), and
+// their classifier when it is ready (#190). An LLM that is not ready is a
+// not_ready failure, and no call is made.
 func Run(ctx context.Context, roles Roles, timeout time.Duration, req Request) Result {
 	if roles == nil || roles.State(ai.RoleLLM) != ai.StateReady {
 		return Result{Text: req.Text, Error: failure(ai.ErrNotReady)}
+	}
+	if req.Classifier == nil && roles.State(ai.RoleClassifier) == ai.StateReady {
+		req.Classifier = roles.Classifier()
 	}
 	if timeout > 0 {
 		var cancel context.CancelFunc
@@ -73,8 +84,9 @@ func Run(ctx context.Context, roles Roles, timeout time.Duration, req Request) R
 }
 
 // Interpret makes one call to l and resolves its answer against the
-// catalog. Every failure is a Result with Error and no proposal; Text is
-// always kept.
+// catalog without the hidden models, asking req.Classifier about near
+// misses. Every failure is a Result with Error and no proposal; Text is
+// always kept. A classifier failing is not one: its field is asked.
 func Interpret(ctx context.Context, l ai.LLM, req Request) Result {
 	res := Result{Text: req.Text}
 	var sources []string
@@ -93,7 +105,8 @@ func Interpret(ctx context.Context, l ai.LLM, req Request) Result {
 		res.Error = failure(ai.ErrNotReady)
 		return res
 	}
-	state := map[string]any{"command": req.Text, "hire_options": req.Catalog}
+	vis := req.Catalog.Without(req.Hidden)
+	state := map[string]any{"command": req.Text, "hire_options": vis}
 	if len(sources) > 0 {
 		state["pending_hire"] = sources
 	}
@@ -120,7 +133,8 @@ func Interpret(ctx context.Context, l ai.LLM, req Request) Result {
 		res.Error = &Failure{Code: CodeBadAnswer, Message: "the language model's answer is not a valid interpretation: " + err.Error()}
 		return res
 	}
-	return Resolve(a, req.Pending, append(append([]string(nil), sources...), req.Text), req.Catalog)
+	sc := scope{full: req.Catalog, vis: vis, cls: req.Classifier}
+	return resolve(ctx, a, req.Pending, append(append([]string(nil), sources...), req.Text), sc)
 }
 
 // failure is the Failure of an error of the LLM's call: its ai.Kind, a

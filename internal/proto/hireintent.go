@@ -17,7 +17,7 @@ func init() { Commands = append(Commands, CmdHireInterpret) }
 // proposal it replies to (left out: a new request), as the last
 // hire.interpret answered it. The proposal is checked again against its own
 // sources and the bridge's current catalog; the catalog is never the
-// client's.
+// client's (hidden_models can only narrow it).
 type HireInterpretArgs struct {
 	Text    string              `json:"text"`
 	Pending *HireInterpretation `json:"pending,omitempty"`
@@ -26,6 +26,11 @@ type HireInterpretArgs struct {
 	// review again, and new files join its own).
 	Secrets        *SecretsReview `json:"secrets,omitempty"`
 	SecretsPending string         `json:"secrets_pending,omitempty"`
+	// #190 (optional): the models the user hides, per harness (the game's
+	// Settings → Harness models): interpretation reads the catalog without
+	// them. It only takes models away; ids the catalog does not have are
+	// ignored. Left out: none hidden.
+	HiddenModels hireintent.Hidden `json:"hidden_models,omitempty"`
 }
 
 // HireInterpretResult is hire.interpret's ack: the intent, the proposal of a
