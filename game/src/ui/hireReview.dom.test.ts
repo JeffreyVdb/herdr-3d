@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CommandResult } from '../net/client';
 import type { HireGit, HireInterpretation, HireOptions, HirePrepare } from '../net/protocol';
 import { FETCH_ORDERINGS, fetchedGit, ORIGIN_GIT, previewGit } from '../test/fetchOrderings';
-import { CAT, FULL, NO_EFFORT } from '../world/hireReviewFixtures';
+import { CAT, field, FULL, NO_EFFORT } from '../world/hireReviewFixtures';
 import type { HireHost } from './hire';
 import { HireReviewDialog } from './hireReview';
 import { HirePrefs } from './hirePrefs';
@@ -430,6 +430,87 @@ describe('HireReviewDialog', () => {
       expect(rv.apply(FULL, t)).toBe(true);
       expect(rv.summary()!.form.effort).toBe('high');
       expect(hires).toHaveLength(0);
+    });
+  });
+
+  describe('#190: the interpreter\'s model question', () => {
+    const SOLS: HireOptions = {
+      claude: CAT.claude!,
+      codex: { models: ['gpt-6.1-sol', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-6-luna'], efforts: ['low', 'medium', 'high'], model_labels: { 'gpt-6.1-sol': 'GPT-6.1-Sol', 'gpt-6-sol': 'GPT-6-Sol', 'gpt-5.6-sol': 'GPT-5.6-Sol' } },
+    };
+    const sol = (model: string) => ({ harness: 'codex', model });
+    const FAMILY: HireInterpretation = {
+      ...FULL,
+      sources: ['Hire a GPT Sol agent with high effort. Task: fix the login bug.'],
+      harness: field('missing'),
+      model: field('invalid', undefined, 'GPT Sol'),
+      questions: [{ field: 'model', text: '“GPT Sol” matches several models. Which one did you mean?', choices: [sol('gpt-6.1-sol'), sol('gpt-6-sol'), sol('gpt-5.6-sol')] }],
+      ready_for_review: false,
+    };
+    const chipsOf = (name: string) => [...document.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`)].map((i) => i.value);
+
+    it('asks its question with exactly its choices; one picked sets the harness and the model, and Hire is on', async () => {
+      const { rv, hires } = setup({ catalog: SOLS });
+      rv.open('floor', FAMILY);
+      await tick();
+      const ask = q('[data-hook="model-question"]')!;
+      expect(ask.textContent).toBe('“GPT Sol” matches several models. Which one did you mean?');
+      expect(chipsOf('model')).toEqual(['gpt-6.1-sol', 'gpt-6-sol', 'gpt-5.6-sol']);
+      expect(q('fieldset[data-pick="model"]')!.getAttribute('aria-describedby')).toBe('review-model-q');
+      expect(section('agent').textContent).not.toContain('not in the catalog');
+      expect(section('agent').textContent).not.toContain('Choose a harness to see its models.');
+      expect(hireBtn().disabled).toBe(true);
+      expect(secOf(rv, 'agent').summary).toBe('Choose a model');
+      expect(rv.summary()!.blocker).toBe('Choose a model.');
+      pickChip('model', 'gpt-6-sol');
+      expect(rv.summary()!.form).toMatchObject({ harness: 'codex', model: 'gpt-6-sol', effort: 'high' });
+      expect(q('[data-hook="model-question"]')).toBeNull();
+      // Answered: the harness's own picker, as without a question.
+      expect(chipsOf('model')).toEqual(['gpt-6.1-sol', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-6-luna']);
+      expect(q('[data-hook="agent-origin"]')!.textContent).toContain('Model Your choice');
+      expect(hireBtn().disabled).toBe(false);
+      expect(hires).toHaveLength(0);
+    });
+
+    it('groups choices of both harnesses by harness; a choice the catalog lost is not offered', async () => {
+      const { rv } = setup({ catalog: SOLS });
+      rv.open('floor', {
+        ...FAMILY,
+        model: field('missing'),
+        questions: [{ field: 'model', text: 'Which model should this agent use?', choices: [{ harness: 'claude', model: 'claude-haiku-5-5', label: 'Haiku 5.5' }, sol('gpt-6.1-sol'), sol('gpt-9-gone')] }],
+      });
+      await tick();
+      expect(q('[data-hook="model-question"]')!.textContent).toBe('Which model should this agent use?');
+      expect(chipsOf('model-claude')).toEqual(['claude-haiku-5-5']);
+      expect(chipsOf('model-codex')).toEqual(['gpt-6.1-sol']);
+      expect([...document.querySelectorAll('fieldset[data-pick^="model-"] legend')].map((l) => l.textContent)).toEqual(['Claude Code', 'Codex']);
+      pickChip('model-claude', 'claude-haiku-5-5');
+      expect(rv.summary()!.form).toMatchObject({ harness: 'claude', model: 'claude-haiku-5-5' });
+    });
+
+    it('a harness picked instead answers it: that harness\'s models', async () => {
+      const { rv } = setup({ catalog: SOLS });
+      rv.open('floor', FAMILY);
+      await tick();
+      pickChip('harness', 'claude');
+      expect(q('[data-hook="model-question"]')).toBeNull();
+      expect(chipsOf('model')).toEqual(SOLS.claude!.models);
+    });
+
+    it('a follow-up\'s question replaces it; without one the panel is as before', async () => {
+      const { rv } = setup({ catalog: SOLS });
+      rv.open('floor', FAMILY);
+      await tick();
+      const t = rv.begin()!;
+      rv.apply({ ...FAMILY, questions: [{ ...FAMILY.questions[0]!, text: 'Which model did you mean by “GPT Banana”?', choices: [sol('gpt-6-luna')] }], model: field('invalid', undefined, 'GPT Banana') }, t);
+      expect(q('[data-hook="model-question"]')!.textContent).toBe('Which model did you mean by “GPT Banana”?');
+      expect(chipsOf('model')).toEqual(['gpt-6-luna']);
+      rv.close();
+      rv.open('floor', { ...FAMILY, harness: field('dictated', 'codex'), model: field('invalid', undefined, 'GPT Banana'), questions: [] });
+      await tick();
+      expect(q('[data-hook="model-question"]')).toBeNull();
+      expect(chipsOf('model')).toEqual(SOLS.codex!.models);
+      expect(q('[data-hook="agent-origin"]')!.textContent).toContain('“GPT Banana” is not in the catalog.');
     });
   });
 

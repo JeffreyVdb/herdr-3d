@@ -24,7 +24,7 @@ export interface Interp {
   model: Field;
   effort: Field;
   task: { provenance: string; value?: string; span?: { source: number; start: number; end: number } };
-  questions: Array<{ field: string; text: string }>;
+  questions: Array<{ field: string; text: string; choices?: Array<{ harness: string; model: string }> }>;
   ready_for_review: boolean;
 }
 
@@ -64,8 +64,8 @@ function hireOf(cmd: string): Interp {
 /**
  * #190: the screenshot's sentence ("Please spawn a GPT Sol agent on high reasoning to solve …"): the model is the one
  * model of `options` (the catalog the bridge sent, without the models Settings hides) whose id has every word said, as
- * the bridge resolves a family; several are asked about, none too. The effort is the word before "reasoning"; the task
- * all that follows "to".
+ * the bridge resolves a family; several are asked about among exactly those, as the bridge asks, none too. The effort is
+ * the word before "reasoning"; the task all that follows "to".
  */
 function familyHire(cmd: string, options: Record<string, { models: string[] }>): Interp {
   const [, said = '', effort = '', task = ''] = /^Please spawn an? (.+?) agent on (\S+) reasoning to (.+)$/s.exec(cmd) ?? [];
@@ -73,7 +73,8 @@ function familyHire(cmd: string, options: Record<string, { models: string[] }>):
   const found = Object.entries(options).flatMap(([h, o]) => o.models.filter((m) => words.every((w) => m.split('-').includes(w))).map((m) => [h, m] as const));
   const one = found.length === 1 ? found[0] : undefined;
   const start = cmd.lastIndexOf(task);
-  const questions = one ? [] : [{ field: 'model', text: `Which model did you mean by “${said}”?` }];
+  const several = found.length > 1 ? { text: `“${said}” matches several models. Which one did you mean?`, choices: found.map(([harness, model]) => ({ harness, model })) } : null;
+  const questions = one ? [] : [{ field: 'model', ...(several ?? { text: `Which model did you mean by “${said}”?` }) }];
   return {
     sources: [cmd],
     harness: one ? { provenance: 'resolved', value: one[0] } : { provenance: 'missing' },
