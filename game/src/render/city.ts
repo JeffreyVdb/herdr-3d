@@ -75,7 +75,17 @@ interface SignMark {
   lit: boolean;
 }
 
-type Part = 'slab' | 'wallN' | 'wallW' | 'kneeS' | 'kneeE' | 'pillar' | 'strip' | 'band' | 'rug' | 'mezz' | 'glow';
+/**
+ * #146: the dollhouses' shadow-casting box parts (one geometry, one toon material, a colour per instance) are one
+ * InstancedMesh: a floor's part `k` is its instance `k * floors + floor`. One mesh is one program (two with shadows),
+ * where six were six. Drawn in the order the separate meshes were (all slabs, then all north walls, …). The mezzanine
+ * stays its own mesh, drawn after the strips, bands and rugs as before: in the merged mesh it was drawn before them and
+ * an edge where its deck meets a window band came out another colour (one pixel of the demo city).
+ */
+const BOX_PARTS = ['slab', 'wallN', 'wallW', 'kneeS', 'kneeE', 'pillar'] as const;
+type BoxPart = (typeof BOX_PARTS)[number];
+type Part = BoxPart | 'strip' | 'band' | 'rug' | 'mezz' | 'glow';
+type Parts = Record<Exclude<Part, BoxPart> | 'box', THREE.InstancedMesh>;
 
 const color = new THREE.Color();
 
@@ -96,7 +106,9 @@ export class CityView {
   private bounds = new THREE.Box3();
   private crowd: Crowd | null = null;
   private desks: DeskSet | null = null;
-  private parts: Record<Part, THREE.InstancedMesh> | null = null;
+  private parts: Parts | null = null;
+  /** The floors `parts.box` holds of each box part. */
+  private partFloors = 0;
   private badgeLayer: BadgeLayer | null = null;
   private dynamic = new THREE.Group();
   private readonly sun: THREE.DirectionalLight;
@@ -190,7 +202,8 @@ export class CityView {
     const floorsTotal = plans.reduce((n, p) => n + p.layouts.length, 0);
     this.desks = new DeskSet(Math.max(1, deskTotal), this.shadows, { plus: false });
     this.crowd = new Crowd(Math.max(1, deskTotal), this.shadows, true);
-    this.parts = this.makeParts(Math.max(1, floorsTotal));
+    this.partFloors = Math.max(1, floorsTotal);
+    this.parts = this.makeParts(this.partFloors);
     this.badgeLayer = new BadgeLayer(Math.max(1, floorsTotal), FH * 0.62);
     this.badgeLayer.object.visible = this.badges;
     this.dynamic.add(this.desks.group, this.crowd.group, ...Object.values(this.parts), this.badgeLayer.object);
@@ -259,39 +272,35 @@ export class CityView {
     this.sun.shadow.normalBias = normalBiasFor(r);
   }
 
-  private makeParts(n: number): Record<Part, THREE.InstancedMesh> {
+  private makeParts(n: number): Parts {
     const unit = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
-    const toon = () => new THREE.MeshToonMaterial({ color: 0xffffff });
     const basic = () => new THREE.MeshBasicMaterial({ color: 0xffffff });
-    const mk = (name: Part, mat: THREE.Material, shadow: boolean, geo: THREE.BufferGeometry = unit) => {
-      const m = new THREE.InstancedMesh(geo, mat, n);
+    const mk = (name: string, mat: THREE.Material, shadow: boolean, geo: THREE.BufferGeometry = unit, count = n) => {
+      const m = new THREE.InstancedMesh(geo, mat, count);
       m.name = `city.${name}`;
       m.castShadow = shadow;
       m.receiveShadow = true;
       m.frustumCulled = false;
-      for (let i = 0; i < n; i++) m.setColorAt(i, color.set(0xffffff));
+      for (let i = 0; i < count; i++) m.setColorAt(i, color.set(0xffffff));
       return m;
     };
     return {
-      slab: mk('slab', toon(), true),
-      wallN: mk('wallN', toon(), true),
-      wallW: mk('wallW', toon(), true),
-      kneeS: mk('kneeS', toon(), true),
-      kneeE: mk('kneeE', toon(), true),
-      pillar: mk('pillar', toon(), true),
+      box: mk('box', new THREE.MeshToonMaterial({ color: 0xffffff }), true, unit, BOX_PARTS.length * n),
       strip: mk('strip', basic(), false),
       band: mk('band', basic(), false, new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0)),
       rug: mk('rug', new THREE.MeshToonMaterial({ color: OFFICE.rug }), false, new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2)),
-      mezz: mk('mezz', toon(), true),
+      mezz: mk('mezz', new THREE.MeshToonMaterial({ color: 0xffffff }), true),
       glow: mk('glow', this.glowMat, false),
     };
   }
 
   private setPart(part: Part, i: number, x: number, y: number, z: number, sx: number, sy: number, sz: number, hex?: number): void {
-    const m = this.parts?.[part];
-    if (!m) return;
-    m.setMatrixAt(i, new THREE.Matrix4().compose(this.v.set(x, y, z), new THREE.Quaternion(), new THREE.Vector3(sx, sy, sz)));
-    if (hex !== undefined) m.setColorAt(i, color.set(hex));
+    if (!this.parts) return;
+    const k = BOX_PARTS.indexOf(part as BoxPart);
+    const m = k < 0 ? this.parts[part as Exclude<Part, BoxPart>] : this.parts.box;
+    const at = k < 0 ? i : k * this.partFloors + i;
+    m.setMatrixAt(at, new THREE.Matrix4().compose(this.v.set(x, y, z), new THREE.Quaternion(), new THREE.Vector3(sx, sy, sz)));
+    if (hex !== undefined) m.setColorAt(at, color.set(hex));
   }
 
   private placeFloor(i: number, f: FloorSlot, tint: number): void {
