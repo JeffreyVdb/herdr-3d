@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Ask, CodexBatch, CodexQuestion, CommandArgs, Followup, WorkerCodex } from '../net/protocol';
 import { AsyncCard, type AsyncResult } from './asyncCard';
 import { AsyncDrafts } from './asyncDrafts';
@@ -401,8 +401,19 @@ describe('AsyncCard (#157)', () => {
   });
 });
 
-describe('the transcript view with async questions (#157)', () => {
+describe('the transcript view with async questions (#157, #187: in the questions’ sheet)', () => {
   let view: TranscriptView | null = null;
+  beforeEach(() => {
+    // jsdom has no modal dialogs: open / close are what the sheet looks at.
+    HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+      this.setAttribute('open', '');
+    };
+    HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+      if (!this.open) return;
+      this.removeAttribute('open');
+      this.dispatchEvent(new Event('close'));
+    };
+  });
   afterEach(() => {
     view?.destroy();
     view = null;
@@ -416,32 +427,50 @@ describe('the transcript view with async questions (#157)', () => {
     since: Date.now(),
     questions: [{ header: '', question: 'Proceed?', multi: false, other: false, options: [{ label: 'Yes', description: '' }] }],
   };
+  const sheet = () => document.querySelector<HTMLDialogElement>('dialog.tx-qsheet');
+  const lane = (k: string) => document.querySelector<HTMLElement>(`.tx-qlane[data-lane="${k}"]`);
 
-  it('keeps the prompt box on beside the card, and gives way to a blocking ask', () => {
+  it('keeps the prompt box on and never opens the sheet by itself; a blocking ask opens it, urgent lane first, the async card under it', () => {
     const box = document.createElement('div');
     document.body.append(box);
     view = mountTranscript(box, { images: null, onPromptSubmit: () => {}, onAnswer: () => {}, onAnswerAsk: () => Promise.resolve({ ok: true, resolved: true }), onSwitchToTerminal: () => {}, loadSubagent: () => Promise.resolve([]) });
     view.setCodex(W, codex([batch('call_3', [color()])]), true);
     const tx = box.querySelector<HTMLElement>('.tx')!;
-    expect(tx.querySelector<HTMLElement>('.tx-aq')?.hidden).toBe(false);
-    expect(tx.hasAttribute('data-asyncq')).toBe(true);
+    const btn = tx.querySelector<HTMLButtonElement>('.tx-qbtn')!;
+    expect(sheet()?.open ?? false).toBe(false);
+    expect(btn.hidden).toBe(false);
+    expect(btn.dataset.lane).toBe('optional');
+    expect(btn.getAttribute('aria-label')).toBe('Codex asked 1 question');
+    expect(tx.querySelector('.tx-aq')).toBeNull(); // in the sheet, not between the timeline and the prompt box
     expect(tx.querySelector('.tx-send')?.hasAttribute('disabled')).toBe(false);
     expect(tx.querySelector('.tx-aq-live')?.getAttribute('aria-live')).toBe('polite');
     view.setAsk(ask);
-    expect(tx.querySelector<HTMLElement>('.tx-aq')?.hidden).toBe(true);
+    expect(sheet()?.open).toBe(true);
+    expect(btn.dataset.lane).toBe('urgent');
+    expect(sheet()!.hasAttribute('data-lanes')).toBe(true);
+    const lanes = [...sheet()!.querySelectorAll<HTMLElement>('.tx-qlane')];
+    expect(lanes.map((l) => [l.dataset.lane, l.hidden])).toEqual([
+      ['urgent', false],
+      ['optional', false],
+    ]);
+    expect(lane('optional')?.querySelector<HTMLElement>('.tx-aq')?.hidden).toBe(false);
+    expect(lane('optional')?.querySelector('.tx-qlane-head')?.textContent).toBe('Codex asked');
+    expect(tx.querySelector('.tx-send')?.hasAttribute('disabled')).toBe(true);
+    // The ask goes: the sheet with it (the async questions stay on the button), the prompt box back on.
     view.setAsk(null);
-    expect(tx.querySelector<HTMLElement>('.tx-aq')?.hidden).toBe(false);
+    expect(sheet()?.open).toBe(false);
+    expect(btn.dataset.lane).toBe('optional');
+    expect(tx.querySelector('.tx-send')?.hasAttribute('disabled')).toBe(false);
   });
 
-  // An idle Codex worker can keep its last turn's async questions and have a follow-up too: one card open, the other
-  // a tab away (a phone's screen has no room for two), the keys the open one's, and what you wrote on each kept.
-  it('opens one of the follow-up’s card and the async questions’ at a time, with tabs to switch, and keeps both drafts', () => {
+  // An idle Codex worker can keep its last turn's async questions and have a follow-up too: both in the sheet's calm
+  // lane (no tabs any more), the keys the card's you are on, and what you wrote on each kept across closing it.
+  it('puts the follow-up’s card and the async questions’ in the calm lane together, and keeps both drafts across closing the sheet', () => {
     const box = document.createElement('div');
     document.body.append(box);
     view = mountTranscript(box, { images: null, onPromptSubmit: () => {}, onAnswer: () => {}, onAnswerAsk: () => Promise.resolve({ ok: true, resolved: true }), onSwitchToTerminal: () => {}, loadSubagent: () => Promise.resolve([]) });
     const tx = box.querySelector<HTMLElement>('.tx')!;
-    const tabs = tx.querySelector<HTMLElement>('.tx-qtabs')!;
-    const tab = (k: string) => tx.querySelector<HTMLButtonElement>(`.tx-qtab[data-card="${k}"]`)!;
+    const btn = tx.querySelector<HTMLButtonElement>('.tx-qbtn')!;
     const key = (target: Element, k: string) => target.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
     const followup: Followup = {
       turn_id: 'turn-9',
@@ -453,48 +482,38 @@ describe('the transcript view with async questions (#157)', () => {
         { id: 'q2', question: 'Any release context?', kind: 'open' },
       ],
     };
-    // The async questions alone: no tabs.
     view.setCodex(W, codex([batch('call_3', [context({ index: 0 })])], { turn: '' }), false);
-    expect(tabs.hidden).toBe(true);
-    expect(tx.dataset.front).toBeUndefined();
-    tx.querySelector<HTMLTextAreaElement>('textarea.tx-aq-text')!.value = 'async draft';
-    tx.querySelector<HTMLTextAreaElement>('textarea.tx-aq-text')!.dispatchEvent(new Event('input'));
-    // A follow-up comes: the card you had stays open, the follow-up waits behind its tab.
     view.setFollowup(followup);
-    expect(tabs.hidden).toBe(false);
-    expect(tabs.getAttribute('role')).toBe('tablist');
-    expect(tx.dataset.front).toBe('asyncq');
-    expect(tab('asyncq').getAttribute('aria-selected')).toBe('true');
-    expect(tab('asyncq').tabIndex).toBe(0);
-    expect(tab('followup').getAttribute('aria-selected')).toBe('false');
-    expect(tab('followup').tabIndex).toBe(-1);
-    expect(tab('followup').getAttribute('aria-controls')).toBe(tx.querySelector('.tx-fu')!.id);
-    expect(tab('followup').textContent).toBe('Open questions2');
-    expect(tab('asyncq').textContent).toBe('Codex asked1');
-    // The follow-up's tab: it opens, the keyboard on it; the timeline's digits are its own now.
-    tab('followup').click();
-    expect(tx.dataset.front).toBe('followup');
-    expect(tx.querySelector('.tx-fu')!.contains(document.activeElement)).toBe(true);
-    const scroll = tx.querySelector<HTMLElement>('.tx-scroll')!;
-    scroll.focus();
-    key(scroll, '2'); // No
-    expect(tx.querySelector('.tx-fu .tx-ask-row .tx-ask-row-text')?.textContent).toBe('No');
-    tx.querySelector<HTMLTextAreaElement>('.tx-fu textarea.tx-fu-text')!.value = 'follow-up draft';
-    tx.querySelector<HTMLTextAreaElement>('.tx-fu textarea.tx-fu-text')!.dispatchEvent(new Event('input'));
-    // ← → on the tabs switch, the keyboard stays there; both drafts are where they were.
-    tab('followup').focus();
-    key(tab('followup'), 'ArrowRight');
-    expect(tx.dataset.front).toBe('asyncq');
-    expect(document.activeElement).toBe(tab('asyncq'));
-    expect(tx.querySelector<HTMLTextAreaElement>('textarea.tx-aq-text')?.value).toBe('async draft');
-    key(tab('asyncq'), 'ArrowLeft');
-    expect(tx.dataset.front).toBe('followup');
-    expect(tx.querySelector<HTMLTextAreaElement>('.tx-fu textarea.tx-fu-text')?.value).toBe('follow-up draft');
-    expect(tx.querySelector('.tx-fu .tx-ask-row .tx-ask-row-text')?.textContent).toBe('No');
-    // The follow-up goes: the async card is the only one, no tabs.
+    expect(sheet()?.open ?? false).toBe(false);
+    expect(btn.getAttribute('aria-label')).toBe('Questions: 2 open, 1 from Codex');
+    btn.click();
+    expect(sheet()?.open).toBe(true);
+    expect(sheet()!.hasAttribute('data-lanes')).toBe(false); // one lane: the title names it
+    expect(lane('urgent')?.hidden).toBe(true);
+    expect(sheet()!.getAttribute('aria-labelledby') ? sheet()!.querySelector('.sheet-title')?.textContent : sheet()!.getAttribute('aria-label')).toBe('Questions for you');
+    const fu = document.querySelector<HTMLElement>('.tx-fu')!;
+    const aq = document.querySelector<HTMLElement>('.tx-aq')!;
+    expect([fu.hidden, aq.hidden]).toEqual([false, false]);
+    expect(fu.contains(document.activeElement)).toBe(true); // the first card up
+    // The digits are the card's the keyboard is on.
+    key(document.activeElement!, '2'); // No
+    expect(fu.querySelector('.tx-ask-row .tx-ask-row-text')?.textContent).toBe('No');
+    aq.querySelector<HTMLTextAreaElement>('textarea.tx-aq-text')!.value = 'async draft';
+    aq.querySelector<HTMLTextAreaElement>('textarea.tx-aq-text')!.dispatchEvent(new Event('input'));
+    fu.querySelector<HTMLTextAreaElement>('textarea.tx-fu-text')!.value = 'follow-up draft';
+    fu.querySelector<HTMLTextAreaElement>('textarea.tx-fu-text')!.dispatchEvent(new Event('input'));
+    // Closed and opened again (Q from the timeline): everything where it was.
+    sheet()!.querySelector<HTMLButtonElement>('.sheet-close')!.click();
+    expect(sheet()?.open).toBe(false);
+    tx.querySelector<HTMLElement>('.tx-scroll')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'q', code: 'KeyQ', bubbles: true, cancelable: true }));
+    expect(sheet()?.open).toBe(true);
+    expect(aq.querySelector<HTMLTextAreaElement>('textarea.tx-aq-text')?.value).toBe('async draft');
+    expect(fu.querySelector<HTMLTextAreaElement>('textarea.tx-fu-text')?.value).toBe('follow-up draft');
+    expect(fu.querySelector('.tx-ask-row .tx-ask-row-text')?.textContent).toBe('No');
+    // The follow-up goes: the async card is the only one, the sheet named for it.
     view.setFollowup(null);
-    expect(tabs.hidden).toBe(true);
-    expect(tx.dataset.front).toBeUndefined();
-    expect(tx.querySelector<HTMLElement>('.tx-aq')?.hidden).toBe(false);
+    expect(fu.hidden).toBe(true);
+    expect(aq.hidden).toBe(false);
+    expect(sheet()?.querySelector('.sheet-title')?.textContent).toBe('Codex asked');
   });
 });

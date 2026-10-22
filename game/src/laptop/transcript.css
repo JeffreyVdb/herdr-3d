@@ -9,10 +9,15 @@
  *
  * #216 (ownership): the transcript's CONTENT (messages, code, diffs, tool output, status annotations and the code
  * highlight palette) keeps the `--tx-*` set and `--tx-mono` / `--tx-prose`. The screen's app chrome and widgets (the strip,
- * the prompt box and its Send, the jump chip, the banner, the question cards and their answer controls, a tool row's
+ * the prompt box and its Send, the jump chip, the question cards and their answer controls, a tool row's
  * button, the completion popover, file chips) wear the UI theme (`--ctl-*`, `--warn`, `--on-fill`; ui/uiTheme.css), so
  * Ubuntu's UI over a Quiet transcript (or the other way round) keeps each part in its own palette. The Ubuntu rules
  * are at the end of the file, under `:root[data-ui-theme='ubuntu'] .tx`: they out-rank `.tx button`'s reset (#111).
+ *
+ * #187: the question cards live in the questions' sheet (questionSheet.ts), a dialog in the page's top layer, outside
+ * `.tx`: its cards' box is `.tx-qcards`. So the rules under the view's root that reach the cards (and its resets) are written
+ * `:is(.tx, .tx-qcards) …` (the same specificity as `.tx …`): the cards keep the resets, the icon sizes, the focus ring
+ * and the Ubuntu rules they had. The comments say `.tx` for both.
  */
 
 .tx {
@@ -35,22 +40,24 @@
   /* Its height is the screen's: the banner and the strips ask how much room there is. */
   container: tx / size;
 }
-.tx *,
-.tx *::before,
-.tx *::after {
+:is(.tx, .tx-qcards) *,
+:is(.tx, .tx-qcards) *::before,
+:is(.tx, .tx-qcards) *::after {
   box-sizing: border-box;
 }
-.tx svg {
+/* #187: the questions' button (questionsButton.css) sizes and colours itself: the resets leave it alone (`:where`, so
+   they keep their specificity). */
+:is(.tx, .tx-qcards) svg:where(:not(.tx-qbtn-icon)) {
   width: calc(14px * var(--tx-k, 1));
   height: calc(14px * var(--tx-k, 1));
   flex: none;
 }
-.tx button {
+:is(.tx, .tx-qcards) button:where(:not(.tx-qbtn)) {
   font: inherit;
   color: inherit;
   cursor: pointer;
 }
-.tx :focus-visible {
+:is(.tx, .tx-qcards) :focus-visible {
   outline: 2px solid var(--ctl-focus);
   outline-offset: 1px;
 }
@@ -336,68 +343,29 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* #216: the banner, the question cards and their tabs are the screen's own chrome, so the sun of "waiting for you" is
-   the UI theme's warning colour there (the rules below keep asking `--tx-sun`; the async-question card and its tab
-   repoint these to the working colour). The timeline's records of a question keep the transcript's sun. */
-.tx-banner,
+/* #216: the question cards are the screen's own chrome, so the sun of "waiting for you" is the UI theme's warning colour
+   there (the rules below keep asking `--tx-sun`; the async-question card repoints these to the working colour). The
+   timeline's records of a question keep the transcript's sun. */
+.tx-bq,
 .tx-ask,
 .tx-fu,
-.tx-aq,
-.tx-qtab {
+.tx-aq {
   --tx-sun: var(--warn);
   --tx-sun-text: var(--warn);
   --tx-on-sun: var(--on-fill);
 }
 
-/* Blocked banner */
-.tx-banner {
-  flex: none;
+/* #187: the screen's question (it was the banner at the top of the view), in the questions' sheet's urgent lane. */
+.tx-bq {
   color: var(--ctl-text);
   font-family: var(--ctl-font);
-  margin: 8px 10px 0;
   padding: 9px 11px 10px;
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--ctl-banner-bg);
   border: 1px solid color-mix(in srgb, var(--tx-sun) 45%, transparent);
 }
-.tx-banner[hidden] {
+.tx-bq[hidden] {
   display: none;
-}
-/* The question never eats the conversation: at most under half the screen, the rest scrolls inside it. */
-.tx-banner {
-  max-height: min(46%, 320px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--tx-sun) 35%, transparent) transparent;
-}
-/* A short screen (a small window): a tighter plate, three lines of the question's excerpt, one row of answers. */
-@container tx (max-height: 470px) {
-  .tx-banner {
-    margin: 6px 8px 0;
-    padding: 6px 9px 7px;
-    max-height: min(44%, 200px);
-  }
-  .tx-banner-tag {
-    font-size: calc(10px * var(--tx-k, 1));
-  }
-  .tx-banner-excerpt {
-    max-height: 4.4em;
-    margin-top: 5px;
-    padding: 3px 7px;
-    font-size: var(--tx-mono-fs, 11.5px);
-  }
-  .tx-banner-actions {
-    margin-top: 5px;
-    gap: 4px 6px;
-  }
-  .tx-choice {
-    padding: 2px 9px 2px 3px;
-    font-size: calc(12px * var(--tx-k, 1));
-  }
-  .tx-choice-label {
-    max-width: 24ch;
-  }
 }
 .tx-banner-head {
   display: flex;
@@ -1279,10 +1247,64 @@
   display: none;
 }
 
+/*
+ * #187: the questions' button, a row of its own above the composer inside the prompt box (never over the conversation:
+ * the timeline keeps its whole height), there only while something waits.
+ */
+.tx-qrow {
+  flex: 0 0 100%;
+  display: flex;
+  min-width: 0;
+  /* The button's ring stands 4px outside it. */
+  padding: 4px 4px 0;
+}
+.tx-qrow:not(:has(> :not([hidden]))) {
+  display: none;
+}
+/*
+ * #187: the questions' sheet's cards (ui/sheet.ts styles the dialog, or the bottom sheet on a phone): the urgent lane
+ * first, then the calm one, each under its name when both are up (`data-lanes`). A container named like the view, so
+ * its narrow-width rules fit the cards to a phone's sheet too.
+ */
+.tx-qcards {
+  container: tx / inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  color: var(--ctl-text);
+  font-family: var(--ctl-font);
+  font-size: var(--tx-fs, 13.5px);
+  line-height: 1.5;
+  text-align: left;
+}
+.tx-qlane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.tx-qlane[hidden] {
+  display: none;
+}
+.tx-qlane-head {
+  display: none;
+  margin: 0;
+  color: var(--ctl-text-2);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.tx-qsheet[data-lanes] .tx-qlane-head {
+  display: block;
+}
+
 /* Prompt */
 .tx-prompt {
   flex: none;
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 8px;
   padding: 8px 10px;
@@ -1761,8 +1783,8 @@
 }
 
 /*
- * #57: an agent's question. Pinned above the prompt box while it waits: the "waiting for you" sun of the blocked
- * banner, its questions stacked (the open one boxed with its options, the others folded to one line each: what was
+ * #57: an agent's question. #187: in the questions' sheet while it waits (questionSheet.ts): the "waiting for you" sun
+ * of the screen's question, its questions stacked (the open one boxed with its options, the others folded to one line each: what was
  * answered, or what is still to answer), the options as rows led by their key cap (round: pick one; square: pick
  * several; filled: picked), so the digit you press is the one you see. In the timeline it is a quiet record of what
  * was asked and answered.
@@ -1772,14 +1794,9 @@
 .tx-aq {
   --tx-sun-soft: color-mix(in srgb, var(--tx-sun) 42%, transparent);
   --tx-ask-bg: var(--ctl-ask-bg);
-  flex: none;
   display: flex;
   flex-direction: column;
-  margin: 0 10px 8px;
   padding: 9px 12px 10px;
-  /* The question never eats the conversation; its top (who asks, the questions) and foot (Send) stay, the options scroll. */
-  max-height: min(60%, 500px);
-  overflow: hidden;
   border: 1px solid var(--tx-sun-soft);
   border-radius: 10px;
   background: var(--tx-ask-bg);
@@ -2121,7 +2138,7 @@
   color: var(--ctl-text-2);
 }
 /* Under .tx: its button reset (`.tx button`: the colour inherited) would win over a bare class, light text on sun. */
-.tx .tx-ask-send {
+:is(.tx, .tx-qcards) .tx-ask-send {
   flex: none;
   padding: 5px 16px;
   border: 0;
@@ -2130,18 +2147,18 @@
   color: var(--tx-on-sun);
   font-weight: 750;
 }
-.tx .tx-ask-send:hover:not(:disabled) {
+:is(.tx, .tx-qcards) .tx-ask-send:hover:not(:disabled) {
   background: color-mix(in srgb, var(--tx-sun) 82%, var(--ctl-lift));
 }
-.tx .tx-ask-send:disabled,
-.tx .tx-ask-send.is-blocked {
+:is(.tx, .tx-qcards) .tx-ask-send:disabled,
+:is(.tx, .tx-qcards) .tx-ask-send.is-blocked {
   background: var(--ctl-hover);
   color: var(--ctl-text-3);
 }
-.tx .tx-ask-send:disabled {
+:is(.tx, .tx-qcards) .tx-ask-send:disabled {
   cursor: default;
 }
-.tx .tx-ask-send.is-blocked:hover {
+:is(.tx, .tx-qcards) .tx-ask-send.is-blocked:hover {
   background: var(--ctl-hover);
 }
 .tx-ask-kbd {
@@ -2168,47 +2185,11 @@
 .tx-ask-note.is-error {
   color: var(--ctl-error);
 }
-.tx .tx-ask button:disabled,
-.tx .tx-fu button:disabled,
-.tx .tx-aq button:disabled {
+:is(.tx, .tx-qcards) .tx-ask button:disabled,
+:is(.tx, .tx-qcards) .tx-fu button:disabled,
+:is(.tx, .tx-qcards) .tx-aq button:disabled {
   cursor: default;
 }
-/* A short screen: a tighter card, descriptions to two lines, no previews' height to spare. */
-@container tx (max-height: 470px) {
-  .tx-ask,
-  .tx-fu,
-  .tx-aq {
-    margin: 0 8px 6px;
-    padding: 6px 9px 7px;
-    max-height: 56%;
-  }
-  .tx-ask-question {
-    margin: 6px 0 5px;
-    font-size: calc(13px * var(--tx-k, 1));
-  }
-  .tx-ask-opt {
-    padding: 4px 8px 4px 5px;
-  }
-  .tx-ask-opt-desc {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-  .tx-ask-preview {
-    max-height: 5em;
-  }
-  .tx-ask-keys {
-    display: none;
-  }
-}
-/*
- * The top and the foot never shrink, so on a narrow screen (a phone's projected monitor is under 200px tall) they
- * keep to as few lines as they can (#59: the top strip takes a second rather than clip its controls): the top drops
- * the terminal link (Ctrl+Esc and the toggle stay), the foot keeps its buttons and cuts its hint and the send key.
- * Whatever height is left is the body's (the stacked questions), which scrolls; the card may take most of the screen
- * then, as the prompt box it replaces is off anyway.
- */
 /* #59: a narrower screen: the picked preset's name and the title go first, then the strip wraps (see .tx-bar). */
 @container tx (max-width: 820px) {
   .tx-theme[aria-checked='true'] .tx-theme-name {
@@ -2297,13 +2278,6 @@
   }
 }
 @container tx (max-height: 300px) {
-  .tx[data-asking] .tx-prompt {
-    display: none;
-  }
-  /* #59: a line of the conversation peeks out (the strip may take two rows on a narrow screen now). */
-  .tx[data-asking] .tx-main {
-    min-height: 1.8em;
-  }
   /* #59: the strip's rows tighter (it wraps to two on a phone), every control still its own size to click. */
   .tx-bar {
     padding: 3px 10px;
@@ -2318,75 +2292,6 @@
   .tx-theme,
   .tx-zoom-btn {
     height: 18px;
-  }
-  .tx-ask,
-  .tx-fu,
-  .tx-aq {
-    flex: 0 1 auto;
-    min-height: 0;
-    max-height: none;
-    margin: 0 6px 6px;
-    padding: 5px 8px 6px;
-  }
-  /* Who asks is the first line; the body's row takes what is left. */
-  .tx-ask,
-  .tx-fu,
-  .tx-aq {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr) auto auto;
-    column-gap: 8px;
-    align-items: center;
-  }
-  .tx-ask-top {
-    grid-column: 1 / -1;
-    grid-row: 1;
-  }
-  .tx-ask-top .tx-ask-wait,
-  .tx-ask-top .tx-spacer,
-  .tx-ask-top .tx-to-term {
-    display: none;
-  }
-  .tx-ask-stack {
-    gap: 4px;
-    margin-top: 4px;
-  }
-  .tx-ask-stack > .tx-ask-q {
-    padding: 4px 7px 6px;
-  }
-  .tx-ask-row {
-    padding: 3px 8px;
-  }
-  .tx-ask-body,
-  .tx-ask-foot,
-  .tx-ask-note {
-    grid-column: 1 / -1;
-    align-self: stretch;
-  }
-  .tx-ask-body {
-    max-height: 100%;
-  }
-  .tx-ask-question {
-    margin: 5px 0 4px;
-    font-size: calc(12.5px * var(--tx-k, 1));
-  }
-  .tx-ask-opt {
-    padding: 3px 7px 3px 4px;
-    gap: 8px;
-  }
-  .tx-ask-foot {
-    margin-top: 4px;
-    padding-top: 4px;
-    gap: 8px;
-  }
-  .tx .tx-ask-send {
-    padding: 3px 13px;
-  }
-  .tx-ask-note {
-    margin-top: 3px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 }
 
@@ -2526,7 +2431,7 @@
   color: var(--ctl-text);
   font-weight: 750;
 }
-.tx .tx-fu-btn {
+:is(.tx, .tx-qcards) .tx-fu-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2540,11 +2445,11 @@
   white-space: nowrap;
   transition: border-color 120ms ease-out, background-color 120ms ease-out;
 }
-.tx .tx-fu-btn:hover:not(:disabled) {
+:is(.tx, .tx-qcards) .tx-fu-btn:hover:not(:disabled) {
   border-color: var(--tx-sun);
   background: color-mix(in srgb, var(--tx-sun) 8%, transparent);
 }
-.tx .tx-fu-btn:disabled {
+:is(.tx, .tx-qcards) .tx-fu-btn:disabled {
   border-color: var(--ctl-border);
   color: var(--ctl-text-3);
 }
@@ -2690,106 +2595,10 @@
   font-weight: 650;
 }
 @media (prefers-reduced-motion: reduce) {
-  .tx .tx-fu-btn,
+  :is(.tx, .tx-qcards) .tx-fu-btn,
   .tx-fu-rec {
     transition: none;
   }
-}
-@container tx (max-height: 470px) {
-  .tx-fu-tail {
-    max-height: 4.5em;
-  }
-  .tx-fu-context,
-  .tx-fu-rec-text {
-    max-height: 5.5em;
-  }
-  .tx-fu-msg {
-    max-height: 9em;
-  }
-}
-/*
- * No room for a pinned card (the follow-up's, or the async questions') beside the timeline: a phone's laptop, or a
- * screen whose strip, tabs, card and prompt box do not fit together (`data-tight`, measured by the view: see `fit()`
- * in transcriptRender.ts). While the card is up it takes the room of the timeline and of the strip (folded away,
- * both back when the card goes; the seat bar below has Terminal / Transcript / Images, Ctrl +/- the zoom) and of the
- * prompt box's second half (one slim line, still there to type in). The card scrolls as one under its first line
- * (the tabs, or what it is), Dismiss and Send kept in view at its foot. On a very short screen it is also the ask's
- * tighter grid (above); above that, the card's own column.
- */
-.tx[data-tight] .tx-main {
-  flex: 0 0 0;
-}
-.tx[data-tight] .tx-bar {
-  display: none;
-}
-.tx[data-tight] .tx-fu,
-.tx[data-tight] .tx-aq {
-  flex: 1 1 auto;
-  min-height: 0;
-  max-height: none;
-  grid-template-rows: auto auto auto auto;
-  align-content: start;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--tx-sun) 35%, transparent) transparent;
-  /* What is scrolled to (a picked option, the focused text) clears the first line and the foot kept in view. */
-  scroll-padding-block: 30px 36px;
-  margin-top: 6px;
-  padding-top: 0;
-  padding-bottom: 0;
-}
-.tx[data-tight] .tx-fu .tx-ask-top,
-.tx[data-tight] .tx-aq .tx-ask-top {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  align-self: stretch;
-  padding-top: 4px;
-  padding-bottom: 1px;
-  background: var(--tx-ask-bg);
-}
-.tx[data-tight] .tx-fu .tx-ask-body,
-.tx[data-tight] .tx-aq .tx-ask-body {
-  /* The card's column (above a very short screen): the questions take what they leave, so the foot sits at its bottom. */
-  flex: 1 0 auto;
-  min-height: auto;
-  max-height: none;
-  overflow: visible;
-}
-.tx[data-tight] .tx-fu-tail,
-.tx[data-tight] .tx-aq-sent {
-  max-height: none;
-  margin-top: 4px;
-  padding: 2px 8px;
-}
-.tx[data-tight] .tx-fu-area,
-.tx[data-tight] .tx-aq-text {
-  height: 2.9em;
-  min-height: 2.9em;
-}
-.tx[data-tight] .tx-fu .tx-ask-foot,
-.tx[data-tight] .tx-aq .tx-ask-foot {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
-  margin-top: 2px;
-  padding: 3px 0 4px;
-  background: var(--tx-ask-bg);
-}
-.tx[data-tight] .tx-prompt {
-  align-items: center;
-  padding-block: 4px;
-}
-.tx[data-tight] .cmp {
-  --cmp-min-height: 1.6em;
-}
-.tx[data-tight] .tx-send {
-  height: calc(24px * var(--tx-k, 1));
-}
-.tx[data-tight] .tx-review {
-  width: calc(24px * var(--tx-k, 1));
-  height: calc(24px * var(--tx-k, 1));
 }
 
 /*
@@ -2799,7 +2608,7 @@
  * every shared rule takes the blue. A reply's state says what the bridge has seen, in its own colour.
  */
 /* The theme's sun text, taken before the card makes its own blue: a reply not delivered is a warning still. */
-.tx {
+:is(.tx, .tx-qcards) {
   --tx-aq-warn: var(--warn);
 }
 .tx-aq {
@@ -2830,7 +2639,7 @@
   animation: tx-pulse 1.2s ease-in-out infinite;
   will-change: opacity;
 }
-.tx[data-page-hidden] .tx-aq-dot {
+:is(.tx, .tx-qcards)[data-page-hidden] .tx-aq-dot {
   animation-play-state: paused;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -2912,109 +2721,7 @@
     animation: none;
   }
 }
-@container tx (max-height: 470px) {
-  .tx-aq-sent {
-    max-height: 4.5em;
-  }
-}
 
-/*
- * #157: the follow-up's card and the async questions' both up (an idle Codex worker keeps what its last turn asked):
- * one is open, the other a tab away, so the open one keeps the room a single card has (a phone's screen has none for
- * two). Each tab in its card's colours (the follow-up's sun, dashed; Codex's blue, solid), the open one filled like
- * its card. The card behind keeps everything (its picks, its text): it is only not drawn.
- */
-.tx-qtabs {
-  flex: none;
-  display: flex;
-  font-family: var(--ctl-font);
-  gap: 6px;
-  min-width: 0;
-  margin: 0 10px 6px;
-}
-.tx-qtabs[hidden],
-.tx[data-front='asyncq'] .tx-fu,
-.tx[data-front='followup'] .tx-aq {
-  display: none;
-}
-.tx-qtab {
-  --tx-sun-soft: color-mix(in srgb, var(--tx-sun) 42%, transparent);
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  padding: 3px 10px;
-  border: 1px dashed var(--tx-sun-soft);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--ctl-text-2);
-  font-size: calc(11px * var(--tx-k, 1));
-  font-weight: 750;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    border-color 120ms ease-out,
-    background-color 120ms ease-out;
-}
-.tx-qtab[data-card='asyncq'] {
-  --tx-sun: var(--ctl-working);
-  --tx-sun-text: var(--ctl-working);
-  --tx-on-sun: var(--on-ctl-accent);
-  border-style: solid;
-}
-.tx-qtab:hover {
-  border-color: var(--tx-sun);
-}
-.tx-qtab[aria-selected='true'] {
-  border-color: var(--tx-sun);
-  background: color-mix(in srgb, var(--tx-sun) 14%, var(--ctl-raised));
-  color: var(--ctl-text);
-  cursor: default;
-}
-.tx-qtab-n {
-  min-width: 1.7em;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: var(--tx-sun-soft);
-  color: var(--ctl-text);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0;
-  text-align: center;
-}
-.tx-qtab-n[hidden] {
-  display: none;
-}
-.tx-qtab[aria-selected='true'] .tx-qtab-n {
-  background: var(--tx-sun);
-  color: var(--tx-on-sun);
-}
-@media (prefers-reduced-motion: reduce) {
-  .tx-qtab {
-    transition: none;
-  }
-}
-@container tx (max-height: 300px) {
-  .tx-qtabs {
-    gap: 4px;
-    margin: 4px 6px 0;
-  }
-  .tx-qtab {
-    padding: 1px 8px;
-  }
-  /* The open tab names the card: its own top line goes, and its questions keep the room a lone card has. */
-  .tx[data-front] .tx-fu,
-  .tx[data-front] .tx-aq {
-    margin-top: 4px;
-    padding-top: 4px;
-    scroll-padding-top: 4px;
-  }
-  .tx[data-front] .tx-fu > .tx-ask-top,
-  .tx[data-front] .tx-aq > .tx-ask-top {
-    display: none;
-  }
-}
 
 /* ubuntu:begin */
 /*
@@ -3032,7 +2739,7 @@
  * scrolling body 5px inside its card, a question card's scrolling options 5px inside it, the short screen's sticky top
  * and foot 6px. Decisions #216 row 24.
  */
-:root[data-ui-theme='ubuntu'] .tx :focus-visible {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) :focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
@@ -3043,17 +2750,9 @@
 :root[data-ui-theme='ubuntu'] .tx .tx-diff-body {
   margin: 0 5px 5px;
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-body {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-body {
   margin: 0 -7px;
   padding: 5px 7px 6px;
-}
-:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-fu .tx-ask-top,
-:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-aq .tx-ask-top {
-  padding-top: 6px;
-}
-:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-fu .tx-ask-foot,
-:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-aq .tx-ask-foot {
-  padding-bottom: 6px;
 }
 /* A changed file's header fills the top of its rounded card: the card lets the ring out (the header rounds its own
    corners instead), and a widget scrolled into view keeps its ring's room inside the scroller. */
@@ -3066,15 +2765,14 @@
 :root[data-ui-theme='ubuntu'] .tx .tx-chg-head[aria-expanded='false'] {
   border-radius: 5px;
 }
-:root[data-ui-theme='ubuntu'] .tx :is(button, input, textarea, select, summary, [tabindex], [contenteditable='true']) {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) :is(button, input, textarea, select, summary, [tabindex], [contenteditable='true']) {
   scroll-margin: 6px;
 }
 /* A bright fill gets the dark keyline between it and the ring, so the ring does not melt into the orange. */
 :root[data-ui-theme='ubuntu'] .tx .tx-send:focus-visible,
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-send:focus-visible,
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-send:focus-visible,
 :root[data-ui-theme='ubuntu'] .tx .tx-theme[aria-checked='true']:focus-visible,
-:root[data-ui-theme='ubuntu'] .tx .tx-sys-toggle[aria-pressed='true']:focus-visible,
-:root[data-ui-theme='ubuntu'] .tx .tx-qtab[aria-selected='true']:focus-visible {
+:root[data-ui-theme='ubuntu'] .tx .tx-sys-toggle[aria-pressed='true']:focus-visible {
   box-shadow: 0 0 0 2px var(--chrome);
 }
 :root[data-ui-theme='ubuntu'] .tx .tx-jump:focus-visible {
@@ -3188,8 +2886,7 @@
 :root[data-ui-theme='ubuntu'] .tx .tx-prompt {
   font-size: 14px;
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-send,
-:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-send {
+:root[data-ui-theme='ubuntu'] .tx .tx-send {
   height: 36px;
 }
 :root[data-ui-theme='ubuntu'] .tx .tx-jump {
@@ -3199,32 +2896,31 @@
   width: 14px;
   height: 14px;
 }
-:root[data-ui-theme='ubuntu'] .tx :is(.tx-ask-opt, .tx-ask-row, .tx-ask-done, .tx-ask-send, .tx-ask-other-input) {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) :is(.tx-ask-opt, .tx-ask-row, .tx-ask-done, .tx-ask-send, .tx-ask-other-input) {
   font-size: 14px;
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-opt {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-opt {
   grid-template-columns: 22px minmax(0, 1fr);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-key {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-key {
   width: 22px;
   height: 22px;
   font-size: 12px;
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-key svg {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-key svg {
   width: 12px;
   height: 12px;
 }
-:root[data-ui-theme='ubuntu'] .tx :is(.tx-ask-opt-desc, .tx-ask-row-act) {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) :is(.tx-ask-opt-desc, .tx-ask-row-act) {
   font-size: 13px;
 }
-:root[data-ui-theme='ubuntu'] .tx :is(.tx-ask-rec, .tx-ask-row-head, .tx-ask-kbd) {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) :is(.tx-ask-rec, .tx-ask-row-head, .tx-ask-kbd) {
   font-size: 12px;
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-qtab,
-:root[data-ui-theme='ubuntu'] .tx .tx-choice {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-choice {
   font-size: 13px;
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-choice-n {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-choice-n {
   width: 20px;
   height: 20px;
   font-size: 12px;
@@ -3234,35 +2930,32 @@
   font-family: var(--font-mono);
 }
 :root[data-ui-theme='ubuntu'] .tx .cmp-pop-list,
-:root[data-ui-theme='ubuntu'] .tx .tx-banner,
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-body,
-:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-fu,
-:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-aq {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-body {
   scrollbar-color: var(--scroll-thumb) var(--scroll-track);
 }
 
 /* Links and the banner's choices. */
-:root[data-ui-theme='ubuntu'] .tx .tx-link,
-:root[data-ui-theme='ubuntu'] .tx .tx-to-term {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-link,
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-to-term {
   min-height: 32px;
   min-width: 32px;
   color: var(--accent-text);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-link:hover {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-link:hover {
   text-decoration-thickness: 2px;
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-choice {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-choice {
   min-height: 32px;
   border-color: var(--border);
   background: var(--btn-bg);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-choice:hover {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-choice:hover {
   background: var(--btn-bg-hover);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-choice:active {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-choice:active {
   background: var(--btn-bg-active);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-choice-sel {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-choice-sel {
   border-color: var(--action-border);
   box-shadow: inset 0 0 0 1px var(--action-border);
   background: var(--btn-bg-hover);
@@ -3277,107 +2970,107 @@
 }
 
 /* The question cards: the answer controls. */
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-opt {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-opt {
   min-height: 36px;
   border-color: var(--border);
   background: transparent;
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-opt:hover {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-opt:hover {
   border-color: var(--border-hover);
   background: var(--hover);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-opt.is-on {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-opt.is-on {
   border-color: var(--action);
   box-shadow: inset 0 0 0 1px var(--action);
   background: var(--hover);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-opt.is-on .tx-ask-key {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-opt.is-on .tx-ask-key {
   border-color: var(--action-border);
   background: var(--action);
   color: var(--on-action);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-opt:disabled,
-:root[data-ui-theme='ubuntu'] .tx .tx-ask[data-phase='sending'] .tx-ask-opt,
-:root[data-ui-theme='ubuntu'] .tx .tx-fu[data-phase='sending'] .tx-ask-opt,
-:root[data-ui-theme='ubuntu'] .tx .tx-aq[data-phase='sending'] .tx-ask-opt {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-opt:disabled,
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask[data-phase='sending'] .tx-ask-opt,
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-fu[data-phase='sending'] .tx-ask-opt,
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-aq[data-phase='sending'] .tx-ask-opt {
   opacity: 1;
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-opt:disabled .tx-ask-opt-label,
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-opt:disabled .tx-ask-opt-desc {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-opt:disabled .tx-ask-opt-label,
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-opt:disabled .tx-ask-opt-desc {
   color: var(--disabled-text);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-row {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-row {
   min-height: 36px;
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-row:hover:not(:disabled) {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-row:hover:not(:disabled) {
   border-color: var(--border-hover);
   background: var(--hover);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-fu-btn {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-fu-btn {
   min-height: 32px;
   border-color: var(--border);
   background: var(--btn-bg);
   color: var(--text);
   font-size: 13px;
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-fu-btn:hover:not(:disabled) {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-fu-btn:hover:not(:disabled) {
   border-color: var(--border-hover);
   background: var(--btn-bg-hover);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-fu-btn:disabled {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-fu-btn:disabled {
   background: transparent;
   color: var(--text-3);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-done {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-done {
   min-height: 36px;
   border-color: var(--border);
   background: var(--btn-bg);
   color: var(--text);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-done:hover:not(:disabled) {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-done:hover:not(:disabled) {
   border-color: var(--border-hover);
   background: var(--btn-bg-hover);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-other-input {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-other-input {
   min-height: 36px;
   caret-color: var(--caret);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-other-input:hover {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-other-input:hover {
   border-color: var(--border-hover);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-other-input:focus {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-other-input:focus {
   border-color: var(--focus);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-send {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-send {
   min-height: 36px;
   border: 1px solid var(--action-border);
   background: var(--action);
   color: var(--on-action);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-send:hover:not(:disabled):not(.is-blocked) {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-send:hover:not(:disabled):not(.is-blocked) {
   background: var(--action-hover);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-send:active:not(:disabled):not(.is-blocked) {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-send:active:not(:disabled):not(.is-blocked) {
   background: var(--action-active);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-send:disabled,
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-send.is-blocked,
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-send.is-blocked:hover {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-send:disabled,
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-send.is-blocked,
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-send.is-blocked:hover {
   background: var(--disabled-bg);
   color: var(--disabled-text);
   border-color: var(--border);
 }
 /* Busy: the same orange and width, with a spinner before the label (the card says aria-busy). */
-:root[data-ui-theme='ubuntu'] .tx .tx-ask[data-phase='sending'] .tx-ask-send:disabled,
-:root[data-ui-theme='ubuntu'] .tx .tx-fu[data-phase='sending'] .tx-ask-send:disabled,
-:root[data-ui-theme='ubuntu'] .tx .tx-aq[data-phase='sending'] .tx-ask-send:disabled {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask[data-phase='sending'] .tx-ask-send:disabled,
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-fu[data-phase='sending'] .tx-ask-send:disabled,
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-aq[data-phase='sending'] .tx-ask-send:disabled {
   background: var(--action);
   color: var(--on-action);
   border-color: var(--action-border);
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask[data-phase='sending'] .tx-ask-send:disabled::before,
-:root[data-ui-theme='ubuntu'] .tx .tx-fu[data-phase='sending'] .tx-ask-send:disabled::before,
-:root[data-ui-theme='ubuntu'] .tx .tx-aq[data-phase='sending'] .tx-ask-send:disabled::before {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask[data-phase='sending'] .tx-ask-send:disabled::before,
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-fu[data-phase='sending'] .tx-ask-send:disabled::before,
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-aq[data-phase='sending'] .tx-ask-send:disabled::before {
   content: '';
   display: inline-block;
   width: 0.9em;
@@ -3395,49 +3088,23 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  :root[data-ui-theme='ubuntu'] .tx .tx-ask[data-phase='sending'] .tx-ask-send:disabled::before,
-  :root[data-ui-theme='ubuntu'] .tx .tx-fu[data-phase='sending'] .tx-ask-send:disabled::before,
-  :root[data-ui-theme='ubuntu'] .tx .tx-aq[data-phase='sending'] .tx-ask-send:disabled::before {
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask[data-phase='sending'] .tx-ask-send:disabled::before,
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-fu[data-phase='sending'] .tx-ask-send:disabled::before,
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-aq[data-phase='sending'] .tx-ask-send:disabled::before {
     animation: none;
     border-right-color: currentColor;
   }
 }
 /* A dark overlay on the orange would cost the label its contrast, so the send key is outlined instead. */
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-kbd {
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-kbd {
   border: 1px solid currentColor;
-}
-
-/* The tabs between the follow-up's card and the async questions': the open one is the orange, its count a dark pill. */
-:root[data-ui-theme='ubuntu'] .tx .tx-qtab {
-  min-height: 32px;
-  border-color: var(--border);
-  background: var(--btn-bg);
-  color: var(--text);
-}
-:root[data-ui-theme='ubuntu'] .tx .tx-qtab:hover {
-  border-color: var(--border-hover);
-  background: var(--btn-bg-hover);
-}
-:root[data-ui-theme='ubuntu'] .tx .tx-qtab[aria-selected='true'] {
-  border-style: solid;
-  border-color: var(--action-border);
-  background: var(--action);
-  color: var(--on-action);
-}
-:root[data-ui-theme='ubuntu'] .tx .tx-qtab-n {
-  background: var(--hover);
-  color: var(--text);
-}
-:root[data-ui-theme='ubuntu'] .tx .tx-qtab[aria-selected='true'] .tx-qtab-n {
-  background: var(--chrome);
-  color: var(--text);
 }
 
 /*
  * A short screen (the laptop's screen at 200% browser zoom is some 140px tall): the strip's 32 / 36px controls must not
  * take the screen. Nothing is dropped and nothing shrinks: the strip keeps to one row that scrolls sideways (room above
- * and below for the focus ring), the timeline keeps half the screen, and the screen itself scrolls when the strip, a
- * banner, the timeline and the prompt box are more than it holds, so the conversation and the prompt box are always
+ * and below for the focus ring), the timeline keeps half the screen, and the screen itself scrolls when the strip, the
+ * timeline and the prompt box are more than it holds, so the conversation and the prompt box are always
  * reached. Decisions #216 row 25.
  */
 :root[data-ui-theme='ubuntu'] .tx {
@@ -3459,7 +3126,7 @@
   :root[data-ui-theme='ubuntu'] .tx .tx-bar > * {
     flex: none;
   }
-  :root[data-ui-theme='ubuntu'] .tx:not([data-tight]) .tx-main {
+  :root[data-ui-theme='ubuntu'] .tx .tx-main {
     min-height: 50cqh;
   }
   /* A card for an image that is not there is a compact one here, so it and its ring fit the short timeline's view. */
@@ -3474,21 +3141,20 @@
   :root[data-ui-theme='ubuntu'] .tx .tx-theme,
   :root[data-ui-theme='ubuntu'] .tx .tx-zoom-btn,
   :root[data-ui-theme='ubuntu'] .tx .tx-busy,
-  :root[data-ui-theme='ubuntu'] .tx .tx-link,
-  :root[data-ui-theme='ubuntu'] .tx .tx-to-term,
-  :root[data-ui-theme='ubuntu'] .tx .tx-choice,
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-link,
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-to-term,
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-choice,
   :root[data-ui-theme='ubuntu'] .tx .tx-tool-row,
   :root[data-ui-theme='ubuntu'] .tx .tx-sub-row,
   :root[data-ui-theme='ubuntu'] .tx .tx-chg-head,
   :root[data-ui-theme='ubuntu'] .tx .tx-send,
   :root[data-ui-theme='ubuntu'] .tx .tx-jump,
-  :root[data-ui-theme='ubuntu'] .tx .tx-ask-send,
-  :root[data-ui-theme='ubuntu'] .tx .tx-ask-opt,
-  :root[data-ui-theme='ubuntu'] .tx .tx-ask-row,
-  :root[data-ui-theme='ubuntu'] .tx .tx-ask-done,
-  :root[data-ui-theme='ubuntu'] .tx .tx-fu-btn,
-  :root[data-ui-theme='ubuntu'] .tx .tx-ask-other-input,
-  :root[data-ui-theme='ubuntu'] .tx .tx-qtab {
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-send,
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-opt,
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-row,
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-done,
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-fu-btn,
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-other-input {
     min-height: 44px;
     min-width: 44px;
   }
@@ -3504,27 +3170,26 @@
 
 /* Forced colours: a state shown by a fill alone gets the system's Highlight, and the controls keep an edge. */
 @media (forced-colors: active) {
-  :root[data-ui-theme='ubuntu'] .tx :focus-visible {
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) :focus-visible {
     outline-color: Highlight;
   }
   :root[data-ui-theme='ubuntu'] .tx .tx-theme[aria-checked='true'],
   :root[data-ui-theme='ubuntu'] .tx .tx-sys-toggle[aria-pressed='true'],
-  :root[data-ui-theme='ubuntu'] .tx .tx-qtab[aria-selected='true'],
-  :root[data-ui-theme='ubuntu'] .tx .tx-choice-sel,
-  :root[data-ui-theme='ubuntu'] .tx .tx-ask-opt.is-on,
-  :root[data-ui-theme='ubuntu'] .tx .tx-ask-opt.is-on .tx-ask-key {
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-choice-sel,
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-opt.is-on,
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-opt.is-on .tx-ask-key {
     background: Highlight;
     color: HighlightText;
     border-color: HighlightText;
   }
   :root[data-ui-theme='ubuntu'] .tx .tx-send,
-  :root[data-ui-theme='ubuntu'] .tx .tx-ask-send,
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-send,
   :root[data-ui-theme='ubuntu'] .tx .tx-jump {
     border-color: ButtonText;
   }
   :root[data-ui-theme='ubuntu'] .tx .tx-send:disabled,
-  :root[data-ui-theme='ubuntu'] .tx .tx-ask-send:disabled,
-  :root[data-ui-theme='ubuntu'] .tx .tx-ask-send.is-blocked,
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-send:disabled,
+  :root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-send.is-blocked,
   :root[data-ui-theme='ubuntu'] .tx .tx-zoom-btn:disabled {
     color: GrayText;
     border-color: GrayText;

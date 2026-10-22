@@ -1,7 +1,7 @@
 import { h, icon } from '../ui/dom';
 
 /**
- * The questions of a pinned card (the ask's #57, the follow-up's #90) stacked: the open one with its options, the
+ * The questions of a question card (the ask's #57, the follow-up's #90, #187: in the questions' sheet) stacked: the open one with its options, the
  * others folded to one line (its answer, or the question still to answer), so every question is in view and none
  * waits behind a tab. One meaning per key: Enter / Space on an option picks it, Enter in a text box takes the text
  * and moves on, and only Send (or Ctrl/⌘+Enter) sends. When the card moves on by itself the keyboard lands on the
@@ -136,21 +136,25 @@ export function focusQuestion(q: HTMLElement | null): void {
   reveal(target);
 }
 
-/** A pinned card: what a reveal never scrolls past. */
+/** A question card: what a reveal looks for `el` in. */
 const CARD = '.tx-ask, .tx-fu, .tx-aq';
 
-/** The box that scrolls `el` on its card: the card's body, or on a very short screen the card itself (transcript.css). */
+/**
+ * The box that scrolls `el` on its card: the card's body, or (#187) the questions' sheet's, the dialog it is in (never
+ * past it: the page around it never moves).
+ */
 function scrollerOf(el: Element): HTMLElement | null {
   const card = el.closest<HTMLElement>(CARD);
   if (!card) return null;
+  const stop = card.closest('dialog') ?? card;
   for (let e = el.parentElement; e; e = e.parentElement) {
     if (e.scrollHeight > e.clientHeight + 1 && /^(auto|scroll)$/.test(getComputedStyle(e).overflowY)) return e;
-    if (e === card) break;
+    if (e === stop) break;
   }
   return null;
 }
 
-/** Where a box shows what it scrolls: its inside, less what sticks over it (a short screen's top line and foot). */
+/** Where a box shows what it scrolls: its inside, less what sticks over it (a sticky top line or foot). */
 function bandOf(box: HTMLElement): { top: number; bottom: number } {
   const r = box.getBoundingClientRect();
   let top = r.top + box.clientTop;
@@ -173,8 +177,8 @@ export function revealBy(band: { top: number; bottom: number }, r: { top: number
 }
 
 /**
- * Scrolls the card (only it: the transcript and the page around it never move) so `el` is in view, clear of a
- * sticky top line and foot: a focus with preventScroll leaves a question below the fold hidden.
+ * Scrolls the card, or the sheet it is in (only them: the transcript and the page around never move) so `el` is in
+ * view, clear of a sticky top line and foot: a focus with preventScroll leaves a question below the fold hidden.
  */
 export function reveal(el: Element): void {
   const box = scrollerOf(el);

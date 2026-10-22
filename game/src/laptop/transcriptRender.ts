@@ -2,10 +2,12 @@ import './transcript.css';
 import DOMPurify, { type Config, type DOMPurify as Purifier } from 'dompurify';
 import { Marked } from 'marked';
 import type { Ask, CommandArgs, Followup, HandoffCandidate, ScheduleSuggestion, TranscriptChanges, TranscriptCollab, TranscriptDiff, TranscriptItem, TranscriptTerminal, Usage, WorkerCodex } from '../net/protocol';
-import { AskCard, askItem, type AskResult } from './askCard';
+import { AskCard, askItem, type AskCardHost, type AskResult } from './askCard';
 import { AsyncCard, type AsyncResult } from './asyncCard';
 import { AsyncDrafts } from './asyncDrafts';
-import { isSendKey, reveal, type AnswerOptions } from './askStack';
+import type { AnswerOptions } from './askStack';
+import { BlockedCard, type BlockedQuestion } from './blockedCard';
+import { QuestionSheet, type OpenedAsks } from './questionSheet';
 import { diffColours, type DiffColours } from './diffHighlight';
 import { FollowupCard, type FollowupMessage, type FollowupResult } from './followupCard';
 import type { FollowupDraft } from './followupDrafts';
@@ -96,6 +98,13 @@ export interface TranscriptRenderHost {
   onDismissAsync?(args: CommandArgs['worker.dismiss_async']): Promise<AsyncResult>;
   /** #157: what you wrote for them, kept by the host across views (none: this view's own, which goes with it). */
   asyncDrafts?: AsyncDrafts;
+  /** #187: what you picked and typed on the worker's ask, kept by the host across views (none: the card's own). */
+  askDrafts?: AskCardHost['drafts'];
+  /**
+   * #187: the worker's mandatory questions the questions' sheet opened for already, kept by the host across views (so
+   * it opens once per question, not again on another view; none: this view's own).
+   */
+  opened?: OpenedAsks | null;
   onSwitchToTerminal(): void;
   loadSubagent(agentId: string): Promise<TranscriptItem[]>;
   /**
@@ -143,22 +152,16 @@ export interface TranscriptRenderHost {
   loading?: boolean;
 }
 
-export interface BlockedQuestion {
-  kind: string;
-  text: string;
-  excerpt: string[];
-  choices: { n: number; label: string }[];
-  selected?: number;
-  hash: string;
-}
+export type { BlockedQuestion } from './blockedCard';
 
 export interface TranscriptView {
   setItems(items: TranscriptItem[]): void;
   applyUpdates(items: TranscriptItem[]): void;
+  /** The question on the worker's screen (null: none). #187: the questions' sheet's urgent lane, while there is no ask. */
   setBlocked(q: BlockedQuestion | null): void;
-  /** #57: the worker's ask (null: none): a card pinned above the prompt box while it waits. */
+  /** #57: the worker's ask (null: none). #187: the questions' sheet's urgent lane: it opens by itself, once per ask. */
   setAsk(ask: Ask | null): void;
-  /** #90: the open questions of the agent's final message (null: none): a card above the prompt box, which stays on. */
+  /** #90: the open questions of the agent's final message (null: none): the sheet's calm lane; the prompt box stays on. */
   setFollowup(f: Followup | null): void;
   /**
    * #223: the worker's latest completed reply a literal handoff can file (null: none). Its row, when the timeline has
@@ -171,8 +174,8 @@ export interface TranscriptView {
    */
   setScheduleSuggestion?(s: ScheduleSuggestion | null): void;
   /**
-   * #157: the worker's Codex launch (null: none): its async questions, on a card above the prompt box, which stays on;
-   * `working`: the worker works on (its effective status, not a real block), the card's "still working".
+   * #157: the worker's Codex launch (null: none): its async questions, in the sheet's calm lane (#187); the prompt box
+   * stays on. `working`: the worker works on (its effective status, not a real block), the card's "still working".
    */
   setCodex(worker: string, codex: WorkerCodex | null, working: boolean): void;
   /** The mode's tab strip (Conversation | Images), put in the bar after the title. */
@@ -194,6 +197,11 @@ export interface TranscriptView {
   setChild?(s: ChildViewState): void;
   /** #126: whether the watch's answer is still to come (`TranscriptRenderHost.loading`). */
   setLoading?(loading: boolean): void;
+  /**
+   * #187: whether the conversation is the view on the screen (not the terminal, the images or a child's conversation;
+   * a view starts as shown). Hidden, the questions' sheet closes; a mandatory question opens it once it is shown.
+   */
+  setVisible?(shown: boolean): void;
   destroy(): void;
 }
 
@@ -287,18 +295,10 @@ const HL_CONFIG: Config = {
   ALLOW_ARIA_ATTR: false,
 };
 
-/** #157: the two pinned cards that share the room below the timeline (the ask's goes over both). */
-type PinnedCard = 'followup' | 'asyncq';
-/** Ids for the cards the tabs control (one transcript per seat, but each mount anew). */
-let cardIds = 0;
 /** #223: ids for the Handoff button's note. */
 let handoffIds = 0;
 /** #64 schedules: the follow-up button's clock. */
 const CLOCK = '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>';
-/** #157: a screen this short (a phone's laptop) has no room for a pinned card beside the timeline (`fit()`). */
-const SHORT_SCREEN = 300;
-/** #157: the least room a pinned card's questions keep beside the timeline (a question and an answer): less, it takes the timeline's. */
-const QUESTION_ROOM = 64;
 
 let mdPurifier: Purifier | null | undefined;
 let hlPurifier: Purifier | null | undefined;
@@ -869,6 +869,8 @@ export const toolHasChanges = (it: TranscriptItem) => {
 const keepsWhenHidden = (it: TranscriptItem) => toolHasImages(it) || toolHasChanges(it);
 const EXCERPT_LINES = 4;
 const PROMPT_HINT = `Message the agent…  (Enter sends, Shift+Enter for a new line, ${PASTE_HINT})`;
+/** #187: the prompt box while an ask or the screen's question waits (the bridge refuses a prompt then). */
+const WAITING_HINT = 'Answer the questions first (button above, or in the terminal)';
 
 /** Where a pasted image goes when the host has no upload: the chip says it did not go up. */
 const NO_UPLOAD: Uploader = () => Promise.resolve({ ok: false, code: 'unavailable', message: 'images cannot be uploaded from here' });
@@ -1327,7 +1329,6 @@ class Transcript implements TranscriptView {
   readonly root: HTMLDivElement;
   private readonly scroller: HTMLDivElement;
   private readonly timeline: Timeline;
-  private readonly banner: HTMLDivElement;
   private readonly jump: HTMLButtonElement;
   private readonly sysBtn: HTMLButtonElement;
   /** #59: the view's prefs and its controls in the top strip: hide tool calls, the preset, the zoom. */
@@ -1401,6 +1402,8 @@ class Transcript implements TranscriptView {
   private showSystem = false;
   private readonly thumbs: Thumbs;
   private blocked: BlockedQuestion | null = null;
+  /** #187: the screen's question as a card in the sheet's urgent lane (while there is no ask). */
+  private readonly blockedCard: BlockedCard;
   private readonly ask: AskCard;
   private readonly followup: FollowupCard; // #90
   /** #223: the worker's handoff candidate, and the inline button on its row (null: none shown). */
@@ -1412,21 +1415,13 @@ class Transcript implements TranscriptView {
   private suggestionTick: ReturnType<typeof setInterval> | null = null;
   private readonly zone = browserZone();
   private readonly asyncq: AsyncCard; // #157
-  /**
-   * #157: the follow-up's card and the async questions' both up (an idle Codex worker keeps the questions its last turn
-   * asked): one is open, the other one tab away, so the open one has the room (a phone's screen has none for two).
-   */
-  private readonly cardTabs: HTMLElement;
-  private readonly tabs: Record<PinnedCard, HTMLButtonElement>;
-  /** Which of the two is open while both are up (the one that was up first stays; both at once: the follow-up). */
-  private front: PinnedCard | null = null;
-  /** The timeline's box (the scroller and the jump chip) and the prompt box: what `fit()` measures. */
+  /** #187: the cards' sheet and its button in the prompt box (the conversation keeps its whole height). */
+  private readonly questions: QuestionSheet;
+  /** The timeline's box (the scroller and the jump chip) and the prompt box. */
   private readonly main: HTMLDivElement;
   private readonly form: HTMLDivElement;
-  /** #157: the transcript's size when `fit()` last ran (another one puts the keyboard's place in a card back in sight). */
-  private fitted = '';
-  /** Whether the banner and the prompt box were last drawn with the card up. */
-  private asking = false;
+  /** Whether the prompt box was last drawn off (an ask or the screen's question waits). */
+  private waiting = false;
   private destroyed = false;
   /** Expanded rows, `scope/id`, kept across re-renders and resyncs. */
   private readonly expanded = new Set<string>();
@@ -1447,8 +1442,12 @@ class Transcript implements TranscriptView {
   private readonly pendingLive: HTMLDivElement;
   /** #31: the popover of a file reference: its full path and "Copy file path". */
   private readonly fileRefs: FileRefPopover;
-  /** A hidden tab pauses the cue's flash (the browser still runs a CSS animation there). */
-  private readonly onVisibility = () => this.root.toggleAttribute('data-page-hidden', document.visibilityState === 'hidden');
+  /** A hidden tab pauses the cue's flash (the browser still runs a CSS animation there); #187: and the questions' glow. */
+  private readonly onVisibility = () => {
+    const hidden = document.visibilityState === 'hidden';
+    this.root.toggleAttribute('data-page-hidden', hidden);
+    this.questions.cardsEl.toggleAttribute('data-page-hidden', hidden);
+  };
 
   constructor(
     container: HTMLElement,
@@ -1464,7 +1463,6 @@ class Transcript implements TranscriptView {
     });
     this.countEl = h('span', { class: 'tx-count' });
     this.sysBtn = h('button', { class: 'tx-sys-toggle', 'aria-pressed': 'false', title: 'Show system notices and unrecognised entries', onclick: () => this.toggleSystem() });
-    this.banner = h('div', { class: 'tx-banner', role: 'alert', hidden: true });
     this.empty = h('div', { class: 'tx-empty' }, 'No conversation yet.');
     this.loading = host.loading === true;
     this.loader = loadingOutline(host.child?.name ?? host.label ?? null);
@@ -1506,19 +1504,23 @@ class Transcript implements TranscriptView {
     const showReview = () => (this.reviewBtn.hidden = !secrets?.on);
     showReview();
     this.offSecrets = secrets ? secrets.onChange(showReview) : () => {};
+    // #187: the cards live in the questions' sheet; their way back to the timeline closes it (or moves to the next card).
     this.ask = new AskCard({
       answer: (args, o) => host.onAnswerAsk(args, o),
       secrets: host.secrets ?? null,
       toTerminal: () => host.onSwitchToTerminal(),
-      focusTimeline: () => this.focus(),
+      focusTimeline: () => this.questions.leave(this.ask),
+      ...(host.askDrafts ? { drafts: host.askDrafts } : {}),
       resized: () => {
-        this.stick();
-        // Shown or gone (also by itself, once its answer is recorded): the prompt box follows.
-        if (this.asking !== this.ask.shown) this.renderBanner();
-        // #90: the follow-up card waits behind a question's; #157: so does the async questions'.
-        this.followup?.suppress(this.ask.shown);
-        this.asyncq?.suppress(this.ask.shown);
+        // Shown or gone (also by itself, once its answer is recorded): the screen's question and the prompt box follow.
+        this.blockedCard?.set(this.ask.shown ? null : this.blocked);
+        if (this.questions && this.waiting !== (this.ask.shown || !!this.blocked)) this.renderPrompt();
+        this.questions?.sync();
       },
+    });
+    this.blockedCard = new BlockedCard({
+      answer: (hash, choice, cancel) => host.onAnswer(hash, choice, cancel),
+      toTerminal: () => host.onSwitchToTerminal(),
     });
     const noFollowup = (): Promise<FollowupResult> => Promise.resolve({ ok: false, code: 'unsupported', message: 'Not available here.' });
     this.followup = new FollowupCard({
@@ -1528,13 +1530,8 @@ class Transcript implements TranscriptView {
       ...(host.onRetryFollowup ? { retry: (turnId: string) => host.onRetryFollowup!(turnId) } : {}),
       ...(host.loadFollowupMessage ? { message: (turnId: string) => host.loadFollowupMessage!(turnId) } : {}),
       ...(host.followupDrafts ? { drafts: host.followupDrafts } : {}),
-      focusTimeline: () => this.focus(),
-      resized: () => {
-        // A very short screen gives the card the timeline's room while it is up (transcript.css).
-        this.root?.toggleAttribute('data-followup', this.followup.shown);
-        this.syncCards();
-        this.stick();
-      },
+      focusTimeline: () => this.questions.leave(this.followup),
+      resized: () => this.questions?.sync(),
     });
     const noAsync = (): Promise<AsyncResult> => Promise.resolve({ ok: false, code: 'unsupported', message: 'Not available here.' });
     this.asyncq = new AsyncCard({
@@ -1542,29 +1539,16 @@ class Transcript implements TranscriptView {
       secrets: host.secrets ?? null,
       dismiss: (args) => (host.onDismissAsync ? host.onDismissAsync(args) : noAsync()),
       toTerminal: () => host.onSwitchToTerminal(),
-      focusTimeline: () => this.focus(),
+      focusTimeline: () => this.questions.leave(this.asyncq),
       drafts: host.asyncDrafts ?? new AsyncDrafts(null),
-      resized: () => {
-        // A very short screen gives the card the timeline's room while it is up (transcript.css), as the follow-up's.
-        this.root?.toggleAttribute('data-asyncq', this.asyncq.shown);
-        this.syncCards();
-        this.stick();
-      },
+      resized: () => this.questions?.sync(),
     });
-    const tab = (k: PinnedCard, name: string, title: string, card: HTMLElement) => {
-      card.id = `tx-${k}-${++cardIds}`;
-      return h(
-        'button',
-        { class: 'tx-qtab', role: 'tab', 'data-card': k, 'aria-selected': 'false', 'aria-controls': card.id, tabindex: '-1', title, onclick: () => this.pickCard(k, true) },
-        h('span', { class: 'tx-qtab-name' }, name),
-        h('span', { class: 'tx-qtab-n' }),
-      );
-    };
-    this.tabs = {
-      followup: tab('followup', 'Open questions', 'The open questions in the agent’s last message', this.followup.el),
-      asyncq: tab('asyncq', 'Codex asked', 'The questions Codex asked while it worked', this.asyncq.el),
-    };
-    this.cardTabs = h('div', { class: 'tx-qtabs', role: 'tablist', 'aria-label': 'Questions for you', hidden: true }, this.tabs.followup, this.tabs.asyncq);
+    this.questions = new QuestionSheet(
+      { ask: this.ask, blocked: this.blockedCard, followup: this.followup, asyncq: this.asyncq },
+      { opened: host.opened ?? null, toTerminal: () => host.onSwitchToTerminal(), focusTimeline: () => this.focus() },
+    );
+    // A row of its own above the composer, in the prompt box: never over the conversation (transcript.css).
+    this.form.prepend(h('div', { class: 'tx-qrow' }, this.questions.button.el));
     // The toggle sits on the left: the HUD's plan-limits widget can hang over the screen's top-right corner.
     this.titleEl = h('span', { class: 'tx-title' }, 'Transcript');
     // #59: hide tool calls, the working chip, the preset and the zoom. The preset's swatch is drawn in its colours only:
@@ -1616,7 +1600,7 @@ class Transcript implements TranscriptView {
     // The preset and the zoom keep together at the strip's end; a narrow screen wraps them to a line of their own.
     const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn, tools, changes, this.busy, this.ctxEl, h('div', { class: 'tx-look' }, picker, zoom));
     this.main = h('div', { class: 'tx-main' }, this.scroller, this.jump);
-    this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown', 'data-changes': 'shown' }, bar, this.banner, this.main, this.ask.el, this.cardTabs, this.followup.el, this.asyncq.el, this.asyncq.live, this.form, this.pendingLive, this.live);
+    this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown', 'data-changes': 'shown' }, bar, this.main, this.form, this.questions.button.live, this.asyncq.live, this.pendingLive, this.live);
     this.fileRefs = new FileRefPopover({
       root: this.root,
       scroller: this.scroller,
@@ -1657,10 +1641,7 @@ class Transcript implements TranscriptView {
     document.addEventListener('visibilitychange', this.onVisibility);
     this.onVisibility();
     if (typeof ResizeObserver !== 'undefined') {
-      this.resize = new ResizeObserver((seen) => {
-        // #157: the screen's size (the window resized) fits a pinned card to it first. The view's own size is its
-        // screen's whatever it holds, so what fit() changes inside never calls this again for the root.
-        if (seen.some((e) => e.target === this.root)) this.fit();
+      this.resize = new ResizeObserver(() => {
         this.sizeView();
         this.stick();
         this.fileRefs.place(); // #31
@@ -1706,17 +1687,22 @@ class Transcript implements TranscriptView {
   setBlocked(q: BlockedQuestion | null): void {
     if (this.destroyed) return;
     this.blocked = q && typeof q === 'object' ? q : null;
-    this.renderBanner();
-    this.fit(); // the banner takes room too
+    // Its excerpt as plain text, the screen's last lines only.
+    const excerpt = (Array.isArray(this.blocked?.excerpt) ? this.blocked.excerpt : [])
+      .map((l) => stripAnsi(String(l)))
+      .filter((l, i, a) => l.trim() || (i > 0 && i < a.length - 1))
+      .slice(-EXCERPT_LINES);
+    if (this.blocked) this.blocked = { ...this.blocked, excerpt };
+    this.blockedCard.set(this.ask.shown ? null : this.blocked);
+    this.renderPrompt();
+    this.questions.sync();
   }
 
   setAsk(ask: Ask | null): void {
     if (this.destroyed) return;
     // The card wins over the screen's question: it has the whole question, the descriptions and multi-select
-    // (the banner and the prompt box are redrawn when it shows or goes, through its resized()).
+    // (the screen's card and the prompt box are redrawn when it shows or goes, through its resized()).
     this.ask.set(ask);
-    this.followup.suppress(this.ask.shown);
-    this.asyncq.suppress(this.ask.shown);
   }
 
   setFollowup(f: Followup | null): void {
@@ -1855,101 +1841,10 @@ class Transcript implements TranscriptView {
     this.asyncq.set(worker, codex, working);
   }
 
-  /** #157: the pinned card the timeline's keys go to after the ask's: the follow-up's or the async questions', the open one. */
-  private pinned(): FollowupCard | AsyncCard | null {
-    const fu = this.followup.shown;
-    const aq = this.asyncq.shown;
-    if (fu && aq) return this.front === 'asyncq' ? this.asyncq : this.followup;
-    return fu ? this.followup : aq ? this.asyncq : null;
-  }
-
-  /** #157: with both cards up, the open one shows and the other waits behind its tab (its picks and text kept). */
-  private syncCards(): void {
-    if (!this.root) return; // a card drawn while the view is built
-    const fu = this.followup.shown;
-    const aq = this.asyncq.shown;
-    if (fu !== aq) this.front = fu ? 'followup' : 'asyncq';
-    else if (fu) this.front ??= 'followup';
-    else if (!this.ask.shown) this.front = null; // both gone (not just behind an ask): the next pair starts afresh
-    const both = fu && aq;
-    this.cardTabs.hidden = !both;
-    if (both && this.front) this.root.dataset.front = this.front;
-    else delete this.root.dataset.front;
-    const counts: Record<PinnedCard, number> = { followup: this.followup.count, asyncq: this.asyncq.toAnswer };
-    for (const k of ['followup', 'asyncq'] as const) {
-      const t = this.tabs[k];
-      const on = both && this.front === k;
-      t.setAttribute('aria-selected', String(on));
-      t.tabIndex = on ? 0 : -1;
-      const n = t.querySelector<HTMLElement>('.tx-qtab-n');
-      if (n) {
-        n.textContent = counts[k] ? String(counts[k]) : '';
-        n.hidden = !counts[k];
-      }
-    }
-    this.fit();
-  }
-
   /** #171: the timeline's height (`--tx-view-h`): a diff body is never taller than the view (transcript.css). */
   private sizeView(): void {
     const height = this.scroller.clientHeight;
     if (height && !this.destroyed) this.root.style.setProperty('--tx-view-h', `${height}px`);
-  }
-
-  /**
-   * #157: the open pinned card (the follow-up's, or the async questions') takes the timeline's room, the top strip's
-   * and half the prompt box's (`data-tight`, transcript.css) when it does not fit beside them: always on a very short
-   * screen (a phone's), and otherwise whenever the layout without it leaves the conversation less than a line, pushes
-   * the prompt box off the screen, or squeezes the card's questions under QUESTION_ROOM. No height says that (the strip
-   * wraps to two rows on a narrower screen, the zoom grows the card but not the strip, two cards bring their tabs), so
-   * it is measured, on the layout without it: the answer never depends on itself, nothing goes back and forth. A new
-   * size, or the other layout, puts the keyboard's place in a card back in sight.
-   */
-  private fit(): void {
-    const root = this.root;
-    if (!root || this.destroyed) return;
-    const height = root.clientHeight;
-    if (!height) return; // not laid out: a screen not shown (the terminal is up), a test's DOM
-    const card = this.pinned()?.el ?? null;
-    const was = root.hasAttribute('data-tight');
-    let tight = !!card && height <= SHORT_SCREEN;
-    if (card && !tight) {
-      // Drawn without it for a moment (no frame shows it); the scroll positions it would clamp are put back.
-      const kept = [card, this.scroller].map((e) => [e, e.scrollTop] as const);
-      root.removeAttribute('data-tight');
-      tight = !this.fitsBeside(card);
-      if (tight) {
-        root.setAttribute('data-tight', '');
-        if (was) for (const [e, top] of kept) e.scrollTop = top;
-      }
-    }
-    root.toggleAttribute('data-tight', tight);
-    const size = `${root.clientWidth}x${height}`;
-    if (tight !== was || size !== this.fitted) {
-      const a = document.activeElement;
-      if (a instanceof HTMLElement && root.contains(a) && a.closest('.tx-fu, .tx-aq, .tx-ask')) reveal(a);
-    }
-    this.fitted = size;
-  }
-
-  /** As laid out now: a line of the conversation, the prompt box on the screen, and the card's questions their room. */
-  private fitsBeside(card: HTMLElement): boolean {
-    if (this.form.getBoundingClientRect().bottom > this.root.getBoundingClientRect().bottom + 0.5) return false;
-    const s = getComputedStyle(this.scroller);
-    const line = parseFloat(s.lineHeight) || 1.5 * parseFloat(s.fontSize);
-    if (this.main.getBoundingClientRect().height < parseFloat(s.paddingTop) + parseFloat(s.paddingBottom) + line) return false;
-    const body = card.querySelector<HTMLElement>('.tx-ask-body');
-    return !body || body.clientHeight >= QUESTION_ROOM || body.scrollHeight <= body.clientHeight + 1;
-  }
-
-  /** #157: opens card k of the two (a click, Enter: the keyboard on it; ← → on the tabs: the keyboard stays there). */
-  private pickCard(k: PinnedCard, into: boolean): void {
-    if (!this.followup.shown || !this.asyncq.shown) return;
-    this.front = k;
-    this.syncCards();
-    if (into) (k === 'followup' ? this.followup : this.asyncq).focus();
-    else this.tabs[k].focus({ preventScroll: true });
-    this.stick();
   }
 
   setUsage(usage: Usage | null): void {
@@ -2027,7 +1922,8 @@ class Transcript implements TranscriptView {
   }
 
   focus(): void {
-    if (this.destroyed) return;
+    // #187: with the questions' sheet open the keyboard is in it (it comes back to the timeline as the sheet closes).
+    if (this.destroyed || this.questions.isOpen) return;
     this.scroller.focus({ preventScroll: true });
   }
 
@@ -2070,6 +1966,10 @@ class Transcript implements TranscriptView {
     this.updateCounts();
   }
 
+  setVisible(shown: boolean): void {
+    if (!this.destroyed) this.questions.setVisible(shown);
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     if (this.suggestionTick) clearInterval(this.suggestionTick); // #66
@@ -2086,7 +1986,9 @@ class Transcript implements TranscriptView {
     document.removeEventListener('visibilitychange', this.onVisibility);
     this.unprefs();
     this.thumbs.destroy();
+    this.questions.destroy(); // #187: its sheet leaves the page
     this.ask.destroy();
+    this.blockedCard.destroy();
     this.followup.destroy();
     this.asyncq.destroy();
     this.fileRefs.destroy(); // #31
@@ -3046,9 +2948,7 @@ class Transcript implements TranscriptView {
     this.zoomBtns.in.disabled = zoom >= ZOOM.max;
     this.renderBusy();
     this.renderJump();
-    // New sizes (a zoom, another preset's fonts) move the bottom: a view that followed it keeps following. #157: and
-    // may take a pinned card's room.
-    if (what === 'transcriptZoom' || what === 'transcriptTheme') this.fit();
+    // New sizes (a zoom, another preset's fonts) move the bottom: a view that followed it keeps following.
     if (what === 'transcriptZoom' || what === 'transcriptTheme' || what === 'hideTools' || what === 'showChanges') this.stick();
   }
 
@@ -3217,46 +3117,7 @@ class Transcript implements TranscriptView {
   private onKey(e: KeyboardEvent): void {
     if (e.defaultPrevented || e.target === this.input) return;
     const target = e.target as HTMLElement | null;
-    const inCard = !!target && this.ask.el.contains(target);
-    const inFollowup = !!target && this.followup.el.contains(target);
-    const inAsync = !!target && this.asyncq.el.contains(target); // #157
-    const pinned = this.pinned();
-    // Ctrl/⌘+Enter sends the pinned card's answers, from the card or from the timeline (the ask's card goes first, then
-    // the follow-up's or the async questions', the open one: the card you are on, if any).
-    if (isSendKey(e)) {
-      const card = inAsync ? this.asyncq : this.ask.shown ? (inFollowup ? null : this.ask) : inFollowup ? this.followup : pinned;
-      if (card?.key(e, card === this.ask ? inCard : card === this.followup ? inFollowup : inAsync)) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-      return;
-    }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    // #157: ← → on the two cards' tabs open the other one (the keyboard stays on the tabs).
-    if (target && this.cardTabs.contains(target) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-      this.pickCard(this.front === 'followup' ? 'asyncq' : 'followup', false);
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
-    // #57: on the pinned question its keys come first: ↑ ↓ through the options, Esc back to the timeline (not up
-    // from the seat); Enter on an option is its click (it picks, never sends).
-    if (inCard && this.ask.key(e, true)) {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
-    // #90: the same on the follow-up card; #157: and on the async questions'.
-    if (inFollowup && this.followup.key(e, true)) {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
-    if (inAsync && this.asyncq.key(e, true)) {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
     // A focused button keeps Enter / Space (it opens its row); the game does not see them.
     if ((e.key === 'Enter' || e.key === ' ') && target?.closest('button, a, summary')) {
       e.stopPropagation();
@@ -3269,24 +3130,11 @@ class Transcript implements TranscriptView {
       e.stopPropagation();
       return;
     }
-    // #57: then, from the timeline, the pinned question's digits, ← →, Enter (to the card).
-    if (!inCard && this.ask.shown && this.ask.key(e)) {
+    // #187: Q opens the questions' sheet while its button shows (the cards' keys are the sheet's, in it).
+    if (e.code === 'KeyQ' && !e.shiftKey && !target?.closest('input, textarea, select, [contenteditable]') && this.questions.canOpen) {
       e.preventDefault();
       e.stopPropagation();
-      return;
-    }
-    // #90: and the follow-up card's digits and ← → (Tab and Enter stay the page's: the focus, the prompt box); #157:
-    // while it is the open one of the two.
-    if (!inFollowup && !this.ask.shown && pinned === this.followup && this.followup.key(e)) {
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
-    // #157: or the async questions' digits and ← → when theirs is the open card (behind the ask's; never the screen
-    // question's digits, which the banner of a real block keeps).
-    if (!inAsync && !this.ask.shown && pinned === this.asyncq && !this.blocked && this.asyncq.key(e)) {
-      e.preventDefault();
-      e.stopPropagation();
+      this.questions.open();
       return;
     }
     const page = Math.max(40, this.scroller.clientHeight * 0.9);
@@ -3312,15 +3160,8 @@ class Transcript implements TranscriptView {
       case 'ArrowUp':
         this.scrollBy(-48);
         break;
-      default: {
-        const q = this.ask.shown ? null : this.blocked; // the card wins over the screen's question
-        const n = /^[1-9]$/.test(e.key) ? Number(e.key) : NaN;
-        if (q && q.choices?.some((c) => c.n === n)) {
-          this.host.onAnswer(q.hash, n);
-          break;
-        }
+      default:
         return;
-      }
     }
     e.preventDefault();
     e.stopPropagation();
@@ -3388,59 +3229,23 @@ class Transcript implements TranscriptView {
     }
   }
 
-  // --- blocked banner ---
+  // --- the prompt box while the agent waits ---
 
-  private renderBanner(): void {
-    const asking = this.ask.shown;
-    this.asking = asking;
-    const q = asking ? null : this.blocked;
-    // A blocked worker takes no prompt (the bridge refuses it): answer above, or in the terminal. A draft stays.
-    // Disabling the focused box or button would drop the keyboard on <body>, out of reach of the reply digits and
-    // scroll keys: it goes to the timeline instead, once, as the question arrives (a disabled control never has focus
-    // later, so re-renders leave focus alone).
+  /**
+   * A blocked worker takes no prompt (the bridge refuses it): an ask or the screen's question waits, in the questions'
+   * sheet (open or not: its button says so) or in the terminal. A draft stays. Disabling the focused box or button would
+   * drop the keyboard on <body>: it goes to the timeline instead, once, as the question arrives (a disabled control
+   * never has focus later, so re-renders leave focus alone).
+   */
+  private renderPrompt(): void {
+    const waiting = this.ask.shown || !!this.blocked;
+    this.waiting = waiting;
     const a = document.activeElement;
-    const waiting = !!q || asking;
     if (waiting && (this.input.contains(a) || a === this.sendBtn)) this.scroller.focus({ preventScroll: true });
     this.promptOff = waiting;
     this.composer.setDisabled(waiting);
-    // A very short screen gives the card the prompt box's room while it is up (transcript.css).
-    this.root.toggleAttribute('data-asking', asking);
-    this.composer.setPlaceholder(asking
-      ? 'Answer the question above first (or in the terminal)'
-      : q
-        ? 'Waiting for an answer to the question above (or switch to the terminal)'
-        : PROMPT_HINT,
-    );
+    this.composer.setPlaceholder(waiting ? WAITING_HINT : PROMPT_HINT);
     this.sendBtn.disabled = waiting;
     this.reviewBtn.disabled = waiting;
-    if (!q) {
-      this.banner.hidden = true;
-      this.banner.replaceChildren();
-      return;
-    }
-    const excerpt = (Array.isArray(q.excerpt) ? q.excerpt : [])
-      .map((l) => stripAnsi(String(l)))
-      .filter((l, i, a) => l.trim() || (i > 0 && i < a.length - 1))
-      .slice(-EXCERPT_LINES);
-    const choices = (Array.isArray(q.choices) ? q.choices : []).filter((c) => c && Number.isInteger(c.n));
-    const chips = choices.map((c) =>
-      h('button', { class: c.n === q.selected ? 'tx-choice tx-choice-sel' : 'tx-choice', 'data-n': String(c.n), onclick: () => this.host.onAnswer(q.hash, c.n) }, h('span', { class: 'tx-choice-n' }, String(c.n)), h('span', { class: 'tx-choice-label' }, String(c.label ?? ''))),
-    );
-    const parts: HTMLElement[] = [
-      h('div', { class: 'tx-banner-head' }, h('span', { class: 'tx-banner-tag' }, 'Waiting for you'), h('span', { class: 'tx-banner-text' }, String(q.text ?? '').trim() || 'Waiting for input')),
-    ];
-    if (excerpt.length) parts.push(h('pre', { class: 'tx-banner-excerpt' }, excerpt.join('\n')));
-    parts.push(
-      h(
-        'div',
-        { class: 'tx-banner-actions' },
-        ...chips,
-        h('span', { class: 'tx-spacer' }),
-        choices.length ? h('button', { class: 'tx-link', onclick: () => this.host.onAnswer(q.hash, null, true) }, 'Cancel') : null,
-        h('button', { class: 'tx-link tx-to-term', onclick: () => this.host.onSwitchToTerminal() }, 'Switch to terminal'),
-      ),
-    );
-    this.banner.replaceChildren(...parts);
-    this.banner.hidden = false;
   }
 }

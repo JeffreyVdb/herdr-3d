@@ -1,12 +1,25 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Ask, CommandArgs } from '../net/protocol';
 import { AskCard, type AskResult } from './askCard';
 import { mountTranscript, type TranscriptView } from './transcriptRender';
 
-// #57: the pinned question card: an answer's ack changes only the ask it was sent for (upserts that come meanwhile are
-// the worker's word), and its keys: Enter on an option picks it (never sends), the card moving on puts the keyboard on
-// the next question (an Enter there picks nothing), only Send or Ctrl+Enter sends, Esc back to the timeline.
+// #57: the question card: an answer's ack changes only the ask it was sent for (upserts that come meanwhile are the
+// worker's word), and its keys: Enter on an option picks it (never sends), the card moving on puts the keyboard on the
+// next question (an Enter there picks nothing), only Send or Ctrl+Enter sends. #187: it is in the questions' sheet,
+// which an ask opens by itself; Esc closes the sheet (the keyboard back on the timeline).
+
+beforeEach(() => {
+  // jsdom has no modal dialogs: open / close are what the sheet looks at, and close fires `close` as a browser does.
+  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+    this.setAttribute('open', '');
+  };
+  HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+    if (!this.open) return;
+    this.removeAttribute('open');
+    this.dispatchEvent(new Event('close'));
+  };
+});
 
 const ask = (id = 'a', question = 'Which color?'): Ask => ({
   tool_use_id: id,
@@ -52,7 +65,7 @@ describe('AskCard: an ack is about its own ask', () => {
     c.set(ask('a'));
     press(c, '1');
     press(c, '1');
-    expect(press(c, 'Enter')).toBe(true); // into the card: not sent
+    expect(press(c, 'Enter')).toBe(false); // not the card's (a button's click): not sent
     expect(pending).toHaveLength(0);
     press(c, 'Enter', { ctrlKey: true });
     expect(pending).toHaveLength(1);
@@ -164,34 +177,34 @@ describe('the card in the transcript view: keys', () => {
     key('1'); // Red, on to Extras: the question itself has the keyboard
     expect(open()).toBe('Extras');
     expect(document.activeElement?.classList.contains('tx-ask-q')).toBe(true);
-    expect(root.querySelector('.tx-ask-row.is-done .tx-ask-row-text')?.textContent).toBe('Red');
+    expect(document.querySelector('.tx-ask-row.is-done .tx-ask-row-text')?.textContent).toBe('Red');
     key('1'); // Logs (pick several: it stays)
     expect(open()).toBe('Extras');
     key('ArrowLeft'); // back to Color, its pick focused
     expect(open()).toBe('Color');
     expect(document.activeElement?.getAttribute('aria-checked')).toBe('true');
     key('2'); // Blue instead: every question answered, all folded, Send next
-    expect(root.querySelector('.tx-ask-q')).toBeNull();
+    expect(document.querySelector('.tx-ask-q')).toBeNull();
     expect(document.activeElement?.classList.contains('tx-ask-send')).toBe(true);
     expect(sent).toHaveLength(0);
     expect(key('Enter', { ctrlKey: true })).toBe(false);
     await flush();
     expect(sent).toEqual([{ id: '', tool_use_id: 'a', answers: [{ question: 0, choices: [2] }, { question: 1, choices: [1] }] }]);
-    expect(root.querySelector('.tx-ask')?.hasAttribute('hidden')).toBe(true);
+    expect(document.querySelector('.tx-ask')?.hasAttribute('hidden')).toBe(true);
   });
 
   it('a click on the first question, then Enter: the next question has the keyboard, the Enter picks nothing and says how', async () => {
     const { root, sent } = mount();
     view?.setAsk(ask('a'));
     view?.focus();
-    root.querySelector<HTMLButtonElement>('.tx-ask-opt[data-n="1"]')?.click(); // Red
+    document.querySelector<HTMLButtonElement>('.tx-ask-opt[data-n="1"]')?.click(); // Red
     expect(open()).toBe('Extras');
     expect(document.activeElement?.classList.contains('tx-ask-q')).toBe(true);
     expect(key('Enter')).toBe(false); // the card's: no option is clicked
     await flush();
     expect(sent).toHaveLength(0);
-    expect(root.querySelector('.tx-ask-opt.is-on')).toBeNull();
-    expect(root.querySelector('.tx-ask-nudge.is-loud')?.textContent).toContain('Enter picks nothing here');
+    expect(document.querySelector('.tx-ask-opt.is-on')).toBeNull();
+    expect(document.querySelector('.tx-ask-nudge.is-loud')?.textContent).toContain('Enter picks nothing here');
     expect(document.activeElement?.classList.contains('tx-ask-q')).toBe(true);
     // ↓ goes to its first option.
     key('ArrowDown');
@@ -202,7 +215,7 @@ describe('the card in the transcript view: keys', () => {
     const { root, sent } = mount();
     view?.setAsk(ask('a'));
     view?.focus();
-    root.querySelector<HTMLElement>('.tx-ask-opt[data-n="1"]')?.focus();
+    document.querySelector<HTMLElement>('.tx-ask-opt[data-n="1"]')?.focus();
     expect(key('Enter')).toBe(true); // left to the button
     expect(sent).toHaveLength(0);
     key('ArrowDown');
@@ -228,7 +241,7 @@ describe('the card in the transcript view: keys', () => {
     await flush();
     expect(sent).toHaveLength(0);
     expect(open()).toBe('Extras');
-    expect(root.querySelector('.tx-ask-row.is-done .tx-ask-row-text')?.textContent).toBe('Teal');
+    expect(document.querySelector('.tx-ask-row.is-done .tx-ask-row-text')?.textContent).toBe('Teal');
   });
 
   it('Send or Ctrl+Enter with a question unanswered: to it, nothing sent', () => {
@@ -240,14 +253,14 @@ describe('the card in the transcript view: keys', () => {
     key('Enter', { ctrlKey: true });
     expect(sent).toHaveLength(0);
     expect(open()).toBe('Color');
-    expect(root.querySelector('.tx-ask-q.is-flash')).not.toBeNull();
-    expect(root.querySelector('.tx-ask-note')?.textContent).toContain('Answer “Color” first');
-    root.querySelector<HTMLButtonElement>('.tx-ask-send')?.click();
+    expect(document.querySelector('.tx-ask-q.is-flash')).not.toBeNull();
+    expect(document.querySelector('.tx-ask-note')?.textContent).toContain('Answer “Color” first');
+    document.querySelector<HTMLButtonElement>('.tx-ask-send')?.click();
     expect(sent).toHaveLength(0);
   });
 
-  it('Esc on an option or a folded question: the timeline has the keyboard, the seat is not left', () => {
-    const { root } = mount();
+  it('Esc on an option or a folded question closes the sheet: the timeline has the keyboard, the seat is not left; Q opens it again', () => {
+    mount();
     const stood: KeyboardEvent[] = [];
     const up = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !e.defaultPrevented) stood.push(e);
@@ -255,13 +268,17 @@ describe('the card in the transcript view: keys', () => {
     window.addEventListener('keydown', up);
     try {
       view?.setAsk(ask('a'));
-      view?.focus();
-      root.querySelector<HTMLElement>('.tx-ask-opt')?.focus();
+      const sheet = document.querySelector('dialog.tx-qsheet') as HTMLDialogElement;
+      expect(sheet.open).toBe(true);
+      document.querySelector<HTMLElement>('.tx-ask-opt')?.focus();
       expect(key('Escape')).toBe(false);
+      expect(sheet.open).toBe(false);
       expect(document.activeElement?.classList.contains('tx-scroll')).toBe(true);
-      root.querySelector<HTMLElement>('.tx-ask-row')?.focus();
+      expect(key('q', { code: 'KeyQ' })).toBe(false);
+      expect(sheet.open).toBe(true);
+      document.querySelector<HTMLElement>('.tx-ask-row')?.focus();
       key('Escape');
-      expect(document.activeElement?.classList.contains('tx-scroll')).toBe(true);
+      expect(sheet.open).toBe(false);
       expect(stood).toHaveLength(0);
       // From the timeline itself Esc is the seat's again.
       key('Escape');
@@ -271,7 +288,7 @@ describe('the card in the transcript view: keys', () => {
     }
   });
 
-  it('a stale ack for the old ask while a new one is up: its card stays pinned, the prompt stays off', async () => {
+  it('a stale ack for the old ask while a new one is up: its card stays, the prompt stays off', async () => {
     let done: (r: AskResult) => void = () => {};
     const { root } = mount(() => new Promise((r) => (done = r)));
     view?.setAsk(ask('a'));
@@ -282,8 +299,8 @@ describe('the card in the transcript view: keys', () => {
     view?.setAsk(ask('b', 'NEW QUESTION: which color?'));
     done({ ok: false, code: 'stale', message: 'another question' });
     await flush();
-    expect(root.querySelector('.tx-ask')?.hasAttribute('hidden')).toBe(false);
-    expect(root.querySelector('.tx-ask-question')?.textContent).toBe('NEW QUESTION: which color?');
+    expect(document.querySelector('.tx-ask')?.hasAttribute('hidden')).toBe(false);
+    expect(document.querySelector('.tx-ask-question')?.textContent).toBe('NEW QUESTION: which color?');
     expect(root.querySelector<HTMLElement>('.tx-input')?.getAttribute('aria-disabled')).toBe('true');
   });
 });
