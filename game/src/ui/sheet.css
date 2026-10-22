@@ -1,0 +1,157 @@
+/* #187: one modal dialog (ui/sheet.ts): the shell's dialog frame (credits.css `.credits`) centred on a desktop, a bottom
+   sheet on a phone (`pointer: coarse`) or a narrow window. The header stays, the body scrolls. Sized to the viewport,
+   never to the laptop's screen. `--sheet-kb` / `--sheet-vv` come from sheet.ts while the on-screen keyboard is up. */
+.sheet {
+  width: min(600px, calc(100vw - 32px));
+  max-height: min(820px, calc(100dvh - 48px));
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.35;
+  color-scheme: dark;
+  overflow: hidden;
+}
+.sheet[open] {
+  display: flex;
+  flex-direction: column;
+}
+.sheet::backdrop {
+  background: var(--scrim);
+}
+.sheet:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: -3px;
+}
+.sheet button {
+  font: inherit;
+  color: inherit;
+}
+.sheet-grab {
+  display: none;
+}
+.sheet-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 12px 10px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.sheet-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 17px;
+  font-weight: 800;
+  font-variation-settings: var(--fvs-casual);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sheet-close {
+  flex: none;
+}
+.sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 14px 18px 18px;
+  scroll-padding: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sheet[open] {
+    animation: sheet-pop 200ms var(--ease);
+  }
+  .sheet[open]::backdrop {
+    animation: sheet-fade 200ms ease-out;
+  }
+}
+@keyframes sheet-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+@keyframes sheet-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* A phone or a narrow window: full width on the bottom edge, rounded top corners, a grab bar, the home indicator's room
+   below, lifted above the on-screen keyboard. */
+@media (pointer: coarse), (max-width: 640px) {
+  .sheet {
+    inset: auto 0 var(--sheet-kb, 0px) 0;
+    width: 100%;
+    max-width: none;
+    max-height: min(85dvh, calc(var(--sheet-vv, 100dvh) - 12px));
+    margin: 0;
+    border-radius: var(--radius) var(--radius) 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    box-shadow: 0 -10px 28px rgb(0 0 0 / 32%);
+  }
+  .sheet-grab {
+    display: block;
+    flex: none;
+    width: 40px;
+    height: 4px;
+    margin: 8px auto 0;
+    border-radius: 2px;
+    background: var(--border-strong);
+  }
+  .sheet-head {
+    padding: 4px 8px 8px 16px;
+  }
+  .sheet-body {
+    padding: 12px 16px 16px;
+  }
+  .sheet-close {
+    width: 44px;
+    height: 44px;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .sheet[open] {
+      animation: sheet-up 260ms var(--ease);
+    }
+  }
+  @keyframes sheet-up {
+    from {
+      transform: translateY(100%);
+    }
+  }
+}
+
+@media (forced-colors: active) {
+  .sheet {
+    border: 2px solid CanvasText;
+  }
+  .sheet-grab {
+    background: CanvasText;
+  }
+  .sheet:focus-visible,
+  .sheet-close:focus-visible {
+    outline: 3px solid Highlight;
+  }
+}
+
+/* ubuntu:begin */
+/* #216: Ubuntu's dialogs keep a visible edge on the aubergine and the full 3px ring on the close button. */
+:root[data-ui-theme='ubuntu'] .sheet {
+  border: 1px solid var(--line);
+}
+:root[data-ui-theme='ubuntu'] .sheet-close:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+/* ubuntu:end */
