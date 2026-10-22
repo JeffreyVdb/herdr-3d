@@ -1,8 +1,9 @@
 /* #187: the questions button (laptop/questionsButton.ts): a pill in the lane's colour with the label on it, a ring 2px
    outside it in the same colour (the 3:1 boundary uiTheme.test.ts checks), and a soft glow behind the ring. Urgent's
    glow breathes; optional's stays still. The ring and glow reach 4px and ~16px past the pill: its container must not
-   clip them. */
-.tx-qbtn {
+   clip them. Its rules are under `.tx` (where it always sits): the HUD's `.hud button { color: inherit; font: inherit }`
+   (0,1,1) would otherwise take its label's colour and font. */
+.tx .tx-qbtn {
   --q: var(--ctl-q-optional);
   --q-text: var(--ctl-q-optional-text);
   position: relative;
@@ -26,37 +27,37 @@
   cursor: pointer;
   transition: background 160ms var(--ease);
 }
-.tx-qbtn[hidden] {
+.tx .tx-qbtn[hidden] {
   display: none;
 }
-.tx-qbtn[data-lane='urgent'] {
+.tx .tx-qbtn[data-lane='urgent'] {
   --q: var(--ctl-q-urgent);
   --q-text: var(--ctl-q-urgent-text);
 }
-.tx-qbtn:hover {
+.tx .tx-qbtn:hover {
   background: color-mix(in srgb, var(--q) 86%, white);
 }
-.tx-qbtn:active {
+.tx .tx-qbtn:active {
   background: color-mix(in srgb, var(--q) 90%, black);
 }
-.tx-qbtn:focus-visible {
+.tx .tx-qbtn:focus-visible {
   outline: 2px solid var(--ctl-focus);
   outline-offset: 6px;
 }
 /* The ring: the lane colour at full strength, a 2px gap of whatever ground is behind. */
-.tx-qbtn::before,
-.tx-qbtn::after {
+.tx .tx-qbtn::before,
+.tx .tx-qbtn::after {
   content: '';
   position: absolute;
   inset: -4px;
   border-radius: inherit;
   pointer-events: none;
 }
-.tx-qbtn::before {
+.tx .tx-qbtn::before {
   border: 2px solid var(--q);
 }
 /* The glow: decoration behind the ring, never what carries the contrast. Only its opacity moves (no layout, no paint). */
-.tx-qbtn::after {
+.tx .tx-qbtn::after {
   box-shadow: 0 0 14px 2px var(--q);
   opacity: 0.35;
 }
@@ -91,7 +92,7 @@
   white-space: nowrap;
 }
 @media (prefers-reduced-motion: no-preference) {
-  .tx-qbtn[data-lane='urgent']::after {
+  .tx .tx-qbtn[data-lane='urgent']::after {
     animation: tx-qbtn-breathe 1.6s ease-in-out infinite alternate;
     will-change: opacity;
   }
@@ -105,7 +106,7 @@
   }
 }
 /* Reduced motion: the urgent glow holds at its middle, stronger than optional's. */
-.tx-qbtn[data-lane='urgent']::after {
+.tx .tx-qbtn[data-lane='urgent']::after {
   opacity: 0.6;
 }
 .tx[data-page-hidden] .tx-qbtn::after {
@@ -113,7 +114,7 @@
 }
 /* A phone: a one-line pill above the composer, a full 44px target. */
 @media (pointer: coarse) {
-  .tx-qbtn {
+  .tx .tx-qbtn {
     min-height: 44px;
     padding: 0 0.6em 0 0.9em;
     font-size: 14px;
@@ -121,24 +122,24 @@
 }
 /* Forced colours: the fills go; a system-colour border and ring remain, and the label and icon still tell the lanes apart. */
 @media (forced-colors: active) {
-  .tx-qbtn {
+  .tx .tx-qbtn {
     border: 2px solid ButtonText;
     background: ButtonFace;
     color: ButtonText;
   }
-  .tx-qbtn::before {
+  .tx .tx-qbtn::before {
     border-color: CanvasText;
   }
-  .tx-qbtn[data-lane='urgent']::before {
+  .tx .tx-qbtn[data-lane='urgent']::before {
     border-color: Highlight;
   }
-  .tx-qbtn::after {
+  .tx .tx-qbtn::after {
     display: none;
   }
   .tx-qbtn-count {
     border: 1px solid ButtonText;
   }
-  .tx-qbtn:focus-visible {
+  .tx .tx-qbtn:focus-visible {
     outline-color: Highlight;
   }
 }
