@@ -1991,6 +1991,11 @@ pipelined throughput, GPU timestamps, and rAF frames that include DOM layout. M3
 `floor96-desk` (seated over 96 workers who all need you: every card shows).
 #141 jobs: `floor60-entry` and `m3b-entry` time `enterFloor` to the next drawn frame, and the longest
 long-animation-frame after it, for each floor's first entry (cold) and the ones after (warm), left for the city between.
+#146 job: `startup` launches Chrome twice on one fresh profile (the second shows what it kept on disk) and loads the
+demo city once per launch: `__h3d.startup` (the first frame that drew the city, ready, `renderer.info.memory.programs`
+at each; on a build from before #146 the runner times ready itself), the long-animation-frame that drew the city first
+and the longest one until ready. To compare with an older commit, run it from a detached worktree of that commit with
+the current `tools/mac-*` copied in (`H3D_PERF_JOBS=startup`).
 M5 jobs, on `perf-floor60` with the simulator: `floor60-screens` (the overview with four live laptop screens),
 `floor60-screens0` (the same with `screens=0`) and `floor60-laptop` (seated at a laptop). On the server,
 `H3D_BENCH=1` with the m5-screen spec runs the same comparison on WebGL2 (relative numbers only).
@@ -2001,7 +2006,8 @@ draw counts, so they bench `{ frames: 40, warm: 10, pipelined: false, raf: false
 close the first page before benching the baseline, so the two runs don't share the CPU. `perf:mac` and the
 `H3D_BENCH` benches keep the defaults.
 
-`window.__h3d` (tests, perf): `backend`, `frames`, `error`, `ready`, `view()`, `lookAt()` → `{kind, id, name?, label?}`
+`window.__h3d` (tests, perf): `backend`, `frames`, `error`, `ready` (#146: a snapshot is in and the first city is compiled
+and drawn whole), `startup` (#146: the first city frame and ready, with the renderer's programs), `view()`, `lookAt()` → `{kind, id, name?, label?}`
 or null, `status(workerId)` → `{status, at}` as last rendered, `world()` (shown `name`/`desk` plus what the bridge
 sent, `bridgeName`/`bridgeDesk`, null from an older bridge), `layout(session)`, `enterFloor(session, pose?)`,
 `leaveFloor()`, `floorPool({data?, t?, hold?, resume?})` (#141: the pool's meshes as drawn, with the instances in use

@@ -663,7 +663,7 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   the player can change, as sections in the About panel's frame. A section is
   `addSection(id, title, render, { store, group })`: the dialog draws the heading and the storage label (`'browser'`:
   "This browser", `localStorage` prefs; `'bridge'`: "Bridge", shared by every client) and lists the section in its
-  navigator group, `render(body)` fills the body and may return `{ open, dispose }`; a feature adds its own from `App`
+  navigator group, `render(body)` fills the body (#146: when the dialog first opens) and may return `{ open, dispose }`; a feature adds its own from `App`
   without touching the dialog (#90's follow-up questions are the first "Bridge" section). #49: one section shows at a
   time, picked from a grouped vertical tablist down the side (General, Workers, AI, Integrations, in that order; within
   a group in the order added), below 800 px wide from a native picker above the section. Every section's DOM stays
