@@ -133,7 +133,8 @@ export class QuestionSheet {
     // Both lanes up: each under its name (one lane alone is what the sheet's title says).
     this.sheet.el.toggleAttribute('data-lanes', urgent && optional);
     const optName = followup.shown && asyncq.shown ? 'Open questions and Codex asked' : asyncq.shown ? 'Codex asked' : 'Open questions';
-    const name = urgent ? 'Answer to continue' : followup.shown && asyncq.shown ? 'Questions for you' : optName;
+    // Both lanes: the title says both (each lane has its own heading), the name which ones.
+    const name = urgent && !optional ? 'Answer to continue' : (urgent && optional) || (followup.shown && asyncq.shown) ? 'Questions for you' : optName;
     this.optionalLane.setAttribute('aria-label', optName);
     this.optionalLane.querySelector('.tx-qlane-head')!.textContent = optName;
     this.sheet.setLabel(urgent && optional ? `Answer to continue, and ${optName.replace(/^Open/, 'open')}` : name, name);
