@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, shot, watchErrors } from './game';
+import { frames, hideQuestions, openGame, shot, watchErrors } from './game';
 
 // M16: the transcript mode of the seated view, for real, on the WebGL2 path: demo-m5 with the simulating fixture server
 // (sim=1), which answers transcript.watch / page / item like herdr-world (tools/fixture-transcript.ts: a demo timeline
@@ -159,8 +159,14 @@ test('sitting down opens the conversation over the monitor, fed by transcript.wa
   const seatedFps = await termFps(page, worker);
   const watchesAtSit = (await watchLog(page)).filter((c) => c.t === 'terminal.watch' && (c.args as { id: string }).id === worker).length;
 
-  // Right after sitting down, with nothing clicked, the scroll keys work (the keyboard is on the timeline) and nothing
-  // reaches the pane.
+  // #187: Tofu is blocked: its question opened the questions' sheet by itself as the conversation showed. Hidden (Esc),
+  // the urgent button in the prompt box keeps it.
+  const sheet = page.locator('dialog.tx-qsheet');
+  const urgent = tx.locator('.tx-prompt').getByRole('button', { name: /^Answer to continue/ });
+  await hideQuestions(page);
+  await expect(urgent).toBeVisible();
+
+  // Then, with nothing clicked, the scroll keys work (the keyboard is on the timeline) and nothing reaches the pane.
   const sentKeys = async () => (await sent(page)).filter((c) => c.t === 'worker.keys').length;
   const keysBefore = await sentKeys();
   const scroller = tx.locator('.tx-scroll');
@@ -242,10 +248,12 @@ test('sitting down opens the conversation over the monitor, fed by transcript.wa
   // Code blocks get highlighted once the lazy highlighter loads.
   await expect(tx.locator('.tx-said pre code.hljs')).toHaveCount(1, { timeout: 15_000 });
 
-  // Tofu is blocked: the banner with its question's numbered chips.
-  await expect(tx.locator('.tx-banner')).toBeVisible();
-  await expect(tx.locator('.tx-banner')).toContainText('Do you want to proceed?');
-  await expect(tx.locator('.tx-choice')).toHaveCount(3);
+  // Tofu is blocked: its question waits on the urgent button; in the sheet, its numbered chips.
+  await urgent.click();
+  await expect(sheet.locator('.tx-bq')).toContainText('Do you want to proceed?');
+  await expect(sheet.locator('.tx-choice')).toHaveCount(3);
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
 
   // Framed on the diff, with the highlighted code block above it.
   await tx.locator('.tx-said pre').evaluate((e) => e.scrollIntoView({ block: 'start' }));
@@ -312,10 +320,17 @@ test('sitting down opens the conversation over the monitor, fed by transcript.wa
   await expect(tx.locator('.tx-jump')).toHaveText('1 new · jump to latest');
   expect(await scrollTop()).toBe(0);
 
-  // `1` on the timeline answers the question (worker.answer); Tofu works again and the prompt comes back.
+  // A digit on the timeline is not the question's (#187); Q opens it, `1` there answers it (worker.answer); Tofu works
+  // again, the sheet and the button go, and the prompt comes back.
+  await page.keyboard.press('1');
+  await frames(page, 3);
+  expect((await sent(page)).filter((c) => c.t === 'worker.answer')).toEqual([]);
+  await page.keyboard.press('q');
+  await expect(sheet).toHaveAttribute('open', '');
   await page.keyboard.press('1');
   await expect.poll(async () => (await sent(page)).filter((c) => c.t === 'worker.answer').at(-1)?.args).toMatchObject({ id: worker, choice: 1 });
-  await expect(tx.locator('.tx-banner')).toBeHidden();
+  await expect(sheet).toBeHidden();
+  await expect(urgent).toBeHidden();
   await expect(tx.locator('.tx-input')).toBeEnabled();
   await tx.locator('.tx-jump').click();
   await expect(tx.locator('.tx-jump')).toBeHidden();
@@ -470,12 +485,13 @@ test('sit / toggle / stand cycles leave no transcript watches or overlays behind
 
 // #56: at 1280x720 the plan-limits plate hung over the top right of the overlay's header; it now steps out of the
 // reading overlay like out of a screen dialog (an edge tab beside it, Shift+L peeks). At 960x600 a blocked question
-// used to leave little room above the prompt: the banner is capped and compact, the timeline keeps its room.
+// used to leave little room above the prompt (a banner); #187: it is in the questions' sheet, hidden on the button, and
+// the timeline keeps its whole height.
 for (const [w, h] of [
   [1280, 720],
   [960, 600],
 ] as const) {
-  test(`the plan-limits plate and the blocked banner leave the conversation its room at ${w}x${h}`, async ({ page }) => {
+  test(`the plan-limits plate and a blocked question leave the conversation its room at ${w}x${h}`, async ({ page }) => {
     test.setTimeout(120_000);
     const clean = watchErrors(page);
     await page.setViewportSize({ width: w, height: h });
@@ -492,6 +508,7 @@ for (const [w, h] of [
     // plate steps away (it was an edge tab beside the monitor's glass); Shift+L still peeks it.
     const tx = page.locator('.seat-transcript .tx');
     await expect(tx.locator('.tx-user').first()).toBeVisible();
+    await hideQuestions(page); // #187: Tofu's question opened the sheet
     await frames(page, 8);
     // It steps out of the overlay: a slim tab (or nothing), never over the header.
     await expect(page.locator('.limits')).toHaveAttribute('data-dock', /^(tab|away)$/);
@@ -501,9 +518,9 @@ for (const [w, h] of [
       return getComputedStyle(e).display === 'none' ? null : { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
     });
     if (plate) expect(plate.left >= box.left + box.width || plate.right <= box.left || plate.top >= box.top + box.height || plate.bottom <= box.top, 'the plate is over the overlay').toBe(true);
-    // Every control of the bar, the banner and the prompt is hit-testable (nothing covers it).
+    // Every control of the bar and the prompt (the questions button too) is hit-testable (nothing covers it).
     const covered = await page.evaluate(() =>
-      [...document.querySelectorAll<HTMLElement>('.seat-transcript .tx-bar button, .seat-transcript .tx-banner button, .seat-transcript .tx-send, .seat-transcript .tx-input')]
+      [...document.querySelectorAll<HTMLElement>('.seat-transcript .tx-bar button, .seat-transcript .tx-qbtn, .seat-transcript .tx-send, .seat-transcript .tx-input')]
         .filter((e) => e.offsetParent !== null)
         .filter((e) => {
           const r = e.getBoundingClientRect();
@@ -518,13 +535,13 @@ for (const [w, h] of [
     await expect(page.locator('.limits')).toHaveAttribute('data-peek', 'true');
     await page.keyboard.press('Shift+L');
     await expect(page.locator('.limits')).toHaveAttribute('data-peek', 'false');
-    // Tofu is blocked: the banner takes less than half the overlay and the timeline keeps at least 130 px.
-    await expect(tx.locator('.tx-banner')).toBeVisible();
+    // Tofu is blocked: the question waits on the button, the timeline meets the prompt box and keeps at least 130 px.
+    await expect(tx.locator('.tx-prompt').getByRole('button', { name: /^Answer to continue/ })).toBeVisible();
     const m = await page.evaluate(() => {
       const q = (s: string) => document.querySelector<HTMLElement>(`.seat-transcript ${s}`)?.getBoundingClientRect();
-      return { root: q('.tx')?.height ?? 0, banner: q('.tx-banner')?.height ?? 0, scroll: q('.tx-scroll')?.height ?? 0, input: q('.tx-input')?.height ?? 0 };
+      return { main: q('.tx-main'), prompt: q('.tx-prompt'), scroll: q('.tx-scroll')?.height ?? 0, input: q('.tx-input')?.height ?? 0 };
     });
-    expect(m.banner).toBeLessThanOrEqual(m.root * 0.47);
+    expect(Math.abs((m.main?.bottom ?? 0) - (m.prompt?.top ?? 0))).toBeLessThanOrEqual(1);
     expect(m.scroll).toBeGreaterThanOrEqual(130);
     expect(m.input).toBeGreaterThan(20);
     await frames(page, 6);

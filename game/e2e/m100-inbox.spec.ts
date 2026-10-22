@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, shot, watchErrors, openMenu, settingsSection } from './game';
+import { frames, hideQuestions, openGame, openMenu, settingsSection, shot, watchErrors } from './game';
 
 // #100 on demo-m5 with the simulator (it answers transcript.watch, so a plain sit opens the conversation) and the plan
 // limits (tools/fixture-limits.ts): the inbox chip under the plate and its list. Work holds herdr-3d (top),
@@ -115,6 +115,8 @@ test('the inbox: the chip opens a list of who and where across the buildings, li
   await expect(page.locator('.seat-transcript')).toBeVisible();
   // Seated, the inbox is out of the way, like the plate.
   await expect(box).toBeHidden();
+  // #187: nutrition's question opened the questions' sheet (its Esc closes it, the next one stands you up).
+  await hideQuestions(page, nutrition.id);
 
   // Plain E still sits you down to its conversation (the inbox's view was for that sit only).
   await page.keyboard.press('Escape');

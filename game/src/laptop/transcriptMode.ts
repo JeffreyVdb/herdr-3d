@@ -12,6 +12,8 @@ import type { ImagesTabHost, ImagesTabView, MountImagesTab } from './imagesTab';
 import { itemsOf, type PushHead, type TimelineOf } from './transcriptWatches';
 import type { ChildViewState } from './transcriptChild';
 import { TranscriptDrafts } from './transcriptDrafts';
+import { AskDrafts } from './askDrafts';
+import type { OpenedAsks } from './questionSheet';
 import { AsyncDrafts } from './asyncDrafts';
 import { FollowupDrafts } from './followupDrafts';
 import { CommandCatalogs } from './commandCatalog';
@@ -167,6 +169,8 @@ const REVEAL_PAGES = 20;
 const REVEAL_LIMIT = 200;
 /** The list of images is asked again this long after the last change (a push with an image). */
 const RELIST_MS = 300;
+/** #187: how many of a worker's questions the sheet remembers having opened for. */
+const OPENED_KEPT = 32;
 const MODES_MAX = 64;
 /** How many of a subagent's items its nested timeline shows (the newest; the bridge's most). */
 const SUBAGENT_LIMIT = 500;
@@ -315,6 +319,14 @@ export class TranscriptMode {
   /** #157: what you wrote for Codex workers' async questions, kept across views, seats and reconnects. */
   private readonly asyncDrafts: AsyncDrafts;
   private readonly followupDrafts: FollowupDrafts; // #60
+  /** #187: what you picked and typed on each worker's ask, kept across the questions' sheet, views, seats and reconnects. */
+  private readonly askDrafts: AskDrafts;
+  /**
+   * #187: per worker, the mandatory questions (an ask's id, the screen question's) the questions' sheet has opened for,
+   * newest last: it opens by itself once per question, not again on a re-render, a reconnect or another seat. In memory
+   * (a reload may open it once more).
+   */
+  private readonly opened = new Map<string, string[]>();
   /**
    * #141: the workers a prompt is on its way to (until the bridge answered it). A sitting's pending rows go when you
    * stand up but the send does not, nor does the draft it came from: sitting there again must not send it twice.
@@ -335,10 +347,12 @@ export class TranscriptMode {
     this.drafts = new TranscriptDrafts({ ...(host.upload ? { upload: host.upload } : {}), storage: host.storage, persist });
     this.asyncDrafts = new AsyncDrafts(host.storage, persist);
     this.followupDrafts = new FollowupDrafts(host.storage, persist);
+    this.askDrafts = new AskDrafts(host.storage, persist);
     host.secrets?.onChange(() => {
       this.drafts.persistChanged();
       this.asyncDrafts.persistChanged();
       this.followupDrafts.persistChanged();
+      this.askDrafts.persistChanged();
     });
   }
 
@@ -473,6 +487,7 @@ export class TranscriptMode {
       s.focusLater = false;
       if (s.box) s.box.hidden = true;
     }
+    this.visible(s);
     // #58: the cue runs only while the conversation is up.
     this.cue(s, true);
     this.tabsChanged(s);
@@ -678,6 +693,7 @@ export class TranscriptMode {
     if (s.viewPane) s.viewPane.hidden = s.mode !== 'transcript' || !!s.child;
     s.view = mount(pane, this.renderHost(s));
     this.counts.mounted++;
+    this.visible(s); // #187: before its questions (a mandatory one opens the sheet only while it is on the screen)
     // #140: the transcript opened: its commands are asked for (the popup asks again when it opens).
     if (hasTranscript(s.harness)) void this.catalogs.get(s.id).refresh();
     const strip = this.tabsFor(s);
@@ -908,6 +924,9 @@ export class TranscriptMode {
       draft: this.drafts.get(s.id, s.name),
       sending: this.drafts.sending(s.id),
       asyncDrafts: this.asyncDrafts,
+      // #187: the ask's picks, and the questions the sheet opened for, kept for the worker's next view.
+      askDrafts: { get: (a) => this.askDrafts.get(s.id, a), set: (a, picks) => this.askDrafts.set(s.id, a, picks), clear: (id) => this.askDrafts.clear(s.id, id) },
+      opened: this.openedOf(s.id),
       files: { id: s.id, search: { send: (t, args) => this.host.send(t, args) } },
       // #247: `@r:` lists the repositories and folders of the other floors (#54: and the ones the bridge discovered).
       repos: { id: s.id, search: { send: (t, args) => this.host.send(t, args), refs: this.host.repoRefs ?? null, discovery: this.host.repoDiscovery ?? null, ...(this.host.floorName ? { floorName: (id: string) => this.host.floorName?.(id) ?? id } : {}) } },
@@ -1112,6 +1131,7 @@ export class TranscriptMode {
     }
     if (s.mode !== 'transcript') this.setMode('transcript', false);
     else this.show(s);
+    this.visible(s);
   }
 
   /**
@@ -1125,7 +1145,25 @@ export class TranscriptMode {
     this.host.childChanged?.();
     if (status) this.host.status(status.kind, status.text);
     if (s.mode === 'transcript') this.show(s);
+    this.visible(s);
     return true;
+  }
+
+  /** #187: tells the worker's view whether it is the one on the screen (its questions' sheet waits while it is not). */
+  private visible(s: Sitting): void {
+    s.view?.setVisible?.(s.mode === 'transcript' && !s.child);
+  }
+
+  /** #187: worker's questions the sheet opened for (the last OPENED_KEPT). */
+  private openedOf(worker: string): OpenedAsks {
+    return {
+      has: (id) => this.opened.get(worker)?.includes(id) ?? false,
+      add: (id) => {
+        const ids = (this.opened.get(worker) ?? []).filter((x) => x !== id);
+        ids.push(id);
+        this.opened.set(worker, ids.slice(-OPENED_KEPT));
+      },
+    };
   }
 
   /** The open child's row as the store has it now (every frame): its state on the breadcrumb. */

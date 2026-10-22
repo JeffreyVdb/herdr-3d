@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { frames, leftInTerminal, openGame, seatMode, shot, watchErrors } from './game';
+import { frames, hideQuestions, leftInTerminal, openGame, seatMode, shot, watchErrors } from './game';
 
 // #172: the Ubuntu preset in the real app (demo-m5, sim=1, WebGL2): its colours and fonts as computed, every text
 // against the ground it really sits on (4.5:1), box drawing lined up at 70 / 100 / 200 %, the terminal canvas at the
@@ -35,6 +35,7 @@ async function transcript(page: Page, id: string): Promise<Locator> {
   await seatMode(page, 'transcript');
   const tx = page.locator('.seat-transcript .tx');
   await expect(tx).toBeVisible();
+  await hideQuestions(page, id); // #187: Tofu's question opened the sheet
   const r = await page.evaluate(
     (w) =>
       window.__h3d.simTranscript({
@@ -286,12 +287,16 @@ test('Ubuntu: the waiting card and the transcript at a phone width, transcript a
   await page.setViewportSize({ width: 390, height: 780 });
   const id = await sit(page);
   const tx = await transcript(page, id);
-  await expect(tx.getByText('Waiting for you', { exact: false }).first()).toBeVisible({ timeout: 20_000 });
-  await tx.getByText('Waiting for you', { exact: false }).first().scrollIntoViewIfNeeded();
-  await shot(page, 'h172-phone-ubuntu-waiting');
   const low = (await contrastScan(tx)).filter((r) => r.ratio < 4.5);
   expect(low, JSON.stringify(low.slice(0, 6))).toEqual([]);
-  await page.keyboard.press('Control+Escape');
+  // #187: the waiting card is in the questions' sheet (a bottom sheet here), behind the urgent button.
+  await tx.locator('.tx-prompt').getByRole('button', { name: /^Answer to continue/ }).click();
+  const sheet = page.locator('dialog.tx-qsheet');
+  await expect(sheet.getByText('Waiting for you', { exact: false }).first()).toBeVisible({ timeout: 20_000 });
+  await shot(page, 'h172-phone-ubuntu-waiting');
+  const lowSheet = (await contrastScan(sheet)).filter((r) => r.ratio < 4.5);
+  expect(lowSheet, JSON.stringify(lowSheet.slice(0, 6))).toEqual([]);
+  await page.keyboard.press('Control+Escape'); // from the sheet: the terminal, the sheet closed
   await expect(tx).toBeHidden();
   await frames(page, 12);
   await shot(page, 'h172-phone-ubuntu-terminal');
@@ -355,11 +360,13 @@ for (const [name, theme, ink, fill, size] of [
       expect(off.fg).toBe(ink);
       expect(off.shown, `disabled Send as shown: ${JSON.stringify(off)}`).toBeGreaterThanOrEqual(2);
     }
-    // Answered: the prompt comes back, Send is live.
+    // Answered (#187: Q opens the question, 1 picks): the prompt comes back, Send is live.
+    await tx.locator('.tx-scroll').focus();
+    await page.keyboard.press('q');
     await page.keyboard.press('1');
     await expect(tx.locator('.tx-input')).toBeEnabled();
     await expect(send).toBeEnabled();
-    await expect(tx.locator('.tx-banner')).toBeHidden();
+    await expect(page.locator('dialog.tx-qsheet')).toBeHidden();
     const on = await filled(send);
     expect(on, 'enabled Send').toMatchObject({ fg: ink, bg: fill });
     expect(on.ratio).toBeGreaterThanOrEqual(4.5);

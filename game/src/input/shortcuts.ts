@@ -225,6 +225,8 @@ export const BINDINGS = [
   { id: 'seat.palette', group: 'laptop', scope: 'seated', keys: [code('KeyP', { mod: true })], label: 'The command palette (the terminal no longer gets Ctrl+P; ↑ is still previous history)', readonly: true },
   { id: 'seat.dictate', group: 'laptop', scope: 'seated', keys: [code('Space', { mod: true, shift: true })], label: 'The dictation bar (the terminal does not get this chord)', readonly: true },
   { id: 'seat.overview', group: 'laptop', scope: 'seated', keys: [code('KeyO')], label: 'The floor overview, over the conversation (Esc comes back)', readonly: true },
+  // #187: the questions' sheet (laptop/questionSheet.ts): the cards' keys are its own in it.
+  { id: 'seat.questions', group: 'laptop', scope: 'seated', keys: [code('KeyQ')], label: 'The questions waiting for you, from the conversation (while its questions button shows). In them: 1–9, ↑ ↓ and Enter pick, Ctrl/⌘+Enter sends, Esc closes, Ctrl+Esc goes to the terminal', readonly: true },
   { id: 'seat.look', group: 'laptop', scope: 'seated', keys: [{ key: ',', ctrl: true }], label: 'The terminal’s preset and zoom controls', readonly: true },
   { id: 'seat.zoom', group: 'laptop', scope: 'seated', keys: [{ key: '=', ctrl: true }, { key: '-', ctrl: true }, { key: '0', ctrl: true }], show: [['Ctrl', '+'], ['Ctrl', '−'], ['Ctrl', '0']], label: 'Zoom in, out and back to 100%', readonly: true },
 ] as const satisfies readonly Binding[];

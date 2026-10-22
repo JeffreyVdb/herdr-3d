@@ -24,7 +24,8 @@ const keyCap = (n: number, ticked: boolean): Node => mark(n, ticked);
 
 /**
  * #57: an agent's structured question (Claude's AskUserQuestion, Codex's request_user_input) in the transcript view.
- * `AskCard` is the one you answer, pinned above the prompt box while the worker waits on it: its questions stacked
+ * `AskCard` is the one you answer, in the questions' sheet while the worker waits on it (#187: it opens by itself, once
+ * per ask; questionSheet.ts): its questions stacked
  * (askStack.ts: the open one with its options, the others folded to their answer), the options as rows with their key
  * cap (round: pick one, square: pick several) and description, "(Recommended)" as a quiet badge, a typed "Other"
  * answer, and Send, which goes only once every question has an answer (before that it takes you to the one missing). `askItem` is its entry in the timeline: what it asked and, from the transcript's result, what was
@@ -42,10 +43,12 @@ export interface AskCardHost {
   /** #108 round 4: the switch, for "Review secrets" (absent: no such control). */
   secrets?: CardSecrets | null;
   toTerminal(): void;
-  /** The keyboard back to the timeline (Esc in the card). */
+  /** The keyboard back to the timeline (Esc in the card; #187: the sheet closes). */
   focusTimeline(): void;
-  /** The card's height changed (the timeline keeps its bottom in view). */
+  /** The card was drawn (shown, gone, another question: the sheet and its button follow). */
   resized(): void;
+  /** #187: what you picked and typed, kept by the host per ask across views (none: this card's own, which goes with it). */
+  drafts?: { get(a: Ask): AskPick[] | null; set(a: Ask, picks: AskPick[]): void; clear(id: string): void };
 }
 
 const MAX_INPUT_JSON = 4000;
@@ -108,7 +111,7 @@ export function askItem(it: TranscriptItem, card: TranscriptAsk): HTMLElement {
     const list = h('ul', { class: 'tx-ask-asked' });
     for (const q of qs) list.append(h('li', {}, q.question));
     row.append(list);
-    const note = card.outcome === 'pending' ? 'Waiting for your answer: it is pinned above the prompt box.' : (OUTCOME[String(card.outcome)] ?? String(card.outcome ?? ''));
+    const note = card.outcome === 'pending' ? 'Waiting for your answer: the questions button in the prompt box opens it.' : (OUTCOME[String(card.outcome)] ?? String(card.outcome ?? ''));
     row.append(h('div', { class: `tx-ask-state tx-ask-state--${String(card.outcome)}` }, note));
   }
   const input = inputDisclosure(it.tool?.input);
@@ -119,7 +122,7 @@ export function askItem(it: TranscriptItem, card: TranscriptAsk): HTMLElement {
 /** Where the keyboard goes once the card is drawn: the open question, Send, an option's key (`opt:2`), or the first. */
 type FocusTo = 'q' | 'send' | 'first' | `opt:${number}`;
 
-/** The pinned card. */
+/** The card you answer (in the questions' sheet). */
 export class AskCard {
   readonly el: HTMLElement;
   /** The worker's ask now: the bridge's word, from its upserts (null: none). */
@@ -170,6 +173,11 @@ export class AskCard {
     return !!this.shownAsk;
   }
 
+  /** #187: how many questions it asks (0 while it is not shown). */
+  get count(): number {
+    return this.shownAsk?.questions.length ?? 0;
+  }
+
   get toolUseId(): string | null {
     return this.shownAsk?.tool_use_id ?? null;
   }
@@ -187,8 +195,10 @@ export class AskCard {
     const id = a?.tool_use_id ?? null;
     if (id !== this.picksFor) {
       this.picksFor = id;
-      this.picks = a ? emptyPicks(a) : [];
-      this.active = 0;
+      // #187: what you picked before (the sheet closed, another seat) is back, at the first question still to answer.
+      const kept = a ? (this.host.drafts?.get(a) ?? null) : null;
+      this.picks = a ? (kept ?? emptyPicks(a)) : [];
+      this.active = a && kept ? firstUnanswered(a, kept) : 0;
       this.nudged = false;
       this.note = null;
     }
@@ -214,11 +224,10 @@ export class AskCard {
   // --- keys --------------------------------------------------------------------------------------------------
 
   /**
-   * A key on the transcript (not in a text box): digits pick on the open question, ← → open the question before /
-   * after, Enter takes the keyboard to the card (it never sends from here), Ctrl/⌘+Enter sends. True: it was the
-   * card's. On the card itself (`inCard`) also: ↑ ↓ move through the open question's options, Enter on the question
-   * itself only says how to pick, and Esc goes back to the timeline. Enter / Space on an option, a folded question,
-   * Dismiss or Send are that button's (its click): an option is picked, never sent.
+   * A key in the questions' sheet (not in a text box): digits pick on the open question, ← → open the question before /
+   * after, Ctrl/⌘+Enter sends. True: it was the card's. On the card itself (`inCard`) also: ↑ ↓ move through the open
+   * question's options, Enter on the question itself only says how to pick, and Esc leaves (the sheet closes). Enter /
+   * Space on an option, a folded question, Dismiss or Send are that button's (its click): an option is picked, never sent.
    */
   key(e: KeyboardEvent, inCard = false): boolean {
     const a = this.shownAsk;
@@ -267,12 +276,13 @@ export class AskCard {
       if (to >= 0 && to < n) this.openAt(to);
       return true;
     }
-    if (!inCard && e.key === 'Enter' && !e.shiftKey) {
-      this.focusTo = this.active >= 0 ? 'q' : 'send';
-      this.render();
-      return true;
-    }
     return false;
+  }
+
+  /** #187: the picks go to the host's drafts as they change (closing the sheet, standing up keeps them). */
+  private keep(): void {
+    const a = this.shownAsk;
+    if (a && a.tool_use_id === this.picksFor) this.host.drafts?.set(a, this.picks);
   }
 
   private choose(n: number): void {
@@ -281,6 +291,7 @@ export class AskCard {
     const q = a.questions[this.active];
     if (!q) return;
     this.picks = pickOption(a, this.picks, this.active, n);
+    this.keep();
     this.note = null;
     this.nudged = false;
     if (q.multi) {
@@ -326,6 +337,7 @@ export class AskCard {
     if (!a) return;
     if (this.picks[this.active]?.other === null) {
       this.picks = pickOther(a, this.picks, this.active, '');
+      this.keep();
       this.render();
     }
     this.otherEl?.focus({ preventScroll: true });
@@ -391,6 +403,7 @@ export class AskCard {
     if (r.ok && r.resolved) {
       // The bridge saw the answer in the transcript: the card goes (its upsert without the ask may still be on its way), the timeline has it.
       this.gone = a.tool_use_id;
+      this.host.drafts?.clear(a.tool_use_id);
       this.sync();
       this.host.focusTimeline();
       return null;
@@ -401,6 +414,7 @@ export class AskCard {
   /** The Other text box: Enter takes the text and moves on (never sends), ↑ ↓ leave it for the options around it. */
   private onOtherKey(e: KeyboardEvent, input: HTMLInputElement): void {
     if (zoomKey(e)) return; // #59: the text zoom works from here too
+    if (e.key === 'Escape' && (e.ctrlKey || e.metaKey)) return; // the terminal toggle (Ctrl/⌘+Esc) is the sheet's
     e.stopPropagation(); // what is typed here is the answer's, not the game's or the timeline's
     const a = this.shownAsk;
     if (!a) return;
@@ -414,6 +428,7 @@ export class AskCard {
       e.preventDefault();
       if (!input.value.trim()) {
         this.picks = pickOther(a, this.picks, this.active, null);
+        this.keep();
         this.paintPicks();
       }
       this.host.focusTimeline();
@@ -498,7 +513,7 @@ export class AskCard {
     );
     const q = a.questions[this.active];
     const pickKeys = q ? `1–${q.options.length + (q.other ? 1 : 0)} or ↑↓ Enter pick · ` : '';
-    const keys = `${pickKeys}${several ? '← → question · ' : ''}${SEND_KEY} send · Esc back`;
+    const keys = `${pickKeys}${several ? '← → question · ' : ''}${SEND_KEY} send · Esc closes`;
     const foot = h(
       'div',
       { class: 'tx-ask-foot' },
@@ -593,6 +608,7 @@ export class AskCard {
         const a = this.shownAsk;
         if (a && this.picks[this.active]?.other === null) {
           this.picks = pickOther(a, this.picks, this.active, '');
+          this.keep();
           this.paintPicks();
         }
       });
@@ -600,6 +616,7 @@ export class AskCard {
         const a = this.shownAsk;
         if (!a) return;
         this.picks = pickOther(a, this.picks, this.active, input.value);
+        this.keep();
         this.note = null;
         this.paintPicks();
       });

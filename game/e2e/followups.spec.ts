@@ -4,12 +4,13 @@ import type { AddressInfo } from 'node:net';
 import { resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, seatMode, settingsSection, shot, watchErrors, openMenu } from './game';
+import { frames, openGame, seatMode, settingsSection, sheetSettled, shot, watchErrors, openMenu } from './game';
 
 // #90: follow-up questions against the fixture bridge (`sim=1`, tools/fixture-followup.ts), whose AI integration
 // calls fake Jev and OpenAI-compatible servers started here on OS-leased loopback ports. Set up both models, pass
 // the follow-up test, switch it on (ready); then a turn of Pebble's ends with open questions: Pebble needs you, its
-// transcript view pins the card, the answers go back as one prompt, echoed in the transcript.
+// transcript view's questions button glows calm (#187: optional questions never open the questions' sheet by
+// themselves), the button or Q opens it, the answers go back as one prompt, echoed in the transcript.
 
 const JEV_KEY = 'jev-test-key-0123456789';
 const LLM_KEY = 'sk-test-llm-key-abcdef';
@@ -140,6 +141,19 @@ async function sitAtTranscript(page: Page, w: Worker): Promise<void> {
 
 const sent = (page: Page, t: string) => page.evaluate((x) => window.__h3d.sent().filter((c) => c.t === x), t);
 
+/** #187: the questions' sheet (on the page, outside the laptop's screen). */
+const sheetOf = (page: Page): Locator => page.locator('dialog.tx-qsheet');
+/** #187: the calm questions button in the prompt box (its text runs label and count together: by its name). */
+const calmButton = (page: Page): Locator => page.locator('.seat-transcript .tx-prompt').getByRole('button', { name: /^Open questions/ });
+
+/** #187 AC1: the timeline's bottom edge meets the prompt box: no question sits between them. */
+async function fullHeight(page: Page): Promise<void> {
+  const tx = page.locator('.seat-transcript .tx');
+  const [m, f] = await Promise.all([tx.locator('.tx-main').boundingBox(), tx.locator('.tx-prompt').boundingBox()]);
+  expect(m && f, 'the timeline and the prompt box').toBeTruthy();
+  if (m && f) expect(Math.abs(m.y + m.height - f.y), 'the timeline meets the prompt box').toBeLessThanOrEqual(1);
+}
+
 test('switched on after a passing test, a turn ending in questions needs you and is answered from the transcript view', async ({ page }) => {
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
@@ -187,20 +201,29 @@ test('switched on after a passing test, a turn ending in questions needs you and
     const tx = page.locator('.seat-transcript .tx');
     const turn = await page.evaluate((a) => window.__h3d.simTurn(a), { id: w.id, text: QUESTIONS });
     expect(turn).toMatchObject({ ok: true, data: { flagged: true } });
-    const card = tx.locator('.tx-fu');
+    const sheet = sheetOf(page);
+    const card = sheet.locator('.tx-fu');
+    // #187: the calm button says so (and its live region); the sheet waits for it; the prompt box stays on, the
+    // conversation keeps its whole height.
+    await expect(calmButton(page)).toBeVisible();
+    await expect(calmButton(page)).toHaveAccessibleName('Open questions: 2');
+    await expect(calmButton(page)).toHaveAttribute('data-lane', 'optional');
+    await expect(tx.locator('.tx-qbtn-live')).toHaveText('Open questions: 2');
+    await expect(sheet).toBeHidden();
+    await expect.poll(() => page.evaluate((id) => window.__h3d.needs().some((n) => n.id === id && n.reason === 'blocked'), w.id)).toBe(true);
+    await expect(tx.locator('.tx-input')).toBeEnabled();
+    await fullHeight(page);
+    await shot(page, 'followup-button');
+    await calmButton(page).click();
+    await expect(sheet).toHaveAttribute('open', '');
+    await expect(sheet).toHaveAccessibleName('Open questions');
     await expect(card).toBeVisible();
     await expect(card.locator('.tx-fu-auto')).toHaveText('Detected automatically');
-    await expect.poll(() => page.evaluate((id) => window.__h3d.needs().some((n) => n.id === id && n.reason === 'blocked'), w.id)).toBe(true);
-    // Above the prompt box, which stays on.
-    const [cb, pb] = await Promise.all([card.boundingBox(), tx.locator('.tx-prompt').boundingBox()]);
-    expect(cb && pb && cb.y + cb.height <= pb.y + 1).toBe(true);
-    await expect(tx.locator('.tx-input')).toBeEnabled();
     // Stacked: question 1 open, question 2 folded under it.
     await expect(card.locator('.tx-ask-q .tx-ask-chip')).toHaveText('Question 1');
     await expect(card.locator('.tx-ask-row .tx-ask-row-text')).toHaveText(['Ship this already, or wait for the e2e-live run?']);
     await expect(card.locator('.tx-ask-question')).toHaveText('Does the legacy importer still need the v1 format?');
     await shot(page, 'followup-card');
-    await tx.locator('.tx-scroll').focus(); // the bare screenshot hides the HUD, and that drops the focus
 
     // No, then (it moves on) the Enter after the click: picks nothing, sends nothing (the question says how to pick).
     await card.getByRole('radio', { name: 'No' }).click();
@@ -216,6 +239,7 @@ test('switched on after a passing test, a turn ending in questions needs you and
     await expect(card.locator('.tx-ask-send')).toBeFocused();
     await card.getByRole('button', { name: 'Send answers' }).click();
     await expect(card).toBeHidden();
+    await expect(sheet).toBeHidden();
     const answers = await sent(page, 'worker.answer_followup');
     expect(answers).toHaveLength(1);
     expect(await sent(page, 'worker.prompt')).toHaveLength(0);
@@ -242,14 +266,16 @@ test('switched off, a turn with questions flags nothing and sends nothing', asyn
   clean();
 });
 
-// On a phone (360×800) the laptop's screen is short: the card takes the room the timeline leaves (collapsed to a
-// strip while it is up), so its question, options, text and a fallback's message tail are shown and usable, and the
-// prompt box stays reachable. In Quiet (navy) and Ubuntu (purple).
-test('on a phone the card has room for the question and its answers, and the prompt box stays reachable', async ({ page }) => {
+// On a phone (360×800, touch) the laptop's screen is short: #187: the questions open in a bottom sheet sized to the
+// phone's screen, not to the laptop's, so their question, options, text and a fallback's message tail are shown and
+// usable; closed, the conversation keeps its whole height and the prompt box stays on. In Quiet (navy) and Ubuntu
+// (purple).
+test('on a phone the questions open in a bottom sheet with room for the question and its answers; the conversation keeps its height', async ({ browser }) => {
+  const ctx = await browser.newContext({ viewport: { width: 360, height: 800 }, hasTouch: true, isMobile: true });
+  const page = await ctx.newPage();
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
   try {
-    await page.setViewportSize({ width: 360, height: 800 });
     await openGame(page, 'demo-m5', '', `play=none&sim=1&simms=300&simusage=0&simecho=200&simjev=${encodeURIComponent(jev.url)}`);
     await openMenu(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -265,31 +291,49 @@ test('on a phone the card has room for the question and its answers, and the pro
     const w = demoWorker('Pebble');
     await sitAtTranscript(page, w);
     const tx = page.locator('.seat-transcript .tx');
-    const card = tx.locator('.tx-fu');
+    const sheet = sheetOf(page);
+    const card = sheet.locator('.tx-fu');
     const box = async (l: Locator) => {
       const b = await l.boundingBox();
       expect(b, 'laid out').toBeTruthy();
       return b as NonNullable<typeof b>;
     };
-    /** Within the card's visible rectangle (it may scroll: then scrolled to first). */
+    /** Within the sheet's scrolling body, on the screen (it may scroll: then scrolled to first). */
     const shown = async (l: Locator, what: string) => {
       await l.scrollIntoViewIfNeeded();
-      const [c, b] = await Promise.all([box(card), box(l)]);
+      const [c, b] = await Promise.all([box(sheet.locator('.sheet-body')), box(l)]);
       expect(b.height, `${what} has a height`).toBeGreaterThan(8);
       expect(b.y, `${what} top`).toBeGreaterThanOrEqual(c.y - 0.5);
-      expect(b.y + b.height, `${what} bottom`).toBeLessThanOrEqual(c.y + c.height + 0.5);
+      expect(b.y + b.height, `${what} bottom`).toBeLessThanOrEqual(Math.min(c.y + c.height, 800) + 0.5);
     };
+    /** A bottom sheet: the phone's whole width, on its bottom edge. */
+    const bottomSheet = async () => {
+      await sheetSettled(page);
+      const b = await box(sheet);
+      expect(b.width).toBeGreaterThanOrEqual(359);
+      expect(Math.abs(b.y + b.height - 800)).toBeLessThanOrEqual(1);
+    };
+    /** Closed: the conversation keeps its height, the prompt box is on. */
     const promptReachable = async () => {
-      const [c, p] = await Promise.all([box(card), box(tx.locator('.tx-input'))]);
+      await sheet.locator('.sheet-close').tap();
+      await expect(sheet).toBeHidden();
+      await fullHeight(page);
+      const p = await box(tx.locator('.tx-input'));
       expect(p.height, 'the prompt box has a line').toBeGreaterThanOrEqual(16);
-      expect(p.y, 'the prompt box below the card').toBeGreaterThanOrEqual(c.y + c.height - 1);
       await expect(tx.locator('.tx-input')).toBeEnabled();
+      await calmButton(page).tap();
+      await expect(sheet).toHaveAttribute('open', '');
     };
 
     for (const theme of ['Quiet', 'Ubuntu'] as const) {
       await tx.getByRole('radio', { name: theme, exact: true }).click();
       expect(await page.evaluate((a) => window.__h3d.simTurn(a), { id: w.id, text: THREE })).toMatchObject({ ok: true, data: { flagged: true } });
+      await expect(calmButton(page)).toBeVisible();
+      const pill = await box(calmButton(page));
+      expect(pill.height, 'a 44px target').toBeGreaterThanOrEqual(43.5);
+      await calmButton(page).tap();
       await expect(card).toBeVisible();
+      await bottomSheet();
       await expect(card.locator('.tx-ask-row')).toHaveCount(2); // the other two, folded
       const body = await box(card.locator('.tx-ask-body'));
       expect(body.height, 'the body has room for the question and an answer').toBeGreaterThanOrEqual(60);
@@ -310,18 +354,19 @@ test('on a phone the card has room for the question and its answers, and the pro
       await shown(card.locator('.tx-ask-send'), 'Send');
       await card.locator('.tx-ask-send').click();
       await expect(card).toBeHidden();
-      // The timeline is back once the card is gone.
-      expect((await box(tx.locator('.tx-main'))).height).toBeGreaterThan(40);
+      await expect(sheet).toBeHidden();
+      await fullHeight(page);
     }
     expect(await sent(page, 'worker.answer_followup')).toHaveLength(2);
 
     // The fallback: the message's end and a free answer.
     expect(await page.evaluate((a) => window.__h3d.simTurn(a), { id: w.id, text: FALLBACK })).toMatchObject({ ok: true, data: { flagged: true } });
+    await calmButton(page).tap();
     await expect(card.locator('.tx-fu-tail')).toBeVisible();
     await shot(page, 'followup-phone-fallback-ubuntu');
-    // The tail may be longer than the card: it shows a good part of it, the rest scrolls.
+    // The tail may be longer than the sheet: it shows a good part of it, the rest scrolls.
     await card.locator('.tx-fu-tail').scrollIntoViewIfNeeded();
-    const [c, tail] = await Promise.all([box(card), box(card.locator('.tx-fu-tail'))]);
+    const [c, tail] = await Promise.all([box(sheet.locator('.sheet-body')), box(card.locator('.tx-fu-tail'))]);
     expect(Math.min(c.y + c.height, tail.y + tail.height) - Math.max(c.y, tail.y), 'the message tail shown').toBeGreaterThanOrEqual(36);
     await shown(card.locator('textarea.tx-fu-text'), 'the free answer');
     await shown(card.locator('.tx-ask-send'), 'Send');
@@ -333,6 +378,7 @@ test('on a phone the card has room for the question and its answers, and the pro
     await Promise.all([jev.close(), llm.close()]);
   }
   clean();
+  await ctx.close();
 });
 
 // #60: a grill round (the incident's ten questions, Q8–Q17, seeded on Pebble by the fixture bridge as the bridge reads
@@ -344,7 +390,11 @@ test('a grill round: each question with its recommendation, accepted or overridd
   const w = demoWorker('Pebble');
   await sitAtTranscript(page, w);
   const tx = page.locator('.seat-transcript .tx');
-  const card = tx.locator('.tx-fu');
+  const card = sheetOf(page).locator('.tx-fu');
+  // #187: Q opens the questions from the conversation.
+  await expect(calmButton(page)).toBeVisible();
+  await tx.locator('.tx-scroll').focus();
+  await page.keyboard.press('q');
   await expect(card).toBeVisible();
   await expect(card.locator('.tx-ask-tag')).toHaveText('10 open questions');
   await expect(card.locator('.tx-ask-q .tx-ask-chip')).toHaveText('Q8');
@@ -356,7 +406,7 @@ test('a grill round: each question with its recommendation, accepted or overridd
   await expect(card.locator('.tx-fu-rec-text')).toContainText('Desk is picked at fire time, not stored.');
   await expect(card.locator('.tx-fu-progress')).toHaveText('0 of 10 answered');
   await shot(page, 'followup-grill');
-  await tx.locator('.tx-scroll').focus();
+  await card.locator('.tx-ask-q').focus(); // on the question (in its text, R is a letter)
 
   // R fills Q8's answer with the recommendation (the keyboard in its text, to edit): nothing is sent.
   await page.keyboard.press('r');
@@ -365,7 +415,7 @@ test('a grill round: each question with its recommendation, accepted or overridd
   await expect(card.locator('.tx-fu-rec.is-using .tx-fu-rec-using')).toHaveText('Your answer');
   await expect(card.locator('.tx-fu-progress')).toHaveText('1 of 10 answered');
   // Q9: the recommended option is marked; another one picked overrides it.
-  await page.keyboard.press('Escape');
+  await card.locator('.tx-ask-q').focus();
   await page.keyboard.press('ArrowRight');
   await expect(card.locator('.tx-ask-q .tx-ask-chip')).toHaveText('Q9');
   await expect(card.getByRole('radio', { name: /Per-schedule checkbox/ }).locator('.tx-ask-rec')).toHaveText('Recommended');
@@ -401,8 +451,8 @@ test('a fallback says why, shows the whole message, and a retry keeps what you w
   await openGame(page, 'demo-m5', '', 'play=none&sim=1&simms=300&simusage=0&simecho=200&simfollowup=fallback');
   const w = demoWorker('Pebble');
   await sitAtTranscript(page, w);
-  const tx = page.locator('.seat-transcript .tx');
-  const card = tx.locator('.tx-fu');
+  const card = sheetOf(page).locator('.tx-fu');
+  await calmButton(page).click();
   await expect(card.locator('.tx-fu-fail-title')).toHaveText('The questions could not be prepared as answers.');
   await expect(card.locator('.tx-fu-fail-why')).toContainText('whole completion budget');
   await expect(card.locator('.tx-fu-tail')).toBeVisible();
@@ -425,7 +475,7 @@ test('a fallback says why, shows the whole message, and a retry keeps what you w
   clean();
 });
 
-// #60 on a phone (360×800), in Quiet and Ubuntu (the transcript's theme, picked before sitting: the card hides the bar):
+// #60 on a phone (360×800), in Quiet and Ubuntu (the transcript's theme, picked before sitting):
 // a grill question's context, recommendation and Send are reachable, Use recommendation fills it, and a reload keeps it.
 test('on a phone a grill round’s question, recommendation and Send are reachable', async ({ page }) => {
   const clean = watchErrors(page);
@@ -440,7 +490,8 @@ test('on a phone a grill round’s question, recommendation and Send are reachab
     }, theme);
     await openGame(page, 'demo-m5', '', 'play=none&sim=1&simms=300&simusage=0&simfollowup=grill');
     await sitAtTranscript(page, demoWorker('Pebble'));
-    const card = page.locator('.seat-transcript .tx .tx-fu');
+    const card = sheetOf(page).locator('.tx-fu');
+    await calmButton(page).click();
     await expect(card).toBeVisible();
     await card.locator('.tx-ask-row').filter({ hasText: 'Q9' }).click();
     await expect(card.locator('.tx-ask-q .tx-ask-chip')).toHaveText('Q9');

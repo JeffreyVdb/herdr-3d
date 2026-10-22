@@ -596,6 +596,21 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   shows them, a changed file's lines when it comes near the view and, once every row is built, all the others (so find in
   page finds them). With "Hide tool calls" on it stays opening until a row that shows is built. Counts read the items,
   never the rows (`decisions.md` "#126").
+- **The conversation's questions** (#187): no card sits between the conversation and the prompt box. An ask, the
+  screen's question, the follow-up's and Codex's async questions are in one sheet per view (`laptop/questionSheet.ts`),
+  behind one button in the prompt box (`laptop/questionsButton.ts`): urgent (red, a stop sign, "Answer to continue", a
+  breathing glow) while the agent is blocked, calm (slate cyan, a speech bubble, "Open questions" / "Codex asked" /
+  "Questions", a still glow) for the optional ones, with a polite live region that speaks when it appears and when its
+  lane changes. A new mandatory question opens the sheet once (its id kept per worker in `TranscriptMode`), only while
+  the conversation is on the screen; optional ones never do; `Q` opens it. `ui/sheet.ts` is the one modal dialog that is
+  a centred dialog on a desktop and a bottom sheet on a phone (`pointer: coarse` or a viewport under 640 px; the switch is
+  CSS only). It lives on `document.body` in the top layer, sized to the viewport, never inside `.tx`. Esc, its close
+  button, a backdrop press (`dismiss.ts`'s `sheet` policy) and `close()` each report one `onClose` with their reason;
+  keydown stops at the dialog so the game and the laptop never see the keys, while listeners inside it (the cards' keys,
+  routed by `QuestionSheet`) do. While the sheet is open `QuestionSheet` keeps the keyboard on a card's control whatever
+  the cards become (one emptied or replaced under it, a send refused): the card it was on, else the first up, else the
+  dialog itself while that card's controls are off, whose keys then go to that card. While open it follows `visualViewport` so the on-screen keyboard does not cover the
+  focused field (`decisions.md` "#187").
 - **Workers**: original procedural rigid-part characters (capsule body, goggle + strap, tiny limbs), one `InstancedMesh`
   per part, animation in code. Measured on M2 Max at 3024×1890 with shadows: **240 workers 1.2 ms/frame pipelined,
   600 workers 3.1 ms** (Chrome 153 WebGPU); 120 Hz budget is 8.33 ms. Skinned Kenney: 4.9 ms @240, 14 ms @600.

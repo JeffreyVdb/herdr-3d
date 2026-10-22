@@ -1002,7 +1002,9 @@ describe('keys inside the view', () => {
   });
 });
 
-describe('blocked banner', () => {
+// #187: the screen's question (a permission prompt, a menu read off the terminal) is in the questions' sheet's urgent
+// lane, no longer a banner at the top of the view: it opens the sheet once per question, its chips and digits answer.
+describe('the screen’s question, in the questions’ sheet', () => {
   const Q: BlockedQuestion = {
     kind: 'permission',
     text: 'Allow Bash to run `rm -rf build`?',
@@ -1014,64 +1016,86 @@ describe('blocked banner', () => {
     selected: 1,
     hash: 'h-123',
   };
+  beforeEach(() => {
+    // jsdom has no modal dialogs: open / close are what the sheet looks at.
+    HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+      this.setAttribute('open', '');
+    };
+    HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+      if (!this.open) return;
+      this.removeAttribute('open');
+      this.dispatchEvent(new Event('close'));
+    };
+  });
+  const sheet = () => document.querySelector<HTMLDialogElement>('dialog.tx-qsheet');
+  const card = () => document.querySelector<HTMLElement>('.tx-bq');
+  const q = <E extends Element = HTMLElement>(sel: string) => document.querySelector<E>(sel);
 
-  it('shows the question, the excerpt tail and numbered chips that answer', () => {
+  it('opens the sheet with the question, the excerpt tail and numbered chips that answer; nothing sits above the timeline', () => {
     mount();
-    const banner = $('.tx-banner') as HTMLElement;
-    expect(banner.hidden).toBe(true);
+    expect($('.tx-banner')).toBeNull();
     view.setBlocked(Q);
-    expect(banner.hidden).toBe(false);
-    expect($('.tx-banner-text')?.textContent).toBe('Allow Bash to run `rm -rf build`?');
-    expect($('.tx-banner-excerpt')?.textContent).toBe('line 2\nDo you want to proceed?\n❯ 1. Yes\n  2. No, and tell Claude what to do differently');
-    const chips = $$<HTMLButtonElement>('.tx-choice');
+    expect(sheet()?.open).toBe(true);
+    expect(card()?.hidden).toBe(false);
+    expect(card()?.closest('.tx-qlane')?.getAttribute('data-lane')).toBe('urgent');
+    expect(q('.tx-banner-text')?.textContent).toBe('Allow Bash to run `rm -rf build`?');
+    expect(q('.tx-banner-excerpt')?.textContent).toBe('line 2\nDo you want to proceed?\n❯ 1. Yes\n  2. No, and tell Claude what to do differently');
+    const chips = [...document.querySelectorAll<HTMLButtonElement>('.tx-choice')];
     expect(chips.map((c) => c.textContent)).toEqual(['1Yes', '2No, and tell Claude what to do differently']);
     expect(chips[0]?.classList.contains('tx-choice-sel')).toBe(true);
+    expect(document.activeElement).toBe(chips[0]); // the keyboard on the highlighted choice
     chips[1]?.click();
     expect(host.answers).toEqual([['h-123', 2, undefined]]);
-    // A digit key in the view answers too.
-    const sc = $('.tx-scroll') as HTMLElement;
-    sc.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true, cancelable: true }));
-    sc.dispatchEvent(new KeyboardEvent('keydown', { key: '7', bubbles: true, cancelable: true }));
+    // A digit in the sheet answers too; one that is no choice does nothing.
+    press(chips[0] as HTMLElement, '1');
+    press(chips[0] as HTMLElement, '7');
     expect(host.answers).toEqual([
       ['h-123', 2, undefined],
       ['h-123', 1, undefined],
     ]);
-    [...banner.querySelectorAll('button')].find((b) => b.textContent === 'Cancel')?.click();
+    [...card()!.querySelectorAll('button')].find((b) => b.textContent === 'Cancel')?.click();
     expect(host.answers.at(-1)).toEqual(['h-123', null, true]);
-    [...banner.querySelectorAll('button')].find((b) => b.textContent === 'Switch to terminal')?.click();
+    [...card()!.querySelectorAll('button')].find((b) => b.textContent === 'Switch to terminal')?.click();
     expect(host.terminal).toBe(1);
     view.setBlocked(null);
-    expect(banner.hidden).toBe(true);
-    expect(banner.childElementCount).toBe(0);
+    expect(card()?.hidden).toBe(true);
+    expect(card()?.childElementCount).toBe(0);
+    expect(sheet()?.open).toBe(false);
+    expect($<HTMLButtonElement>('.tx-qbtn')?.hidden).toBe(true);
   });
 
-  it('a question arriving while you type moves the keyboard to the timeline, once: its digits answer', () => {
+  it('opens once per question: hidden, a redraw (the cursor moved) leaves it on the button; another question opens it again; the timeline’s digits are not its', () => {
     mount();
-    const ta = box();
-    const sc = $('.tx-scroll') as HTMLElement;
+    view.setBlocked(Q);
+    expect(sheet()?.open).toBe(true);
+    sheet()!.querySelector<HTMLButtonElement>('.sheet-close')!.click();
+    expect(sheet()?.open).toBe(false);
+    const btn = $<HTMLButtonElement>('.tx-qbtn')!;
+    expect([btn.hidden, btn.dataset.lane, btn.getAttribute('aria-label')]).toEqual([false, 'urgent', 'Answer to continue: 1 question']);
+    view.setBlocked({ ...Q, selected: 2 });
+    view.setBlocked(Q);
+    expect(sheet()?.open).toBe(false);
+    press($('.tx-scroll') as HTMLElement, '1');
+    expect(host.answers).toEqual([]);
+    view.setBlocked({ ...Q, hash: 'h-456', text: 'Allow Bash to run `ls`?' });
+    expect(sheet()?.open).toBe(true);
+    expect(q('.tx-banner-text')?.textContent).toBe('Allow Bash to run `ls`?');
+  });
+
+  it('a question arriving while you type: the keyboard leaves the prompt box (for the sheet), the draft stays', () => {
+    mount();
     view.focusPrompt();
     write('follow-up');
     view.setBlocked(Q);
     expect(isOff()).toBe(true);
-    expect(document.activeElement).toBe(sc);
-    sc.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true, cancelable: true }));
-    expect(host.answers).toEqual([['h-123', 1, undefined]]);
+    expect(card()!.contains(document.activeElement)).toBe(true);
     expect(boxText()).toBe('follow-up');
-    // Another render of a question does not move the keyboard (it stays where the user put it).
-    const other = document.createElement('button');
-    document.body.append(other);
-    other.focus();
-    view.setBlocked({ ...Q, hash: 'h-456' });
-    expect(document.activeElement).toBe(other);
-    // Nor does a question arriving while the prompt box is not focused.
-    view.setBlocked(null);
-    other.focus();
-    view.setBlocked(Q);
-    expect(document.activeElement).toBe(other);
-    other.remove();
+    // Hidden, the keyboard is back on the timeline (not on the prompt box, which is off).
+    sheet()!.querySelector<HTMLButtonElement>('.sheet-close')!.click();
+    expect(document.activeElement).toBe($('.tx-scroll'));
   });
 
-  it('while blocked the prompt is off (the bridge refuses it), its draft kept; it comes back after', async () => {
+  it('while blocked the prompt is off (the bridge refuses it), open or hidden, its draft kept; it comes back after', async () => {
     mount();
     const ta = box();
     const send = $('.tx-send') as HTMLButtonElement;
@@ -1079,7 +1103,10 @@ describe('blocked banner', () => {
     view.setBlocked(Q);
     expect(isOff()).toBe(true);
     expect(send.disabled).toBe(true);
-    expect(ta.dataset.placeholder).toMatch(/question above/);
+    expect(ta.dataset.placeholder).toBe('Answer the questions first (button above, or in the terminal)');
+    sheet()!.querySelector<HTMLButtonElement>('.sheet-close')!.click();
+    expect(isOff()).toBe(true);
+    expect(send.disabled).toBe(true);
     send.click();
     view.focusPrompt();
     await flush();
@@ -1094,13 +1121,36 @@ describe('blocked banner', () => {
     expect(host.prompts).toEqual(['draft']);
   });
 
+  it('an ask replacing it while the sheet is open takes the keyboard (not <body>): its digits are its, Esc only closes the sheet (R1)', () => {
+    const seen: string[] = [];
+    const onWin = (e: KeyboardEvent) => void seen.push(e.key);
+    window.addEventListener('keydown', onWin);
+    try {
+      mount();
+      view.setBlocked(Q);
+      expect(document.activeElement?.classList.contains('tx-choice')).toBe(true);
+      view.setAsk({ tool_use_id: 'tu-r1', agent: 'claude', source: 'transcript', since: 1, questions: [{ question: 'Which color?', header: 'Color', multi: false, other: false, options: [{ label: 'Red' }, { label: 'Blue' }] }] });
+      expect(card()?.hidden).toBe(true);
+      expect(sheet()?.open).toBe(true);
+      expect(q('.tx-ask')!.contains(document.activeElement)).toBe(true);
+      press(document.activeElement as HTMLElement, '2');
+      expect(q('.tx-ask-opt[data-n="2"]')?.getAttribute('aria-checked')).toBe('true');
+      expect(host.answers).toEqual([]);
+      press(document.activeElement as HTMLElement, 'Escape');
+      expect(sheet()?.open).toBe(false);
+      expect(seen).toEqual([]);
+    } finally {
+      window.removeEventListener('keydown', onWin);
+    }
+  });
+
   it('an empty question reads "Waiting for input" and still offers the terminal', () => {
     mount();
     view.setBlocked({ kind: 'unknown', text: '', excerpt: [], choices: [], hash: 'x' });
-    expect($('.tx-banner-text')?.textContent).toBe('Waiting for input');
-    expect($('.tx-banner-excerpt')).toBeNull();
-    expect($$('.tx-choice').length).toBe(0);
-    expect($('.tx-to-term')).not.toBeNull();
+    expect(q('.tx-banner-text')?.textContent).toBe('Waiting for input');
+    expect(q('.tx-banner-excerpt')).toBeNull();
+    expect(document.querySelectorAll('.tx-choice').length).toBe(0);
+    expect(card()?.querySelector('.tx-to-term')).not.toBeNull();
   });
 });
 

@@ -304,6 +304,13 @@ describe('the list: cached, refreshed, and its states', () => {
   });
 
   it('no popup while the worker waits on a question (the box is disabled)', async () => {
+    // jsdom has no modal dialogs (#187: the screen's question opens the questions' sheet).
+    HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+      this.setAttribute('open', '');
+    };
+    HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+      this.removeAttribute('open');
+    };
     await ready();
     type('/re');
     expect(isOpen()).toBe(true);

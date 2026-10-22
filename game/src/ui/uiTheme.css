@@ -597,6 +597,18 @@
   /* Shadow of the follow-up and async-question cards (cast upward) */
   --ctl-shadow-card-soft: 0 -6px 18px -8px rgb(0 0 0 / 45%);
 
+  /* ---- #187: the questions button's two lanes (its fill and ring, the label on the fill) and their marks in the questions
+     sheet. Told apart by label and icon too. ui/uiTheme.test.ts checks each label 4.5:1 on its fill and each fill 3:1 on
+     every ground it can sit on, under both transcript presets. ---- */
+  /* The agent is blocked on your answer: red. Quiet has no orange accent: the screen's own error red. */
+  --ctl-q-urgent: #ff7a72;
+  /* Label on --ctl-q-urgent */
+  --ctl-q-urgent-text: #0b1020;
+  /* Optional questions (follow-ups, Codex's async asks): a calm slate cyan, not the accent and not the sun (waiting for you). */
+  --ctl-q-optional: #88c4d0;
+  /* Label on --ctl-q-optional */
+  --ctl-q-optional-text: #0b1020;
+
   /* ---- type ---- */
   --font: 'Recursive Variable', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono Variable', 'H3D Box Quiet', ui-monospace, 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Liberation Mono', monospace;
@@ -1179,6 +1191,18 @@
   --ctl-shadow-card: 0 -8px 22px -6px rgb(0 0 0 / 55%);
   /* Shadow of the follow-up and async-question cards (cast upward) */
   --ctl-shadow-card-soft: 0 -6px 18px -8px rgb(0 0 0 / 45%);
+
+  /* ---- #187: the questions button's two lanes (its fill and ring, the label on the fill) and their marks in the questions
+     sheet. Told apart by label and icon too. ui/uiTheme.test.ts checks each label 4.5:1 on its fill and each fill 3:1 on
+     every ground it can sit on, under both transcript presets. ---- */
+  /* The agent is blocked on your answer: red. A rose red (hue 353°), away from the orange accent and the salmon --ctl-error. */
+  --ctl-q-urgent: #ff5a6e;
+  /* Label on --ctl-q-urgent */
+  --ctl-q-urgent-text: #2c001e;
+  /* Optional questions (follow-ups, Codex's async asks): a calm slate cyan, not the accent and not the sun (waiting for you). */
+  --ctl-q-optional: #9cc8db;
+  /* Label on --ctl-q-optional */
+  --ctl-q-optional-text: #2c001e;
 
   --font: 'Ubuntu', system-ui, sans-serif;
   --font-mono: 'Ubuntu Mono', 'H3D Box Ubuntu', 'H3D Symbols Ubuntu', 'H3D Symbols Ubuntu 2', 'H3D Symbols Ubuntu Consolas', ui-monospace, 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Liberation Mono', monospace;

@@ -43,14 +43,15 @@ export interface FollowupCardHost {
   message?(turnId: string): Promise<FollowupMessage>;
   /** #60: what you picked and wrote, kept by the host across views (none: this card's own, which goes with it). */
   drafts?: { get(turn: string): FollowupDraft | null; set(turn: string, d: FollowupDraft): void; clear(turn: string): void };
-  /** The keyboard back to the timeline (Esc in the card). */
+  /** The keyboard back to the timeline (Esc in the card; #187: the sheet closes). */
   focusTimeline(): void;
   /** The card's height changed. */
   resized(): void;
 }
 
 /**
- * #90: the open questions of the agent's final message, pinned above the prompt box while the worker has them. The
+ * #90: the open questions of the agent's final message, in the questions' sheet's calm lane while the worker has them
+ * (#187: it never opens the sheet by itself; questionSheet.ts). The
  * bridge found them with the AI integration's models (a classifier said the message asks you something, an LLM
  * listed the questions), so the card says it was detected automatically and stays out of the way: the prompt box
  * stays on, and a prompt typed there clears it. Its questions stacked as on the ask card (askStack.ts): yes/no takes
@@ -91,7 +92,6 @@ export class FollowupCard {
   private flash = -1;
   private focusTo: FocusTo | null = null;
   private note: { text: string; error: boolean } | null = null;
-  private suppressed = false;
   private ticker: ReturnType<typeof setInterval> | null = null;
   private waitEl: HTMLElement | null = null;
   /** The turn a retry runs for. */
@@ -108,7 +108,7 @@ export class FollowupCard {
 
   private get shownFollowup(): Followup | null {
     const f = this.followup;
-    if (!f || f.turn_id === this.gone || this.suppressed) return null;
+    if (!f || f.turn_id === this.gone) return null;
     return f;
   }
 
@@ -137,13 +137,6 @@ export class FollowupCard {
   set(f: Followup | null): void {
     this.followup = f;
     if (f?.turn_id !== this.gone) this.gone = null;
-    this.sync();
-  }
-
-  /** Hidden while an ask's card is up (the dialog the agent waits on goes first). */
-  suppress(on: boolean): void {
-    if (on === this.suppressed) return;
-    this.suppressed = on;
     this.sync();
   }
 
@@ -223,12 +216,11 @@ export class FollowupCard {
   // --- keys --------------------------------------------------------------------------------------------------
 
   /**
-   * A key on the transcript (not in a text box): digits pick on the open question, R takes its recommendation (#60),
-   * ← → open the question before / after, Ctrl/⌘+Enter sends. On the card itself (`inCard`) also: ↑ ↓ move through the
-   * open question's options, Enter on the question itself only says how to pick, Esc goes back to the timeline.
-   * Enter / Space on an option is its click: it picks, never sends; R only fills. Tab is never the card's, nor is
-   * Enter on the timeline: it goes to the prompt box, which a typed prompt clears the card from. True: it was the
-   * card's.
+   * A key in the questions' sheet (not in a text box): digits pick on the open question, R takes its recommendation
+   * (#60), ← → open the question before / after, Ctrl/⌘+Enter sends. On the card itself (`inCard`) also: ↑ ↓ move
+   * through the open question's options, Enter on the question itself only says how to pick, Esc leaves (the sheet
+   * closes). Enter / Space on an option is its click: it picks, never sends; R only fills. Tab is never the card's.
+   * True: it was the card's.
    */
   key(e: KeyboardEvent, inCard = false): boolean {
     const f = this.shownFollowup;
@@ -485,6 +477,7 @@ export class FollowupCard {
   /** The text box: Enter takes the text and moves on (never sends; Shift+Enter is a new line in an open answer). */
   private onTextKey(e: KeyboardEvent, multiline: boolean): void {
     if (zoomKey(e)) return; // #59: the text zoom works from here too
+    if (e.key === 'Escape' && (e.ctrlKey || e.metaKey)) return; // the terminal toggle (Ctrl/⌘+Esc) is the sheet's
     e.stopPropagation(); // what is typed here is the answer's, not the game's or the timeline's
     const f = this.shownFollowup;
     if (!f) return;
@@ -853,7 +846,7 @@ export class FollowupCard {
     const vals = q ? valuesOf(q) : [];
     const pickKeys = vals.length ? `1–${vals.length + (q?.kind === 'choice' ? 1 : 0)} or ↑↓ Enter pick · ` : '';
     const rec = q && !this.isFallback(f) && recommendedPick(f, this.active) && !isRecommended(f, this.picks, this.active) ? 'R recommendation · ' : '';
-    return `${pickKeys}${rec}${several ? '← → question · ' : ''}${SEND_KEY} send · Esc back`;
+    return `${pickKeys}${rec}${several ? '← → question · ' : ''}${SEND_KEY} send · Esc closes`;
   }
 
   /** Repaints the picks without redrawing the text box you type in. */

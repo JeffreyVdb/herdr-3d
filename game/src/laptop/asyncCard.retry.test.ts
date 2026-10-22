@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
 import type { CodexQuestion, Worker } from '../net/protocol';
 import { WorldStore } from '../world/store';
@@ -63,9 +63,11 @@ function seat() {
       mode.sit('w', 'Pixel', true, 'codex');
       await flush();
     },
-    field: () => layer.querySelector<HTMLTextAreaElement>('.tx-aq-text')!,
-    send: () => layer.querySelector<HTMLButtonElement>('.tx-aq .tx-ask-send')!,
-    note: () => layer.querySelector<HTMLElement>('.tx-aq .tx-ask-note'),
+    /** #187: the card is in the questions' sheet, which async questions never open by themselves: the button does. */
+    open: () => layer.querySelector<HTMLButtonElement>('.tx-qbtn')!.click(),
+    field: () => document.querySelector<HTMLTextAreaElement>('.tx-aq-text')!,
+    send: () => document.querySelector<HTMLButtonElement>('.tx-aq .tx-ask-send')!,
+    note: () => document.querySelector<HTMLElement>('.tx-aq .tx-ask-note'),
     dispose: () => {
       mode.stand();
       layer.remove();
@@ -75,6 +77,17 @@ function seat() {
 
 describe('the async card retries what the bridge lets it (#157)', () => {
   let s: ReturnType<typeof seat> | null = null;
+  beforeEach(() => {
+    // jsdom has no modal dialogs: open / close are what the sheet looks at.
+    HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+      this.setAttribute('open', '');
+    };
+    HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+      if (!this.open) return;
+      this.removeAttribute('open');
+      this.dispatchEvent(new Event('close'));
+    };
+  });
   afterEach(() => {
     s?.dispose();
     s = null;
@@ -98,6 +111,7 @@ describe('the async card retries what the bridge lets it (#157)', () => {
         await x.sit();
         x.frame();
         await flush();
+        x.open();
         write(x, 'Keep v1');
         x.send().click();
         x.send().click(); // a double click while it is on its way: one send
@@ -136,6 +150,7 @@ describe('the async card retries what the bridge lets it (#157)', () => {
     await x.sit();
     x.frame();
     await flush();
+    x.open();
     write(x, 'Keep v1');
     x.send().click();
     x.upsert({ state: 'sending', answer: 'Keep v1' }, 'new-turn');

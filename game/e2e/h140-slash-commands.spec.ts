@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, RESULTS, seatMode, watchErrors } from './game';
+import { frames, hideQuestions, openGame, RESULTS, seatMode, watchErrors } from './game';
 
 // #140: `/` in the transcript's prompt box lists the worker's commands and skills, for real, against the simulating
 // fixture server (tools/fixture-panels.ts `simCommands`: a Claude list and a Codex one). You sit at Pebble (an idle
@@ -30,6 +30,7 @@ async function sitAtTranscript(page: Page, w: Worker): Promise<void> {
   expect(await page.evaluate((id) => window.__h3d.sitAt(id), w.id)).toBe(true);
   await frames(page, 20);
   await seatMode(page, 'transcript');
+  await hideQuestions(page, w.id); // #187: a waiting worker's question opened the questions' sheet
   await expect(page.locator('.seat-transcript .tx .tx-scroll')).toBeFocused();
 }
 

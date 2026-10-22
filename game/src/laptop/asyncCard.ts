@@ -17,7 +17,7 @@ export interface AsyncCardHost {
   dismiss(args: CommandArgs['worker.dismiss_async']): Promise<AsyncResult>;
   /** The terminal (where a question the card cannot answer is answered). */
   toTerminal(): void;
-  /** The keyboard back to the timeline (Esc in the card). */
+  /** The keyboard back to the timeline (Esc in the card; #187: the sheet closes). */
   focusTimeline(): void;
   /** The card's height changed. */
   resized(): void;
@@ -52,7 +52,8 @@ function agoText(at: number, now: number): string {
 }
 
 /**
- * #157: a shared Codex worker's async questions, pinned above the prompt box while it works on (docs/protocol.md
+ * #157: a shared Codex worker's async questions, in the questions' sheet's calm lane while it works on (#187: they never
+ * open the sheet by itself; questionSheet.ts; docs/protocol.md
  * "Codex async questions"). Codex asked them and did not stop: the prompt box stays on, and the terminal is a click
  * (or Ctrl+Esc) away. One section per batch, oldest first, the open one with its questions stacked as on the ask card
  * (askStack.ts) and the others folded to a line. A question with suggested answers takes one of them (a digit, a
@@ -71,7 +72,6 @@ export class AsyncCard {
   private codex: WorkerCodex | null = null;
   /** The worker works on (its effective status, not herdr's `blocked` for an async question): "still working". */
   private working = false;
-  private suppressed = false;
   private openKey: string | null = null;
   /** The open question: its position among the open batch's listed questions. */
   private active = 0;
@@ -127,21 +127,17 @@ export class AsyncCard {
     this.render();
   }
 
-  /** Hidden while an ask's card is up (the dialog the agent waits on goes first). */
-  suppress(on: boolean): void {
-    if (on === this.suppressed) return;
-    this.suppressed = on;
-    this.render();
-  }
-
   get shown(): boolean {
-    return !this.suppressed && this.batches().length > 0;
+    return this.batches().length > 0;
   }
 
-  /** How many of its questions still want an answer (0 while it is not shown). */
-  get toAnswer(): number {
+  /**
+   * #187: how many questions it lists (0 while it is not shown): the questions button's count. An answered one counts
+   * until it is cleared, so the card (its reply states, its Clear) stays a click away.
+   */
+  get count(): number {
     if (!this.shown) return 0;
-    return this.batches().reduce((n, b) => n + this.listed(b).filter(wantsAnswer).length, 0);
+    return this.batches().reduce((n, b) => n + this.listed(b).length, 0);
   }
 
   destroy(): void {
@@ -424,10 +420,10 @@ export class AsyncCard {
   }
 
   /**
-   * A key on the transcript (not in a text box): digits pick on the open question, ← → go to the question before /
+   * A key in the questions' sheet (not in a text box): digits pick on the open question, ← → go to the question before /
    * after, Ctrl/⌘+Enter sends. On the card itself (`inCard`) also: ↑ ↓ through the open question's options, Enter on
-   * the question itself only says how to pick, Esc back to the timeline. Enter / Space on an option is its click: it
-   * picks, never sends. Tab and Enter on the timeline stay the page's (the prompt box). True: it was the card's.
+   * the question itself only says how to pick, Esc leaves (the sheet closes). Enter / Space on an option is its click:
+   * it picks, never sends. True: it was the card's.
    */
   key(e: KeyboardEvent, inCard = false): boolean {
     if (!this.shown) return false;
@@ -473,7 +469,7 @@ export class AsyncCard {
   /** The text box: Enter takes the text and moves on (never sends; Shift+Enter is a new line). */
   private onTextKey(e: KeyboardEvent): void {
     if (zoomKey(e)) return; // #59: the text zoom works from here too
-    if (e.key === 'Escape' && (e.ctrlKey || e.metaKey)) return; // the terminal toggle (Ctrl/⌘+Esc) is the seat's
+    if (e.key === 'Escape' && (e.ctrlKey || e.metaKey)) return; // the terminal toggle (Ctrl/⌘+Esc) is the sheet's
     e.stopPropagation(); // what is typed here is the answer's, not the game's or the timeline's
     if (isSendKey(e)) {
       e.preventDefault();
@@ -495,7 +491,7 @@ export class AsyncCard {
   // --- drawing -------------------------------------------------------------------------------------------------
 
   private render(): void {
-    const bs = this.suppressed ? [] : this.batches();
+    const bs = this.batches();
     const b = bs.length ? this.open() : null;
     const wasShown = !this.el.hidden;
     this.el.hidden = !b;
@@ -733,7 +729,7 @@ export class AsyncCard {
     const q = qs[this.active];
     const opts = q && this.answerable(b, q) ? (q.options ?? []).length : 0;
     const several = this.batches().reduce((n, x) => n + this.listed(x).length, 0) > 1;
-    const keys = `${opts ? `1–${opts} or ↑↓ Enter pick · ` : ''}${several ? '← → question · ' : ''}${answerableN ? `${SEND_KEY} send · ` : ''}Esc back`;
+    const keys = `${opts ? `1–${opts} or ↑↓ Enter pick · ` : ''}${several ? '← → question · ' : ''}${answerableN ? `${SEND_KEY} send · ` : ''}Esc closes`;
     const termOnly = !answerableN && qs.some((x) => this.termOnly(b, x));
     const hint = b.readOnly || termOnly
       ? 'Answer it in the terminal'
