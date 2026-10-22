@@ -142,10 +142,22 @@ export class LimitBook {
 
 const part = (parts: Intl.DateTimeFormatPart[], t: string) => parts.find((p) => p.type === t)?.value ?? '';
 
+/** #144: one formatter per time zone (building one costs more than formatting with it). */
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
+function formatter(tz: string | undefined): Intl.DateTimeFormat {
+  const key = tz ?? '';
+  let f = formatters.get(key);
+  if (!f) {
+    f = new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    formatters.set(key, f);
+  }
+  return f;
+}
+
 /** The parts of a moment in `tz` (the browser's local zone by default), 24-hour. */
 function zoned(ms: number, tz?: string) {
-  const f = new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-  const p = f.formatToParts(new Date(ms));
+  const p = formatter(tz).formatToParts(new Date(ms));
   return { day: `${part(p, 'day')} ${part(p, 'month')}`, weekday: part(p, 'weekday'), clock: `${part(p, 'hour')}:${part(p, 'minute')}` };
 }
 

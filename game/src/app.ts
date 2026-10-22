@@ -61,7 +61,7 @@ import { cabinetSpot, deskToCabinetRoute, deskToDeskRoute, handOver, walkOutRout
 // M6c: reports walk over to the orchestrator's desk.
 import { DeliveryBook, reportArrived, reportFact, trayFolderAt, TRAY_CAP, type Entry, type ReportFact, type TrayPose } from './world/delivery';
 import { toneColor } from './render/tray';
-import { floorOf, WorldStore, type Change, type Counts, type FloorView, type WorkerView } from './world/store';
+import { floorOf, WorldStore, type BuildingView, type Change, type Counts, type FloorView, type WorkerView } from './world/store';
 // M5: P prompt, C changes, N next, 1–9 / 0 quick replies.
 import { ChangesPanel } from './ui/changes';
 import { failureText as commandFailure } from './ui/messages';
@@ -1026,14 +1026,17 @@ export class App {
 
   private applyChange(c: Change): void {
     this.pacing.changes++;
+    if (c.usage) return this.applyUsage(c.usage); // #144
     this.statusDirty = true;
     this.planDirty = true;
+    // #144: one city for every reader of this change (the scene, the top bar, the inbox and its pings).
+    const city = this.cityOnce();
     // #142: a world event is not interaction: no fast frame rate for it (idle still draws it on the next frame).
     if (c.structure) {
       const firstWorld = this.city.isEmpty;
-      this.city.build(this.store.city());
+      this.city.build(city());
       if (firstWorld) this.frameCity(false);
-      if (this.mode === 'floor') this.syncWalk();
+      if (this.mode === 'floor') this.syncWalk(city);
       this.syncLogos();
     } else {
       for (const id of c.workers) {
@@ -1047,7 +1050,7 @@ export class App {
         if (fv) this.city.updateFloor(fv);
       }
     }
-    this.refreshTopbar();
+    this.refreshTopbar(city);
     this.updateNotice();
     if (this.mode === 'floor') this.updateHint();
     this.prompt.refresh();
@@ -1074,12 +1077,48 @@ export class App {
     this.hirePresets.refresh(); // #93
     this.addFloor.refresh(); // #58
     this.limitsWidget.update();
-    this.inbox.set(this.inboxEntries());
+    let cands: InboxCandidate[] | null = null;
+    const candidates = () => (cands ??= this.needCandidates(city()));
+    this.inbox.set(this.inboxEntries(candidates()));
     this.m6Buttons.sync();
     // M7: holders and verdict stamps on the boards follow the workers.
     if (c.structure || c.workers.size) this.pushBoards();
-    this.pingInbox(c); // #100
+    this.pingInbox(c, candidates); // #100
     this.overviewDirty = true; // #118
+  }
+
+  /**
+   * #144: a `worker.usage` alone (`Change.usage`). Only what shows usage follows it: the looked-at worker's card
+   * (`OfficeView.updateUsage`) and, on a floor, the top bar's usage total of the floor it shows. The prompt bar and the
+   * laptop's context meter read the store every frame, a dialog when it draws; no count, status, list, inbox, plan limit,
+   * board or overview row shows usage, so none of their refreshes runs.
+   */
+  private applyUsage(ids: ReadonlySet<string>): void {
+    const shown = this.mode === 'floor' ? this.topbarFloor() : undefined;
+    let topbar = false;
+    for (const id of ids) {
+      const v = this.store.workerView(id);
+      if (!v) continue;
+      if (this.office?.id === v.worker.floor) this.office.updateUsage(v);
+      if (shown !== undefined && v.worker.floor === shown) topbar = true;
+    }
+    if (topbar) this.refreshTopbar();
+  }
+
+  /**
+   * #144: the city as the store has it, built at most once for one change's readers. A pin that changes the lists
+   * (`WorldStore.pin`, from `syncWalk`) bumps the structure version: the next read builds it again.
+   */
+  private cityOnce(): () => BuildingView[] {
+    let city: BuildingView[] | null = null;
+    let at = -1;
+    return () => {
+      if (!city || at !== this.store.structureVersion) {
+        city = this.store.city();
+        at = this.store.structureVersion;
+      }
+      return city;
+    };
   }
 
   // ---- M6c: reports walk over to the orchestrator's desk ---------------------------
@@ -1404,11 +1443,11 @@ export class App {
   /** The store's snapshot count the pings last saw: one more is a snapshot (the first or a reconnect's). */
   private pingSnapshots = 0;
 
-  private pingInbox(c: Change): void {
+  private pingInbox(c: Change, candidates: () => InboxCandidate[] = () => this.needCandidates()): void {
     const snapshot = this.store.snapshots !== this.pingSnapshots;
     this.pingSnapshots = this.store.snapshots;
     if (!snapshot && !c.structure && !c.workers.size && !c.floors.size) return;
-    const entries = pingEntries(this.needCandidates(), this.store.inboxDismissed);
+    const entries = pingEntries(candidates(), this.store.inboxDismissed);
     this.pings.update(entries, snapshot);
   }
 
@@ -1987,12 +2026,18 @@ export class App {
     this.addFloor.open(from);
   }
 
-  private refreshTopbar(): void {
+  /** On a floor: the floor the top bar shows (the one you are on, or whose landing), undefined in the lobby, on the street or the stairs. */
+  private topbarFloor(): string | undefined {
+    const p = this.place;
+    return p.storey !== null ? this.building?.floors[p.storey]?.id : undefined;
+  }
+
+  private refreshTopbar(cityOf: () => BuildingView[] = () => this.store.city()): void {
     if (this.mode === 'floor') {
       // On a floor, or its landing: that floor. In the lobby, on the street or the stairs: the building.
       const ctx = this.building;
       const p = this.place;
-      const s = p.storey !== null ? ctx?.floors[p.storey]?.id : undefined;
+      const s = this.topbarFloor();
       const fv = s ? this.store.floorView(s) : null;
       if (fv) this.hud.setFloor(fv, p.area === 'fire-escape' ? 'fire-escape' : 'floor');
       else if (ctx) {
@@ -2010,7 +2055,7 @@ export class App {
       }
       return;
     }
-    const city = this.store.city();
+    const city = cityOf();
     const total = zero();
     let floors = 0;
     for (const b of city)
@@ -2281,18 +2326,21 @@ export class App {
 
   // ---- the building around you -------------------------------------------------------
 
-  /** The building a floor is in (the unassigned lot's floors make one too). */
-  private buildingFor(floor: string): BuildingCtx | null {
-    return this.store.floors.has(floor) ? this.buildingById(this.panels.buildingOf(floor)) : null;
+  /**
+   * The building a floor is in (the unassigned lot's floors make one too). `city`: the city it is tinted from, #144:
+   * `applyChange`'s one per change (`cityOnce`); else the store's as it is.
+   */
+  private buildingFor(floor: string, city: () => BuildingView[] = () => this.store.city()): BuildingCtx | null {
+    return this.store.floors.has(floor) ? this.buildingById(this.panels.buildingOf(floor), city) : null;
   }
 
-  private buildingById(id: string | null): BuildingCtx | null {
+  private buildingById(id: string | null, city: () => BuildingView[] = () => this.store.city()): BuildingCtx | null {
     const store = this.store;
     if (id !== null && !store.buildings.has(id)) return null;
     const floors = id === null ? store.stack(null) : store.stack(id).reverse();
     if (!floors.length) return null;
     // The city view's colour for it, so the facade matches the dollhouse.
-    const bi = store.city().findIndex((b) => (b.building?.id ?? null) === id);
+    const bi = city().findIndex((b) => (b.building?.id ?? null) === id);
     const tint = id === null ? LOT_TINT : (BUILDING_TINTS[Math.max(0, bi) % BUILDING_TINTS.length] ?? 0xffb8b0);
     const outline = outlineOf(floors.map((f) => f.desks));
     const openings = openingsFor(outline.width, outline.depth);
@@ -2454,17 +2502,20 @@ export class App {
     this.retired.push(o);
   }
 
-  /** The world changed while walking: follow the building (floors moved, added, resized, asleep). */
-  private syncWalk(): void {
+  /**
+   * The world changed while walking: follow the building (floors moved, added, resized, asleep). `city`: as in
+   * `buildingFor`; a pin here changes the lists, and the reader builds them again.
+   */
+  private syncWalk(city: () => BuildingView[] = () => this.store.city()): void {
     const floor = this.office?.id ?? null;
-    const ctx = floor ? this.buildingFor(floor) : this.building ? this.buildingById(this.building.id) : null;
+    const ctx = floor ? this.buildingFor(floor, city) : this.building ? this.buildingById(this.building.id, city) : null;
     const fv = floor ? this.store.floorView(floor) : null;
     // #58: the floor with the interior left its building's stack (hidden and empty, not pinned; its building may have
     // no other): list it again (you are on it or by it) rather than put you on no storey; still out of it, it is gone.
     const storey = fv && ctx ? ctx.floors.findIndex((f) => f.id === fv.id) : -1;
     if (fv && storey < 0 && this.store.pin(fv.id)) {
-      this.city.build(this.store.city());
-      this.syncWalk();
+      this.city.build(city());
+      this.syncWalk(city);
       return;
     }
     if (!ctx || (floor && (!fv || storey < 0))) {
@@ -2507,7 +2558,7 @@ export class App {
     }
     // #187: the world moved you (the floor's storey, a nudge out of a new chair), not your feet: a seat stays.
     this.laptops.rebase(this.walker);
-    this.updatePlace(false, true);
+    this.updatePlace(false, true, city);
     this.cameraMoved = true;
   }
 
@@ -2579,8 +2630,9 @@ export class App {
    * Where the walker is now, and what follows from it: a landing gives its
    * floor the interior (its door opens onto it), the lobby needs none;
    * crossing the lobby's front door is what the receptionist hears about.
+   * `city`: as in `buildingFor` (#144: `syncWalk`'s, from `applyChange`).
    */
-  private updatePlace(walked: boolean, force = false): void {
+  private updatePlace(walked: boolean, force = false, city: () => BuildingView[] = () => this.store.city()): void {
     const ctx = this.building;
     if (!ctx) return;
     const prev = this.place;
@@ -2595,11 +2647,11 @@ export class App {
     if (walked && prev.area === 'lobby' && next.area === 'street') this.receptionEvent('leave-front');
     if (next.area !== 'floor' && this.planOpen) this.setPlan(false);
     this.hud.setArea(next.area);
-    this.refreshTopbar();
+    this.refreshTopbar(city);
     this.updateHint();
     this.panels.refresh();
     this.statusDirty = true;
-    this.pinHere();
+    this.pinHere(city);
   }
 
   /**
@@ -2608,11 +2660,11 @@ export class App {
    * the street the last one stays, so the building does not change shape under the stairs. When the lists change, the
    * city is rebuilt and the walk follows the building (`syncWalk`, whose own `updatePlace` finds the pin as it is).
    */
-  private pinHere(): void {
+  private pinHere(city: () => BuildingView[] = () => this.store.city()): void {
     const here = this.place.area === 'floor' ? (this.office?.id ?? null) : this.place.area === 'lobby' ? null : undefined;
     if (here === undefined || !this.store.pin(here)) return;
-    this.city.build(this.store.city());
-    if (this.mode === 'floor') this.syncWalk();
+    this.city.build(city());
+    if (this.mode === 'floor') this.syncWalk(city);
   }
 
   /** #58: the id of the floor you are on (inside it), else null. */
@@ -4329,8 +4381,8 @@ export class App {
   }
 
   /** Every worker of the city, as N's queue and the inbox take them. */
-  private needCandidates(): InboxCandidate[] {
-    return this.store.city().flatMap((b) =>
+  private needCandidates(city: BuildingView[] = this.store.city()): InboxCandidate[] {
+    return city.flatMap((b) =>
       b.floors.flatMap((f) =>
         f.workers.map((w) => ({ id: w.worker.id, floor: f.id, building: b.building?.id ?? null, display: w.display, since: w.since, desk: w.desk, name: w.name, role: crewRole(w.worker) })),
       ),
@@ -4344,13 +4396,13 @@ export class App {
   }
 
   /** #100: who is in the inbox, in its list's order (needs you, then done; no building first; freelancers' done per Settings). */
-  inboxItems(): NeedItem[] {
-    return inboxQueue(this.needCandidates(), { freelancers: this.inboxPrefs.settings.freelancers, dismissed: this.store.inboxDismissed });
+  inboxItems(candidates: InboxCandidate[] = this.needCandidates()): NeedItem[] {
+    return inboxQueue(candidates, { freelancers: this.inboxPrefs.settings.freelancers, dismissed: this.store.inboxDismissed });
   }
 
   /** #100: the inbox list's rows. */
-  private inboxEntries(): InboxEntry[] {
-    return this.inboxItems().flatMap((item) => {
+  private inboxEntries(candidates?: InboxCandidate[]): InboxEntry[] {
+    return this.inboxItems(candidates).flatMap((item) => {
       const v = this.store.workerView(item.id);
       return v ? [{ id: item.id, name: item.name, harness: v.harness, where: inboxWhere(this.store, item.floor), reason: inboxReason(v), blocked: item.reason === 'blocked', dismissable: item.reason === 'done', since: item.since, request: inboxRequest(v) }] : [];
     });

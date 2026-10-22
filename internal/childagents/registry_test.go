@@ -644,3 +644,69 @@ func TestChildByRowID(t *testing.T) {
 		t.Fatal("a row of the replaced session found")
 	}
 }
+
+// #144: a running child's last_activity_at alone is no upsert (nothing shows
+// it while the child runs); the registry keeps it, so the next upsert of
+// that row, a stop or a snapshot carries the latest. An idle child's activity
+// still is one (its time is shown), and removal is as before.
+func TestActivityOnlyIsNoUpsertWhileRunning(t *testing.T) {
+	r := childagents.New()
+	r.Worker("w", "s")
+	ev := func(at int64, over childagents.Evidence) childagents.Evidence {
+		over.Session, over.Provider, over.NativeID, over.LastActivityAt = "s", proto.ChildClaude, "a1", at
+		if over.Source == "" {
+			over.Source = "transcript"
+		}
+		return over
+	}
+	evs := apply(t, r, ev(10, childagents.Evidence{State: proto.ChildRunning, StartedAt: 5, Source: "hook"}))
+	if len(evs) != 1 || evs[0].Child.LastActivityAt != 10 {
+		t.Fatalf("start: %s %+v", kinds(evs), evs)
+	}
+	id := evs[0].Child.ID
+	for _, at := range []int64{20, 30} {
+		if evs := apply(t, r, ev(at, childagents.Evidence{})); len(evs) != 0 {
+			t.Fatalf("activity %d while running: %s", at, kinds(evs))
+		}
+	}
+	// Repeating its state is no change either.
+	if evs := apply(t, r, ev(35, childagents.Evidence{State: proto.ChildRunning, Source: "hook"})); len(evs) != 0 {
+		t.Fatalf("running again: %s", kinds(evs))
+	}
+	if c, _ := r.Child("w", id); c.LastActivityAt != 35 {
+		t.Fatalf("kept activity = %d, want 35 (the snapshot's)", c.LastActivityAt)
+	}
+	// Any other field: one upsert, with the latest activity.
+	evs = apply(t, r, ev(40, childagents.Evidence{Description: "reads the tests"}))
+	if len(evs) != 1 || evs[0].T != proto.EvChildUpsert || evs[0].Child.LastActivityAt != 40 || evs[0].Child.Description != "reads the tests" {
+		t.Fatalf("description: %s %+v", kinds(evs), evs)
+	}
+	if evs := apply(t, r, ev(45, childagents.Evidence{})); len(evs) != 0 {
+		t.Fatalf("activity after the upsert: %s", kinds(evs))
+	}
+	// It stops: an upsert with its final time.
+	evs = apply(t, r, ev(50, childagents.Evidence{State: proto.ChildIdle, Source: "hook"}))
+	if len(evs) != 1 || evs[0].Child.State != proto.ChildIdle || evs[0].Child.LastActivityAt != 50 {
+		t.Fatalf("idle: %s %+v", kinds(evs), evs)
+	}
+	// Idle, its activity is shown ("idle 4m"): every change is an upsert.
+	evs = apply(t, r, ev(60, childagents.Evidence{}))
+	if len(evs) != 1 || evs[0].Child.LastActivityAt != 60 {
+		t.Fatalf("activity while idle: %s %+v", kinds(evs), evs)
+	}
+	// Running again: an upsert (its state), then quiet again.
+	if evs := apply(t, r, ev(70, childagents.Evidence{State: proto.ChildRunning, Source: "hook"})); len(evs) != 1 || evs[0].Child.State != proto.ChildRunning {
+		t.Fatalf("resumed: %s", kinds(evs))
+	}
+	if evs := apply(t, r, ev(80, childagents.Evidence{})); len(evs) != 0 {
+		t.Fatalf("activity after resuming: %s", kinds(evs))
+	}
+	evs = apply(t, r, ev(90, childagents.Evidence{State: proto.ChildCompleted, EndedAt: 95, Source: "hook"}))
+	if len(evs) != 1 || evs[0].Child.State != proto.ChildCompleted || evs[0].Child.LastActivityAt != 90 || evs[0].Child.EndedAt != 95 {
+		t.Fatalf("completed: %s %+v", kinds(evs), evs)
+	}
+	// Removal is unchanged.
+	if evs := apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, NativeID: "a1", Removed: true, Source: "transcript"}); kinds(evs) != fmt.Sprintf("child.removed:%s ", id) {
+		t.Fatalf("removed: %s", kinds(evs))
+	}
+}

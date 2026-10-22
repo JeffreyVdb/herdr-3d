@@ -418,6 +418,37 @@ describe('InboxChip', () => {
   });
 });
 
+describe('InboxChip on every world event (#144)', () => {
+  it('does not ask the corner again while it stays shown or stays away; it does when it comes or goes', async () => {
+    const { chip } = mount();
+    chip.set([entry('a')]);
+    const q = vi.spyOn(document, 'querySelector');
+    const all = vi.spyOn(document, 'querySelectorAll');
+    chip.set([entry('a')]);
+    chip.set([entry('a', { blocked: false, reason: 'Finished' }), entry('b')]); // other rows, still shown
+    expect(q).not.toHaveBeenCalled();
+    expect(all).not.toHaveBeenCalled();
+    expect(chipOf(chip).textContent).toBe('Inbox2');
+    chip.set([]);
+    expect(chip.root.hidden).toBe(true);
+    chip.set([]);
+    q.mockClear();
+    chip.set([entry('c')]);
+    expect(q).toHaveBeenCalled();
+    expect(chip.root.hidden).toBe(false);
+    // A screen that opens still takes it away, and new rows meanwhile leave it away.
+    document.documentElement.setAttribute('data-seated', '1200');
+    await tick();
+    expect(chip.root.hidden).toBe(true);
+    chip.set([entry('c'), entry('d')]);
+    expect(chip.root.hidden).toBe(true);
+    document.documentElement.removeAttribute('data-seated');
+    await tick();
+    expect(chip.root.hidden).toBe(false);
+    expect(chipOf(chip).textContent).toBe('Inbox2');
+  });
+});
+
 describe('Settings → Display: Show inbox', () => {
   it('is bound to the inbox prefs both ways', () => {
     const store = new Map<string, string>();

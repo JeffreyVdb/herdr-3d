@@ -8,7 +8,8 @@ import { WorldStore } from './store';
 // #22: the child-agent fixtures end to end, the game's half. internal/childagents/testdata/<name>.json are the scripts and
 // the trees each worker must end with; game/fixtures/children-<name>.jsonl the frames a bridge sends a client while it
 // plays one (written by the Go test TestChildFixturesEndToEnd, which checks the same trees on its side). Fed through the
-// decoder and the world store, they make the same trees here.
+// decoder and the world store, they make the same trees here (#144: a running child's last_activity_at aside, which the
+// snapshot has but no event sends alone).
 
 const SCRIPTS = resolve(import.meta.dirname, '../../../internal/childagents/testdata');
 const FRAMES = resolve(import.meta.dirname, '../../fixtures');
@@ -46,6 +47,10 @@ function canonical(tree: ChildTreeNode[]): Node[] {
   });
 }
 
+/** #144: a tree without a running child's `last_activity_at`: no `child.upsert` says that alone, so the frames may lag it. */
+const quietRunning = (tree: Node[]): Node[] =>
+  tree.map(({ last_activity_at, children, ...n }) => ({ ...n, ...(n.state !== 'running' && last_activity_at !== undefined ? { last_activity_at } : {}), ...(children ? { children: quietRunning(children) } : {}) }));
+
 const names = readdirSync(SCRIPTS)
   .filter((f) => f.endsWith('.json'))
   .map((f) => f.slice(0, -'.json'.length))
@@ -82,7 +87,7 @@ describe('#22 child-agent fixtures, bridge frames → decoder → store', () => 
         expect(id, ws).toBeDefined();
         const children = store.children.of(id!);
         for (const c of children) expect(c.generation, `${ws} ${c.id}`).toBe(store.children.generation(id!));
-        expect(canonical(childTree(children)), ws).toEqual(want);
+        expect(quietRunning(canonical(childTree(children))), ws).toEqual(quietRunning(want));
       }
     });
   }

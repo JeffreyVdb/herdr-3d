@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Limits } from '../net/protocol';
 import { isWorldEvent } from '../net/protocol';
 import { harnessViews, LimitBook, limitsOf, limitsView, providerView, readText, resetText, severity, STALE_MS, warningOf } from './limits';
@@ -92,6 +92,28 @@ describe('times', () => {
     expect(resetText(Date.UTC(2026, 8, 29, 23, 30), NOW, 'Europe/Brussels')).toBe('Wed 01:30');
     expect(resetText(0, NOW, 'UTC')).toBe('');
     expect(readText(NOW - 26 * 3600_000, NOW, 'UTC')).toBe('Mon 15:00');
+  });
+
+  it('#144: build one formatter per time zone, not one per date', () => {
+    const made: unknown[] = [];
+    const Real = Intl.DateTimeFormat;
+    const spy = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (...a: ConstructorParameters<typeof Real>) {
+      made.push(a[1]?.timeZone);
+      return new Real(...a);
+    } as unknown as typeof Real);
+    try {
+      for (let i = 0; i < 5; i++) {
+        resetText(NOW + i * 3600_000, NOW, 'Asia/Tokyo');
+        readText(NOW - i * 3600_000, NOW, 'America/Lima');
+      }
+      expect(made.filter((z) => z === 'Asia/Tokyo')).toHaveLength(1);
+      expect(made.filter((z) => z === 'America/Lima')).toHaveLength(1);
+      // Each zone still says its own time.
+      expect(resetText(NOW + 3 * 3600_000, NOW, 'Asia/Tokyo')).toBe('05:00');
+      expect(resetText(NOW + 3 * 3600_000, NOW, 'America/Lima')).toBe('15:00'); // Tokyo: Wed 05:00 (UTC+9), Lima: Tue 15:00 (UTC-5)
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

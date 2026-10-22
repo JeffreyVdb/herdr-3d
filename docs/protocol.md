@@ -604,7 +604,7 @@ conversation, watched by its own target ([A child's transcript](#a-childs-transc
 | `model`, `effort` | string, optional | what the child runs on, as its own transcript reports it: the model id (as a worker's `model`) and its effort level; Claude only (a Codex child's are not observed); at most 80 bytes each |
 | `state` | `running` \| `completed` \| `idle` \| `shut_down` \| `interrupted` \| `unknown` | its lifecycle (see below) |
 | `source` | string | the evidence source that set `state`: `hook` (Claude's `SubagentStart`/`SubagentStop`), `transcript`, `app_server`, `rollout`, `fixture` (the test source); a client shows any other as it is |
-| `started_at`, `last_activity_at`, `ended_at` | int, optional | unix **milliseconds**, from the evidence (the provider's clock, not the bridge's as `status_since`); absent when not known. `started_at` keeps the earliest seen, `last_activity_at` the latest |
+| `started_at`, `last_activity_at`, `ended_at` | int, optional | unix **milliseconds**, from the evidence (the provider's clock, not the bridge's as `status_since`); absent when not known. `started_at` keeps the earliest seen, `last_activity_at` the latest (a running child's alone is no upsert: "When an upsert goes out" below) |
 | `transcript` | `available` \| `pending` \| `unavailable` | whether it has a transcript to open, one is expected but not written yet, or none is known (the default) |
 
 **States** are kept apart: `running` (working now), `completed` (its task completed), `idle` (idle and reusable: it can be
@@ -652,6 +652,18 @@ other, and ordered per worker by the one `seq`, with the worker's own events too
 the upsert of the child observed, then those of the children it resolved or orphaned (so a new parent comes before the
 children that waited for it). The snapshot's `children` follow the workers' order, each worker's children in the order
 first seen: a parent may come after its child, so build the tree by `parent_id`, never by position.
+
+**When an upsert goes out (#144).** A `child.upsert` goes out when a row changes, with one exception: a child that is
+`running` before and after an observation whose only change is its `last_activity_at` gets **no** upsert (a busy child's
+evidence is mostly that tick: 113 of 121 upserts in a 120 s live dump). The bridge keeps the latest value, so every
+upsert that does go out carries it: the row's next change of any other field, and the one of its stop (any change of
+`state`, e.g. to `idle` or `completed`), which has its final time. Every other change emits as before: an `idle` (or
+ended) child's activity is an upsert, and so is a `running` child's first upsert. `child.removed` is unchanged. A
+snapshot always has the latest `last_activity_at`. So a client's copy of a running child's `last_activity_at` may be
+older than the bridge's, by up to that child's whole run (until its next other change, its stop or the next snapshot);
+nothing may show or decide anything by a running child's `last_activity_at`. The game shows a running child's time
+from `started_at` (`running 4m`) and uses `last_activity_at` only for an idle one (`idle 4m`), so it shows nothing
+stale.
 
 **Restart.** Nothing of the children is persisted (no SQLite). A bridge starts with none and rebuilds them from the
 providers' evidence alone: whenever it binds a worker to a root session it has not bound (every worker after a restart,

@@ -167,6 +167,11 @@ func (v *childView) apply(ev proto.Event) {
 
 func (v *childView) tree(t *testing.T, ws string) string {
 	t.Helper()
+	return treeJSON(t, v.nodes(t, ws))
+}
+
+func (v *childView) nodes(t *testing.T, ws string) []childagentstest.Node {
+	t.Helper()
 	var list []proto.Child
 	for id, cs := range v.children {
 		if v.ws[id] != ws {
@@ -179,7 +184,22 @@ func (v *childView) tree(t *testing.T, ws string) string {
 			list = append(list, c)
 		}
 	}
-	return treeJSON(t, childagentstest.Tree(list))
+	return childagentstest.Tree(list)
+}
+
+// quietRunning is n without a running child's last_activity_at: #144 sends
+// no child.upsert for that alone, so a client's events may lag it (its
+// snapshot has the latest).
+func quietRunning(n []childagentstest.Node) []childagentstest.Node {
+	out := make([]childagentstest.Node, len(n))
+	for i, c := range n {
+		if c.State == proto.ChildRunning {
+			c.LastActivityAt = 0
+		}
+		c.Children = quietRunning(c.Children)
+		out[i] = c
+	}
+	return out
 }
 
 func treeJSON(t *testing.T, n []childagentstest.Node) string {
@@ -228,8 +248,8 @@ func TestChildFixturesEndToEnd(t *testing.T) {
 			fresh := newChildView(r.b.connect(proto.Hello{}).snapshot())
 			for ws, want := range s.Expect {
 				e := treeJSON(t, want)
-				if g := v.tree(t, ws); g != e {
-					t.Errorf("%s: frames make\n%s\nwant\n%s", ws, g, e)
+				if g, e := treeJSON(t, quietRunning(v.nodes(t, ws))), treeJSON(t, quietRunning(want)); g != e {
+					t.Errorf("%s: frames make\n%s\nwant (a running child's last_activity_at aside)\n%s", ws, g, e)
 				}
 				if g := fresh.tree(t, ws); g != e {
 					t.Errorf("%s: a fresh snapshot has\n%s\nwant\n%s", ws, g, e)

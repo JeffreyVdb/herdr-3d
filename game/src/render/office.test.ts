@@ -1,6 +1,6 @@
 import '../test/fakeCanvas';
 import * as THREE from 'three/webgpu';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Floor, Worker } from '../net/protocol';
 import { DROP_S, FALL_S, PACK_S, TAKE_LAPTOP_AT } from '../world/arrival';
 import type { V3 } from '../world/collide';
@@ -314,5 +314,31 @@ describe('OfficeView day and night (M17)', () => {
     office.setDaylight(lookOf(NOON));
     expect(office.lightInfo().lamps).toEqual([0, 0]);
     office.dispose();
+  });
+});
+
+describe('OfficeView.updateUsage (#144)', () => {
+  it('redraws the looked-at worker’s card with its usage line; another desk keeps the new view for its next redraw', () => {
+    const store = world();
+    store.applyEvent({ t: 'worker.upsert', seq: 2, worker: worker('two', { name: 'Bix', desk_index: 1, status: 'working' }) });
+    const office = new OfficeView(store.floorView('top')!, { shadows: false });
+    const card = (desk: number) => (office as unknown as { cards: { card(i: number): { usage?: string } | null } }).cards.card(desk);
+    const used = (id: string, tokens: number) => {
+      store.applyEvent({ t: 'worker.usage', seq: 3 + tokens, id, session: 'top', usage: { tokens, cost_usd_est: 0, priced: 'unknown' } });
+      return store.workerView(id)!;
+    };
+    office.setFocus('old');
+    expect(card(0)?.usage).toBeUndefined(); // nothing known yet
+    office.updateUsage(used('old', 37_000));
+    expect(card(0)?.usage).toContain('37k tokens');
+    // Bix is not looked at: no card shows its usage, so none is drawn again…
+    const seats = vi.spyOn(office as unknown as { setSeat(i: number, v: unknown): void }, 'setSeat');
+    office.updateUsage(used('two', 52_000));
+    expect(seats).not.toHaveBeenCalled();
+    expect(card(1)?.usage).toBeUndefined();
+    // …but a look at it shows the latest.
+    office.setFocus('two');
+    expect(card(1)?.usage).toContain('52k tokens');
+    expect(card(0)?.usage).toBeUndefined();
   });
 });
