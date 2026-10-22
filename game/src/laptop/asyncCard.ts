@@ -131,10 +131,13 @@ export class AsyncCard {
     return this.batches().length > 0;
   }
 
-  /** How many of its questions still want an answer (0 while it is not shown). */
-  get toAnswer(): number {
+  /**
+   * #187: how many questions it lists (0 while it is not shown): the questions button's count. An answered one counts
+   * until it is cleared, so the card (its reply states, its Clear) stays a click away.
+   */
+  get count(): number {
     if (!this.shown) return 0;
-    return this.batches().reduce((n, b) => n + this.listed(b).filter(wantsAnswer).length, 0);
+    return this.batches().reduce((n, b) => n + this.listed(b).length, 0);
   }
 
   destroy(): void {

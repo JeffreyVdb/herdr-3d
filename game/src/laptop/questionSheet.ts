@@ -86,7 +86,7 @@ export class QuestionSheet {
       initialFocus: () => this.first(),
     });
     this.sheet.el.id ||= `tx-qsheet-${++sheets}`;
-    this.button = new QuestionsButton({ onOpen: () => this.open(), controls: this.sheet.el.id });
+    this.button = new QuestionsButton({ onOpen: () => this.open(this.button.el), controls: this.sheet.el.id });
     const lane = (k: 'urgent' | 'optional', name: string, ...els: HTMLElement[]) =>
       h('section', { class: 'tx-qlane', 'data-lane': k, 'aria-label': name }, h('h3', { class: 'tx-qlane-head' }, name), ...els);
     this.urgentLane = lane('urgent', 'Answer to continue', cards.ask.el, cards.blocked.el);
@@ -114,10 +114,10 @@ export class QuestionSheet {
     return ask ? `ask:${ask}` : this.cards.blocked.id;
   }
 
-  /** What waits, for the button: an ask's questions (the screen's question is one), the follow-up's, Codex's to answer. */
+  /** What the button counts: an ask's questions (the screen's question is one), the follow-up's, Codex's on its card. */
   private state(): QuestionsState {
     const { ask, blocked, followup, asyncq } = this.cards;
-    return { urgent: ask.shown ? ask.count : blocked.shown ? 1 : 0, followup: followup.count, asyncq: asyncq.toAnswer, open: this.sheet.isOpen };
+    return { urgent: ask.shown ? ask.count : blocked.shown ? 1 : 0, followup: followup.count, asyncq: asyncq.count, open: this.sheet.isOpen };
   }
 
   /** A card was drawn (shown, gone, another question): the button, the lanes and the sheet follow. */
@@ -125,7 +125,7 @@ export class QuestionSheet {
     if (this.destroyed) return;
     const { ask, blocked, followup, asyncq } = this.cards;
     const s = this.state();
-    // A lane is up while one of its cards is (Codex's can hold only answered questions, to clear: nothing to count).
+    // A lane is up while one of its cards is.
     const urgent = ask.shown || blocked.shown;
     const optional = followup.shown || asyncq.shown;
     this.urgentLane.hidden = !urgent;
@@ -149,12 +149,12 @@ export class QuestionSheet {
     this.button.set({ ...s, open: this.sheet.isOpen });
   }
 
-  /** The button, `Q`: the sheet, the keyboard on its first question. */
-  open(): void {
+  /** The button, `Q`: the sheet, the keyboard on its first question (closed, back to `opener`, else where it was). */
+  open(opener: HTMLElement | null = null): void {
     if (!this.canOpen) return;
     const id = this.urgentId;
     if (id) this.opened.add(id);
-    this.sheet.open(this.button.el.isConnected && !this.button.el.hidden ? this.button.el : null);
+    this.sheet.open(opener);
     this.button.set({ ...this.state(), open: true });
   }
 
@@ -206,9 +206,11 @@ export class QuestionSheet {
     this.escaping = false; // an Esc in the sheet always ends here
     if (this.destroyed) return;
     this.button.set({ ...this.state(), open: false });
-    // Nowhere else to be (no opener, it went, or it is the button now hidden): the conversation.
+    // Nowhere else to be in the view (no opener, it went, the button now hidden, a control outside the view): the
+    // conversation.
     const a = document.activeElement;
-    if (!a || a === document.body || this.sheet.el.contains(a) || !!a.closest('[hidden]')) this.host.focusTimeline();
+    const view = this.button.el.closest('.tx');
+    if (!a || this.sheet.el.contains(a) || !!a.closest('[hidden]') || !view?.contains(a)) this.host.focusTimeline();
   }
 
   /** A key in the sheet: the card it is on takes it first; Esc closes, Ctrl/⌘+Esc goes on to the terminal. */
