@@ -173,10 +173,17 @@ export function pickModel(c: ReviewChoice, model: string, cat: HireOptions): Rev
   return recheckEffort(next, cat);
 }
 
-/** #190: the human picked one of the interpreter's choices: its harness and model together. */
+/**
+ * #190: the human picked one of the interpreter's choices: its harness and model together, the effort checked against
+ * that model (a level only it has, such as an extra, stays).
+ */
 export function pickAgent(c: ReviewChoice, harness: string, model: string, cat: HireOptions): ReviewChoice {
   if (!modelsFor(cat, harness).includes(model)) return c;
-  return pickModel(pickHarness(c, harness, cat), model, cat);
+  if (harness === c.harness) return pickModel(c, model, cat);
+  const next: ReviewChoice = { ...touch(c, 'harness', 'model'), harness, model, origin: { ...c.origin, harness: 'chosen', model: 'chosen' }, said: { ...c.said } };
+  delete next.said.harness;
+  delete next.said.model;
+  return recheckEffort(next, cat);
 }
 
 /** #190: the interpreter's model question, as the review asks it: its words and its choices by harness, in its order. */

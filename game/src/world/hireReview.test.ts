@@ -231,4 +231,15 @@ describe('#190: the interpreter\'s model question', () => {
     // Not in the catalog: nothing changes.
     expect(pickAgent(c, 'codex', 'gpt-gone', CAT)).toBe(c);
   });
+
+  it('keeps an effort only the picked model has (an extra), checked against the model, not the harness first', () => {
+    const max = fromInterpretation({ ...ASKED, effort: field('dictated', 'max') }, CAT);
+    expect(max.effort).toBe('max');
+    const picked = pickAgent(max, 'claude', 'claude-opus-5-5', CAT);
+    expect(picked).toMatchObject({ harness: 'claude', model: 'claude-opus-5-5', effort: 'max', origin: { harness: 'chosen', model: 'chosen', effort: 'dictated' } });
+    expect(effortOk(picked, CAT)).toBe(true);
+    expect(needsAttention(picked, CAT).has('effort')).toBe(false);
+    // A model without it still clears it, its word kept.
+    expect(pickAgent(max, 'codex', 'gpt-6-sol', CAT)).toMatchObject({ effort: '', origin: { effort: 'invalid' }, said: { effort: 'max' } });
+  });
 });
