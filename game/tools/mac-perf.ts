@@ -86,6 +86,8 @@ const jobs = [
   { name: 'floor60-entry', path: `/?${fx('perf-floor60')}`, entry: { floors: ['perf-floor'], rounds: 3 } },
   { name: 'm3b-entry', path: `/?${fx('demo-m3b')}`, entry: { floors: ['herdr-3d', 'depot-manager', 'pastry', 'scratchpad'], rounds: 2 } },
   { name: 'demo-city', path: `/?${fx('demo')}`, shot: true, settle: 2500 },
+  // #146: start-up on the demo city, Chrome launched twice on one fresh profile (the second: what it kept on disk).
+  { name: 'startup', path: `/?${fx('demo')}`, startup: { launches: 2 } },
   { name: 'demo-desk-row', path: `/?${fx('demo')}`, floor: 'herdr-3d', pose: 'row', shot: true },
   // #145: the overview page alone, the scene stopped (opt-in: H3D_PERF_JOBS=floor60-ov,city240-ov,floor96-ov): the busy
   // floor's page and the all-floors page left open 20 s, and the 96 needs-you rows' page opened four times.
