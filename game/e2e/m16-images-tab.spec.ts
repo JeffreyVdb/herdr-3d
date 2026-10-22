@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, seatMode, shot, watchErrors } from './game';
+import { frames, hideQuestions, openGame, seatMode, shot, watchErrors } from './game';
 
 // M16 phase 2: the Images tab, third mode of the seated view, for real on the WebGL2 path. demo-m5 with the simulating
 // fixture server (sim=1): its demo timeline has real PNGs (tools/fixture-transcript.ts): the user sends a screenshot
@@ -26,6 +26,7 @@ async function sitAt(page: Page, name: string): Promise<string> {
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
   await expect(page.locator('.seat')).toBeVisible();
   await seatMode(page, 'transcript');
+  await hideQuestions(page, id); // #187: Tofu's question opened the questions' sheet
   return id;
 }
 
