@@ -50,6 +50,7 @@ function mount(s: CodexProfilesState | null, refuse?: (args: Record<string, unkn
     }),
     { store: 'bridge', group: 'workers' },
   );
+  dialog.renderSections(); // #146: what the dialog's first open does
   const root = document.querySelector<HTMLElement>('[data-section="codex-profiles"]')!;
   const rules = () => [...root.querySelectorAll<HTMLElement>('.settings-cp-rule')];
   const match = (i: number) => root.querySelector<HTMLInputElement>(`[data-key="rule-match:${i}"]`)!;

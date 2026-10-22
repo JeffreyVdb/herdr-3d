@@ -73,6 +73,23 @@ describe('holdDisposals (#141)', () => {
     expect(after.fired).toBe(0);
   });
 
+  it('a work that throws before returning a promise ends its hold too', async () => {
+    const mat = new THREE.MeshBasicMaterial();
+    let endOther!: () => void;
+    const other = holdDisposals(() => new Promise<void>((r) => (endOther = r)));
+    await expect(
+      holdDisposals((): Promise<void> => {
+        throw new Error('at once');
+      }),
+    ).rejects.toThrow('at once');
+    mat.dispose();
+    const late = lateListener(mat);
+    endOther();
+    await other;
+    expect(late).toEqual({ fired: 1 });
+    expect(THREE.EventDispatcher.prototype.dispatchEvent).toBe(dispatch);
+  });
+
   it('a hold inside a hold fires them once, when the outer one ends', async () => {
     const mat = new THREE.MeshBasicMaterial();
     let late: { fired: number } | null = null;
@@ -84,5 +101,100 @@ describe('holdDisposals (#141)', () => {
       expect(late).toEqual({ fired: 0 });
     });
     expect(late).toEqual({ fired: 1 });
+  });
+
+  it('a hold started inside one that ends first keeps recording until it ends too (#146)', async () => {
+    const mat = new THREE.MeshBasicMaterial();
+    let endOuter!: () => void;
+    let endInner!: () => void;
+    const outer = holdDisposals(() => new Promise<void>((r) => (endOuter = r)));
+    const inner = holdDisposals(() => new Promise<void>((r) => (endInner = r)));
+    endOuter();
+    await outer;
+    expect(THREE.EventDispatcher.prototype.dispatchEvent).not.toBe(dispatch);
+    mat.dispose();
+    const late = lateListener(mat);
+    endInner();
+    await inner;
+    expect(late).toEqual({ fired: 1 });
+    expect(THREE.EventDispatcher.prototype.dispatchEvent).toBe(dispatch);
+  });
+
+  /**
+   * Every order two and three holds can start and end in (nested, crossed, one after the other), each ending its work
+   * or throwing, with a material disposed before, between each step and after: what was disposed while any hold ran
+   * is fired again once, when the last of those running then ends; nothing else is.
+   */
+  type Step = { hold: number; start: boolean };
+  /** The orders of `steps` in which each hold starts before it ends. */
+  function orders(left: Step[], started = new Set<number>()): Step[][] {
+    if (!left.length) return [[]];
+    return left.flatMap((step, i) => {
+      if (!step.start && !started.has(step.hold)) return [];
+      const rest = left.filter((_, j) => j !== i);
+      const next = step.start ? new Set([...started, step.hold]) : started;
+      return orders(rest, next).map((o) => [step, ...o]);
+    });
+  }
+  const cases = [2, 3].flatMap((n) => {
+    const steps = Array.from({ length: n }, (_, hold) => [
+      { hold, start: true },
+      { hold, start: false },
+    ]).flat();
+    return orders(steps).flatMap((order) =>
+      Array.from({ length: 1 << n }, (_, mask) => ({ order, throws: (hold: number) => (mask >> hold) & 1 })),
+    );
+  });
+
+  it(`overlapping holds fire each dispose again once, after the last running one (${cases.length} cases)`, async () => {
+    expect(cases.length).toBe(6 * 4 + 90 * 8);
+    for (const { order, throws } of cases) {
+      const name = order.map((s) => `${s.start ? 's' : throws(s.hold) ? 'x' : 'e'}${s.hold}`).join(' ');
+      const ends: Array<() => void> = [];
+      const runs: Array<Promise<unknown>> = [];
+      /** Per material: how often a listener there before its dispose and one added after it heard it. */
+      const disposals: Array<{ before: { n: number }; after: { n: number }; held: boolean; done: boolean }> = [];
+      let running = 0;
+      const dispose = () => {
+        const mat = new THREE.MeshBasicMaterial();
+        // three's own: removed when it fires.
+        const before = { n: 0 };
+        const once = () => {
+          before.n++;
+          mat.removeEventListener('dispose', once);
+        };
+        mat.addEventListener('dispose', once);
+        mat.dispose();
+        // Kept, to count every fire after the dispose.
+        const after = { n: 0 };
+        mat.addEventListener('dispose', () => after.n++);
+        disposals.push({ before, after, held: running > 0, done: false });
+      };
+      const check = (at: string) => {
+        expect(THREE.EventDispatcher.prototype.dispatchEvent === dispatch, `${name} @${at}`).toBe(running === 0);
+        expect(
+          disposals.map((d) => [d.before.n, d.after.n]),
+          `${name} @${at}`,
+        ).toEqual(disposals.map((d) => [1, d.held && d.done ? 1 : 0]));
+      };
+      dispose();
+      for (const [i, step] of order.entries()) {
+        if (step.start) {
+          const end = (res: () => void, rej: (e: Error) => void) => (throws(step.hold) ? rej(new Error('x')) : res());
+          runs[step.hold] = holdDisposals(
+            () => new Promise<void>((res, rej) => (ends[step.hold] = () => end(res, rej))),
+          ).catch(() => 'threw');
+          running++;
+        } else {
+          ends[step.hold]!();
+          expect(await runs[step.hold], name).toBe(throws(step.hold) ? 'threw' : undefined);
+          // The last running hold has ended: what was disposed since the first is fired again now, not before.
+          if (--running === 0) for (const d of disposals) d.done = true;
+        }
+        check(`${i}`);
+        dispose();
+        check(`${i}+`);
+      }
+    }
   });
 });

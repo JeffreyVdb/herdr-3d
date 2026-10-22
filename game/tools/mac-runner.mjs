@@ -9,6 +9,7 @@
 //         mezz | desk (M3c: at the corner office's glass on the mezzanine, seated at your desk)
 //         boards (M7: south of the board wall, facing the issues board)
 //   overview: { ms } (#145: the overview page alone, the scene stopped: `overview()` below)
+//   startup: { launches } (#146: `startup()` below: Chrome launched that many times on one profile, fresh at the first)
 /** #141: floor entries timed in the page (see the header). */
 async function entries(page, { floors, rounds }) {
   await page.evaluate(() => {
@@ -39,6 +40,73 @@ async function entries(page, { floors, rounds }) {
       await page.evaluate(() => window.__h3d.leaveFloor());
       await page.waitForTimeout(800);
     }
+  }
+  return out;
+}
+
+/**
+ * #146: start-up, on Chrome launched `launches` times one after the other on one profile (fresh at the first launch, so
+ * the second shows what Chrome kept on disk: the HTTP cache, compiled code, WebGPU's pipeline cache). Each launch loads
+ * the page once: `__h3d.startup` (the first frame that drew the city, ready, the renderer's programs then) and the
+ * long animation frames until ready: the one that drew the city first, and the longest. A build from before #146 has
+ * no `startup`: ready is timed here, and its first city frame is the one ready came with (it drew the city whole).
+ */
+async function startup(path, { launches }) {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'h3d-startup-'));
+  const out = [];
+  try {
+    for (let i = 0; i < launches; i++) {
+      const ctx = await chromium.launchPersistentContext(dir, { executablePath: exe, headless: true, args: ARGS, viewport: { width: 1512, height: 945 }, deviceScaleFactor: 2 });
+      try {
+        const page = ctx.pages()[0] ?? (await ctx.newPage());
+        await page.addInitScript(() => {
+          // When `ready` turns true, whatever the build reports itself.
+          let real;
+          Object.defineProperty(window, '__h3d', {
+            configurable: true,
+            get: () => real,
+            set(v) {
+              real = v;
+              let ready = v.ready;
+              Object.defineProperty(v, 'ready', { get: () => ready, set: (x) => ((ready = x), x && (window.__readyAt ??= performance.now())) });
+            },
+          });
+          window.__loaf = [];
+          new PerformanceObserver((l) => {
+            for (const e of l.getEntries()) window.__loaf.push({ at: e.startTime, ms: e.duration });
+          }).observe({ type: 'long-animation-frame', buffered: true });
+        });
+        await page.goto(cfg.base + path);
+        await page.waitForFunction(() => window.__h3d?.error || (window.__h3d?.ready && window.__h3d.frames > 2), null, { timeout: 90_000 });
+        await page.waitForTimeout(300);
+        out.push(
+          await page.evaluate((launch) => {
+            const s = window.__h3d.startup ?? { cityAt: window.__readyAt, readyAt: window.__readyAt, cityPrograms: null, readyPrograms: null };
+            const upTo = window.__loaf.filter((x) => s.readyAt !== null && x.at <= s.readyAt);
+            const city = s.cityAt === null ? undefined : window.__loaf.find((x) => x.at <= s.cityAt && x.at + x.ms >= s.cityAt - 1);
+            const r = (x) => (x === null || x === undefined ? null : Math.round(x));
+            return {
+              launch,
+              backend: window.__h3d.backend,
+              error: window.__h3d.error,
+              cityAtMs: r(s.cityAt),
+              readyMs: r(s.readyAt),
+              cityPrograms: s.cityPrograms,
+              readyPrograms: s.readyPrograms,
+              cityFrameMs: r(city?.ms ?? 0),
+              longestFrameMs: r(Math.max(0, ...upTo.map((x) => x.ms))),
+            };
+          }, i + 1),
+        );
+      } finally {
+        await ctx.close();
+      }
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
   return out;
 }
@@ -102,13 +170,24 @@ async function overview(page, o) {
   };
 }
 
+const ARGS = ['--enable-unsafe-webgpu', '--disable-frame-rate-limit', '--disable-gpu-vsync'];
 const browser = await chromium.launch({
   executablePath: exe,
   headless: true,
-  args: ['--enable-unsafe-webgpu', '--disable-frame-rate-limit', '--disable-gpu-vsync'],
+  args: ARGS,
 });
 try {
   for (const job of cfg.jobs) {
+    if (job.startup) {
+      const out = { job: job.name };
+      try {
+        out.startup = await startup(job.path, job.startup);
+      } catch (e) {
+        out.failed = String(e && e.message ? e.message : e);
+      }
+      console.log(JSON.stringify(out));
+      continue;
+    }
     const page = await browser.newPage({ viewport: { width: 1512, height: 945 }, deviceScaleFactor: 2 });
     const logs = [];
     page.on('pageerror', (e) => logs.push(`pageerror: ${e.message}`));

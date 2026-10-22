@@ -66,6 +66,7 @@ function mount(s: CodexProfilesState, plan: CodexShareStep[] = [], refuse?: (arg
     }),
     { store: 'bridge', group: 'workers' },
   );
+  dialog.renderSections(); // #146: what the dialog's first open does
   const root = document.querySelector<HTMLElement>('[data-section="codex-profiles"]')!;
   const row = (key: string) => root.querySelector<HTMLElement>(`.settings-cp-row[data-profile="${key}"]`)!;
   const key = (k: string) => root.querySelector<HTMLElement>(`[data-key="${k}"]`);

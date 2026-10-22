@@ -23,6 +23,7 @@ function mount(s: Record<string, unknown> | null, answer?: (args: Record<string,
     }),
     { store: 'bridge', group: 'integrations' },
   );
+  dialog.renderSections(); // #146: what the dialog's first open does
   const root = document.querySelector<HTMLElement>('[data-section="repos"]')!;
   const box = () => root.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
   const text = (sel: string) => root.querySelector<HTMLElement>(sel)?.textContent ?? '';

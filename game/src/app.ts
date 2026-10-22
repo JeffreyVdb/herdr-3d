@@ -1,7 +1,8 @@
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { BridgeClient, type CommandResult, type ConnState, type SocketLike } from './net/client';
-import { bridgeUrl, takeToken } from './net/endpoint';
+import { BridgeClient, type CommandResult, type ConnState, type SocketFactory, type SocketLike } from './net/client';
+import { takeToken } from './net/endpoint';
+import { GAME_CLIENT, socketUrl } from './net/startup';
 import { postUpload } from './net/upload';
 import { loggedArgs } from './net/redact';
 import { deleteLogo, logoUrl, putLogo } from './net/logo';
@@ -169,6 +170,8 @@ export interface AppOptions {
   token?: string | null;
   /** #57: the helper's bridges, as main.ts read them before anything else (absent: no helper serves this page). */
   bridges?: BridgeBook;
+  /** #146: the bridge socket factory, with the socket main.ts opened early for the first connect (absent: a new WebSocket each). */
+  socket?: SocketFactory;
 }
 
 export interface LookAt {
@@ -203,7 +206,6 @@ interface BuildingCtx {
   shape: string;
 }
 
-const CLIENT = 'herdr-3d-game/0.2';
 /** Gap between the gong rings of several PRs merged in one poll. */
 const GONG_GAP_MS = 450;
 /** A desk a hire is on its way to: chair in, no laptop, no "+". */
@@ -285,7 +287,8 @@ export class App {
   /** Reception events the app detected, in order (test hook), and the receptionist once coder B's module is in. */
   readonly receptionEvents: Array<{ ev: ReceptionEvent; at: number; building: string | null }> = [];
   readonly audio: GameAudio;
-  readonly reception: Reception;
+  /** #146: the receptionist, built where it is first seen (a lobby, as its building is set up), not with the game. */
+  private receptionist: Reception | null = null;
   /** M15: the office radio (E and R on it, fades with where you are, toast, display). */
   readonly radio: RadioLink;
   /** M13: the screen share and the TV that shows it. */
@@ -404,6 +407,12 @@ export class App {
   private retired: OfficeView[] = [];
   /** #141: a cold entry's shaders are compiling behind the doors: no frame is drawn meanwhile (`warmUp`). */
   private warming = false;
+  /** #146: the frame count when the first city was built (-1: not yet); the next frame draws it (`stageCity`). */
+  cityBuiltAt = -1;
+  /** #146: the first city's desks and figures are compiling (`stageCity`). */
+  private staging = false;
+  /** #146: the frame count when they showed again: the next frame draws them. */
+  private stagedAt = -1;
   /** #141: the outside of the building you left for the city (see `keepOutside`). */
   private kept: { shape: string; view: OutsideView } | null = null;
   private fireDoor = 0;
@@ -583,7 +592,6 @@ export class App {
       this.inbox.enabled = this.inboxPrefs.settings.show;
       this.inbox.set(this.inboxEntries());
     });
-    this.reception = createReception({ audio: this.audio, overlay: this.hud.root, shadows: this.shadows });
     this.radio = new RadioLink({ music: this.audio.music, toast: (m, ms, soft) => this.hud.toast(m, ms, 'info', soft), hudRadio: (n) => this.hud.setRadio(n) });
     this.city = new CityView(
       this.hud.floorList,
@@ -634,15 +642,14 @@ export class App {
     const token = o.token !== undefined ? o.token : takeToken(window.location, safeStorage(), (u) => history.replaceState(null, '', u));
     this.token = token;
     this.noOpen = o.params.get('open') === 'none';
-    // #57: the helper lets this page through to the bridge its keys belong to only (`none`: it had none): its /ws and
-    // every HTTP route (logos, uploads, frames, whiteboards, drops), whose URLs derive from this one.
-    this.url = bridgeUrl(window.location, token, bridgeScope() ?? (this.bridges.list ? 'none' : null));
+    // #146: the URL main.ts pre-opened the socket at, when it opened one (the same helper and inputs).
+    this.url = socketUrl(window.location, token, this.bridges);
     this.follow = followActiveBridge(this.bridges, bridgeScope, (b) => this.followSwitch(b));
     onBridgeChanged(() => void this.follow.connLost());
     this.client = new BridgeClient({
       url: this.url,
-      clientName: CLIENT,
-      socket: (u) => new WebSocket(u) as unknown as SocketLike,
+      clientName: GAME_CLIENT,
+      socket: o.socket ?? ((u) => new WebSocket(u) as unknown as SocketLike),
       handlers: {
         onWelcome: (w) => o.onBridgeVersion?.(bannerVersion(w.server)),
         onSnapshot: (s) => {
@@ -1036,6 +1043,7 @@ export class App {
       const firstWorld = this.city.isEmpty;
       this.city.build(city());
       if (firstWorld) this.frameCity(false);
+      if (firstWorld && this.cityBuiltAt === -1) void this.stageCity();
       if (this.mode === 'floor') this.syncWalk(city);
       this.syncLogos();
     } else {
@@ -2244,6 +2252,49 @@ export class App {
     }
   }
 
+  /**
+   * #146: the first city, at start-up: its first frame draws the shell (the buildings, the ground, the signs) while the
+   * desks and figures in the dollhouses, most of its programs, are hidden and compiled over the next tasks
+   * (`compileAsync`, one object at a time, as `warmUp`); then they show, and their shadow pass is built on that frame.
+   * Without it, one frame built every program at once. Later builds (a floor added, moved) are drawn in one frame as
+   * before: hiding the desks there would blink them.
+   */
+  private async stageCity(): Promise<void> {
+    this.cityBuiltAt = this.stagedAt = this.frames;
+    const parts = this.city.furniture;
+    if (!parts.length) return;
+    this.staging = true;
+    const culled: THREE.Object3D[] = [];
+    for (const g of parts) g.traverse((o) => (o as THREE.Mesh).isMesh && o.frustumCulled && culled.push(o));
+    for (const o of culled) o.frustumCulled = false;
+    // A new render call for the scene's cache key, as in `warmUp`.
+    (this.r.info as { calls: number }).calls++;
+    try {
+      // compileAsync picks what to compile before its first await: the groups hide (and cull) again at once.
+      await holdDisposals(() => {
+        const done = Promise.all(parts.map((g) => this.r.compileAsync(g, this.cityCam, this.city.scene)));
+        for (const g of parts) g.visible = false;
+        for (const o of culled) o.frustumCulled = true;
+        return done;
+      });
+    } finally {
+      for (const g of parts) g.visible = true;
+      // Drawn on the next frame, their shadow pass built there.
+      this.staging = false;
+      this.stagedAt = this.frames;
+    }
+  }
+
+  /** #146: a snapshot is in and the first city compiled and drawn whole (`h3d.ready` waits for it). */
+  get cityReady(): boolean {
+    return this.store.snapshots > 0 && !this.staging && this.frames > this.stagedAt;
+  }
+
+  /** #146: the city has been drawn (its shell at least, `stageCity`). */
+  get cityDrawn(): boolean {
+    return this.cityBuiltAt >= 0 && this.frames > this.cityBuiltAt && this.mode === 'city';
+  }
+
   /** The elevator to a building's lobby (null: the unassigned lot's). */
   async enterLobby(building: string | null, opts: { transition?: boolean } = {}): Promise<void> {
     if (this.transitioning || !this.buildingById(building)) return;
@@ -2670,6 +2721,11 @@ export class App {
   /** #58: the id of the floor you are on (inside it), else null. */
   hereFloor(): string | null {
     return this.mode === 'floor' && this.place.area === 'floor' && this.office ? this.office.id : null;
+  }
+
+  /** #146: built on first use, as a building's lobby is set up (`setBuilding`). */
+  get reception(): Reception {
+    return (this.receptionist ??= createReception({ audio: this.audio, overlay: this.hud.root, shadows: this.shadows }));
   }
 
   private receptionEvent(ev: ReceptionEvent): void {

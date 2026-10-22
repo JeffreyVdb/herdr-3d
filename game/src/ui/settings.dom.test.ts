@@ -57,6 +57,7 @@ describe('SettingsDialog section registry (#91)', () => {
     s.addSection('a', 'First', (body) => void body.append('one'), { store: 'browser', group: 'general' });
     s.addSection('b', 'Second', (body) => void body.append('two'), { store: 'bridge', group: 'general' });
     expect(s.sectionIds).toEqual(['a', 'b']);
+    s.open(); // #146: the content renders on the first open
     const [a, b] = sections();
     expect(a!.querySelector('h3')!.textContent).toBe('First');
     expect(a!.querySelector('.settings-store')!.textContent).toBe('This browser');
@@ -81,6 +82,8 @@ describe('SettingsDialog section registry (#91)', () => {
     const disposeB = vi.fn();
     const removeA = s.addSection('a', 'A', () => ({ dispose: disposeA }), { store: 'browser', group: 'general' });
     s.addSection('b', 'B', () => ({ dispose: disposeB }), { store: 'bridge', group: 'ai' });
+    s.open(); // #146: rendered (a section never rendered has nothing to dispose)
+    s.close();
     expect(s.activeSection).toBe('a');
     removeA();
     removeA();
@@ -380,6 +383,8 @@ describe('sections a bridge does not offer (#98, #49)', () => {
   it('with nothing to show, nothing is selected and nothing breaks; the first section shown is selected', () => {
     const s = make();
     const hide = five(s, { a: 'general', b: 'ai' });
+    s.open(); // #146: rendered, so each holds its setHidden
+    s.close();
     hide.a!(true);
     hide.b!(true);
     s.open();
@@ -391,13 +396,67 @@ describe('sections a bridge does not offer (#98, #49)', () => {
     expect(panel('b').hidden).toBe(false);
   });
 
-  it('a section that hides itself while it is being added is never selected', () => {
+  it('a section that hides itself while it renders (#146: on the first open) is never selected', () => {
     const s = make();
     s.addSection('a', 'A', (_b, section) => section.setHidden(true), { store: 'bridge', group: 'general' });
     s.addSection('b', 'B', () => {}, { store: 'bridge', group: 'general' });
+    s.open();
     expect(s.activeSection).toBe('b');
     expect(panel('a').hidden).toBe(true);
     expect(tab('a').hidden).toBe(true);
+  });
+});
+
+describe('sections render on the first open (#146)', () => {
+  it('renders nothing when added, every section once on the first open (before its open), and later ones at once', () => {
+    const s = make();
+    const calls: string[] = [];
+    const add = (id: string, group: SettingsGroup = 'general') =>
+      s.addSection(
+        id,
+        id.toUpperCase(),
+        (body) => {
+          calls.push(`render ${id}`);
+          body.append(`${id} content`);
+          return { open: () => void calls.push(`open ${id}`) };
+        },
+        { store: 'browser', group },
+      );
+    add('a');
+    add('b', 'ai');
+    expect(calls).toEqual([]);
+    expect(panel('a').querySelector('.settings-content')!.textContent).toBe('');
+    expect(s.sectionIds).toEqual(['a', 'b']);
+    expect(shownTabs()).toEqual(['a', 'b']);
+    s.open();
+    expect(calls).toEqual(['render a', 'render b', 'open a', 'open b']);
+    expect(panel('b').querySelector('.settings-content')!.textContent).toBe('b content');
+    s.close();
+    s.open();
+    expect(calls).toEqual(['render a', 'render b', 'open a', 'open b', 'open a', 'open b']);
+    calls.length = 0;
+    add('c', 'workers');
+    expect(calls).toEqual(['render c']);
+  });
+
+  it('reveal renders them too (a link that opens the dialog on a section)', () => {
+    const s = make();
+    const hide = five(s);
+    s.reveal('d');
+    expect(typeof hide.d).toBe('function');
+    expect(panel('d').querySelector('input')).not.toBeNull();
+    expect(s.activeSection).toBe('d');
+  });
+
+  it('a section that hides itself on its first render is gone from the navigator before anything shows', () => {
+    const s = make();
+    s.addSection('a', 'A', (_b, section) => section.setHidden(true), { store: 'bridge', group: 'general' });
+    s.addSection('b', 'B', () => {}, { store: 'bridge', group: 'ai' });
+    s.open();
+    expect(shownTabs()).toEqual(['b']);
+    expect(pickerGroups()).toEqual([['AI', ['b']]]);
+    expect(panel('a').hidden).toBe(true);
+    expect(s.activeSection).toBe('b');
   });
 });
 
