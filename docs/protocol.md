@@ -4873,7 +4873,7 @@ bridge accepts is not narrowed: `worker.hire`, settings and presets still check 
 "hire_options": <the bridge's current catalog without the hidden models>}`, in JSON mode with a 3,000-token budget
 (#190; it was 1,400), no partial answer and low reasoning effort when the model's catalog says it takes it (else the
 provider's default); the AI integration's timeout, retry and concurrency limit apply, and the bridge bounds
-the whole at 35 s. Its answer must be exactly `{intent, harness, model, effort, task, multiple, selection_unclear}`
+the whole at 35 s (#190: the model's reasoning metadata and the classifier included). Its answer must be exactly `{intent, harness, model, effort, task, multiple, selection_unclear}`
 (`intent` `hire` | `unsupported` | `unclear`, `harness` `claude` | `codex` | null, booleans for the last two, short
 strings or null for the others); anything else is the error `bad_answer`. Then, deterministically:
 
@@ -4887,17 +4887,26 @@ strings or null for the others); anything else is the error `bad_answer`. Then, 
   other harness, contradictory such as "Claude on GPT-5.5 Haiku", an effort the model does not support, or a harness
   with no models in the current catalog; `said` keeps the words, there is no `value`). `value` is always an exact
   launch id of the **current** catalog; nothing is ever defaulted (not from the floor's settings, the last hire or
-  `hire.prepare`'s choice) or substituted. A model is never chosen from a harness. An effort counts only when its word
+  `hire.prepare`'s choice) or substituted. A model is never chosen from a harness. **A harness said outside the task
+  binds (#190)**: "Codex", "Claude Code" or "Claude" in the latest sentence that names a harness is the harness,
+  whatever the LLM read (its `harness` left out, or the other one), so a model of the other harness is asked, never
+  taken; both said, no model is taken. An effort counts only when its word
   is said outside the task ("Task: make the high effort setting visible" has no effort); before the model is valid it
   is only checked against the catalog's levels.
 - **Models by name or family (#190).** A model counts only where its words were said outside the task (else
-  `missing`), and never when the LLM's answer names a model word the user did not say at all (`invalid`). Said as an
+  `missing`), and never when the LLM's answer names a model word the user did not say at all (`invalid`). A harness's
+  or brand's words alone ("Codex", "Claude Code", "GPT" where every Codex model is a GPT) name no model: `missing`,
+  its question offering the models they cover. **Every word said with the model's counts**: the words around and
+  between the LLM's model words, in one clause, up to the sentence's glue ("a", "agent", "on", "with", an effort level…).
+  A version or a model word there joins the words said, whatever the LLM kept ("GPT Sol 6" answered "GPT Sol" is
+  gpt-6-sol); any other word names no model and the model is `invalid`, asked in the user's words ("GPT Banana"
+  answered "GPT", a version said in words: "GPT six point one Sol" is asked, never matched). Said as an
   exact id or readable label it is that model: of another harness than the one named, or hidden, it is `invalid`. Said
   otherwise ("GPT Sol", "Sol", "Opus"), it is the visible model of the harness named (any harness without one) whose
   words — its id's and label's, split into words and versions: gpt-6.1-sol is gpt, 6.1, sol — cover every word said,
-  so a version said must be its version ("GPT 6 Sol" is never gpt-6.1-sol; a number said next to the name's words
-  counts as said, whatever version the LLM answered). One such model is `resolved` (`said` keeps
-  the words); several are `invalid` and the model question offers exactly those, never a version picked for you. A
+  so a version said must be its version ("GPT 6 Sol" is never gpt-6.1-sol, whatever version the LLM answered). One
+  such model is `resolved` (`said` keeps the words); several are `invalid` and the model question ("“GPT Sol” matches
+  several models. Which one did you mean?") offers exactly those, never a version picked for you. A
   near miss of a word said ("GPT soul" for Sol: one edit, three letters or more) goes to the AI integration's
   **classifier** when it is ready: it reads only the sentence without the task and one yes/no question per near
   candidate (at most 16 per call, calls in parallel), and picks a candidate scoring at least 0.3 and 0.15 above the
@@ -4911,7 +4920,7 @@ strings or null for the others); anything else is the error `bad_answer`. Then, 
   included; commands inside it are its content. A task the LLM read that is not in the sentences is the error
   `bad_span`. Said twice, the span is in the latest sentence holding it, at its last occurrence there.
 - **`questions`**, in order, never null: `model` (missing or invalid: "Which model should this agent use?" / "Which
-  model did you mean by “…”?", with `choices` `[{harness, model, label?}]`: the visible models a family named, else the
+  model did you mean by “…”?" / "“…” matches several models. Which one did you mean?", with `choices` `[{harness, model, label?}]`: the visible models a family named, else the
   harness's visible models, every visible model without one), `effort` (missing: exactly "What effort level should this agent use?"; unsupported: a correction; `efforts`
   are the selected model's levels, none before a model is valid), `task` ("What should this agent work on?"), and
   `selection` when the LLM found the selection unclear though every value validated (#190: not for a model these rules
@@ -4922,9 +4931,12 @@ strings or null for the others); anything else is the error `bad_answer`. Then, 
 as `pending`, exactly as it came; its `sources` grow by the reply (at most 6). The pending proposal is checked in full
 first (its sources, its task's span against them, its fields' shape, a valid harness `claude` or `codex`; else the
 error `bad_pending`, no call) and its values are resolved again against the **current** catalog without the models
-hidden **on this call** (#190: the bridge keeps no visibility either): a model that left it, or is hidden now, is
-`invalid` again (asked in the words first said), a family that now names several visible models is asked among them,
-and so is a harness with no models left (its model question offering every visible model).
+hidden **on this call** (#190: the bridge keeps no visibility either). A pending model is that very id: still visible
+(and of the harness said), it is kept; one that left the catalog, or is hidden now, is `invalid` again (asked in the
+words first said, among the visible models), never another version of its family. A pending model that was not valid
+goes through the rules again in its words: a family that now names several visible models is asked among them, one
+that names one visible model is that model. A harness with no models left is asked too (its model question offering
+every visible model).
 The reply fills or changes only what it targets: a field the LLM leaves out keeps the pending one, and the task
 changes only to a part of the reply. A model change keeps a still-supported effort; an effort it does not support is
 `missing` again. A cancellation is `unclear` (drop the pending proposal), and a reply without a pending proposal
