@@ -50,7 +50,9 @@ import (
 //     Missing again. Every kept value is resolved again, against the
 //     current catalog and visibility: a pending model is that very id while
 //     it is visible (and of the harness said), else Invalid, never another
-//     version of its family.
+//     version of its family. Only a reply that says a model's words itself
+//     (outside the task) changes a pending model, whatever the parser
+//     answered: it is then a selection from the reply's words alone.
 func Resolve(a *Answer, pending *Interpretation, sources []string, cat Catalog) Result {
 	return resolve(context.Background(), a, pending, sources, scope{full: cat, vis: cat})
 }
@@ -107,10 +109,18 @@ func resolve(ctx context.Context, a *Answer, pending *Interpretation, sources []
 	}
 
 	var m modelRes
-	if pending != nil && word(a.Model) == "" && pending.Model.Valid() {
-		m = sc.keepModel(harness, pending, sel)
-	} else {
+	switch reply := parts[len(parts)-1]; {
+	case pending == nil || !pending.Model.Valid():
 		m = sc.resolveModel(harness, model, sel, parts)
+	case !sc.saysModel(reply):
+		// The parser may repeat the pending model ("GPT Sol", its id):
+		// that is no new selection.
+		m = sc.keepModel(harness, pending, sel)
+	default:
+		m = sc.resolveModel(harness, model, strings.ToLower(reply), []string{reply})
+		if harness != "" {
+			m.harness = sc.harnessField(harness, sel) // said in an earlier sentence too
+		}
 	}
 	if len(named) > 1 && (m.model.Valid() || len(m.near) > 0) {
 		said := cmp.Or(model, m.model.Said, m.model.Value)
@@ -323,6 +333,33 @@ func (sc scope) keepModel(harness string, p *Interpretation, sel string) modelRe
 		r.model = Field{Provenance: Invalid, Said: said}
 	}
 	return r
+}
+
+// saysModel reports whether part (a source without the task) says a model:
+// a number, in digits or words, or a word of a model of the catalog that is
+// no brand or glue, or a near miss of one. A word too many only asks: the
+// reply's words are then all a model may be taken from.
+func (sc scope) saysModel(part string) bool {
+	stop, brand := sc.glueWords(), brands(sc.full)
+	var vocab []string
+	for _, c := range choices(sc.full, "") {
+		for _, w := range modelWords(sc.full, c) {
+			if !stop[w] && !brand[w] && !isNumber(w) {
+				vocab = append(vocab, w)
+			}
+		}
+	}
+	toks := tokens(part)
+	for i, t := range toks {
+		switch {
+		case isNumber(t.w), slices.Contains(numberWords, t.w) && !isGlue(stop, toks, i, 0, len(toks)):
+			return true
+		case stop[t.w] || brand[t.w]:
+		case slices.ContainsFunc(vocab, func(v string) bool { return v == t.w || nearWord(t.w, v) }):
+			return true
+		}
+	}
+	return false
 }
 
 // resolveModel resolves the harness named and the model said (see Resolve).

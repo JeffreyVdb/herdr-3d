@@ -178,6 +178,8 @@ type pcase struct {
 	cls      pClassifier
 	phrasing int
 	task     string
+	// llm, when set, is the LLM's model whatever llmM says (a reply's).
+	llm *string
 }
 
 func (c pcase) String() string {
@@ -203,6 +205,9 @@ func (c pcase) saidHarnesses() []string {
 // llmModel is the LLM's model ("" null); ok false when the variant does not
 // apply to the case.
 func (c pcase) llmModel() (string, bool) {
+	if c.llm != nil {
+		return *c.llm, true
+	}
 	f := c.form
 	switch c.llmM {
 	case llmNull:
@@ -279,13 +284,15 @@ type pOutcome struct {
 }
 
 // allowed are the visible models the words name, of the harness said.
-func (c pcase) allowed(v pVis) []string {
-	said := c.saidHarnesses()
+func (c pcase) allowed(v pVis) []string { return pAllowed(c.form, c.saidHarnesses(), v) }
+
+// pAllowed are the visible models f's words name, of the harness said.
+func pAllowed(f pForm, said []string, v pVis) []string {
 	if len(said) > 1 {
 		return nil // two harnesses said: a model agrees with one at most
 	}
 	var out []string
-	for _, m := range c.form.named(v) {
+	for _, m := range f.named(v) {
 		if slices.Contains(v.shown(), m) && (len(said) == 0 || strings.HasPrefix(m, said[0]+"/")) {
 			out = append(out, m)
 		}
@@ -470,24 +477,115 @@ func TestNoSubstitution(t *testing.T) {
 	f.done()
 }
 
-// pFollowUp is a follow-up: the case, then "Use high effort." under the
-// reply's visibility.
+// pFollowUp is a follow-up: the case, then a reply under the reply's
+// visibility.
 type pFollowUp struct {
 	pcase
-	reply pVis
+	reply   pVis
+	words   string // the reply's model words ("": none)
+	replyLM string // the LLM's model for the reply ("": null)
 }
 
-func (p pFollowUp) String() string { return "follow-up to " + p.reply.name + ": " + p.pcase.String() }
+func (p pFollowUp) String() string {
+	return fmt.Sprintf("follow-up to %s, reply words %q, reply LLM model %q: %s", p.reply.name, p.words, p.replyLM, p.pcase.String())
+}
+
+// pReplyForms are what a reply says of the model, for a first sentence of
+// form f: nothing, its family, the other family, another version.
+func pReplyForms(f pForm) []pForm {
+	form := func(name string) pForm {
+		return pForms[slices.IndexFunc(pForms, func(p pForm) bool { return p.name == name })]
+	}
+	same, other := form("family"), form("claude-family")
+	if f.harness == "claude" {
+		same, other = other, same
+	}
+	return []pForm{form("none"), same, other, form("family-digits")}
+}
+
+// pReplyText is the reply saying f's words.
+func pReplyText(f pForm) string {
+	if f.words == "" {
+		return "Use high effort."
+	}
+	return join("Use", f.words, "with high effort.")
+}
+
+// pReplyLLM are the LLM's model answers to a reply after first ("" null):
+// null, the words the user said first, the pending id, another visible
+// model of its harness, a hidden id. The LLM is told to keep earlier
+// fields, so it may answer any of them to a reply that names no model.
+func pReplyLLM(c pcase, first *hireintent.Interpretation, v2 pVis) []string {
+	out := []string{""}
+	add := func(m string) {
+		if m != "" && !slices.Contains(out, m) {
+			out = append(out, m)
+		}
+	}
+	add(c.form.words)
+	h := cmpOr(c.form.harness, "codex")
+	if first.Model.Valid() {
+		add(first.Model.Value)
+		h = first.Harness.Value
+	}
+	for _, s := range v2.shown() {
+		if m := strings.TrimPrefix(s, h+"/"); m != s && m != first.Model.Value {
+			add(m)
+			break
+		}
+	}
+	add(v2.hiddenModel())
+	return out
+}
+
+// pReplyExpect is the reply's outcome, from labels: the first case c, the
+// first result's model (checked against its own oracle), the reply's form
+// rf and the LLM's model llm ("" null). A reply that names no model keeps a
+// pending model, that very id while it is shown, whatever the LLM answers
+// (#190 F1); one that names a model is a selection from its own words.
+func pReplyExpect(c pcase, first hireintent.Interpretation, rf pForm, llm string, v2 pVis) pOutcome {
+	said := c.saidHarnesses() // the reply says no harness: the first sentence's binds
+	words := rf.modelLike(v2)
+	switch {
+	case first.Model.Valid() && !words:
+		if was := first.Harness.Value + "/" + first.Model.Value; slices.Contains(v2.shown(), was) {
+			return pOutcome{pick: was}
+		}
+		return pOutcome{}
+	case first.Model.Valid() && llm == "":
+		return pOutcome{missing: true} // the LLM's null is asked (D7)
+	case first.Model.Valid():
+		allowed := pAllowed(rf, said, v2)
+		if llm != rf.words {
+			return pOutcome{may: allowed}
+		}
+		switch len(allowed) {
+		case 0:
+			return pOutcome{}
+		case 1:
+			return pOutcome{pick: allowed[0]}
+		}
+		return pOutcome{choices: allowed}
+	case first.Model.Provenance == hireintent.Missing && llm == "":
+		return pOutcome{missing: true}
+	case llm == "" && !words:
+		// An invalid one's words go through the rules again: never a model
+		// they do not name.
+		e := pExpect(c, v2)
+		return pOutcome{may: slices.Concat(e.may, e.choices, []string{e.pick})}
+	}
+	// A pending model not taken, and words from either sentence: a model
+	// one of them names, else asked.
+	return pOutcome{may: slices.Concat(pAllowed(c.form, said, v2), pAllowed(rf, said, v2))}
+}
 
 // Every pair of visibilities between the sentence and the reply (of one
-// catalog), for every harness said, model said and LLM answer; the LLM's
-// harness and the classifier rotate. The reply names no model: the pending
-// model is that very model while it is shown, else asked (#190 F1); a
-// model the sentence could not take is what its words name under the
-// reply's visibility; nothing said stays missing.
+// catalog), for every harness said, model said and LLM answer, and every
+// LLM answer to the reply; the LLM's harness, the classifier and what the
+// reply says of the model rotate.
 func TestNoSubstitutionFollowUp(t *testing.T) {
 	f := &failures{t: t}
-	i := 0
+	i, j := 0, 0
 	for _, h := range pHarnesses {
 		for _, fm := range pForms {
 			for _, lm := range pLLMModels {
@@ -508,28 +606,28 @@ func TestNoSubstitutionFollowUp(t *testing.T) {
 						if r.Hire == nil {
 							continue
 						}
-						var w pOutcome
-						switch first := r.Hire.Model; {
-						case first.Valid():
-							was := r.Hire.Harness.Value + "/" + first.Value
-							if slices.Contains(v2.shown(), was) {
-								w = pOutcome{pick: was}
+						forms := pReplyForms(fm)
+						for _, llm := range pReplyLLM(c, r.Hire, v2) {
+							j++
+							rf := forms[j%len(forms)]
+							w := pReplyExpect(c, *r.Hire, rf, llm, v2)
+							// The classifier's check: a model may be asked about
+							// when either sentence said one and the LLM read one
+							// (on a null, an invalid pending one's words).
+							rc, read := c, llm
+							if read == "" && r.Hire.Model.Provenance == hireintent.Invalid {
+								read, _ = c.llmModel()
 							}
-						case first.Provenance == hireintent.Missing:
-							w = pOutcome{missing: true}
-						default:
-							// Its words go through the rules again: never a model
-							// they do not name.
-							e := pExpect(c, v2)
-							w = pOutcome{may: slices.Concat(e.may, e.choices, []string{e.pick})}
+							rc.llm = &read
+							rc.form = pForm{name: fm.name + "/" + rf.name, askOnly: fm.modelLike(v1) || rf.modelLike(v2)}
+							replyText := pReplyText(rf)
+							got, cls2 := pInterpret(c, replyText, roundTrip(t, r.Hire), v2, ans("hire", "", llm, "high", ""))
+							prob := pCheck(rc, v2, w, got, cls2)
+							if r.Hire.Model.Valid() && !rf.modelLike(v2) && cls2 != nil && len(cls2.Calls()) > 0 {
+								prob += "; the classifier was asked about a kept model"
+							}
+							f.add(pFollowUp{c, v2, rf.words, llm}, text+" / "+replyText, prob)
 						}
-						reply := pFollowUp{c, v2}
-						got, cls2 := pInterpret(c, "Use high effort.", roundTrip(t, r.Hire), v2, ans("hire", "", "", "high", ""))
-						prob := pCheck(c, v2, w, got, cls2)
-						if first := r.Hire.Model; first.Valid() && cls2 != nil && len(cls2.Calls()) > 0 {
-							prob += "; the classifier was asked about a kept model"
-						}
-						f.add(reply, text+" / Use high effort.", prob)
 					}
 				}
 			}

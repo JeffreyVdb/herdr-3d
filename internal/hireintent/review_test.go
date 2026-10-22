@@ -35,6 +35,31 @@ func TestReviewPendingModelHidden(t *testing.T) {
 	}
 }
 
+// Review round 2, F1: an effort-only reply where the LLM repeats a model
+// (the pending words, its id, another id) keeps the pending model: that
+// very id while shown, else asked. Only the reply's own words change it.
+func TestR2PendingEchoKeepsIdentity(t *testing.T) {
+	cat := matrixCatalog()
+	first := mustHire(t, matrixInterpret("Hire a GPT Sol agent to fix it.", nil, cat, visibilities[0].hidden, nil, ans("hire", "", "GPT Sol", "", "fix it.")))
+	for _, model := range []string{"GPT Sol", "gpt-6.1-sol", "gpt-6-sol", "gpt-5.6-sol"} {
+		t.Run(model, func(t *testing.T) {
+			in := mustHire(t, matrixInterpret("Use high effort.", roundTrip(t, first), cat, hireintent.Hidden{"codex": {"gpt-6.1-sol", "gpt-5.6-sol"}}, nil, ans("hire", "", model, "high", "")))
+			if in.Model.Provenance != hireintent.Invalid || in.ReadyForReview {
+				t.Errorf("hidden pending model substituted: LLM model=%q => %s ready=%v", model, fields(in), in.ReadyForReview)
+			}
+			kept := mustHire(t, matrixInterpret("Use high effort.", roundTrip(t, first), cat, visibilities[0].hidden, nil, ans("hire", "", model, "high", "")))
+			if kept.Model.Value != "gpt-6.1-sol" || !kept.ReadyForReview {
+				t.Errorf("shown pending model not kept: LLM model=%q => %s ready=%v", model, fields(kept), kept.ReadyForReview)
+			}
+		})
+	}
+	// The reply's own words do change it.
+	in := mustHire(t, matrixInterpret("Use GPT 6 Sol with high effort.", roundTrip(t, first), cat, hireintent.Hidden{"codex": {"gpt-6.1-sol", "gpt-5.6-sol"}}, nil, ans("hire", "", "gpt-6.1-sol", "high", "")))
+	if in.Model.Value != "gpt-6-sol" || !in.ReadyForReview {
+		t.Errorf("the reply's model not taken: %s ready=%v", fields(in), in.ReadyForReview)
+	}
+}
+
 // R4 / UX2: a version said in words is never another version.
 func TestReviewSpokenVersions(t *testing.T) {
 	cat := matrixCatalog()
