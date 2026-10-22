@@ -588,6 +588,11 @@ export class CityView {
     return this.floors.length === 0;
   }
 
+  /** #146: the desks and figures in the dollhouses: most of the city's programs (see `App.stageCity`). */
+  get furniture(): THREE.Object3D[] {
+    return [this.desks?.group, this.crowd?.group].filter((g): g is THREE.Group => !!g);
+  }
+
   frameAll(): { center: THREE.Vector3; radius: number } {
     const center = this.bounds.getCenter(new THREE.Vector3());
     return { center, radius: Math.max(6, this.bounds.getSize(new THREE.Vector3()).length() / 2) };

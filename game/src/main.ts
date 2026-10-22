@@ -55,8 +55,13 @@ export interface H3DDebug {
   /** #143: the game clock (`App.time`, ms: the frame's rAF timestamp) that the last rendered frame was stepped to. */
   frameAt: number;
   error: string | null;
-  /** True once a world snapshot has been rendered. */
+  /** True once a world snapshot has been rendered (#146: and the first city compiled and drawn whole, `App.cityReady`). */
   ready: boolean;
+  /**
+   * #146: start-up milestones (`performance.now()`, ms from navigation) and the renderer's programs then
+   * (`renderer.info.memory.programs`): the first frame that drew the city (its shell, `App.stageCity`), and `ready`.
+   */
+  startup: { cityAt: number | null; cityPrograms: number | null; readyAt: number | null; readyPrograms: number | null };
   /**
    * `busy` while the elevator-door transition runs; `asleep`: the office's lights are off (null in the city).
    * `floor` is the floor with an interior (the one you are on, or outside the one you last left; null in the
@@ -406,6 +411,7 @@ const h3d: H3DDebug = {
   frameAt: 0,
   error: null,
   ready: false,
+  startup: { cityAt: null, cityPrograms: null, readyAt: null, readyPrograms: null },
   view: () => ({
     mode: app?.mode ?? 'city',
     floor: app?.office?.id ?? null,
@@ -806,7 +812,12 @@ async function start(): Promise<void> {
       h3d.frames = a.frames;
       h3d.frameAt = a.time * 1000;
       screenTrace?.push({ frame: a.frames, screens: a.laptops.screens() });
-      if (!h3d.ready && a.store.snapshots > 0) h3d.ready = true;
+      const s = h3d.startup;
+      if (s.cityAt === null && a.cityDrawn) Object.assign(s, { cityAt: performance.now(), cityPrograms: r.info.memory.programs });
+      if (!h3d.ready && a.cityReady) {
+        Object.assign(s, { readyAt: performance.now(), readyPrograms: r.info.memory.programs });
+        h3d.ready = true;
+      }
     };
     a.start();
     return a;

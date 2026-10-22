@@ -407,6 +407,12 @@ export class App {
   private retired: OfficeView[] = [];
   /** #141: a cold entry's shaders are compiling behind the doors: no frame is drawn meanwhile (`warmUp`). */
   private warming = false;
+  /** #146: the frame count when the first city was built (-1: not yet); the next frame draws it (`stageCity`). */
+  cityBuiltAt = -1;
+  /** #146: the first city's desks and figures are compiling (`stageCity`). */
+  private staging = false;
+  /** #146: the frame count when they showed again: the next frame draws them. */
+  private stagedAt = -1;
   /** #141: the outside of the building you left for the city (see `keepOutside`). */
   private kept: { shape: string; view: OutsideView } | null = null;
   private fireDoor = 0;
@@ -1034,6 +1040,7 @@ export class App {
       const firstWorld = this.city.isEmpty;
       this.city.build(this.store.city());
       if (firstWorld) this.frameCity(false);
+      if (firstWorld && this.cityBuiltAt === -1) void this.stageCity();
       if (this.mode === 'floor') this.syncWalk();
       this.syncLogos();
     } else {
@@ -2198,6 +2205,49 @@ export class App {
     } finally {
       this.warming = false;
     }
+  }
+
+  /**
+   * #146: the first city, at start-up: its first frame draws the shell (the buildings, the ground, the signs) while the
+   * desks and figures in the dollhouses, most of its programs, are hidden and compiled over the next tasks
+   * (`compileAsync`, one object at a time, as `warmUp`); then they show, and their shadow pass is built on that frame.
+   * Without it, one frame built every program at once. Later builds (a floor added, moved) are drawn in one frame as
+   * before: hiding the desks there would blink them.
+   */
+  private async stageCity(): Promise<void> {
+    this.cityBuiltAt = this.stagedAt = this.frames;
+    const parts = this.city.furniture;
+    if (!parts.length) return;
+    this.staging = true;
+    const culled: THREE.Object3D[] = [];
+    for (const g of parts) g.traverse((o) => (o as THREE.Mesh).isMesh && o.frustumCulled && culled.push(o));
+    for (const o of culled) o.frustumCulled = false;
+    // A new render call for the scene's cache key, as in `warmUp`.
+    (this.r.info as { calls: number }).calls++;
+    try {
+      // compileAsync picks what to compile before its first await: the groups hide (and cull) again at once.
+      await holdDisposals(() => {
+        const done = Promise.all(parts.map((g) => this.r.compileAsync(g, this.cityCam, this.city.scene)));
+        for (const g of parts) g.visible = false;
+        for (const o of culled) o.frustumCulled = true;
+        return done;
+      });
+    } finally {
+      for (const g of parts) g.visible = true;
+      // Drawn on the next frame, their shadow pass built there.
+      this.staging = false;
+      this.stagedAt = this.frames;
+    }
+  }
+
+  /** #146: a snapshot is in and the first city compiled and drawn whole (`h3d.ready` waits for it). */
+  get cityReady(): boolean {
+    return this.store.snapshots > 0 && !this.staging && this.frames > this.stagedAt;
+  }
+
+  /** #146: the city has been drawn (its shell at least, `stageCity`). */
+  get cityDrawn(): boolean {
+    return this.cityBuiltAt >= 0 && this.frames > this.cityBuiltAt && this.mode === 'city';
   }
 
   /** The elevator to a building's lobby (null: the unassigned lot's). */
