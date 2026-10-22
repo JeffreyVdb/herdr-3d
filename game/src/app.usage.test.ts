@@ -26,7 +26,7 @@ const snap = (): Snapshot => ({
   },
 });
 
-const RUN = new Set(['applyUsage', 'cityOnce', 'refreshTopbar', 'topbarFloor', 'needCandidates', 'inboxItems', 'inboxEntries', 'pingInbox']);
+const RUN = new Set(['applyUsage', 'cityOnce', 'syncWalk', 'buildingFor', 'buildingById', 'refreshTopbar', 'topbarFloor', 'needCandidates', 'inboxItems', 'inboxEntries', 'pingInbox']);
 /** Of those, the ones that only read (left out of the calls). */
 const HELPERS = new Set(['applyUsage', 'cityOnce', 'topbarFloor', 'needCandidates', 'inboxItems', 'inboxEntries']);
 
@@ -42,6 +42,7 @@ function run(make: (s: WorldStore) => Change, o: { mode?: 'city' | 'floor'; offi
       get: (_t, k) => (typeof k === 'symbol' ? undefined : stub(`${path}.${String(k)}`)),
       apply: (_t, _self, args: unknown[]) => {
         calls.push(path);
+        if (path === 'panels.buildingOf') return 'b1';
         return path === 'inbox.set' || path === 'hud.setFloor' ? args : undefined;
       },
       set: () => true,
@@ -53,7 +54,14 @@ function run(make: (s: WorldStore) => Change, o: { mode?: 'city' | 'floor'; offi
     // On a floor: standing on `top` (storey 1 of the building), in its office.
     place: { area: 'floor', storey: 1 },
     building: { id: 'b1', name: 'Work', floors: [{ id: 'low' }, { id: 'top' }] },
-    office: o.office === undefined ? null : o.office === null ? null : { id: o.office, updateWorker: () => calls.push('office.updateWorker'), updateUsage: () => calls.push('office.updateUsage') },
+    office:
+      o.office === undefined || o.office === null
+        ? null
+        : { id: o.office, updateWorker: () => calls.push('office.updateWorker'), updateUsage: () => calls.push('office.updateUsage'), apply: () => true },
+    // What `syncWalk` reads: no storey loaded yet, the walker on open ground (nothing solid around it).
+    loaded: null,
+    walker: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, place: () => calls.push('walker.place') },
+    walkWorldNow: () => ({ supports: [{ x0: -100, z0: -100, x1: 100, z1: 100, y: 0 }], solids: [] }),
   };
   const proto = App.prototype as unknown as Record<string, unknown>;
   const self: Record<string, unknown> = new Proxy(state, {
@@ -162,5 +170,48 @@ describe('App.applyChange: every other change keeps every refresh (#144)', () =>
     expect(r.change.structure).toBe(true);
     expect(r.calls).toContain('city.build');
     expect(r.cityBuilt).toBe(1);
+  });
+});
+
+describe('App.applyChange: a structure change inside a building builds the city once (#144 AC4)', () => {
+  const renamed = (s: WorldStore) => s.applyEvent(ev({ t: 'building.upsert', seq: 11, building: { id: 'b1', name: 'Renamed', sort: 0, floors: ['top', 'low'] } }));
+
+  it('in its lobby: the scene and the walk (syncWalk, buildingById) share it', () => {
+    const r = run(renamed, { mode: 'floor', office: null });
+    expect(r.change.structure).toBe(true);
+    expect(r.calls).toEqual(expect.arrayContaining(['city.build', 'syncWalk', 'buildingById', 'setBuilding']));
+    expect(r.calls).not.toContain('leaveFloor');
+    expect(r.cityBuilt).toBe(1);
+  });
+
+  it('on a floor: the scene, its building (buildingFor) and the top bar share it', () => {
+    const r = run((s) => s.applyEvent(ev({ t: 'worker.upsert', seq: 11, worker: worker('a', 3) })), { mode: 'floor', office: 'top' });
+    expect(r.change.structure).toBe(true);
+    expect(r.calls).toEqual(expect.arrayContaining(['city.build', 'syncWalk', 'buildingFor', 'setBuilding', 'refreshTopbar']));
+    expect(r.calls).not.toContain('leaveFloor');
+    expect(r.cityBuilt).toBe(1);
+  });
+
+  it('a reconnect snapshot on a floor: once', () => {
+    expect(run((s) => s.applySnapshot(snap(), 0), { mode: 'floor', office: 'top' }).cityBuilt).toBe(1);
+  });
+
+  it('the floor you stand on leaving its stack: pinned, then built again once (the lists changed) and walked on', () => {
+    // `low` is hidden: only its worker `c` lists it. `c` leaving takes it out of the stack while you stand on it.
+    const r = run(
+      (s) => {
+        const hidden = snap();
+        hidden.world.floors[1]!.hidden = true;
+        s.applySnapshot(hidden, 0);
+        return s.applyEvent(ev({ t: 'worker.removed', seq: 11, id: 'c', session: 'low', floor_id: 'low', workspace_id: 'ws-c' }));
+      },
+      { mode: 'floor', office: 'low' },
+    );
+    expect(r.change.structure).toBe(true);
+    expect(r.calls.filter((k) => k === 'city.build')).toHaveLength(2);
+    expect(r.calls.filter((k) => k === 'syncWalk')).toHaveLength(2);
+    expect(r.calls).toContain('setBuilding');
+    expect(r.calls).not.toContain('leaveFloor');
+    expect(r.cityBuilt).toBe(2);
   });
 });
