@@ -117,7 +117,7 @@ describe('TranscriptMode: the questions’ sheet across views and seats (#187)',
   });
   afterEach(() => document.body.replaceChildren());
 
-  async function seat(): Promise<{ tx: TranscriptMode; sit: () => Promise<void> }> {
+  async function seat(before: (tx: TranscriptMode) => void = () => {}): Promise<{ tx: TranscriptMode; sit: () => Promise<void> }> {
     document.body.replaceChildren();
     const tx = new TranscriptMode({
       feed: () => null,
@@ -132,7 +132,9 @@ describe('TranscriptMode: the questions’ sheet across views and seats (#187)',
       tx.sit('a', 'Ada', true, 'claude');
       await flush();
     };
-    await sit();
+    tx.sit('a', 'Ada', true, 'claude');
+    before(tx); // what the store has before the view is up (it mounts with it)
+    await flush();
     return { tx, sit };
   }
   const sheet = () => document.querySelector<HTMLDialogElement>('dialog.tx-qsheet');
@@ -164,6 +166,28 @@ describe('TranscriptMode: the questions’ sheet across views and seats (#187)',
     await sit();
     tx.asked({ ...ASK, tool_use_id: 'tu-b' });
     expect(sheet()?.open ?? false).toBe(false);
+  });
+
+  it('mounted with the screen’s question and an ask (the screen’s first): the keyboard is on the ask, not <body> (R1)', async () => {
+    const seen: string[] = [];
+    const onWin = (e: KeyboardEvent) => void seen.push(e.key);
+    window.addEventListener('keydown', onWin);
+    try {
+      await seat((tx) => {
+        tx.blocked({ kind: 'permission', text: 'Allow?', excerpt: [], choices: [{ n: 1, label: 'Yes' }], hash: 'screen1' });
+        tx.asked(ASK);
+      });
+      expect(sheet()?.open).toBe(true);
+      expect(document.querySelector('.tx-bq')?.hasAttribute('hidden')).toBe(true);
+      expect(document.querySelector('.tx-ask')!.contains(document.activeElement)).toBe(true);
+      const e = new KeyboardEvent('keydown', { key: '2', bubbles: true, cancelable: true });
+      document.activeElement!.dispatchEvent(e);
+      expect(e.defaultPrevented).toBe(true); // Blue, on to Extras
+      expect(document.querySelector('.tx-ask-row.is-done .tx-ask-row-text')?.textContent).toBe('Blue');
+      expect(seen).toEqual([]);
+    } finally {
+      window.removeEventListener('keydown', onWin);
+    }
   });
 
   it('the ask’s picks survive closing and opening the sheet, and standing up and sitting again', async () => {

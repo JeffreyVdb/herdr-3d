@@ -1121,6 +1121,29 @@ describe('the screen’s question, in the questions’ sheet', () => {
     expect(host.prompts).toEqual(['draft']);
   });
 
+  it('an ask replacing it while the sheet is open takes the keyboard (not <body>): its digits are its, Esc only closes the sheet (R1)', () => {
+    const seen: string[] = [];
+    const onWin = (e: KeyboardEvent) => void seen.push(e.key);
+    window.addEventListener('keydown', onWin);
+    try {
+      mount();
+      view.setBlocked(Q);
+      expect(document.activeElement?.classList.contains('tx-choice')).toBe(true);
+      view.setAsk({ tool_use_id: 'tu-r1', agent: 'claude', source: 'transcript', since: 1, questions: [{ question: 'Which color?', header: 'Color', multi: false, other: false, options: [{ label: 'Red' }, { label: 'Blue' }] }] });
+      expect(card()?.hidden).toBe(true);
+      expect(sheet()?.open).toBe(true);
+      expect(q('.tx-ask')!.contains(document.activeElement)).toBe(true);
+      press(document.activeElement as HTMLElement, '2');
+      expect(q('.tx-ask-opt[data-n="2"]')?.getAttribute('aria-checked')).toBe('true');
+      expect(host.answers).toEqual([]);
+      press(document.activeElement as HTMLElement, 'Escape');
+      expect(sheet()?.open).toBe(false);
+      expect(seen).toEqual([]);
+    } finally {
+      window.removeEventListener('keydown', onWin);
+    }
+  });
+
   it('an empty question reads "Waiting for input" and still offers the terminal', () => {
     mount();
     view.setBlocked({ kind: 'unknown', text: '', excerpt: [], choices: [], hash: 'x' });

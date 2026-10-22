@@ -72,6 +72,8 @@ export class QuestionSheet {
   private hadUrgent = false;
   /** An Esc is being handled in the sheet (a card's way back to the timeline is then a close). */
   private escaping = false;
+  /** The card the keyboard was last on (its answer on its way, the keyboard waits on the sheet for it). */
+  private last: Card | null = null;
   private destroyed = false;
 
   constructor(
@@ -96,6 +98,7 @@ export class QuestionSheet {
     // Capture: a card's text box stops its own Esc before it bubbles here. Any other key or a press is not an Esc.
     this.sheet.el.addEventListener('keydown', (e) => (this.escaping = isEsc(e) && !e.ctrlKey && !e.metaKey), true);
     this.sheet.el.addEventListener('pointerdown', () => (this.escaping = false), true);
+    this.sheet.el.addEventListener('focusin', (e) => (this.last = this.cardOf(e.target) ?? this.last));
     this.sheet.el.addEventListener('keydown', (e) => this.onKey(e));
   }
 
@@ -147,7 +150,25 @@ export class QuestionSheet {
       this.opened.add(id);
       if (!this.sheet.isOpen) this.sheet.open(null);
     }
+    this.keepFocus();
     this.button.set({ ...s, open: this.sheet.isOpen });
+  }
+
+  /**
+   * Open, the keyboard is on a card's control, whatever the cards became: one emptied or replaced under it (the
+   * screen's question gives way to an ask) leaves it on <body>, where Esc would stand you up; one whose answer was on its
+   * way left it on the sheet itself, and it goes back to that card once its controls are on again (a refusal). The card
+   * it was on, else the first up; none can take it (its controls off): the sheet, whose keys go to that card.
+   * Anywhere else in the sheet (another card, the close button) it stays.
+   */
+  private keepFocus(): void {
+    if (!this.sheet.isOpen) return;
+    const a = document.activeElement;
+    if (a && a !== this.sheet.el && this.sheet.el.contains(a)) return;
+    const back = this.last?.shown ? this.last : null;
+    if (back) back.focus();
+    else this.first();
+    if (!this.sheet.el.contains(document.activeElement)) this.sheet.el.focus({ preventScroll: true });
   }
 
   /** The button, `Q`: the sheet, the keyboard on its first question (closed, back to `opener`, else where it was). */
@@ -173,17 +194,18 @@ export class QuestionSheet {
 
   /**
    * A card's way back to the timeline. In the sheet: its Esc (or its text box's) closes it; its last question gone (an
-   * answer recorded) puts the keyboard on the next card up, else closes it; its controls off while its answer is on its
-   * way keep it open, the keyboard on the sheet itself (the card says how the answer went).
+   * answer recorded) puts the keyboard on the next card up; its controls off while its answer is on its way keep it
+   * open, the keyboard on the sheet itself (the card says how the answer went, and `keepFocus` brings it back).
    */
   leave(card: Card): void {
     if (this.destroyed) return;
     if (!this.sheet.isOpen) return this.host.focusTimeline();
     if (this.escaping) return this.sheet.close();
     if (card.shown) return this.sheet.el.focus({ preventScroll: true });
-    const next = this.first();
-    if (next) return next.focus({ preventScroll: true });
-    this.sheet.close();
+    if (this.first()) return;
+    // No card up to take it yet (the screen's question is drawn again only after the ask's card went): the sheet holds
+    // it, and the sync after every card's drawing closes it with nothing left or puts the keyboard on what came.
+    this.sheet.el.focus({ preventScroll: true });
   }
 
   destroy(): void {
@@ -193,10 +215,19 @@ export class QuestionSheet {
     this.button.destroy();
   }
 
+  /** The cards, urgent first. */
+  private get all(): Card[] {
+    const { ask, blocked, followup, asyncq } = this.cards;
+    return [ask, blocked, followup, asyncq];
+  }
+
+  private cardOf(t: EventTarget | null): Card | undefined {
+    return t instanceof Node ? this.all.find((c) => c.el.contains(t)) : undefined;
+  }
+
   /** The first card up, urgent first: its keyboard's place. */
   private first(): HTMLElement | null {
-    const { ask, blocked, followup, asyncq } = this.cards;
-    const card = [ask, blocked, followup, asyncq].find((c) => c.shown);
+    const card = this.all.find((c) => c.shown);
     if (!card) return null;
     card.focus();
     const a = document.activeElement;
@@ -205,6 +236,7 @@ export class QuestionSheet {
 
   private closed(): void {
     this.escaping = false; // an Esc in the sheet always ends here
+    this.last = null;
     if (this.destroyed) return;
     this.button.set({ ...this.state(), open: false });
     // Nowhere else to be in the view (no opener, it went, the button now hidden, a control outside the view): the
@@ -224,11 +256,12 @@ export class QuestionSheet {
       this.host.toTerminal();
       return;
     }
-    const t = e.target instanceof Node ? e.target : null;
-    const { ask, blocked, followup, asyncq } = this.cards;
-    const card = t ? [ask, blocked, followup, asyncq].find((c) => c.el.contains(t)) : undefined;
+    // On the sheet itself (a card's controls off while its answer is on its way, a press on its padding): the card the
+    // keyboard was on, else the first up, takes its keys as from outside it (Esc stays the sheet's, Tab the browser's).
+    const inCard = e.target !== this.sheet.el;
+    const card = inCard ? this.cardOf(e.target) : this.last?.shown ? this.last : this.all.find((c) => c.shown);
     // Enter and Space on a button stay its click (an option is picked, never sent): no card takes them.
-    if (card && (card === blocked ? blocked.key(e) : card.key(e, true))) {
+    if (card && (card === this.cards.blocked ? this.cards.blocked.key(e) : card.key(e, inCard))) {
       e.preventDefault();
       e.stopPropagation();
     }
