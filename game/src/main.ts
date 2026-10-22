@@ -41,7 +41,9 @@ import type { NeedItem } from './world/next';
 import { BuildInfo, loadHelperVersion } from './version';
 import { takeToken } from './net/endpoint';
 import { BridgeApi, BridgeBook } from './net/bridges';
-import { migrateBridgeKeys, setBridgeScope } from './net/bridgeScope';
+import type { SocketLike } from './net/client';
+import { Preopened } from './net/preopen';
+import { FIRST_HELLO, handOver, startEarly } from './net/startup';
 import type { Area, BuildingPlan } from './world/building';
 import type { floorLayout } from './world/layout';
 import { walkOutRoute, type Waypoint } from './world/route';
@@ -751,25 +753,6 @@ function safeLocalStorage(): Storage | null {
   }
 }
 
-/** #57: the bridge in use when the helper last said (shared; only read when it does not answer at start). */
-const LAST_BRIDGE_KEY = 'h3d.bridges.active';
-
-function rememberBridge(id: string): void {
-  try {
-    safeLocalStorage()?.setItem(LAST_BRIDGE_KEY, id);
-  } catch {
-    // not remembered
-  }
-}
-
-function rememberedBridge(): string | null {
-  try {
-    return safeLocalStorage()?.getItem(LAST_BRIDGE_KEY) || null;
-  } catch {
-    return null;
-  }
-}
-
 async function start(): Promise<void> {
   const r = new THREE.WebGPURenderer({
     antialias: true,
@@ -782,7 +765,30 @@ async function start(): Promise<void> {
   r.shadowMap.enabled = params.get('shadows') !== '0';
   r.shadowMap.type = THREE.PCFShadowMap;
   document.body.appendChild(r.domElement);
-  await r.init();
+
+  // #57: a page the helper serves (it has a token) asks it which bridge is in use, alongside the font, before anything
+  // reads the per-bridge keys; the helper answers from memory (never after an ssh handshake), within 2.5 s or not at all.
+  // #146: alongside the renderer's init too; the bridge socket opens as soon as the list settles its URL.
+  const token = takeToken(window.location, safeLocalStorage(), (u) => history.replaceState(null, '', u));
+  const bridges = new BridgeBook(token ? new BridgeApi(token) : null);
+  const init = r.init();
+  const pre = await startEarly({
+    init,
+    list: bridges.api?.load() ?? Promise.resolve(null),
+    // Canvas text (boards, cards) needs the font before it is drawn. After the renderer's init, as before #146: a font
+    // load asked for first held init's own continuation ~100 ms here (measured, docs/decisions.md).
+    fonts: init.then(() =>
+      Promise.race([
+        Promise.all(['800 32px "Recursive Variable"', '500 25px "Recursive Variable"'].map((f) => document.fonts.load(f))),
+        new Promise((res) => setTimeout(res, 1500)),
+      ]),
+    ),
+    token,
+    book: bridges,
+    storage: safeLocalStorage(),
+    location: window.location,
+    preopen: (url) => new Preopened(url, (u) => new WebSocket(u) as unknown as SocketLike, FIRST_HELLO),
+  });
 
   h3d.backend = backendName(r.backend);
   const buildInfo = new BuildInfo();
@@ -790,41 +796,21 @@ async function start(): Promise<void> {
   const overlay = document.getElementById('debug');
   if (overlay) overlay.textContent = `backend: ${h3d.backend}`;
 
-  // #57: a page the helper serves (it has a token) asks it which bridge is in use, alongside the font, before anything
-  // reads the per-bridge keys; the helper answers from memory (never after an ssh handshake), within 2.5 s or not at all.
-  const token = takeToken(window.location, safeLocalStorage(), (u) => history.replaceState(null, '', u));
-  const bridges = new BridgeBook(token ? new BridgeApi(token) : null);
-  const [list] = await Promise.all([
-    bridges.api?.load() ?? Promise.resolve(null),
-    // Canvas text (boards, cards) needs the font before it is drawn.
-    Promise.race([
-      Promise.all(['800 32px "Recursive Variable"', '500 25px "Recursive Variable"'].map((f) => document.fonts.load(f))),
-      new Promise((res) => setTimeout(res, 1500)),
-    ]),
-  ]);
-  if (list) {
-    // The keys kept before #57 belong to the first bridge (the one an install from before came up with).
-    if (list.bridges[0]) migrateBridgeKeys(safeLocalStorage(), list.bridges[0].id);
-    setBridgeScope(list.active || null);
-    rememberBridge(list.active);
-    bridges.set(list);
-  } else if (token) {
-    // The helper did not answer in time: the bridge it last named, so drafts never land in another bridge's keys.
-    setBridgeScope(rememberedBridge());
-  }
-
   void loadHelperVersion().then((v) => buildInfo.setHelper(v));
-  app = new App({ renderer: r, host: document.body, params, buildInfo, onBridgeVersion: (v) => buildInfo.setBridge(v), token, bridges });
-  const a = app;
-  const origRender = a.render.bind(a);
-  a.render = () => {
-    origRender();
-    h3d.frames = a.frames;
-    h3d.frameAt = a.time * 1000;
-    screenTrace?.push({ frame: a.frames, screens: a.laptops.screens() });
-    if (!h3d.ready && a.store.snapshots > 0) h3d.ready = true;
-  };
-  a.start();
+  // #146: a game that fails to build (or start) never takes the pre-opened socket: `handOver` closes it.
+  const a = handOver(pre, (u) => new WebSocket(u) as unknown as SocketLike, (socket) => {
+    const a = (app = new App({ renderer: r, host: document.body, params, buildInfo, onBridgeVersion: (v) => buildInfo.setBridge(v), token, bridges, socket }));
+    const origRender = a.render.bind(a);
+    a.render = () => {
+      origRender();
+      h3d.frames = a.frames;
+      h3d.frameAt = a.time * 1000;
+      screenTrace?.push({ frame: a.frames, screens: a.laptops.screens() });
+      if (!h3d.ready && a.store.snapshots > 0) h3d.ready = true;
+    };
+    a.start();
+    return a;
+  });
   const floor = params.get('floor');
   if (floor) {
     const wait = setInterval(() => {

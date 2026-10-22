@@ -1,7 +1,8 @@
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { BridgeClient, type CommandResult, type ConnState, type SocketLike } from './net/client';
-import { bridgeUrl, takeToken } from './net/endpoint';
+import { BridgeClient, type CommandResult, type ConnState, type SocketFactory, type SocketLike } from './net/client';
+import { takeToken } from './net/endpoint';
+import { GAME_CLIENT, socketUrl } from './net/startup';
 import { postUpload } from './net/upload';
 import { loggedArgs } from './net/redact';
 import { deleteLogo, logoUrl, putLogo } from './net/logo';
@@ -169,6 +170,8 @@ export interface AppOptions {
   token?: string | null;
   /** #57: the helper's bridges, as main.ts read them before anything else (absent: no helper serves this page). */
   bridges?: BridgeBook;
+  /** #146: the bridge socket factory, with the socket main.ts opened early for the first connect (absent: a new WebSocket each). */
+  socket?: SocketFactory;
 }
 
 export interface LookAt {
@@ -203,7 +206,6 @@ interface BuildingCtx {
   shape: string;
 }
 
-const CLIENT = 'herdr-3d-game/0.2';
 /** Gap between the gong rings of several PRs merged in one poll. */
 const GONG_GAP_MS = 450;
 /** A desk a hire is on its way to: chair in, no laptop, no "+". */
@@ -634,15 +636,14 @@ export class App {
     const token = o.token !== undefined ? o.token : takeToken(window.location, safeStorage(), (u) => history.replaceState(null, '', u));
     this.token = token;
     this.noOpen = o.params.get('open') === 'none';
-    // #57: the helper lets this page through to the bridge its keys belong to only (`none`: it had none): its /ws and
-    // every HTTP route (logos, uploads, frames, whiteboards, drops), whose URLs derive from this one.
-    this.url = bridgeUrl(window.location, token, bridgeScope() ?? (this.bridges.list ? 'none' : null));
+    // #146: the URL main.ts pre-opened the socket at, when it opened one (the same helper and inputs).
+    this.url = socketUrl(window.location, token, this.bridges);
     this.follow = followActiveBridge(this.bridges, bridgeScope, (b) => this.followSwitch(b));
     onBridgeChanged(() => void this.follow.connLost());
     this.client = new BridgeClient({
       url: this.url,
-      clientName: CLIENT,
-      socket: (u) => new WebSocket(u) as unknown as SocketLike,
+      clientName: GAME_CLIENT,
+      socket: o.socket ?? ((u) => new WebSocket(u) as unknown as SocketLike),
       handlers: {
         onWelcome: (w) => o.onBridgeVersion?.(bannerVersion(w.server)),
         onSnapshot: (s) => {
