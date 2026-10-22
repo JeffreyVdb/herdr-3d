@@ -90,16 +90,18 @@ func Run(ctx context.Context, roles Roles, timeout time.Duration, req Request) R
 	if roles == nil || roles.State(ai.RoleLLM) != ai.StateReady {
 		return Result{Text: req.Text, Error: failure(ai.ErrNotReady)}
 	}
+	// The bound is the whole interpretation's: the reasoning metadata (a
+	// fetch on a cache miss), the LLM and the classifier.
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	if req.Classifier == nil && roles.State(ai.RoleClassifier) == ai.StateReady {
 		req.Classifier = roles.Classifier()
 	}
 	if rs, ok := roles.(Reasoner); ok && req.Reasoning.Support == "" {
 		req.Reasoning = rs.ModelReasoning(ctx)
-	}
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
 	}
 	return Interpret(ctx, roles.LLM(), req)
 }
@@ -139,6 +141,10 @@ func Interpret(ctx context.Context, l ai.LLM, req Request) Result {
 	effort := ""
 	if req.Reasoning.Support == ai.SupportYes && req.Reasoning.Allows(ReasoningEffort) {
 		effort = ReasoningEffort
+	}
+	if err := ctx.Err(); err != nil {
+		res.Error = failure(err) // the bound passed before the call: none is made
+		return res
 	}
 	answer, err := l.Complete(ctx, ai.Request{
 		Messages:        []ai.Message{{Role: "system", Content: Prompt}, {Role: "user", Content: string(payload)}},
