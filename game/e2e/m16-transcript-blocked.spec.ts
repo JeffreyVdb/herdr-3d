@@ -75,3 +75,42 @@ test('a question arriving while you type: the prompt turns off, its draft kept, 
   expect(await page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.prompt' || c.t === 'worker.keys').length)).toBe(0);
   clean();
 });
+
+test('an ask over the screen’s question while the sheet is open: the keyboard goes to the ask, Esc only hides the sheet (#187 R1)', async ({ page }) => {
+  const clean = watchErrors(page);
+  const w = tofu();
+  const seen: string[] = [];
+  await page.exposeFunction('h3dWindowKey', (k: string) => void seen.push(k));
+  await openGame(page, 'demo-m5', '', SIM);
+  await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+  await frames(page, 3);
+  expect(await page.evaluate((id) => window.__h3d.face(id), w.id)).toBe(true);
+  await frames(page, 3);
+  expect(await page.evaluate((id) => window.__h3d.sitAt(id), w.id)).toBe(true);
+  await frames(page, 30);
+  await seatMode(page, 'transcript');
+  const sheet = page.locator('dialog.tx-qsheet');
+  await expect(sheet).toHaveAttribute('open', '');
+  await expect(sheet.locator('.tx-bq .tx-choice-sel')).toBeFocused();
+  // What reaches the page's own keys (the laptop's Esc stands you up), from here on.
+  await page.evaluate(() => window.addEventListener('keydown', (e) => void (window as unknown as { h3dWindowKey(k: string): void }).h3dWindowKey(e.key)));
+
+  // The agent asks while the screen's question is up: the ask's card replaces it (and its focused chip).
+  const ask = {
+    tool_use_id: 'toolu_e2e_r1',
+    agent: 'claude',
+    questions: [{ header: 'Color', question: 'Which color?', multi: false, other: false, options: [{ label: 'Red' }, { label: 'Blue' }] }],
+  };
+  await page.evaluate(([id, a]) => window.__h3d.simAsk({ id, ask: a }), [w.id, ask] as const);
+  await expect(sheet.locator('.tx-ask')).toBeVisible();
+  await expect(sheet.locator('.tx-bq')).toBeHidden();
+  await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('dialog.tx-qsheet .tx-ask'))).toBe(true);
+  await page.keyboard.press('2');
+  await expect(sheet.locator('.tx-ask-opt[data-n="2"]')).toHaveAttribute('aria-checked', 'true');
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+  expect(await page.evaluate(() => window.__h3d.seated())).not.toBeNull();
+  expect(seen).toEqual([]);
+  expect(await page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.answer').length)).toBe(0);
+  clean();
+});

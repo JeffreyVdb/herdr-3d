@@ -326,6 +326,28 @@ test('another question while an answer is sent: the old ack leaves it up, the pr
   clean();
 });
 
+test('a refused answer: the keyboard is back on the card, Ctrl+Enter sends it again (#187 R2)', async ({ page }) => {
+  const clean = watchErrors(page);
+  const w = demoWorker('Pebble');
+  await openGame(page, 'demo-m5', '', `${SIM}&simfail=answer_ask_failed`);
+  await sitAtTranscript(page, w);
+  const card = sheetOf(page).locator('.tx-ask');
+  await page.evaluate((a) => window.__h3d.simAsk({ id: 'cf1db588-9a66-4307-adfa-1bbe4306c2f3', ask: a }), one);
+  await sheetSettled(page);
+  await expect(card.locator('[data-n="1"]')).toBeFocused();
+  await page.keyboard.press('1');
+  await expect(card.locator('.tx-ask-send')).toBeFocused();
+  await page.keyboard.press('Control+Enter');
+  await expect(card.locator('.tx-ask-note.is-error')).toContainText('did not show question 1');
+  // Not left on the dialog (where the card's keys do not reach it): on the card again.
+  await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('dialog.tx-qsheet .tx-ask'))).toBe(true);
+  await page.keyboard.press('Control+Enter');
+  await expect(card).toBeHidden();
+  await expect.poll(async () => (await sent(page, 'worker.answer_ask')).length).toBe(2);
+  await expect(page.locator('.seat-transcript .tx .tx-scroll')).toBeFocused();
+  clean();
+});
+
 /** Four questions with descriptions and previews: the tallest card, for the screen sizes below. */
 const four: Partial<Ask> = {
   tool_use_id: 'toolu_e2e_four',
