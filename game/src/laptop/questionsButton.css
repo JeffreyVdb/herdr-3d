@@ -145,9 +145,9 @@
 }
 
 /* ubuntu:begin */
-/* #216: Ubuntu's chrome does not zoom with the transcript: the shell's 13px and a fixed height. */
+/* #216: Ubuntu's chrome does not zoom with the transcript: the shell's 13px and a fixed height, a labelled control's 36px. */
 :root[data-ui-theme='ubuntu'] .tx .tx-qbtn {
-  min-height: 30px;
+  min-height: 36px;
   font-size: 13px;
 }
 :root[data-ui-theme='ubuntu'] .tx .tx-qbtn:focus-visible {
