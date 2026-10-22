@@ -155,7 +155,8 @@ type spoken struct {
 	alien bool
 }
 
-// sayName checks name's words against the selection's (sel, lower case).
+// sayName checks name's words against the selection's (sel: its words in
+// order, lower case).
 func sayName(name string, sel []string, gen map[string]bool) spoken {
 	var sp spoken
 	sp.whole = true
@@ -174,6 +175,20 @@ func sayName(name string, sel []string, gen map[string]bool) spoken {
 			sp.alien = true
 		}
 		sp.whole = false
+	}
+	// A version said next to a word of the name is said too, whatever the
+	// name has: "GPT 6 Sol" answered "gpt-6.1-sol" or "GPT Sol" is gpt, 6,
+	// sol (an LLM that reads only the visible models normalizes to them).
+	for i, s := range sel {
+		if isNumber(s) || !slices.ContainsFunc(sp.words, func(w string) bool { return w == s || nearWord(w, s) }) {
+			continue
+		}
+		for _, j := range []int{i - 1, i + 1} {
+			if j >= 0 && j < len(sel) && isNumber(sel[j]) && !slices.Contains(sp.words, sel[j]) {
+				sp.words = append(sp.words, sel[j])
+				sp.whole = false
+			}
+		}
 	}
 	return sp
 }

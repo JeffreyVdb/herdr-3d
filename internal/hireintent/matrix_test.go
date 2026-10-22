@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/hireintent"
@@ -91,8 +92,7 @@ var forms = []form{
 }
 
 // llmModel is what the LLM answers for the model: the user's words, a
-// normalized name, or nothing. ok false: a variant that would lose a
-// version the user said (the rules cannot see it: the report lists it).
+// normalized name, or nothing. ok false: a variant that does not apply.
 type llmModel struct {
 	name string
 	of   func(f form) (answer string, ok bool)
@@ -106,10 +106,19 @@ var llmModels = []llmModel{
 		}
 		return "gpt-6.1-sol", true // a version picked by the LLM, or invented
 	}},
-	{"GPT Sol", func(f form) (string, bool) { return "GPT Sol", f.version == "" }},
-	{"Sol", func(f form) (string, bool) { return "Sol", f.version == "" }},
-	{"GPT soul", func(f form) (string, bool) { return "GPT soul", f.version == "" }},
-	{"gpt sol", func(f form) (string, bool) { return "gpt sol", f.version == "" }},
+	// The family, dropping a version said: the version said beside it counts.
+	{"GPT Sol", func(f form) (string, bool) { return "GPT Sol", true }},
+	{"Sol", func(f form) (string, bool) { return "Sol", true }},
+	{"GPT soul", func(f form) (string, bool) { return "GPT soul", true }},
+	{"gpt sol", func(f form) (string, bool) { return "gpt sol", true }},
+	// The LLM normalizes a version said to another (it reads only the
+	// visible models): the version said counts.
+	{"other version", func(f form) (string, bool) {
+		if f.version == "gpt-6-sol" {
+			return "gpt-6.1-sol", true
+		}
+		return "", false
+	}},
 	{"null", func(f form) (string, bool) { return "", true }},
 }
 
@@ -291,10 +300,18 @@ func expect(cat hireintent.Catalog, c mcase) want {
 	case c.form.unknown || c.harness.answer == "claude":
 		w.choices = defaults // unknown, or a Sol with Claude Code: asked, never substituted
 	case c.form.version != "":
-		if c.vis.shown(c.form.version) {
-			w.model = c.form.version
-		} else {
+		switch {
+		case !c.vis.shown(c.form.version):
 			w.choices = defaults
+		case llmSaid == "GPT soul": // the version said, the name a near miss
+			w.classifier = c.cls.make != nil
+			if c.cls.picks {
+				w.model = c.form.version
+			} else {
+				w.choices = defaults
+			}
+		default:
+			w.model = c.form.version
 		}
 	default: // a Sol by its family
 		var shownSols []string
@@ -664,7 +681,7 @@ func TestSelect(t *testing.T) {
 	if got.Model.Outcome != hireintent.Picked || got.Model.Value != "codex/gpt-6.1-sol" {
 		t.Fatalf("clear: %+v", got)
 	}
-	got, _ = hireintent.Select(ctx, scores(map[string]float64{"gpt-6.1-sol": 0.4}), "x", []hireintent.Choice{sol}, nil)
+	got, _ = hireintent.Select(ctx, scores(map[string]float64{"gpt-6.1-sol": 0.2}), "x", []hireintent.Choice{sol}, nil)
 	if got.Model.Outcome != hireintent.Unknown {
 		t.Fatalf("low: %+v", got)
 	}
@@ -770,5 +787,81 @@ func TestCheckHidden(t *testing.T) {
 		if err := hireintent.CheckHidden(h); err == nil {
 			t.Fatalf("%s: no error", name)
 		}
+	}
+}
+
+// The LLM flags the selection unclear when it cannot map a family to an id
+// itself: a family the rules took is ready all the same. Said exactly and
+// flagged, or with another model named outside the task, it is asked.
+func TestSelectionUnclearAfterAFamily(t *testing.T) {
+	cat := matrixCatalog()
+	unclear := func(model string) map[string]any {
+		a := ans("hire", "", model, "high", "solve the issue with the frontend.")
+		a["selection_unclear"] = true
+		return a
+	}
+	hidden := visibilities[0].hidden
+	cls := &ai.FakeClassifier{Score: 0.95}
+	for _, c := range []struct {
+		text, model string
+		ready       bool
+	}{
+		{"Please spawn a GPT Sol agent on high reasoning to solve the issue with the frontend.", "GPT Sol", true},
+		{"Please spawn a GPT soul agent on high reasoning to solve the issue with the frontend.", "GPT soul", true},
+		{"Please spawn a GPT Sol or maybe Opus agent on high reasoning to solve the issue with the frontend.", "GPT Sol", false},
+		{"Please spawn a GPT Sol agent on high reasoning, or Luna, to solve the issue with the frontend.", "GPT Sol", false},
+		{"Please spawn a gpt-6.1-sol agent on high reasoning to solve the issue with the frontend.", "gpt-6.1-sol", false},
+	} {
+		in := mustHire(t, matrixInterpret(c.text, nil, cat, hidden, cls, unclear(c.model)))
+		if in.Model.Value != "gpt-6.1-sol" || in.ReadyForReview != c.ready || !c.ready && !slices.Equal(asks(in), []string{"selection"}) {
+			t.Fatalf("%q: %s ready=%v asks %q", c.text, fields(in), in.ReadyForReview, asks(in))
+		}
+	}
+	// Another model's name only in the task is not another choice.
+	in := mustHire(t, matrixInterpret("Please spawn a GPT Sol agent on high reasoning to compare it with Opus.", nil, cat, hidden, cls,
+		func() map[string]any {
+			a := ans("hire", "", "GPT Sol", "high", "compare it with Opus.")
+			a["selection_unclear"] = true
+			return a
+		}()))
+	if !in.ReadyForReview {
+		t.Fatalf("Opus only in the task: %s asks %q", fields(in), asks(in))
+	}
+}
+
+type reasonRoles struct {
+	roles
+	r ai.Reasoning
+}
+
+func (r reasonRoles) ModelReasoning(context.Context) ai.Reasoning { return r.r }
+
+// #190: the request's budget is MaxTokens, and its reasoning effort low only
+// when the model's catalog says it takes low; else none (the provider's
+// default), as before.
+func TestRequestBudgetAndReasoning(t *testing.T) {
+	for name, c := range map[string]struct {
+		r    *ai.Reasoning
+		want string
+	}{
+		"takes low":        {&ai.Reasoning{Support: ai.SupportYes, Efforts: []string{"none", "low", "medium", "high"}, Listed: true}, "low"},
+		"any effort":       {&ai.Reasoning{Support: ai.SupportYes, Efforts: []string{"low", "high"}}, "low"},
+		"listed, no low":   {&ai.Reasoning{Support: ai.SupportYes, Efforts: []string{"medium", "high"}, Listed: true}, ""},
+		"no reasoning":     {&ai.Reasoning{Support: ai.SupportNo}, ""},
+		"unknown":          {&ai.Reasoning{Support: ai.SupportUnknown, Efforts: []string{"low"}}, ""},
+		"no Reasoner role": {nil, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			llm := answerLLM(ans("hire", "", "", "", ""))
+			var rs hireintent.Roles = roles{ai.StateReady, llm}
+			if c.r != nil {
+				rs = reasonRoles{roles{ai.StateReady, llm}, *c.r}
+			}
+			hireintent.Run(context.Background(), rs, time.Second, hireintent.Request{Text: "Spawn an agent.", Catalog: matrixCatalog()})
+			req := llm.Calls()[0]
+			if req.ReasoningEffort != c.want || req.MaxTokens != 3000 {
+				t.Fatalf("effort %q budget %d, want %q 3000", req.ReasoningEffort, req.MaxTokens, c.want)
+			}
+		})
 	}
 }

@@ -97,6 +97,7 @@ func resolve(ctx context.Context, a *Answer, pending *Interpretation, sources []
 	ef, nearEfforts := sc.resolveEffort(hf, mf, effort, sel)
 	if len(m.near) > 0 || len(nearEfforts) > 0 {
 		hf, mf, ef, m.choices = sc.classify(ctx, selText, sel, m, ef, effort, nearEfforts)
+		m.byFamily = m.byFamily || len(m.near) > 0 && mf.Valid()
 	}
 	modelChanged := pending != nil && mf.Value != pending.Model.Value
 	if ef.Provenance == Invalid && keptEffort && modelChanged && mf.Valid() {
@@ -104,7 +105,12 @@ func resolve(ctx context.Context, a *Answer, pending *Interpretation, sources []
 	}
 
 	in := &Interpretation{Sources: sources, Harness: hf, Model: mf, Effort: ef, Task: task, Questions: []Question{}}
-	in.Questions = questions(sc.vis, in, a.SelectionUnclear, m.choices)
+	// The LLM finds the selection unclear when it cannot map a family to an
+	// id itself ("GPT Sol" is in no hire_options): that is what the rules
+	// did. It still counts when the model was said exactly, or when another
+	// model is named outside the task ("GPT Sol or maybe Opus").
+	unclear := a.SelectionUnclear && !(m.byFamily && mf.Valid() && !sc.otherModelSaid(sel, Choice{Harness: hf.Value, Model: mf.Value}))
+	in.Questions = questions(sc.vis, in, unclear, m.choices)
 	in.ReadyForReview = len(in.Questions) == 0 && hf.Valid() && mf.Valid() && ef.Valid() && task.Provenance == Dictated
 	res.Hire = in
 	return res
@@ -242,6 +248,9 @@ type modelRes struct {
 	harness, model Field
 	choices        []Choice
 	near           []Choice
+	// byFamily: taken by this package's rules (a family, a near miss), not
+	// as the exact id or label the LLM gave.
+	byFamily bool
 }
 
 // resolveModel resolves the harness named and the model said (see Resolve).
@@ -304,6 +313,7 @@ func (sc scope) resolveModel(harness, model string, sel string) modelRes {
 	if !sp.weak {
 		switch fam, _ := familyMatches(sc.vis, cands, sp.words, false); len(fam) {
 		case 1:
+			r.byFamily = true
 			return take(fam[0])
 		case 0:
 		default:
@@ -322,6 +332,26 @@ func (sc scope) resolveModel(harness, model string, sel string) modelRes {
 	r = invalid(nil)
 	r.near = near
 	return r
+}
+
+// otherModelSaid reports whether sel (the selection, lower case) has a word
+// that names a model of the whole catalog other than c: one of its words
+// that c does not have, not generic, not a number.
+func (sc scope) otherModelSaid(sel string, c Choice) bool {
+	words := nameTokens(sel)
+	gen := generic(sc.full)
+	mine := modelWords(sc.full, c)
+	for _, o := range choices(sc.full, "") {
+		if o == (Choice{Harness: c.Harness, Model: c.Model, Label: o.Label}) {
+			continue
+		}
+		for _, w := range modelWords(sc.full, o) {
+			if !isNumber(w) && !gen[w] && !slices.Contains(mine, w) && slices.Contains(words, w) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // harnessOf is f's value when it is valid, else "".

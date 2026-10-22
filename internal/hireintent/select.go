@@ -6,8 +6,10 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 )
@@ -28,12 +30,22 @@ const (
 	Unknown   = "unknown"   // no candidate scored high enough
 )
 
-// Classifier constants (TODO(#190 live): the live matrix's).
+// Classifier constants, from the live matrix (docs/decisions.md #190; the
+// configured jev-preview, 2026-10-22, the issue's 12 sentences as the
+// tuning set, three runs each). With modelQuestion, a misheard name
+// ("GPT soul" for GPT-6.1-Sol) scored 0.39-0.48, a name said right 0.90-0.96,
+// and every sentence that names no model or another one (omitted, "GPT
+// Banana", the model only in the task) at most 0.15. A contradiction ("Claude
+// Code … GPT Sol") scored 0.8, but never reaches the classifier: a harness
+// named restricts the candidates to its models. A universal 0.5 would refuse
+// every misheard name.
 const (
-	// PickScore is the least score of a pick.
-	PickScore = 0.5
-	// PickMargin is how far a pick must score above the runner-up.
-	PickMargin = 0.2
+	// PickScore is the least score of a pick: between 0.15 and 0.39.
+	PickScore = 0.3
+	// PickMargin is how far a pick must score above the runner-up (two
+	// near candidates the words tell apart; with one, its score is its
+	// margin).
+	PickMargin = 0.15
 	// SelectTimeout bounds the classifier's calls of one interpretation
 	// (they run in parallel, ai.DefaultClassifierTimeout each).
 	SelectTimeout = 2 * ai.DefaultClassifierTimeout
@@ -66,11 +78,11 @@ func Select(ctx context.Context, cls ai.Classifier, selection string, models []C
 	type q struct{ key, text string }
 	var qs []q
 	for _, m := range models {
-		name := m.Model
+		name, short := m.Model, familyName(m.Model)
 		if m.Label != "" {
-			name = m.Label + " (" + m.Model + ")"
+			name, short = m.Label+", id "+m.Model, familyName(m.Label)
 		}
-		qs = append(qs, q{"model:" + modelKey(m), fmt.Sprintf(modelQuestion, name)})
+		qs = append(qs, q{"model:" + modelKey(m), fmt.Sprintf(modelQuestion, name, short)})
 	}
 	for _, e := range efforts {
 		qs = append(qs, q{"effort:" + e, fmt.Sprintf(effortQuestion, effortSpoken(e))})
@@ -166,15 +178,22 @@ func decide(p Pick) Pick {
 // modelKey is a model's key in a Selection: "harness/model".
 func modelKey(c Choice) string { return c.Harness + "/" + c.Model }
 
-// The questions (the issue's experiment: one per candidate; spoken
-// aliases, a name misheard, nothing chosen and a contradiction are said).
+// The questions: one per candidate. modelQuestion names the model by its
+// family ("GPT Sol") and its full name; it was the best of ten wordings on
+// the tuning set (one that said "answer no for another version" scored a
+// correct "GPT Sol" 0.1).
 const (
-	modelQuestion = "The request was dictated by voice, so a name may be misheard (\"soul\" for \"Sol\"). " +
-		"Does it choose the AI model %s for the new agent? Answer no when it names no model, a different model, " +
-		"another version, or a harness this model does not run on."
+	modelQuestion = "This request was transcribed from speech and may misspell model names. Which AI model does it ask for? " +
+		"Answer yes if it asks for %[2]s (%[1]s), spelled correctly or as a similar-sounding word; no otherwise."
 	effortQuestion = "The request was dictated by voice. Does it choose %s reasoning effort for the new agent? " +
 		"Answer no when it names no effort level or a different one."
 )
+
+// familyName is a model name without its versions: "GPT-6.1-Sol" is "GPT
+// Sol".
+func familyName(name string) string {
+	return strings.Join(strings.FieldsFunc(name, func(r rune) bool { return !unicode.IsLetter(r) }), " ")
+}
 
 // effortSpoken is how an effort level is said: its word and its spoken
 // forms.

@@ -27,8 +27,17 @@ const (
 	// MaxSources bounds the sentences of one proposal: the first and its
 	// follow-up replies.
 	MaxSources = 6
-	// MaxTokens is the LLM's completion budget (the research's).
-	MaxTokens = 1400
+	// MaxTokens is the LLM's completion budget. #190: the research's 1,400
+	// left the configured reasoning model (inception/mercury-3, default
+	// effort medium) cut off on 10 of 78 bench sentences and 41 of 66 of the
+	// command bar's; 3,000 with ReasoningEffort: 0 and 1 (docs/decisions.md
+	// #190).
+	MaxTokens = 3000
+	// ReasoningEffort is the LLM's reasoning effort when its catalog says it
+	// takes it (Request.Reasoning); else none is sent, the provider's
+	// default. #190: low kept every bench answer's task exact where none
+	// dropped final periods.
+	ReasoningEffort = "low"
 	// DefaultTimeout bounds one interpretation on the bridge: room for the
 	// AI integration's two attempts of ai.DefaultLLMTimeout each (the
 	// research measured a median of 2 s, p95 under 3 s).
@@ -56,6 +65,15 @@ type Request struct {
 	// Classifier is asked about near misses (Select); nil: never, they are
 	// asked of the user.
 	Classifier ai.Classifier
+	// Reasoning is what is known of the LLM's reasoning efforts: low is
+	// asked for only when it allows it (zero: nothing known, none sent).
+	Reasoning ai.Reasoning
+}
+
+// Reasoner is what the AI integration knows of the LLM's reasoning efforts
+// (*ai.Service); Roles may implement it.
+type Reasoner interface {
+	ModelReasoning(ctx context.Context) ai.Reasoning
 }
 
 // Roles is what the package needs of the AI integration: *ai.Service.
@@ -74,6 +92,9 @@ func Run(ctx context.Context, roles Roles, timeout time.Duration, req Request) R
 	}
 	if req.Classifier == nil && roles.State(ai.RoleClassifier) == ai.StateReady {
 		req.Classifier = roles.Classifier()
+	}
+	if rs, ok := roles.(Reasoner); ok && req.Reasoning.Support == "" {
+		req.Reasoning = rs.ModelReasoning(ctx)
 	}
 	if timeout > 0 {
 		var cancel context.CancelFunc
@@ -115,11 +136,16 @@ func Interpret(ctx context.Context, l ai.LLM, req Request) Result {
 		res.Error = failure(err)
 		return res
 	}
+	effort := ""
+	if req.Reasoning.Support == ai.SupportYes && req.Reasoning.Allows(ReasoningEffort) {
+		effort = ReasoningEffort
+	}
 	answer, err := l.Complete(ctx, ai.Request{
-		Messages:  []ai.Message{{Role: "system", Content: Prompt}, {Role: "user", Content: string(payload)}},
-		JSON:      true,
-		MaxTokens: MaxTokens,
-		NoPartial: true,
+		Messages:        []ai.Message{{Role: "system", Content: Prompt}, {Role: "user", Content: string(payload)}},
+		JSON:            true,
+		MaxTokens:       MaxTokens,
+		ReasoningEffort: effort,
+		NoPartial:       true,
 	})
 	if err == nil && ctx.Err() != nil {
 		err = ctx.Err() // the answer came after the bound: not waited on

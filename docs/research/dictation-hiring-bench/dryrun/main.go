@@ -5,6 +5,12 @@
 // existing private AI config read-only. No worker.hire, no launch: this is
 // not a launch test. A follow-up case first interprets its history, so its
 // reply merges into a real pending proposal, as the game will do it.
+//
+// #190: -max-tokens and -reasoning try another LLM budget or reasoning
+// effort than the product's (hireintent.MaxTokens, none) on the same
+// cases, to measure truncation; the product's request is otherwise sent as
+// is. The classifier, when the AI config has it ready, takes part as in the
+// product.
 package main
 
 import (
@@ -121,6 +127,32 @@ func catalogOf(o proto.HireOptions) hireintent.Catalog {
 	return hireintent.Catalog{Claude: conv(o.Claude), Codex: conv(o.Codex)}
 }
 
+// roles are the AI service's, with the LLM's request budget or reasoning
+// effort replaced when set (#190, measurement only).
+type roles struct {
+	*ai.Service
+	maxTokens int
+	reasoning string
+}
+
+func (r roles) LLM() ai.LLM { return budgetLLM{r.Service.LLM(), r.maxTokens, r.reasoning} }
+
+type budgetLLM struct {
+	ai.LLM
+	maxTokens int
+	reasoning string
+}
+
+func (b budgetLLM) Complete(ctx context.Context, req ai.Request) (string, error) {
+	if b.maxTokens > 0 {
+		req.MaxTokens = b.maxTokens
+	}
+	if b.reasoning != "" {
+		req.ReasoningEffort = b.reasoning
+	}
+	return b.LLM.Complete(ctx, req)
+}
+
 func main() {
 	home, _ := os.UserHomeDir()
 	dir := "docs/research/dictation-hiring-bench"
@@ -128,6 +160,8 @@ func main() {
 	socket := flag.String("socket", "/run/user/1000/herdr-world/bridge.sock", "read-only catalog source")
 	out := flag.String("out", filepath.Join(os.TempDir(), "dictation-dryrun.json"), "sanitized results (not committed: it holds the live catalog)")
 	extra := flag.String("extra", "", "#214: one more labelled sample file in the bench's schema (set \"e2e\"), e.g. "+dir+"/e2e-phrases.json")
+	maxTokens := flag.Int("max-tokens", 0, "#190: the LLM's completion budget for this run (0: the product's)")
+	reasoning := flag.String("reasoning", "", "#190: the LLM's reasoning effort for this run (\"\": the product's, none sent)")
 	flag.Parse()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
@@ -157,7 +191,9 @@ func main() {
 	svc, err := ai.New(ai.Options{File: *config, HTTP: &http.Client{Transport: m}})
 	must(err)
 	v := svc.View()
-	fmt.Printf("Configured LLM: %s (state %s)\n", v.LLM.Model, svc.State(ai.RoleLLM))
+	fmt.Printf("Configured LLM: %s (state %s), classifier %s; budget %d, reasoning %q\n", v.LLM.Model, svc.State(ai.RoleLLM),
+		svc.State(ai.RoleClassifier), *maxTokens, *reasoning)
+	run := roles{svc, *maxTokens, *reasoning}
 
 	var cases []sample
 	sets := []string{}
@@ -188,7 +224,7 @@ func main() {
 			r := row{ID: s.ID, Set: sets[i], Expected: s.Decision, WantTask: s.Task}
 			var pending *hireintent.Interpretation
 			for _, h := range s.History {
-				res := hireintent.Run(ctx, svc, hireintent.DefaultTimeout, hireintent.Request{Text: h, Pending: pending, Catalog: cat})
+				res := hireintent.Run(ctx, run, hireintent.DefaultTimeout, hireintent.Request{Text: h, Pending: pending, Catalog: cat})
 				r.Calls++
 				if res.Hire == nil {
 					r.Error = "history: " + label(res)
@@ -198,7 +234,7 @@ func main() {
 				pending = res.Hire
 			}
 			t := time.Now()
-			res := hireintent.Run(ctx, svc, hireintent.DefaultTimeout, hireintent.Request{Text: s.Text, Pending: pending, Catalog: cat})
+			res := hireintent.Run(ctx, run, hireintent.DefaultTimeout, hireintent.Request{Text: s.Text, Pending: pending, Catalog: cat})
 			r.LatencyMS = time.Since(t).Milliseconds()
 			if strings.TrimSpace(s.Text) != "" {
 				r.Calls++
@@ -263,10 +299,16 @@ func main() {
 	for k, ps := range perSet {
 		sets2[k] = fmt.Sprintf("%d/%d", ps[0], ps[1])
 	}
-	summary := map[string]any{"pass": pass, "total": len(rows), "llm": v.LLM.Model, "median_ms": pct(0.5), "p90_ms": pct(0.9), "p95_ms": pct(0.95),
+	truncated := 0
+	for _, r := range rows {
+		if r.Error == "truncated" {
+			truncated++
+		}
+	}
+	summary := map[string]any{"max_tokens": *maxTokens, "reasoning": *reasoning, "truncated": truncated, "pass": pass, "total": len(rows), "llm": v.LLM.Model, "median_ms": pct(0.5), "p90_ms": pct(0.9), "p95_ms": pct(0.95),
 		"provider_calls": calls, "provider_cost_usd": cost, "per_set": sets2, "launch_ready_violations": launchReady}
-	fmt.Printf("dry-run interpretation check: %d/%d (outcome and exact task) %v, LLM %s, median %d ms, p90 %d ms, p95 %d ms, %d calls, reported cost $%.7f\n",
-		pass, len(rows), sets2, v.LLM.Model, pct(0.5), pct(0.9), pct(0.95), calls, cost)
+	fmt.Printf("dry-run interpretation check: %d/%d (outcome and exact task) %v, %d truncated, LLM %s, median %d ms, p90 %d ms, p95 %d ms, %d calls, reported cost $%.7f\n",
+		pass, len(rows), sets2, truncated, v.LLM.Model, pct(0.5), pct(0.9), pct(0.95), calls, cost)
 	fmt.Printf("not-ready cases (unclear, unsupported, clarify_*) that came back ready for review: %d %v\n", len(launchReady), launchReady)
 	data := map[string]any{"at": time.Now().UTC().Format(time.RFC3339), "llm": v.LLM.Model, "catalog": opts, "summary": summary,
 		"results": rows, "http_metadata": m.calls,
