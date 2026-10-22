@@ -424,7 +424,14 @@ export class Hud {
     if (span && span.textContent !== text) span.textContent = text;
   }
 
+  /** #144: what the counts last drew (a usage event redraws the top bar with the same counts). */
+  private countsKey = '';
+
   private setCounts(c: Counts, asleep = false): void {
+    const nk = keyName('next-need');
+    const key = JSON.stringify([c, asleep, nk]);
+    if (key === this.countsKey) return;
+    this.countsKey = key;
     // The words go when the bar is short (hud.css); the title keeps them on hover.
     const item = (cls: string, n: number, label: string, hint = '') =>
       `<span class="count count--${cls}" title="${n} ${label}${hint}"><i></i><b>${n}</b><span>${label}</span></span>`;
@@ -432,7 +439,6 @@ export class Hud {
     const waiting = !asleep && c.waiting > 0;
     this.counts.dataset.n = asleep ? '1' : waiting ? '4' : '3';
     // M5: N goes to the next one who needs you (the blocked, then the done).
-    const nk = keyName('next-need');
     const next = c.needsYou + c.done > 0 ? ` · ${nk}: go to the next${c.done ? ` (then ${c.done} done)` : ''}` : '';
     // #118: the same items the floor overview's header shows (`countItems`).
     this.counts.innerHTML = countItems(c, asleep)

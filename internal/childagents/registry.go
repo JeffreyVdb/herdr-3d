@@ -398,13 +398,25 @@ func (ch *changes) events() []proto.Event {
 	}
 	for _, id := range ch.touched {
 		rw := ch.rt.rows[id]
-		if rw == nil || rw.c == ch.before[id] {
+		if rw == nil || quiet(ch.before[id], rw.c) {
 			continue
 		}
 		c := rw.c
 		evs = append(evs, proto.Event{T: proto.EvChildUpsert, Child: &c})
 	}
 	return evs
+}
+
+// quiet says a row changed nothing a client shows (#144): nothing at all,
+// or, running before and after, only its last activity (a running child
+// shows its start; most of a busy child's evidence is that tick). The row
+// keeps the latest time: its next upsert, its stop and the snapshot carry
+// it.
+func quiet(before, now proto.Child) bool {
+	if before.State == proto.ChildRunning && now.State == proto.ChildRunning {
+		before.LastActivityAt = now.LastActivityAt
+	}
+	return before == now
 }
 
 // setParent applies a parent the evidence names. A child parent the root
