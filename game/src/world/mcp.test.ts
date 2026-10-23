@@ -338,8 +338,12 @@ describe('connection evidence (round 2: probe and worker statuses age on their o
     expect(checkText(p('failed', 60_000), r, T0)).toBe('Check failed 1 min ago');
     expect(checkText(p('timeout', 60_000), r, T0)).toBe('Check timed out 1 min ago');
     expect(checkText(p('skipped', 20 * 60_000), r, T0)).toBe('Check skipped 20 min ago, may be out of date');
-    const s = snapshot(p('ok', 2 * 3600_000), p('none', null));
-    expect(wallModel({ unsupported: false, live: true, asking: false, r: received(s), now: T0 }).providers.map((x) => x.check)).toEqual(['Checked 2 h ago, may be out of date', '']);
+    // The wall's columns are narrow: the age on one line, "may be out of date" on its own (render/mcpScreen.ts).
+    const s = snapshot(p('ok', 2 * 3600_000), p('ok', 3 * 60_000));
+    expect(wallModel({ unsupported: false, live: true, asking: false, r: received(s), now: T0 }).providers.map((x) => [x.check, x.checkOld])).toEqual([
+      ['Checked 2 h ago', true],
+      ['Checked 3 min ago', false],
+    ]);
   });
 });
 

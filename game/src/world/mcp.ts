@@ -230,12 +230,15 @@ export function checkStale(p: McpProvider, r: Received, now: number): boolean {
   return age === null || age > MCP_EVIDENCE_STALE_MS;
 }
 
-/** The provider's last connection check in words (`Checked 3 min ago`, `Check failed 1 h ago, may be out of date`), or '' when there was none. */
-export function checkText(p: McpProvider, r: Received, now: number): string {
+/**
+ * The provider's last connection check in words (`Checked 3 min ago`, `Check failed 1 h ago, may be out of date`), or ''
+ * when there was none. `short`: without "may be out of date" (the wall says that on a line of its own).
+ */
+export function checkText(p: McpProvider, r: Received, now: number, short = false): string {
   if (p.check.state === 'none' || !p.check.at) return '';
   const word = p.check.state === 'ok' ? 'Checked' : p.check.state === 'timeout' ? 'Check timed out' : p.check.state === 'skipped' ? 'Check skipped' : 'Check failed';
   const text = `${word} ${ageText(ageOf(p.check.at, r, now))}`;
-  return checkStale(p, r, now) ? `${text}${OUT_OF_DATE}` : text;
+  return !short && checkStale(p, r, now) ? `${text}${OUT_OF_DATE}` : text;
 }
 
 /** A server's or a skill's source and scope in words (`plugin` names its plugin). */
@@ -303,9 +306,9 @@ export interface McpWallProvider {
   skills: string;
   /** "Read 3 min ago". */
   age: string;
-  /** "Checked 4 min ago", "Checked 2 h ago, may be out of date", or '' (never checked). */
+  /** "Checked 4 min ago", "Check failed 2 h ago", or '' (never checked). */
   check: string;
-  /** The last check is over `MCP_EVIDENCE_STALE_MS` old: its line is grey. */
+  /** The last check is over `MCP_EVIDENCE_STALE_MS` old: its line is grey, "May be out of date" under it. */
   checkOld: boolean;
   /** A tag on the column: "stale", "partial", "" (fresh). */
   tag: string;
@@ -355,7 +358,7 @@ export function wallProvider(h: McpHarness, r: Received, now: number): McpWallPr
   const read = ageText(ageOf(p.config.read_at, r, now));
   const age = read ? `Read ${read}` : '';
   const tag = tone === 'stale' ? 'stale' : tone === 'partial' ? 'partial' : '';
-  return { harness: h, name: PROVIDER_NAME[h], tone, big, attention, attentionCount: known ? n : 0, skills, age, check: checkText(p, r, now), checkOld: checkStale(p, r, now), tag };
+  return { harness: h, name: PROVIDER_NAME[h], tone, big, attention, attentionCount: known ? n : 0, skills, age, check: checkText(p, r, now, true), checkOld: checkStale(p, r, now), tag };
 }
 
 /** What the wall says now. `r`: the Snapshot of the shown context (null: none yet). `error`: the bridge refused the request (its words). */

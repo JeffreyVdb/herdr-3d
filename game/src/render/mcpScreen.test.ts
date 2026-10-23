@@ -74,11 +74,12 @@ describe('the MCP wall screen (#196)', () => {
     const m = buildMcpScreen(box);
     const checked = (ageMs: number) => provider({ check: { state: 'ok', at: iso(T0 - ageMs), note: '' } });
     m.set(model(snap(checked(3 * 60_000), checked(2 * 3600_000))));
-    expect(m.info().lines).toEqual(expect.arrayContaining(['Read just now', 'Checked 3 min ago', 'Checked 2 h ago, may be out of date']));
+    expect(m.info().lines).toEqual(expect.arrayContaining(['Read just now', 'Checked 3 min ago', 'Checked 2 h ago', 'May be out of date']));
+    expect(m.info().lines.filter((l) => l === 'May be out of date')).toHaveLength(1);
     expect(m.info().tones.map((t) => t.check)).toEqual(['text', 'grey']);
     // Never checked: no line.
     m.set(model(snap(provider(), provider())));
-    expect(m.info().lines.some((l) => l.startsWith('Check'))).toBe(false);
+    expect(m.info().lines.some((l) => l.startsWith('Check') || l === 'May be out of date')).toBe(false);
     expect(m.info().tones.map((t) => t.check)).toEqual(['', '']);
     m.dispose();
   });

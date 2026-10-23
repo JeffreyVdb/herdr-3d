@@ -8,7 +8,7 @@ import { WALL, type WallPalette } from './palette';
  * #196: the MCP & skills screen on the north wall, over the server rack: a dark bezel box a few cm off the wall, facing
  * +z, and in it one canvas texture: the title and the scope (checkout, Codex profile) on top, then a column per provider
  * (Claude Code, Codex) with its configured MCP count, what needs attention, its skills, the age of the last read and
- * of the last connection check (grey, "may be out of date", past 10 minutes). Unlit (not tone mapped), so it reads like a screen in any light (M17). Calm screens for a bridge without the
+ * of the last connection check (grey, "May be out of date" under it, past 10 minutes). Unlit (not tone mapped), so it reads like a screen in any light (M17). Calm screens for a bridge without the
  * command, no connection, nobody looking yet and the first read.
  *
  * It is drawn only when what it shows changes (the model's `key`: its words and a coarse age bucket), never per frame.
@@ -177,12 +177,15 @@ export function buildMcpScreen(box: Box3, c: Readonly<WallPalette> = WALL): McpS
       out.push(p.age);
     }
     if (p.check) {
-      // An old check's line says so, in grey; it gets smaller (28 px down to 22) before it is shortened.
+      // An old check is grey and says so on a line of its own (a column is too narrow for both on one).
       g.fillStyle = p.checkOld ? GREY : c.text3;
-      let cpx = 28;
-      for (g.font = font(500, cpx); cpx > 22 && g.measureText(p.check).width > max; cpx -= 2) g.font = font(500, cpx - 2);
+      g.font = font(500, 28);
       g.fillText(fit(g, p.check, max), left, top + 330);
       out.push(p.check);
+      if (p.checkOld) {
+        g.fillText('May be out of date', left, top + 366);
+        out.push('May be out of date');
+      }
     }
   };
 
