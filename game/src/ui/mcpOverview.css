@@ -156,10 +156,11 @@
 }
 .mcp-attn {
   color: var(--warn);
-  font-size: 15px;
-  font-family: var(--font);
   font-weight: 700;
-  letter-spacing: 0;
+}
+.mcp-calm-line {
+  color: var(--text-2);
+  font-weight: 600;
 }
 .mcp-prov--stale .mcp-attn {
   color: var(--text-2);

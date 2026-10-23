@@ -2991,11 +2991,17 @@ export class App {
       page: this.mcpPage.isOpen ? this.mcpPageFloor : null,
       camera: this.fpCam,
     });
-    if (this.mcpPage.isOpen) this.mcpPage.refresh();
+    // The page follows the link's changes (`changed`); its ages move once a minute.
+    const minute = Math.floor(Date.now() / 60_000);
+    if (minute !== this.mcpMinute) {
+      this.mcpMinute = minute;
+      this.mcpPage.refresh();
+    }
   }
 
-  /** #196: the floor the MCP & skills page is open for. */
+  /** #196: the floor the MCP & skills page is open for, and the minute its ages were last drawn in. */
   private mcpPageFloor: string | null = null;
+  private mcpMinute = 0;
 
   /** #196: E at the MCP & skills screen, or the palette: the overview of the floor you are on. */
   openMcp(): void {

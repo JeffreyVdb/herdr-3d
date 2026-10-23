@@ -92,20 +92,20 @@ export function buildMcpScreen(box: Box3, c: Readonly<WallPalette> = WALL): McpS
     g.textBaseline = 'alphabetic';
     g.textAlign = 'left';
     g.fillStyle = c.accent;
-    g.font = font(800, 50);
-    g.fillText(m.title, pad, 74);
+    g.font = font(800, 56);
+    g.fillText(m.title, pad, 82);
     const tw = g.measureText(m.title).width;
     out.push(m.title);
     if (m.mode === 'data') {
       g.textAlign = 'right';
       g.fillStyle = c.text2;
-      g.font = font(600, 26);
+      g.font = font(600, 28);
       const s = fit(g, m.scope, W - pad * 2 - tw - 40);
-      g.fillText(s, W - pad, 72);
+      g.fillText(s, W - pad, 80);
       out.push(m.scope);
     }
     g.fillStyle = c.ink3;
-    g.fillRect(pad, 100, W - pad * 2, 3);
+    g.fillRect(pad, 108, W - pad * 2, 3);
   };
 
   const calm = (m: McpWallModel, out: string[]) => {
@@ -132,12 +132,12 @@ export function buildMcpScreen(box: Box3, c: Readonly<WallPalette> = WALL): McpS
     if (!g) return;
     const fresh = p.tone === 'ok';
     const grey = p.tone === 'stale' || p.tone === 'unavailable' || p.tone === 'unsupported' || p.tone === 'pending' || p.tone === 'failed';
-    const top = 128;
+    const top = 136;
     const max = width - 8;
     g.textAlign = 'left';
     g.fillStyle = c.text2;
-    g.font = font(700, 32);
-    g.fillText(p.name, left, top + 30);
+    g.font = font(700, 36);
+    g.fillText(p.name, left, top + 36);
     out.push(p.name);
     if (p.tag) {
       // A tag beside the name: the numbers are the last good ones (stale), or not the whole configuration (partial).
@@ -147,32 +147,32 @@ export function buildMcpScreen(box: Box3, c: Readonly<WallPalette> = WALL): McpS
       const tx = left + nw + 16;
       g.strokeStyle = p.tag === 'stale' ? GREY : WARN;
       g.lineWidth = 2;
-      g.strokeRect(tx, top + 6, tw, 30);
+      g.strokeRect(tx, top + 10, tw, 30);
       g.fillStyle = p.tag === 'stale' ? GREY : WARN;
-      g.fillText(p.tag, tx + 10, top + 29);
+      g.fillText(p.tag, tx + 10, top + 33);
       out.push(p.tag);
     }
     g.fillStyle = grey ? GREY : c.text;
-    g.font = font(800, p.big.length > 14 ? 48 : 60);
-    g.fillText(fit(g, p.big, max), left, top + 108);
+    g.font = font(800, p.big.length > 14 ? 54 : 68);
+    g.fillText(fit(g, p.big, max), left, top + 124);
     out.push(p.big);
     let ink: McpScreenInfo['tones'][number]['ink'] = 'text';
     if (p.attention) {
       ink = p.tone === 'stale' ? 'grey' : p.attentionCount > 0 ? 'warn' : fresh ? 'ok' : 'text';
       g.fillStyle = ink === 'grey' ? GREY : ink === 'warn' ? WARN : ink === 'ok' ? OK : c.text2;
-      g.font = font(700, 28);
-      g.fillText(fit(g, p.attention, max), left, top + 156);
+      g.font = font(700, 34);
+      g.fillText(fit(g, p.attention, max), left, top + 182);
       out.push(p.attention);
     }
     tones.push({ harness: p.harness, tone: p.tone, ink });
     g.fillStyle = c.text2;
-    g.font = font(600, 26);
-    g.fillText(fit(g, p.skills, max), left, top + 202);
+    g.font = font(600, 32);
+    g.fillText(fit(g, p.skills, max), left, top + 238);
     out.push(p.skills);
     if (p.age) {
       g.fillStyle = c.text3;
-      g.font = font(500, 22);
-      g.fillText(fit(g, p.age, max), left, top + 244);
+      g.font = font(500, 28);
+      g.fillText(fit(g, p.age, max), left, top + 290);
       out.push(p.age);
     }
   };
@@ -194,7 +194,7 @@ export function buildMcpScreen(box: Box3, c: Readonly<WallPalette> = WALL): McpS
     const colW = (W - pad * 2 - gap) / 2;
     m.providers.forEach((p, i) => column(p, pad + i * (colW + gap), colW, out));
     g.fillStyle = c.ink3;
-    g.fillRect(W / 2 - 1, 128, 2, H - 128 - 36);
+    g.fillRect(W / 2 - 1, 136, 2, H - 136 - 36);
     return out;
   };
 

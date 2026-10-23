@@ -760,6 +760,20 @@ export const SURFACES: Surface[] = [
     root: 'dialog.cab',
   },
   {
+    // #196: the MCP & skills overview after a Claude Code connection check (connected, sign-in, approval, a connector).
+    name: 'mcp-overview',
+    fixture: 'demo-m5',
+    wsQuery: `${SIM}&simmcpcheckms=50`,
+    open: async (page) => {
+      await onFloor(page);
+      await page.evaluate(() => window.__h3d.openMcp());
+      await expect.poll(async () => (await page.evaluate(() => window.__h3d.mcp()))?.page.state).toBe('data');
+      await page.locator('dialog.mcp [data-key="check-claude"]').click();
+      await expect.poll(async () => (await page.evaluate(() => window.__h3d.mcp()))?.page.providers[0]?.check).toBe('ok');
+    },
+    root: 'dialog.mcp',
+  },
+  {
     // #64 schedules: the scheduled agents dialog with every state (simschedules), and its create form.
     name: 'schedules',
     fixture: 'demo-m5',
