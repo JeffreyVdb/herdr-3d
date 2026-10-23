@@ -21,7 +21,7 @@ var Samples = []LabelledPrompt{
 	{Text: "Do the action, leave the office and clean up the worktree", Match: true, Core: true, Task: "Do the action"},
 	{Text: "Please make a PR", Core: true},
 
-	{Text: "Fix the flaky login test, open a PR, then go home.", Match: true},
+	{Text: "Fix the flaky login test, open a PR, then go home.", Match: true, Task: "Fix the flaky login test, open a PR"},
 	{Text: "Rebase on main and push. After that you can go home and clean up your worktree.", Match: true},
 	{Text: "Once the PR is merged, pack up and head home.", Match: true},
 	{Text: "Update the changelog for 1.4 and commit it, then you're done for the day: clean up and leave.", Match: true},
@@ -30,10 +30,10 @@ var Samples = []LabelledPrompt{
 	{Text: "Run the e2e suite and fix whatever fails, then call it a day and remove your worktree.", Match: true},
 	{Text: "Address the review comments on #42 and push; after that, clock out.", Match: true},
 	{Text: "Bump the Go version in go.mod, make a PR, and then you can leave.", Match: true},
-	{Text: "Mach einen PR und geh dann nach Hause.", Match: true},
+	{Text: "Mach einen PR und geh dann nach Hause.", Match: true, Task: "Mach einen PR"},
 	{Text: "Squash the commits and push. Then shut down and go home, you're done.", Match: true},
 	{Text: "Close the issue once CI is green and sign off for today.", Match: true},
-	{Text: "Merge the dependabot PRs that pass, then you are free to go: clean up after yourself.", Match: true},
+	{Text: "Merge the dependabot PRs that pass, then you are free to go: clean up after yourself.", Match: true, Task: "Merge the dependabot PRs that pass"},
 
 	{Text: "Stop the dev server and restart it with --verbose."},
 	{Text: "Clean up the stale build artifacts in the worktree, then run the tests again."},

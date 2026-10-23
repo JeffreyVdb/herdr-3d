@@ -53,10 +53,14 @@ test('Settings: the switch is off until a test passed, after the follow-up quest
     await expect(toggle).toBeDisabled();
     expect(await sent(page, 'packup.set')).toHaveLength(0);
     expect(await sent(page, 'packup.detect')).toHaveLength(0);
+    await section.getByLabel('Reasoning effort', { exact: true }).selectOption('high');
+    await section.getByLabel('Completion budget (tokens)', { exact: true }).fill('2048');
+    await section.getByLabel('Completion budget (tokens)', { exact: true }).press('Enter');
+    await expect.poll(() => page.evaluate(() => window.__h3d.packup())).toMatchObject({ reasoning_effort: 'high', max_tokens: 2048 });
     await section.getByRole('button', { name: 'Test' }).click();
     await expect(section).toContainText('Test passed');
     await expect(section.locator('.settings-fu-result > .settings-fu-samples')).toContainText('Sent as: “Please make a PR”');
-    await expect(section.locator('.settings-pk-all summary')).toHaveText(/^\d+ of 8 sample prompts as expected at 0\.85$/);
+    await expect(section.locator('.settings-pk-all summary')).toHaveText(/^\d+ of 8 classifier scores as expected at 0\.85$/);
     await toggle.check();
     await expect(section).toContainText('On: each prompt is checked');
     expect(await page.evaluate(() => window.__h3d.packup())).toMatchObject({ enabled: true, state: 'ready', tested: true });
@@ -71,6 +75,7 @@ test('Settings: the switch is off until a test passed, after the follow-up quest
     const scroll = await dialog.locator('.settings-body').evaluate((e) => e.scrollWidth - e.clientWidth);
     expect(scroll).toBeLessThanOrEqual(0);
     await section.scrollIntoViewIfNeeded();
+    await section.getByLabel('Completion budget (tokens)', { exact: true }).scrollIntoViewIfNeeded();
     await shot(page, 'settings-packup-phone');
   } finally {
     await Promise.all([jev.close(), llm.close()]);

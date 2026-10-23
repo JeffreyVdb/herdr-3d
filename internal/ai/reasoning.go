@@ -175,6 +175,10 @@ func without(list []string, drop string) []string {
 // reasoning text. A count the provider did not report stays nil, apart from
 // a zero.
 type Diagnostics struct {
+	// Outbound controls, normalized to safe values; no endpoint extra_body is retained.
+	MaxTokens       int    `json:"max_tokens,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+
 	// Status is the HTTP status.
 	Status int `json:"status"`
 	// FinishReason and NativeFinishReason are the first choice's (the

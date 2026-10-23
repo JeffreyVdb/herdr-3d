@@ -81,8 +81,8 @@ describe('the pack up on request section (#110)', () => {
     expect(core.textContent).toContain('Sent as: “Please make a PR”');
     expect(core.textContent).not.toContain('Nach Hause');
     const all = m.body.querySelector('details.settings-pk-all')!;
-    expect(all.querySelector('summary')!.textContent).toBe('29 of 30 sample prompts as expected at 0.85');
-    expect(all.textContent).toContain('Missed: wrong');
+    expect(all.querySelector('summary')!.textContent).toBe('29 of 30 classifier scores as expected at 0.85');
+    expect(all.textContent).toContain('Gate missed · extraction not tested');
     expect(m.body.textContent).toContain('Test passed');
     m.book.upsert(state({ tested: true }));
     m.box().checked = true;
@@ -112,6 +112,66 @@ describe('the pack up on request section (#110)', () => {
     th.dispatchEvent(new Event('input'));
     th.dispatchEvent(new Event('change'));
     await m.flush();
-    expect(m.sent).toEqual([{ t: 'packup.set', args: { threshold: 0.9 } }]);
+    expect(m.sent.filter((s) => s.t !== 'packup.get')).toEqual([{ t: 'packup.set', args: { threshold: 0.9 } }]);
   });
+});
+
+it('saves exactly the selected effort and budget, including higher reasoning', async () => {
+  const m = mount(state({ reasoning_effort: '', max_tokens: 600, reasoning: { support: 'supported', listed: true, efforts: ['none', 'high'], model: 'example', default_effort: 'high' } }));
+  const effort = m.body.querySelector('select')!;
+  expect([...effort.options].map((o) => o.value)).toEqual(['', 'none', 'high']);
+  effort.value = 'high';
+  effort.dispatchEvent(new Event('change'));
+  await m.flush();
+  expect(m.sent.at(-1)).toEqual({ t: 'packup.set', args: { reasoning_effort: 'high' } });
+  const tokens = m.body.querySelector<HTMLInputElement>('input[id$="-tokens"]')!;
+  tokens.value = '2048';
+  tokens.dispatchEvent(new Event('input'));
+  tokens.dispatchEvent(new Event('change'));
+  await m.flush();
+  expect(m.sent.at(-1)).toEqual({ t: 'packup.set', args: { max_tokens: 2048 } });
+  tokens.value = '0';
+  tokens.dispatchEvent(new Event('input'));
+  tokens.dispatchEvent(new Event('change'));
+  expect(tokens.getAttribute('aria-invalid')).toBe('true');
+});
+
+it('keeps stale efforts visible and lets the user explicitly restore Provider default', async () => {
+  const m = mount(state({ reasoning_effort: 'high', effort_stale: true, reasoning: { support: 'unsupported', listed: true, efforts: [] } }));
+  const effort = m.body.querySelector('select')!;
+  expect(effort.value).toBe('high');
+  expect(effort.selectedOptions[0]!.disabled).toBe(true);
+  expect(effort.disabled).toBe(false);
+  expect(m.button('Test').disabled).toBe(true);
+  expect(m.body.textContent).toContain('Checks are paused');
+  effort.value = '';
+  effort.dispatchEvent(new Event('change'));
+  await m.flush();
+  expect(m.sent.at(-1)).toEqual({ t: 'packup.set', args: { reasoning_effort: '' } });
+});
+
+it('offers no effort selector when the catalog describes reasoning without effort selection', () => {
+  const m = mount(state({ reasoning: { support: 'supported', listed: true, efforts: [] } }));
+  const effort = m.body.querySelector('select')!;
+  expect(effort.disabled).toBe(true);
+  expect([...effort.options].map((o) => o.value)).toEqual(['']);
+});
+
+it('separates gate-only positives from verified extractions and shows safe timing diagnostics', async () => {
+  const m = mount(state(), { 'packup.test': () => ({ ok: true, data: {
+    ok: false, threshold: .85, right: 1, total: 2, gate_right: 2, extractions: 1, verified: 0,
+    model: 'example', reasoning_effort: 'high', max_tokens: 2048, timeout_ms: 1200,
+    samples: [
+      { text: 'Core prompt', core: true, expect: 'match', score: .9, extraction_tested: true, right: false, stage: 'timing', code: 'llm_timeout', classifier_ms: 20, extraction_ms: 1180, diag: { finish_reason: 'length', completion_tokens: 2048, reasoning_tokens: 2048 } },
+      { text: 'Other positive', expect: 'match', score: .9, extraction_tested: false, right: true },
+    ],
+  } }) });
+  m.button('Test').click();
+  await m.flush();
+  expect(m.body.textContent).toContain('0 of 1 attempted extractions verified');
+  expect(m.body.textContent).toContain('Gate correct · extraction not tested');
+  expect(m.body.textContent).toContain('Failed: timing');
+  expect(m.body.textContent).toContain('Classifier 20 ms · extraction 1180 ms');
+  expect(m.body.textContent).toContain('finish: length');
+  expect(m.body.textContent).toContain('2,048 reasoning');
 });

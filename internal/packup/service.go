@@ -63,10 +63,23 @@ type Roles interface {
 	LLM() ai.LLM
 }
 
+// Settings are persisted together so a saved extraction policy survives restart.
+type Settings struct {
+	Enabled   bool
+	Threshold float64
+	Params
+}
+
+// Reasoner is the existing AI capability catalog, optional for test doubles.
+type Reasoner interface {
+	ModelReasoning(context.Context) ai.Reasoning
+	KnownReasoning() ai.Reasoning
+}
+
 // Store keeps the feature's settings (the bridge's database).
 type Store interface {
-	LoadPackupSettings(ctx context.Context) (enabled bool, threshold float64, ok bool, err error)
-	SavePackupSettings(ctx context.Context, enabled bool, threshold float64) error
+	LoadPackupSettings(ctx context.Context) (Settings, bool, error)
+	SavePackupSettings(ctx context.Context, settings Settings) error
 }
 
 // Options configure a Service.
@@ -89,6 +102,7 @@ type Service struct {
 	enabled   bool
 	threshold float64
 	passed    *passedTest
+	params    Params
 }
 
 // passedTest is the last passing packup.test: the role configs it ran with,
@@ -96,6 +110,8 @@ type Service struct {
 type passedTest struct {
 	classifier, llm string
 	at              time.Time
+	params          Params
+	threshold       float64
 }
 
 // New loads the settings.
@@ -108,12 +124,14 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 	}
 	s := &Service{opts: opts, threshold: DefaultThreshold}
 	if opts.Store != nil {
-		en, th, ok, err := opts.Store.LoadPackupSettings(ctx)
+		saved, ok, err := opts.Store.LoadPackupSettings(ctx)
+		en, th := saved.Enabled, saved.Threshold
 		if err != nil {
 			return nil, err
 		}
 		if ok {
 			s.enabled = en
+			s.params = saved.Params
 			if th >= MinThreshold && th <= MaxThreshold {
 				s.threshold = th
 			}
@@ -140,7 +158,12 @@ type View struct {
 	Env []string `json:"env"`
 	// Tested: a passing packup.test covers the models in use (enabling is
 	// allowed).
-	Tested bool `json:"tested"`
+	Tested          bool         `json:"tested"`
+	ReasoningEffort string       `json:"reasoning_effort"`
+	MaxTokens       int          `json:"max_tokens"`
+	Reasoning       ai.Reasoning `json:"reasoning"`
+	EffortStale     bool         `json:"effort_stale"`
+	TimeoutMS       int64        `json:"timeout_ms"`
 }
 
 func (s *Service) enabledLocked() bool {
@@ -161,9 +184,12 @@ func (s *Service) missing() []string {
 	return m
 }
 
-func (s *Service) testedLocked() bool {
+func (s *Service) testedLocked() bool { return s.passedForLocked(s.policyLocked(), s.threshold) }
+
+func (s *Service) passedForLocked(params Params, threshold float64) bool {
 	p := s.passed
 	return p != nil && s.opts.Now().Sub(p.at) <= testValidity &&
+		p.params == params && p.threshold == threshold && !s.staleLocked() &&
 		p.classifier == s.opts.Roles.Fingerprint(ai.RoleClassifier) && p.llm == s.opts.Roles.Fingerprint(ai.RoleLLM)
 }
 
@@ -173,14 +199,15 @@ func (s *Service) View() View {
 	defer s.mu.Unlock()
 	v := View{Enabled: s.enabledLocked(), Threshold: s.threshold, Missing: s.missing(), Env: []string{},
 		Roles:  RoleStates{Classifier: string(s.opts.Roles.State(ai.RoleClassifier)), LLM: string(s.opts.Roles.State(ai.RoleLLM))},
-		Tested: s.testedLocked()}
+		Tested: s.testedLocked(), ReasoningEffort: s.params.ReasoningEffort, MaxTokens: s.params.tokens(),
+		Reasoning: s.known(), EffortStale: s.staleLocked(), TimeoutMS: s.opts.Timeout.Milliseconds()}
 	if s.opts.EnvEnabled != nil {
 		v.Env = append(v.Env, "enabled")
 	}
 	switch {
 	case !v.Enabled:
 		v.State = StateOff
-	case len(v.Missing) > 0:
+	case len(v.Missing) > 0 || v.EffortStale:
 		v.State = StateIncomplete
 	default:
 		v.State = StateReady
@@ -204,12 +231,65 @@ func badThreshold(th float64) bool { return th < MinThreshold || th > MaxThresho
 // packup.test of the models in use; the environment's toggle cannot be
 // changed.
 func (s *Service) Set(ctx context.Context, enabled *bool, threshold *float64) error {
+	return s.Apply(ctx, Update{Enabled: enabled, Threshold: threshold})
+}
+
+// Update changes only fields supplied by the client.
+type Update struct {
+	Enabled         *bool    `json:"enabled,omitempty"`
+	Threshold       *float64 `json:"threshold,omitempty"`
+	ReasoningEffort *string  `json:"reasoning_effort,omitempty"`
+	MaxTokens       *int     `json:"max_tokens,omitempty"`
+}
+
+func (s *Service) known() ai.Reasoning {
+	if r, ok := s.opts.Roles.(Reasoner); ok {
+		return r.KnownReasoning()
+	}
+	return ai.UnknownReasoning()
+}
+func (s *Service) Refresh(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, s.opts.Timeout)
+	defer cancel()
+	if r, ok := s.opts.Roles.(Reasoner); ok && s.opts.Roles.State(ai.RoleLLM) == ai.StateReady {
+		r.ModelReasoning(ctx)
+	}
+}
+func (s *Service) staleLocked() bool {
+	return s.params.ReasoningEffort != "" && !s.known().Allows(s.params.ReasoningEffort)
+}
+func (s *Service) policyLocked() Params {
+	return Params{ReasoningEffort: s.params.ReasoningEffort, MaxTokens: s.params.tokens()}
+}
+
+// Apply saves an explicitly selected policy; unsupported saved choices pause detection, never downgrade it.
+func (s *Service) Apply(ctx context.Context, u Update) error {
+	enabled, threshold := u.Enabled, u.Threshold
+	if u.MaxTokens != nil && (*u.MaxTokens < MinMaxTokens || *u.MaxTokens > MaxMaxTokens) {
+		return &Error{CodeBadRequest, "max_tokens must be 64-16384"}
+	}
+	if u.ReasoningEffort != nil && *u.ReasoningEffort != "" {
+		s.Refresh(ctx)
+		if !s.known().Allows(*u.ReasoningEffort) {
+			return &Error{CodeBadRequest, "this model does not support that reasoning effort; choose a listed effort or Provider default"}
+		}
+	}
 	if threshold != nil && badThreshold(*threshold) {
 		return &Error{CodeBadRequest, fmt.Sprintf("threshold must be %.2f-%.2f", MinThreshold, MaxThreshold)}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	en, th := s.enabled, s.threshold
+	next := s.policyLocked()
+	if u.ReasoningEffort != nil {
+		next.ReasoningEffort = *u.ReasoningEffort
+	}
+	if u.MaxTokens != nil {
+		next.MaxTokens = *u.MaxTokens
+	}
+	if threshold != nil {
+		th = *threshold
+	}
 	if enabled != nil {
 		if s.opts.EnvEnabled != nil {
 			if *enabled != *s.opts.EnvEnabled {
@@ -219,7 +299,7 @@ func (s *Service) Set(ctx context.Context, enabled *bool, threshold *float64) er
 			if m := s.missing(); len(m) > 0 {
 				return &Error{CodeIncomplete, "pack up on request needs the classification model and the LLM to be ready"}
 			}
-			if !s.testedLocked() {
+			if !s.passedForLocked(next, th) {
 				return &Error{CodeTestRequired, "run the pack-up test first: it must pass with the models in use"}
 			}
 		}
@@ -227,15 +307,12 @@ func (s *Service) Set(ctx context.Context, enabled *bool, threshold *float64) er
 			en = *enabled
 		}
 	}
-	if threshold != nil {
-		th = *threshold
-	}
 	if s.opts.Store != nil {
-		if err := s.opts.Store.SavePackupSettings(ctx, en, th); err != nil {
+		if err := s.opts.Store.SavePackupSettings(ctx, Settings{Enabled: en, Threshold: th, Params: next}); err != nil {
 			return fmt.Errorf("the settings could not be saved: %w", err)
 		}
 	}
-	s.enabled, s.threshold = en, th
+	s.enabled, s.threshold, s.params = en, th, next
 	return nil
 }
 
@@ -250,7 +327,14 @@ func (s *Service) Detect(ctx context.Context, prompt string) (*Result, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.opts.Timeout)
 	defer cancel()
-	res, err := run(ctx, s.opts.Roles.Classifier(), s.opts.Roles.LLM(), prompt, s.Threshold(), s.Ready)
+	s.Refresh(ctx)
+	if !s.Ready() {
+		return nil, ai.ErrNotReady
+	}
+	s.mu.Lock()
+	p, th := s.policyLocked(), s.threshold
+	s.mu.Unlock()
+	res, err := run(ctx, s.opts.Roles.Classifier(), s.opts.Roles.LLM(), prompt, th, s.Ready, p, false)
 	if err == nil && ctx.Err() != nil {
 		// The LLM's answer came, but too late to wait on: no match.
 		err = &ai.Error{Kind: ai.KindTimeout, Msg: "pack-up detection timed out"}
@@ -270,33 +354,47 @@ type Sample struct {
 	Core    bool    `json:"core,omitempty"`
 	Score   float64 `json:"score"`
 	Matched bool    `json:"matched"`
-	// Task is what is left (core matches: it must be WantTask).
+	// Task is what is left; extraction samples must preserve WantTask.
 	Task     string `json:"task,omitempty"`
 	WantTask string `json:"want_task,omitempty"`
 	// Right: it came out as expected.
-	Right bool   `json:"right"`
-	Error string `json:"error,omitempty"` // why an extraction was no match
+	Right            bool            `json:"right"`
+	Error            string          `json:"error,omitempty"`
+	Code             string          `json:"code,omitempty"`
+	Stage            string          `json:"stage,omitempty"`
+	ExtractionTested bool            `json:"extraction_tested"`
+	ClassifierMS     int64           `json:"classifier_ms"`
+	ExtractionMS     int64           `json:"extraction_ms"`
+	Diag             *ai.Diagnostics `json:"diag,omitempty"`
 }
 
 // TestResult is packup.test's answer. A test that ran but did not pass (a
 // core sample on the wrong side, a task not cut as expected) has OK false
-// and Reason; a call that failed is an error. Right of Total is how many
-// samples came out as expected at the threshold, for choosing it.
+// and Reason. Per-sample call failures are reported by stage; cancellation
+// of the whole test is an error. GateRight calibrates the classifier independently
+// of Verified extractions. Right counts each sample against its own expectation.
 type TestResult struct {
-	OK        bool     `json:"ok"`
-	Reason    string   `json:"reason,omitempty"`
-	Threshold float64  `json:"threshold"`
-	Samples   []Sample `json:"samples"`
-	Right     int      `json:"right"`
-	Total     int      `json:"total"`
-	LatencyMS int64    `json:"latency_ms"`
+	OK              bool     `json:"ok"`
+	Reason          string   `json:"reason,omitempty"`
+	Threshold       float64  `json:"threshold"`
+	Samples         []Sample `json:"samples"`
+	Right           int      `json:"right"`
+	Total           int      `json:"total"`
+	LatencyMS       int64    `json:"latency_ms"`
+	Model           string   `json:"model,omitempty"`
+	ReasoningEffort string   `json:"reasoning_effort"`
+	MaxTokens       int      `json:"max_tokens"`
+	TimeoutMS       int64    `json:"timeout_ms"`
+	Extractions     int      `json:"extractions"`
+	Verified        int      `json:"verified"`
+	GateRight       int      `json:"gate_right"`
 }
 
 // testParallel is how many samples the test classifies at once.
 const testParallel = 4
 
-// Test runs every labelled sample through the classifier, and the core
-// matches through the extraction too, with the models in use and the
+// Test runs every labelled sample through the classifier and positives with
+// expected tasks through extraction, with the saved request policy and the
 // threshold (nil: the current one). It passes when every core sample comes
 // out as expected (the others are reported, for the threshold). A pass
 // allows switching the feature on for 30 minutes, while the models stay the
@@ -315,89 +413,108 @@ func (s *Service) Test(ctx context.Context, threshold *float64) (*TestResult, er
 	if len(m) > 0 {
 		return nil, &Error{CodeIncomplete, "the pack-up test needs the classification model and the LLM to be ready"}
 	}
+	s.Refresh(ctx)
+	s.mu.Lock()
+	p := s.policyLocked()
+	stale := s.staleLocked()
+	// A failed retest revokes an earlier pass, including one for these same settings.
+	s.passed = nil
+	s.mu.Unlock()
+	if stale {
+		return nil, &Error{CodeBadRequest, "the saved reasoning effort is unsupported by this model; choose another or Provider default"}
+	}
 	r := s.opts.Roles
 	cfp, lfp := r.Fingerprint(ai.RoleClassifier), r.Fingerprint(ai.RoleLLM)
-	start := s.opts.Now()
-	res := &TestResult{Threshold: th, Samples: make([]Sample, len(Samples)), Total: len(Samples)}
-	errs := make([]error, len(Samples))
+	start := time.Now()
+	res := &TestResult{Threshold: th, Samples: make([]Sample, len(Samples)), Total: len(Samples),
+		Model: s.known().Model, ReasoningEffort: p.ReasoningEffort, MaxTokens: p.tokens(), TimeoutMS: s.opts.Timeout.Milliseconds()}
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, testParallel)
 	for i, smp := range Samples {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			slots <- struct{}{}
+			select {
+			case slots <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
 			defer func() { <-slots }()
+			// As in Detect, the deadline includes waiting for the shared AI call slots.
+			sampleCtx, cancel := context.WithTimeout(ctx, s.opts.Timeout)
+			defer cancel()
 			out := Sample{Text: smp.Text, Expect: "skip", Core: smp.Core, WantTask: smp.Task}
 			if smp.Match {
 				out.Expect = "match"
 			}
-			cls := r.Classifier()
-			var llm ai.LLM = noLLM{}
-			if smp.Core && smp.Match {
-				llm = r.LLM()
+			extract := smp.Match && smp.Task != ""
+			got, err := run(sampleCtx, r.Classifier(), r.LLM(), smp.Text, th, nil, p, !extract)
+			if got != nil {
+				out.Score, out.ClassifierMS, out.ExtractionMS = got.Score, got.ClassifierMS, got.ExtractionMS
+				out.ExtractionTested, out.Diag = got.Extracted, got.Diag
+				out.Matched, out.Task, out.Error, out.Code = got.Matched, got.Task, got.ExtractErr, got.ExtractCode
 			}
-			got, err := Run(ctx, cls, llm, smp.Text, th)
-			if err != nil {
-				errs[i] = err
-				return
-			}
-			out.Score = got.Score
-			if smp.Core {
-				out.Matched, out.Task, out.Error = got.Matched, got.Task, got.ExtractErr
-			}
-			gated := got.Score >= th
 			switch {
+			case sampleCtx.Err() != nil:
+				out.Stage, out.Code, out.Error = "timing", "llm_timeout", extractionError("llm_timeout")
+				out.Matched, out.Task = false, ""
+			case err != nil:
+				out.Stage, out.Code, out.Error = "classifier", "classifier_"+string(ai.KindOf(err)), "the classifier call failed"
 			case !smp.Match:
-				out.Right = !gated
-			case smp.Core:
-				out.Right = got.Matched && sameTask(got.Task, smp.Task)
+				out.Right = out.Score < th
+				if !out.Right {
+					out.Stage = "score"
+					out.Error = "the classifier score is at or over the threshold"
+				}
+			case out.Score < th:
+				out.Stage, out.Error = "score", "the classifier score is under the threshold"
+			case extract:
+				out.Right = out.Matched && sameTask(out.Task, smp.Task)
+				if !out.Right {
+					out.Stage = "extraction"
+					if out.Error == "" {
+						out.Error = "the remaining task differs from the expected task"
+					}
+				}
 			default:
-				out.Right = gated
+				out.Right = true
 			}
 			res.Samples[i] = out
 		}()
 	}
 	wg.Wait()
-	for _, err := range errs {
-		if err != nil {
-			return nil, err
-		}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
 	}
-	res.LatencyMS = s.opts.Now().Sub(start).Milliseconds()
+	res.LatencyMS = time.Since(start).Milliseconds()
 	for _, smp := range res.Samples {
 		if smp.Right {
 			res.Right++
 		}
+		if (smp.Score >= th) == (smp.Expect == "match") && smp.Stage != "classifier" && !(smp.Stage == "timing" && !smp.ExtractionTested) {
+			res.GateRight++
+		}
+		if smp.ExtractionTested {
+			res.Extractions++
+			if smp.Right {
+				res.Verified++
+			}
+		}
 		if !smp.Core || smp.Right || res.Reason != "" {
 			continue
 		}
-		switch {
-		case smp.Expect == "skip":
-			res.Reason = fmt.Sprintf("%q scored %.2f, at or over the threshold %.2f", smp.Text, smp.Score, th)
-		case smp.Score < th:
-			res.Reason = fmt.Sprintf("%q scored %.2f, under the threshold %.2f", smp.Text, smp.Score, th)
-		case !smp.Matched:
-			res.Reason = fmt.Sprintf("the LLM did not cut %q: %s", smp.Text, smp.Error)
-		default:
-			res.Reason = fmt.Sprintf("the LLM cut %q to %q, not %q", smp.Text, smp.Task, smp.WantTask)
-		}
+		res.Reason = fmt.Sprintf("core sample failed at %s: %s", smp.Stage, smp.Error)
 	}
 	res.OK = res.Reason == ""
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cfp != r.Fingerprint(ai.RoleClassifier) || lfp != r.Fingerprint(ai.RoleLLM) || p != s.policyLocked() || s.staleLocked() {
+		res.OK, res.Reason = false, "settings changed during the test; run it again"
+	}
 	if res.OK {
-		s.mu.Lock()
-		s.passed = &passedTest{classifier: cfp, llm: lfp, at: s.opts.Now()}
-		s.mu.Unlock()
+		s.passed = &passedTest{classifier: cfp, llm: lfp, at: s.opts.Now(), params: p, threshold: th}
 	}
 	return res, nil
-}
-
-// noLLM stands in for the LLM where the test only needs the gate: a passing
-// gate's extraction fails without a call.
-type noLLM struct{}
-
-func (noLLM) Complete(context.Context, ai.Request) (string, error) {
-	return "", fmt.Errorf("the test does not extract this sample")
 }
 
 // sameTask compares a cut task with the expected one, its case and a final

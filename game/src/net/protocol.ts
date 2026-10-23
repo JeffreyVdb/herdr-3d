@@ -1150,7 +1150,7 @@ export interface CommandArgs {
   'worker.dismiss_schedule_suggestion': { id: string; suggestion: string };
   // #110 pack up on request (docs/protocol.md "Pack up on request"). `packup.detect` acks `PackupDetectAck`.
   'packup.get': Record<string, never>;
-  'packup.set': { enabled?: boolean; threshold?: number };
+  'packup.set': { enabled?: boolean; threshold?: number; reasoning_effort?: string; max_tokens?: number };
   'packup.test': { threshold?: number };
   /** #108 round 2: `secrets`, the review of `text` before the models read it. */
   'packup.detect': { id: string; text: string; secrets?: SecretsReview };
@@ -2792,7 +2792,13 @@ export interface ScheduleSuggestionsUpdate extends ScheduleSuggestionsState {
 // worker to leave once the task is done, and what to cut; the same settings shape as the follow-up questions'.
 
 /** The feature's settings and state: the same fields as the follow-up questions'. */
-export type PackupState = FollowupsState;
+export interface PackupState extends FollowupsState {
+  reasoning_effort?: string;
+  max_tokens?: number;
+  reasoning?: DigestReasoning;
+  effort_stale?: boolean;
+  timeout_ms?: number;
+}
 
 /** `packup.update`: the whole state, flat. */
 export interface PackupUpdate extends PackupState {
@@ -2822,6 +2828,12 @@ export interface PackupDetectAck {
 }
 
 export interface PackupTestSample {
+  extraction_tested?: boolean;
+  stage?: string;
+  code?: string;
+  classifier_ms?: number;
+  extraction_ms?: number;
+  diag?: CallDiagnostics;
   text: string;
   expect: 'match' | 'skip';
   /** One of the four the test must get right (the cut included). */
@@ -2836,6 +2848,13 @@ export interface PackupTestSample {
 
 /** `packup.test` ack: ok false with `reason` when it ran but did not pass; `right` of `total` came out as expected. */
 export interface PackupTestAck {
+  model?: string;
+  reasoning_effort?: string;
+  max_tokens?: number;
+  timeout_ms?: number;
+  extractions?: number;
+  verified?: number;
+  gate_right?: number;
   ok: boolean;
   reason?: string;
   threshold: number;
@@ -2924,6 +2943,8 @@ export interface DigestReasoning {
 
 /** #174: how a call ended and what it spent: never any text. */
 export interface CallDiagnostics {
+  max_tokens?: number;
+  reasoning_effort?: string;
   status: number;
   finish_reason?: string;
   native_finish_reason?: string;

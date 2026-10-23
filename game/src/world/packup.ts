@@ -3,17 +3,69 @@
  * worker to leave once the task is done, and what to cut. Pure: who it applies to, the ack read strictly (anything
  * odd is no match: the prompt goes as written), the original split into kept and struck parts for the confirm
  * dialog, the worktree choice it preselects and the wrap-up prompt "Send and go home" sends. The feature's settings
- * are the follow-up questions' shape (`PackupBook`).
+ * include the feature's own extraction policy (`PackupBook`).
  */
 
-import type { FirePrepare, FireWorktree, PackupDetectAck, PackupRange, Worker } from '../net/protocol';
+import type { FirePrepare, FireWorktree, PackupState, PackupDetectAck, PackupRange, Worker } from '../net/protocol';
 import { crewRole, isFreelancer } from './crew';
-import { followupFailureText, FollowupsBook } from './followup';
+import { followupFailureText, followupsStateOf } from './followup';
+import { reasoningOf } from './digestSettings';
 import { fireOptions } from './hire';
 import { WRAPUP_PROMPT } from './wrapup';
 
 /** The feature's settings and state, from the snapshot's `packup` and `packup.update`. */
-export class PackupBook extends FollowupsBook {}
+export type PackupSettings = PackupState & Required<Pick<PackupState, 'reasoning_effort' | 'max_tokens' | 'reasoning' | 'effort_stale' | 'timeout_ms'>>;
+export function packupStateOf(v: unknown): PackupSettings | null {
+  const base = followupsStateOf(v);
+  if (!base) return null;
+  const o = v as Record<string, unknown>;
+  return {
+    ...base,
+    reasoning_effort: typeof o.reasoning_effort === 'string' ? o.reasoning_effort : '',
+    max_tokens: typeof o.max_tokens === 'number' && Number.isFinite(o.max_tokens) && o.max_tokens > 0 ? Math.floor(o.max_tokens) : 600,
+    reasoning: reasoningOf(o.reasoning),
+    effort_stale: o.effort_stale === true,
+    timeout_ms: typeof o.timeout_ms === 'number' && Number.isFinite(o.timeout_ms) && o.timeout_ms > 0 ? o.timeout_ms : 1200,
+  };
+}
+
+export class PackupBook {
+  /** The bridge sent a `packup` state (it has the feature). */
+  known = false;
+  version = 0;
+  private cur: PackupSettings | null = null;
+  private readonly listeners = new Set<() => void>();
+
+  get state(): PackupSettings | null {
+    return this.cur;
+  }
+
+  reset(v: unknown): void {
+    this.cur = packupStateOf(v);
+    this.known = this.cur !== null;
+    this.version++;
+    this.emit();
+  }
+
+  upsert(v: unknown): boolean {
+    const next = packupStateOf(v);
+    if (!next) return false;
+    this.cur = next;
+    this.known = true;
+    this.version++;
+    this.emit();
+    return true;
+  }
+
+  onChange(fn: () => void): () => void {
+    this.listeners.add(fn);
+    return () => void this.listeners.delete(fn);
+  }
+
+  private emit(): void {
+    for (const fn of [...this.listeners]) fn();
+  }
+}
 
 /** Whether a prompt to this worker is looked at: the wrap-up's workers (Claude or Codex agents), never a freelancer. */
 export function packupApplies(w: Pick<Worker, 'agent_kind' | 'harness' | 'role' | 'label'> | null | undefined): boolean {

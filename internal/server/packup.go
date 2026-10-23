@@ -22,6 +22,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/packup"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
@@ -30,6 +31,17 @@ import (
 type packupState struct {
 	svc  *packup.Service
 	last string // the view as last published (JSON)
+}
+
+// packupStore keeps storage independent of the AI feature, like digestStore.
+type packupStore struct{ st *store.Store }
+
+func (a packupStore) LoadPackupSettings(ctx context.Context) (packup.Settings, bool, error) {
+	v, ok, err := a.st.LoadPackupSettings(ctx)
+	return packup.Settings{Enabled: v.Enabled, Threshold: v.Threshold, Params: packup.Params{ReasoningEffort: v.ReasoningEffort, MaxTokens: v.MaxTokens}}, ok, err
+}
+func (a packupStore) SavePackupSettings(ctx context.Context, v packup.Settings) error {
+	return a.st.SavePackupSettings(ctx, store.PackupSettings{Enabled: v.Enabled, Threshold: v.Threshold, ReasoningEffort: v.ReasoningEffort, MaxTokens: v.MaxTokens})
 }
 
 // initPackup makes the feature's service (NewHub); none without the AI
@@ -42,7 +54,7 @@ func (h *Hub) initPackup(ctx context.Context) error {
 	if roles == nil {
 		return nil
 	}
-	svc, err := packup.New(ctx, packup.Options{Roles: roles, Store: h.st, EnvEnabled: h.opts.PackupEnabled,
+	svc, err := packup.New(ctx, packup.Options{Roles: roles, Store: packupStore{h.st}, EnvEnabled: h.opts.PackupEnabled,
 		Timeout: h.opts.PackupTimeout, Now: h.opts.Now})
 	if err != nil {
 		return fmt.Errorf("pack up on request: %w", err)
@@ -115,14 +127,18 @@ func (h *Hub) startPackup(ctx context.Context, c *Client, cmd proto.Command) err
 		if err := decodeArgs(cmd.Args, &struct{}{}); err != nil {
 			return err
 		}
-		work = func(context.Context) (any, error) { return svc.View(), nil }
+		work = func(ctx context.Context) (any, error) {
+			svc.Refresh(ctx)
+			_ = h.doWait(ctx, h.publishPackup)
+			return svc.View(), nil
+		}
 	case proto.CmdPackupSet:
 		var a proto.PackupSetArgs
 		if err := decodeArgs(cmd.Args, &a); err != nil {
 			return err
 		}
 		work = func(ctx context.Context) (any, error) {
-			if err := svc.Set(ctx, a.Enabled, a.Threshold); err != nil {
+			if err := svc.Apply(ctx, a); err != nil {
 				return nil, err
 			}
 			_ = h.doWait(ctx, h.publishPackup)

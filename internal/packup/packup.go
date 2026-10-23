@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
@@ -53,7 +54,11 @@ type Range struct {
 
 // Result is what Run made of a prompt.
 type Result struct {
-	Score float64
+	Score        float64
+	ClassifierMS int64
+	ExtractionMS int64
+	Extracted    bool
+	Diag         *ai.Diagnostics
 	// Matched: the gate passed and the extraction was valid. Task is then
 	// the prompt with the leaving part cut out ("" when nothing is left),
 	// Removed the parts cut.
@@ -61,8 +66,7 @@ type Result struct {
 	Task    string
 	Removed []Range
 	// ExtractErr is why a passing gate is no match ("" when it is one, or
-	// the gate did not pass). It may carry the provider's words, which can
-	// echo the prompt: never log it, log ExtractCode.
+	// the gate did not pass). It is a fixed explanation; provider text is never retained.
 	ExtractErr string
 	// ExtractCode is ExtractErr as a fixed code, safe to log: "llm_<kind>"
 	// (the LLM's call failed, ai.Kind), "bad_answer" (its answer is not a
@@ -140,26 +144,54 @@ func (v view) at(i int) int {
 // threshold, has the LLM say what to cut. Only a failure of the classifier
 // is an error: a failed or invalid extraction is no match.
 func Run(ctx context.Context, c ai.Classifier, l ai.LLM, prompt string, threshold float64) (*Result, error) {
-	return run(ctx, c, l, prompt, threshold, nil)
+	return RunWith(ctx, c, l, prompt, threshold, Params{})
+}
+
+// Params is the pack-up-specific extraction policy. Its budget wins over endpoint extra_body.
+type Params struct {
+	ReasoningEffort string
+	MaxTokens       int
+}
+
+const (
+	DefaultMaxTokens = 600
+	MinMaxTokens     = 64
+	MaxMaxTokens     = 16384
+)
+
+func (p Params) tokens() int {
+	if p.MaxTokens > 0 {
+		return p.MaxTokens
+	}
+	return DefaultMaxTokens
+}
+
+// RunWith runs the same pipeline with explicit extraction settings.
+func RunWith(ctx context.Context, c ai.Classifier, l ai.LLM, prompt string, threshold float64, p Params) (*Result, error) {
+	return run(ctx, c, l, prompt, threshold, nil, p, false)
 }
 
 // run is Run; with ready, a passing gate goes to the LLM only while ready
 // still holds (the feature switched off, or a role gone invalid, during the
 // classification): else no call, ai.ErrNotReady.
-func run(ctx context.Context, c ai.Classifier, l ai.LLM, prompt string, threshold float64, ready func() bool) (*Result, error) {
+func run(ctx context.Context, c ai.Classifier, l ai.LLM, prompt string, threshold float64, ready func() bool, p Params, gateOnly bool) (*Result, error) {
 	v := modelView(prompt)
+	start := time.Now()
 	score, err := c.Classify(ctx, map[string]any{"prompt": v.text}, GateQuestion)
+	res := &Result{Score: score, ClassifierMS: time.Since(start).Milliseconds()}
 	if err != nil {
-		return nil, err
+		return res, err
 	}
-	res := &Result{Score: score}
-	if score < threshold {
+	if score < threshold || gateOnly {
 		return res, nil
 	}
 	if ready != nil && !ready() {
 		return nil, ai.ErrNotReady
 	}
-	spans, err := Extract(ctx, l, v.text)
+	start = time.Now()
+	res.Extracted = true
+	spans, err := extract(ctx, l, v.text, p, func(d ai.Diagnostics) { res.Diag = &d })
+	res.ExtractionMS = time.Since(start).Milliseconds()
 	code := "bad_answer"
 	if k := ai.KindOf(err); k != "" {
 		code = "llm_" + string(k)
@@ -169,7 +201,7 @@ func run(ctx context.Context, c ai.Classifier, l ai.LLM, prompt string, threshol
 		res.Task, res.Removed, err = cut(prompt, v, spans)
 	}
 	if err != nil {
-		res.Task, res.Removed, res.ExtractErr, res.ExtractCode = "", nil, err.Error(), code
+		res.Task, res.Removed, res.ExtractErr, res.ExtractCode = "", nil, extractionError(code), code
 		return res, nil
 	}
 	res.Matched = true
@@ -193,20 +225,48 @@ Rules:
 // Extract asks the LLM for the spans to remove of text and validates their
 // shape (Parse).
 func Extract(ctx context.Context, l ai.LLM, text string) ([]string, error) {
+	return extract(ctx, l, text, Params{}, nil)
+}
+
+func extract(ctx context.Context, l ai.LLM, text string, p Params, report func(ai.Diagnostics)) ([]string, error) {
 	temp := 0.0
 	out, err := l.Complete(ctx, ai.Request{
 		Messages: []ai.Message{
 			{Role: "system", Content: extractSystem},
 			{Role: "user", Content: "The prompt:\n\n" + text},
 		},
-		Temperature: &temp,
-		MaxTokens:   600,
-		JSON:        true,
+		Temperature:     &temp,
+		MaxTokens:       p.tokens(),
+		ReasoningEffort: p.ReasoningEffort,
+		BudgetWins:      true,
+		NoPartial:       true,
+		Report:          report,
+		JSON:            true,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return Parse(out)
+}
+
+// extractionError never includes provider text or the answer.
+func extractionError(code string) string {
+	switch code {
+	case "llm_truncated":
+		return "the model exhausted its completion budget; increase the budget or choose another reasoning effort"
+	case "llm_empty_answer":
+		return "the model returned no text"
+	case "llm_timeout":
+		return "the check exceeded the send deadline; choose a faster model or effort (the original prompt is kept)"
+	case "bad_answer":
+		return "the LLM did not return a valid remove: string[] object"
+	case "bad_part":
+		return "the removal spans were invalid or crossed an image"
+	case "llm_bad_config":
+		return "the endpoint rejected the extraction settings; check the model's supported reasoning controls"
+	default:
+		return "the extraction failed (" + code + ")"
+	}
 }
 
 // Parse reads the LLM's answer (the first JSON object in it): 1-8 spans,

@@ -238,6 +238,8 @@ func TestPackupSettings(t *testing.T) {
 	if _, m := c.command(proto.CmdPackupSet, "s1", proto.PackupSetArgs{Enabled: on()}); !strings.Contains(string(m.raw), `"code":"test_required"`) {
 		t.Fatalf("enable untested: %s", m.raw)
 	}
+	c.mustAck(proto.CmdPackupSet, proto.PackupSetArgs{Threshold: ptrTo(0.9)})
+	c.mustAck(proto.CmdPackupSet, proto.PackupSetArgs{ReasoningEffort: ptrTo("high"), MaxTokens: ptrTo(2048)})
 	evs, m := c.command(proto.CmdPackupTest, "t1", proto.PackupTestArgs{})
 	var ack struct {
 		Data proto.PackupTestResult `json:"data"`
@@ -256,7 +258,7 @@ func TestPackupSettings(t *testing.T) {
 	if _, m := c.command(proto.CmdPackupGet, "g", nil); !strings.Contains(string(m.raw), `"threshold":0.9`) {
 		t.Fatalf("get: %s", m.raw)
 	}
-	if p := hb.connect(proto.Hello{}).snapshot().World.Packup; !p.Enabled || p.State != proto.PackupReady || !p.Tested {
+	if p := hb.connect(proto.Hello{}).snapshot().World.Packup; !p.Enabled || p.State != proto.PackupReady || !p.Tested || p.ReasoningEffort != "high" || p.MaxTokens != 2048 {
 		t.Fatalf("snapshot = %+v", p)
 	}
 }
