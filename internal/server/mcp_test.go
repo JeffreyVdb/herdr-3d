@@ -207,7 +207,9 @@ func TestMCPInventorySnapshotIsSafe(t *testing.T) {
 	codex := mcpinv.CodexRunner{Bin: filepath.Join(home, "no-codex"), UserHome: home}
 	ctx, cancel := context.WithCancel(context.Background())
 	svc := mcpinv.New(ctx, mcpinv.Options{Read: map[string]mcpinv.Reader{
-		mcpinv.Claude: func(_ context.Context, key mcpinv.Key) (proto.MCPProvider, error) { return mcpinv.ReadClaude(files, key.Cwd), nil },
+		mcpinv.Claude: func(_ context.Context, key mcpinv.Key) (proto.MCPProvider, error) {
+			return mcpinv.ReadClaude(files, key.Cwd), nil
+		},
 		mcpinv.Codex: func(ctx context.Context, key mcpinv.Key) (proto.MCPProvider, error) {
 			return codex.ReadCodex(ctx, mcpinv.CodexHome{Home: key.Home, Default: true}, key.Cwd)
 		},
