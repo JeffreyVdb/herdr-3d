@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/hireintent"
@@ -84,22 +85,25 @@ type pForm struct {
 	askOnly bool
 	// near: a near miss ("soul"): only the classifier may take it.
 	near bool
+	// brand: a brand is said as a model's ("GPT" where every Codex model is
+	// a GPT): a reply with one is a new selection (#190 R3-1).
+	brand bool
 }
 
 var pSols = []string{"codex/gpt-6.1-sol", "codex/gpt-6-sol", "codex/gpt-5.6-sol"}
 
 var pForms = []pForm{
-	{name: "id", words: "gpt-6.1-sol", harness: "codex", names: pSols[:1], singleNames: pSols[:1]},
-	{name: "label", words: "GPT-6.1-Sol", harness: "codex", names: pSols[:1], singleNames: pSols[:1]},
-	{name: "family", words: "GPT Sol", harness: "codex", names: pSols, singleNames: pSols[:1]},
-	{name: "family-digits", words: "GPT 6 Sol", harness: "codex", names: pSols[1:2], singleNames: []string{}},
-	{name: "family-words", words: "GPT six point one Sol", harness: "codex", askOnly: true},
-	{name: "near", words: "GPT soul", harness: "codex", names: pSols, singleNames: pSols[:1], near: true},
-	{name: "unknown", words: "GPT Banana", harness: "codex", askOnly: true},
+	{name: "id", words: "gpt-6.1-sol", harness: "codex", names: pSols[:1], singleNames: pSols[:1], brand: true},
+	{name: "label", words: "GPT-6.1-Sol", harness: "codex", names: pSols[:1], singleNames: pSols[:1], brand: true},
+	{name: "family", words: "GPT Sol", harness: "codex", names: pSols, singleNames: pSols[:1], brand: true},
+	{name: "family-digits", words: "GPT 6 Sol", harness: "codex", names: pSols[1:2], singleNames: []string{}, brand: true},
+	{name: "family-words", words: "GPT six point one Sol", harness: "codex", askOnly: true, brand: true},
+	{name: "near", words: "GPT soul", harness: "codex", names: pSols, singleNames: pSols[:1], near: true, brand: true},
+	{name: "unknown", words: "GPT Banana", harness: "codex", askOnly: true, brand: true},
 	{name: "harness-only", words: "Codex"},
 	// "GPT" is a word of every Codex model: no model in the matrix catalog;
 	// the one-model catalog's only GPT (#190 PA6).
-	{name: "generic-only", words: "GPT", harness: "codex", singleNames: pSols[:1]},
+	{name: "generic-only", words: "GPT", harness: "codex", singleNames: pSols[:1], brand: true},
 	{name: "none"},
 	{name: "claude-family", words: "Opus", harness: "claude", names: []string{"claude/claude-opus-5-5"}, singleNames: []string{"claude/claude-opus-5-5"}},
 }
@@ -490,9 +494,15 @@ func (p pFollowUp) String() string {
 	return fmt.Sprintf("follow-up to %s, reply words %q, reply LLM model %q: %s", p.reply.name, p.words, p.replyLM, p.pcase.String())
 }
 
+// pBareUnknown is a reply's unknown name with no brand ("Banana"): only
+// the LLM's answer tells it is a model's (#190 R3-1). A reply only.
+var pBareUnknown = pForm{name: "bare-unknown", words: "Banana"}
+
 // pReplyForms are what a reply says of the model, for a first sentence of
-// form f: nothing, its family, the other family, another version.
-func pReplyForms(f pForm) []pForm {
+// form f: nothing, its family, the other family, another version (these
+// rotate over the LLM's answers); then an unknown name, a bare one and a
+// brand alone (each after every case, its LLM answers rotating, #190 R3-1).
+func pReplyForms(f pForm) (rotate, crossed []pForm) {
 	form := func(name string) pForm {
 		return pForms[slices.IndexFunc(pForms, func(p pForm) bool { return p.name == name })]
 	}
@@ -500,7 +510,7 @@ func pReplyForms(f pForm) []pForm {
 	if f.harness == "claude" {
 		same, other = other, same
 	}
-	return []pForm{form("none"), same, other, form("family-digits")}
+	return []pForm{form("none"), same, other, form("family-digits")}, []pForm{form("unknown"), pBareUnknown, form("generic-only")}
 }
 
 // pReplyText is the reply saying f's words.
@@ -538,14 +548,46 @@ func pReplyLLM(c pcase, first *hireintent.Interpretation, v2 pVis) []string {
 	return out
 }
 
+// pUnknownLLM are the LLM's model answers to a reply rf that names an
+// unknown model or a brand ("" null): null, "GPT", rf's words, the words
+// the user said first, the pending id.
+func pUnknownLLM(c pcase, first *hireintent.Interpretation, rf pForm) []string {
+	out := []string{""}
+	for _, m := range []string{"GPT", rf.words, c.form.words, first.Model.Value} {
+		if m != "" && !slices.Contains(out, m) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// pNewSelection: the reply rf names a model, to the LLM's answer llm: words
+// that may name one, a brand, or a word of the answer said in rf's words
+// (a harness's words aside: they bind the harness). Else the pending model
+// is kept, even with a word the LLM did not return ("Banana" answered null
+// or the pending model: #190 R3-1, declared like L1).
+func pNewSelection(rf pForm, llm string, v pVis) bool {
+	if rf.modelLike(v) || rf.brand {
+		return true
+	}
+	split := func(s string) []string {
+		return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	}
+	said := split(rf.words)
+	return slices.ContainsFunc(split(llm), func(w string) bool {
+		return slices.Contains(said, w) && !slices.Contains([]string{"claude", "code", "codex"}, w)
+	})
+}
+
 // pReplyExpect is the reply's outcome, from labels: the first case c, the
 // first result's model (checked against its own oracle), the reply's form
 // rf and the LLM's model llm ("" null). A reply that names no model keeps a
 // pending model, that very id while it is shown, whatever the LLM answers
-// (#190 F1); one that names a model is a selection from its own words.
+// (#190 F1); one that names a model (pNewSelection) is a selection from its
+// own words.
 func pReplyExpect(c pcase, first hireintent.Interpretation, rf pForm, llm string, v2 pVis) pOutcome {
 	said := c.saidHarnesses() // the reply says no harness: the first sentence's binds
-	words := rf.modelLike(v2)
+	words := pNewSelection(rf, llm, v2)
 	switch {
 	case first.Model.Valid() && !words:
 		if was := first.Harness.Value + "/" + first.Model.Value; slices.Contains(v2.shown(), was) {
@@ -582,10 +624,12 @@ func pReplyExpect(c pcase, first hireintent.Interpretation, rf pForm, llm string
 // Every pair of visibilities between the sentence and the reply (of one
 // catalog), for every harness said, model said and LLM answer, and every
 // LLM answer to the reply; the LLM's harness, the classifier and what the
-// reply says of the model rotate.
+// reply says of the model rotate. Every case is also followed by an unknown
+// name, a bare one and a brand alone, each with one of the LLM's answers to
+// it (pUnknownLLM) in turn: over the cases, every pair.
 func TestNoSubstitutionFollowUp(t *testing.T) {
 	f := &failures{t: t}
-	i, j := 0, 0
+	i, j, k := 0, 0, 0
 	for _, h := range pHarnesses {
 		for _, fm := range pForms {
 			for _, lm := range pLLMModels {
@@ -606,10 +650,7 @@ func TestNoSubstitutionFollowUp(t *testing.T) {
 						if r.Hire == nil {
 							continue
 						}
-						forms := pReplyForms(fm)
-						for _, llm := range pReplyLLM(c, r.Hire, v2) {
-							j++
-							rf := forms[j%len(forms)]
+						reply := func(rf pForm, llm string) {
 							w := pReplyExpect(c, *r.Hire, rf, llm, v2)
 							// The classifier's check: a model may be asked about
 							// when either sentence said one and the LLM read one
@@ -619,14 +660,31 @@ func TestNoSubstitutionFollowUp(t *testing.T) {
 								read, _ = c.llmModel()
 							}
 							rc.llm = &read
-							rc.form = pForm{name: fm.name + "/" + rf.name, askOnly: fm.modelLike(v1) || rf.modelLike(v2)}
+							rc.form = pForm{name: fm.name + "/" + rf.name, askOnly: fm.modelLike(v1) || pNewSelection(rf, llm, v2)}
 							replyText := pReplyText(rf)
 							got, cls2 := pInterpret(c, replyText, roundTrip(t, r.Hire), v2, ans("hire", "", llm, "high", ""))
 							prob := pCheck(rc, v2, w, got, cls2)
-							if r.Hire.Model.Valid() && !rf.modelLike(v2) && cls2 != nil && len(cls2.Calls()) > 0 {
+							if r.Hire.Model.Valid() && !pNewSelection(rf, llm, v2) && cls2 != nil && len(cls2.Calls()) > 0 {
 								prob += "; the classifier was asked about a kept model"
 							}
 							f.add(pFollowUp{c, v2, rf.words, llm}, text+" / "+replyText, prob)
+						}
+						rotate, crossed := pReplyForms(fm)
+						for _, llm := range pReplyLLM(c, r.Hire, v2) {
+							j++
+							reply(rotate[j%len(rotate)], llm)
+						}
+						for _, rf := range crossed {
+							if rf.name == "generic-only" && !r.Hire.Model.Valid() {
+								// A known gap, not R3-1's: an invalid pending
+								// id the LLM gave ("GPT 6 Sol" read
+								// gpt-6.1-sol) goes through the rules again,
+								// and "Use GPT" moves sayAround off the "6".
+								continue
+							}
+							k++
+							llms := pUnknownLLM(c, r.Hire, rf)
+							reply(rf, llms[k%len(llms)])
 						}
 					}
 				}

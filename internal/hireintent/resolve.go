@@ -112,7 +112,7 @@ func resolve(ctx context.Context, a *Answer, pending *Interpretation, sources []
 	switch reply := parts[len(parts)-1]; {
 	case pending == nil || !pending.Model.Valid():
 		m = sc.resolveModel(harness, model, sel, parts)
-	case !sc.saysModel(reply):
+	case !sc.saysModel(reply, model):
 		// The parser may repeat the pending model ("GPT Sol", its id):
 		// that is no new selection.
 		m = sc.keepModel(harness, pending, sel)
@@ -337,24 +337,44 @@ func (sc scope) keepModel(harness string, p *Interpretation, sel string) modelRe
 
 // saysModel reports whether part (a source without the task) says a model:
 // a number, in digits or words, or a word of a model of the catalog that is
-// no brand or glue, or a near miss of one. A word too many only asks: the
-// reply's words are then all a model may be taken from.
-func (sc scope) saysModel(part string) bool {
+// no brand or glue, or a near miss of one; a brand said as a model's ("GPT
+// Banana", "Claude" alone; "Codex" and "Claude Code" name the harness,
+// which binds as said); or a word of model, the LLM's answer, that is no
+// glue ("Banana"). A word too many only asks: the reply's words are then
+// all a model may be taken from.
+func (sc scope) saysModel(part, model string) bool {
 	stop, brand := sc.glueWords(), brands(sc.full)
-	var vocab []string
+	var vocab, firsts []string
 	for _, c := range choices(sc.full, "") {
 		for _, w := range modelWords(sc.full, c) {
 			if !stop[w] && !brand[w] && !isNumber(w) {
 				vocab = append(vocab, w)
 			}
 		}
+		firsts = append(firsts, append(nameTokens(c.Model), "")[0])
 	}
+	answer := slices.DeleteFunc(nameTokens(model), func(w string) bool { return stop[w] })
 	toks := tokens(part)
+	harnessName := func(i int) bool {
+		for _, ws := range harnessWords {
+			k := slices.Index(ws, toks[i].w)
+			if k >= 0 && i-k >= 0 && i-k+len(ws) <= len(toks) && slices.EqualFunc(toks[i-k:i-k+len(ws)], ws, func(t token, w string) bool { return t.w == w }) {
+				return true
+			}
+		}
+		return false
+	}
 	for i, t := range toks {
 		switch {
 		case isNumber(t.w), slices.Contains(numberWords, t.w) && !isGlue(stop, toks, i, 0, len(toks)):
 			return true
-		case stop[t.w] || brand[t.w]:
+		case slices.Contains(answer, t.w):
+			return true
+		case brand[t.w]:
+			if slices.Contains(firsts, t.w) && !harnessName(i) {
+				return true
+			}
+		case stop[t.w]:
 		case slices.ContainsFunc(vocab, func(v string) bool { return v == t.w || nearWord(t.w, v) }):
 			return true
 		}

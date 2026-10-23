@@ -4935,7 +4935,9 @@ hidden **on this call** (#190: the bridge keeps no visibility either). A pending
 (and of the harness said), it is kept; one that left the catalog, or is hidden now, is `invalid` again (asked in the
 words first said, among the visible models), never another version of its family. Only the reply's own words outside
 the task (a model's name, family, version or a near miss of one) change a pending model, whatever the LLM answers; it
-is then a selection from the reply's words alone. A pending model that was not valid
+is then a selection from the reply's words alone. A brand said as a model's ("GPT Banana", "Claude" alone; "Codex"
+and "Claude Code" only bind the harness) or a word of the LLM's model said in the reply ("Banana") is such a word
+too, so an unknown model in a reply is asked, never the pending one kept. A pending model that was not valid
 goes through the rules again in its words: a family that now names several visible models is asked among them, one
 that names one visible model is that model. A harness with no models left is asked too (its model question offering
 every visible model).

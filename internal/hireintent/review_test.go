@@ -60,6 +60,39 @@ func TestR2PendingEchoKeepsIdentity(t *testing.T) {
 	}
 }
 
+// Review round 3, R3-1: a reply naming an unknown model ("GPT Banana") is a
+// new selection, asked, never the pending model kept; a harness said alone
+// ("Claude Code") keeps it only when it is that harness's.
+func TestR3UnknownReplyAsks(t *testing.T) {
+	cat := matrixCatalog()
+	sol := mustHire(t, matrixInterpret("Hire a GPT Sol agent to fix it.", nil, cat, visibilities[0].hidden, nil, ans("hire", "", "GPT Sol", "", "fix it.")))
+	opus := mustHire(t, matrixInterpret("Hire an Opus agent to fix it.", nil, cat, nil, nil, ans("hire", "", "Opus", "", "fix it.")))
+	for _, tc := range []struct {
+		name, text, model string
+		pending           *hireintent.Interpretation
+		want              string // "": asked
+	}{
+		{name: "dropped-unknown", text: "Use GPT Banana with high effort.", model: "GPT", pending: sol},
+		{name: "unknown-full-answer", text: "Use GPT Banana with high effort.", model: "GPT Banana", pending: sol},
+		{name: "unknown-null", text: "Use GPT Banana with high effort.", pending: sol},
+		{name: "bare-unknown", text: "Use Banana with high effort.", model: "Banana", pending: sol},
+		{name: "brand-only", text: "Use GPT with high effort.", model: "GPT Sol", pending: sol},
+		{name: "other-harness", text: "Use Claude Code with high effort.", model: "GPT Sol", pending: sol},
+		{name: "same-harness", text: "Use Claude Code with high effort.", model: "Opus", pending: opus, want: "claude-opus-5-5"},
+		{name: "same-harness-null", text: "Use Claude Code with high effort.", pending: opus, want: "claude-opus-5-5"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := mustHire(t, matrixInterpret(tc.text, roundTrip(t, tc.pending), cat, nil, nil, ans("hire", "", tc.model, "high", "")))
+			switch {
+			case tc.want != "" && (in.Model.Value != tc.want || !in.ReadyForReview):
+				t.Errorf("want %s kept, ready: %s ready=%v", tc.want, fields(in), in.ReadyForReview)
+			case tc.want == "" && (in.Model.Valid() || in.ReadyForReview):
+				t.Errorf("must ask: %s ready=%v questions=%+v", fields(in), in.ReadyForReview, in.Questions)
+			}
+		})
+	}
+}
+
 // R4 / UX2: a version said in words is never another version.
 func TestReviewSpokenVersions(t *testing.T) {
 	cat := matrixCatalog()
