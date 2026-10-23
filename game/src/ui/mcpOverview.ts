@@ -306,7 +306,8 @@ export class McpOverview {
     const where = ctx.cwd === null ? 'user scope only' : ctx.cwd_display || ctx.cwd;
     const next = providerNextStep(hh, p);
     const checking = v.checking[hh];
-    const checkLine = checking ? 'Checking…' : checkText(p, r, now) || 'Not checked yet';
+    // A check the bridge did not start (busy: no time, its note says why) is not "not checked yet"; the button works again.
+    const checkLine = checking ? 'Checking…' : checkText(p, r, now) || (p.check.state === 'skipped' ? 'Check not started' : 'Not checked yet');
     const canCheck = p.available && p.config.state !== 'unsupported' && v.live && !v.unsupported;
     return h(
       'article',

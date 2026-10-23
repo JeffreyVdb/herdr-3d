@@ -267,6 +267,40 @@ describe('the MCP & skills overview (#196)', () => {
     expect(rule).toMatch(/clip-path: inset\(50%\)/);
   });
 
+  it('shows the bridge busy: a check it did not start says so and can be asked again; a read waiting for a reader says why', () => {
+    const r = rig();
+    const s = snapshot();
+    s.providers.claude.check = { state: 'skipped', at: null, note: 'Other connection checks or reads are running; try again in a moment' };
+    s.providers.codex = provider({ config: { state: 'pending', read_at: null, stale: false, note: 'Other inventory reads are running; this one starts on a later refresh' }, skills: { ...provider().skills, state: 'pending', read_at: null } });
+    r.set({ received: { snap: s, at: T0 }, checking: { claude: false, codex: false } });
+    r.page.open('lab');
+    const claude = r.$('.mcp-prov[data-harness="claude"]');
+    expect(claude.querySelector('.mcp-check-age')?.textContent).toBe('Check not started');
+    expect(claude.textContent).toContain('Other connection checks or reads are running; try again in a moment');
+    expect(r.$<HTMLButtonElement>('[data-key="check-claude"]').disabled).toBe(false);
+    const codex = r.$('.mcp-prov[data-harness="codex"]');
+    expect(codex.querySelector('.mcp-state')?.textContent).toBe('Reading');
+    expect(codex.querySelector('.mcp-note')?.textContent).toBe('Other inventory reads are running; this one starts on a later refresh');
+    expect(codex.querySelector('.mcp-next')).toBeNull(); // the bridge's note says it; no second, contradicting line
+    expect(r.page.summary().rows.find((x) => x.name === 'github')?.codex).toBe('Unknown');
+  });
+
+  it('keeps a failed half’s last good rows, stale and with the bridge’s "Last read failed" note', () => {
+    const r = rig();
+    const s = snapshot();
+    s.providers.codex.config = { state: 'ok', read_at: iso(T0 - 5 * 60_000), stale: true, note: 'Last read failed: config/read refused; showing the read from 11:55' };
+    s.providers.codex.skills = { ...s.providers.codex.skills, stale: true, note: 'Last read failed: skills/list refused; showing the read from 11:55' };
+    r.set({ received: { snap: s, at: T0 } });
+    r.page.open('lab');
+    const codex = r.$('.mcp-prov[data-harness="codex"]');
+    expect(codex.querySelector('.mcp-state')?.textContent).toBe('Stale');
+    expect(codex.querySelector('.mcp-note')?.textContent).toContain('Last read failed: config/read refused');
+    expect(r.$('.mcp-row[data-name="github"] .mcp-cell[data-harness="codex"] .mcp-tag--stale')).not.toBeNull();
+    const skills = r.$('.mcp-skill-col[data-harness="codex"]');
+    expect(skills.querySelector('.mcp-tag--stale')).not.toBeNull();
+    expect(skills.textContent).toContain('Last read failed: skills/list refused');
+  });
+
   it('has calm states: an old bridge, no connection, the first read, a refused context', () => {
     const r = rig({ received: null, asking: true });
     r.page.open('lab');

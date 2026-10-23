@@ -270,7 +270,8 @@ export function providerNextStep(h: McpHarness, p: McpProvider): string {
   const cli = h === 'claude' ? 'claude' : 'codex';
   if (p.config.state === 'unsupported') return `This bridge cannot read ${PROVIDER_NAME[h]}’s configuration.`;
   if (!p.available || p.config.state === 'unavailable') return `Install the ${cli} CLI on the bridge host (or put it on its PATH), then Refresh.`;
-  if (p.config.state === 'pending') return 'Reading the configuration; it shows here when it is in.';
+  // Pending with the bridge's own note (waiting for a free reader): that note says what happens, nothing to add.
+  if (p.config.state === 'pending') return p.config.note ? '' : 'Reading the configuration; it shows here when it is in.';
   if (p.config.state === 'failed') return 'The configuration could not be read. It is tried again by itself; Refresh tries now.';
   if (configWhole(p) && p.servers.length === 0) return h === 'claude' ? 'No MCP servers configured here. Add one with claude mcp add.' : 'No MCP servers configured here. Add one with codex mcp add.';
   return '';
