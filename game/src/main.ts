@@ -388,6 +388,12 @@ export interface H3DDebug {
   departures(): ReturnType<import('./app').App['departuresInfo']> | null;
   /** #74: the server rack: what it shows (screen mode, redraws, LED rates), the host watch and the commands sent for it. */
   rack(): ReturnType<import('./app').App['rackInfo']> | null;
+  /** #196: the MCP & skills wall: its link (context, polling), the screen's picture, the page's summary and the requests sent. */
+  mcp(): ReturnType<import('./app').App['mcpInfo']> | null;
+  /** #196: opens the MCP & skills page of the floor you are on (as E at the screen does). */
+  openMcp(): void;
+  /** #196: the fixture simulator's `sim.mcp` (script a stale, failed, pending or missing provider, slow replies) and `sim.mcp_log`. */
+  simMcp(t: 'sim.mcp' | 'sim.mcp_log', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #74: shows or hides the floor's rack. */
   rackShown(on: boolean): void;
 }
@@ -740,6 +746,13 @@ const h3d: H3DDebug = {
   overview: () => (app ? structuredClone(app.overviewInfo()) : null),
   departures: () => (app ? structuredClone(app.departuresInfo()) : null),
   rack: () => (app ? structuredClone(app.rackInfo()) : null),
+  mcp: () => (app ? structuredClone(app.mcpInfo()) : null),
+  openMcp: () => app?.openMcp(),
+  simMcp: async (t, args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    const r = await app.client.request(t as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
   rackShown: (on) => app?.rackShown(on),
   openChanges: (id) => {
     if (app?.changes.worker !== id) app?.toggleChanges(id);

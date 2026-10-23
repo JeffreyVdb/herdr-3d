@@ -714,6 +714,14 @@ export class Hud {
       k.append(el('kbd', '', 'E'), document.createTextNode('Open'));
       keys.append(k);
       this.prompt.setAttribute('aria-label', `${t.label}: ${info} · E Open`);
+    } else if (t.kind === 'prop' && t.id === 'screen.mcp') {
+      // #196: the MCP & skills screen over the rack: what it reads (per provider, or why it says nothing), E opens the overview.
+      const info = this.propInfo.get('screen.mcp') ?? 'The MCP servers and skills of this floor’s agents';
+      line.append(text('prompt-name', t.label), text('prompt-task', info));
+      const k = el('span', 'key');
+      k.append(el('kbd', '', 'E'), document.createTextNode('Open'));
+      keys.append(k);
+      this.prompt.setAttribute('aria-label', `${t.label}: ${info} · E Open`);
     } else if (t.kind === 'prop' && t.id === 'filing') {
       // #223: the floor's filing cabinet: its handoffs (the drawers fill as they come).
       const info = this.propInfo.get('filing') ?? 'The floor’s handoffs';

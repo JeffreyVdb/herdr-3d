@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/gitremote"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -78,6 +80,30 @@ func validStatusField(f proto.StatusField) error {
 	return nil
 }
 
+// validExpectedMCP checks an expected_mcp list (#196) and returns its names
+// trimmed: at most proto.MaxExpectedMCP, each 1-proto.MaxExpectedMCPName
+// bytes of valid UTF-8 without control characters, no name twice (exact
+// match). An empty list is nil: the setting is cleared.
+func validExpectedMCP(list []string) ([]string, error) {
+	if len(list) > proto.MaxExpectedMCP {
+		return nil, fmt.Errorf("expected_mcp has %d names, the most is %d", len(list), proto.MaxExpectedMCP)
+	}
+	var out []string
+	for _, n := range list {
+		n = strings.TrimSpace(n)
+		switch {
+		case n == "" || len(n) > proto.MaxExpectedMCPName:
+			return nil, fmt.Errorf("expected_mcp names must be 1-%d bytes", proto.MaxExpectedMCPName)
+		case !utf8.ValidString(n) || strings.IndexFunc(n, unicode.IsControl) >= 0:
+			return nil, fmt.Errorf("expected_mcp name %q has control characters or is not UTF-8", n)
+		case slices.Contains(out, n):
+			return nil, fmt.Errorf("expected_mcp has %q twice", n)
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
+
 func validLabel(s string) bool { return strings.TrimSpace(s) != "" && len(s) <= maxFieldLen }
 
 // applySettings folds floor.settings.set args into a floor's settings:
@@ -85,6 +111,7 @@ func validLabel(s string) bool { return strings.TrimSpace(s) != "" && len(s) <= 
 func applySettings(cur store.FloorSettings, a proto.FloorSettingsArgs, statDir func(string) error, hire proto.HireOptions) (store.FloorSettings, error) {
 	next := cur
 	next.StatusOptions = slices.Clone(cur.StatusOptions)
+	next.ExpectedMCP = slices.Clone(cur.ExpectedMCP)
 	bad := func(format string, args ...any) error { return &badArgsError{fmt.Errorf(format, args...)} }
 	if a.Repo.Set {
 		next.Repo = ""
@@ -157,6 +184,16 @@ func applySettings(cur store.FloorSettings, a proto.FloorSettingsArgs, statDir f
 	if next.Tracker == proto.TrackerKaneo && next.KaneoProjectID == "" {
 		return cur, bad("a Kaneo floor needs its workspace and project: choose a project")
 	}
+	if a.ExpectedMCP.Set { // #196
+		next.ExpectedMCP = nil
+		if v := a.ExpectedMCP.Value; v != nil {
+			names, err := validExpectedMCP(*v)
+			if err != nil {
+				return cur, &badArgsError{err}
+			}
+			next.ExpectedMCP = names
+		}
+	}
 	if a.DefaultHire.Set {
 		next.HireHarness, next.HireModel, next.HireEffort = "", "", ""
 		if v := a.DefaultHire.Value; v != nil {
@@ -196,7 +233,8 @@ func settingsView(s store.FloorSettings) *proto.FloorSettings {
 	if s.HireHarness != "" {
 		v.DefaultHire = &proto.Hire{Harness: s.HireHarness, Model: s.HireModel, Effort: s.HireEffort}
 	}
-	v.Tracker = s.Tracker // #184
+	v.Tracker = s.Tracker                       // #184
+	v.ExpectedMCP = slices.Clone(s.ExpectedMCP) // #196
 	if s.KaneoProjectID != "" {
 		v.Kaneo = &proto.KaneoLink{WorkspaceID: s.KaneoWorkspaceID, WorkspaceName: s.KaneoWorkspaceName,
 			ProjectID: s.KaneoProjectID, ProjectName: s.KaneoProjectName}

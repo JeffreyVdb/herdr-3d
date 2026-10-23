@@ -17,6 +17,7 @@ import type { Solid, Support } from './collide';
  * corner office over the filing cabinet, with an open stair up the east wall.
  * #118: the lounge's west wall carries the floor overview's big screen.
  * #65: the departures board stands on the board partition, over the clock.
+ * #196: the MCP & skills screen hangs on the north wall, over the server rack.
  */
 
 export interface Rect {
@@ -63,7 +64,8 @@ export type PropKind =
   | 'clock'
   | 'screen.overview'
   | 'server.rack'
-  | 'board.departures';
+  | 'board.departures'
+  | 'screen.mcp';
 
 export interface Prop {
   id: PropKind;
@@ -320,6 +322,15 @@ export function overviewScreenBox(depth: number): Box3 {
   return box(0, OVERVIEW_Y0, OVERVIEW_GAP, OVERVIEW_D, OVERVIEW_Y1, r3(north - FRAME_LIP - OVERVIEW_GAP));
 }
 
+/**
+ * #196: the MCP & skills screen on the north wall, over the server rack (RACK_BOX: its monitor's top at 1.62 m): from
+ * 0.25 m east of the lounge window's frame (x 4.65) to 0.35 m west of the whiteboard at its nearest (x 7.35, on the
+ * smallest outline), 1.9 to 3.1 m up: 2.1 x 1.2 m, read from the lounge or the rack's front. The same on every floor
+ * (the window and the rack are; the whiteboard and the mezzanine only move east as the grid grows). A bezel box 8 cm
+ * deep, facing +z (into the room).
+ */
+export const MCP_SCREEN_BOX = [4.9, 1.9, 0, 7.0, 3.1, 0.08] as const;
+
 /** #65: the departures board on the partition: this wide, its top this high, a little deeper than the partition. */
 const DEPARTURES_W = 3.2;
 const DEPARTURES_TOP = 3.9;
@@ -422,6 +433,8 @@ export function floorLayout(deskCount: number, outline?: Outline): FloorLayout {
     { id: 'server.rack', label: 'Server rack', milestone: null, box: box(...RACK_BOX), solid: true },
     // #65: the departures board on the partition (E: the floor's scheduled agents).
     { id: 'board.departures', label: 'Departures board', milestone: '#65', box: departuresBoardBox(width, depth), solid: false },
+    // #196: the MCP servers and skills of the floor's agents, over the rack (E: the MCP & skills overview).
+    { id: 'screen.mcp', label: 'MCP & skills', milestone: '#196', box: box(...MCP_SCREEN_BOX), solid: false },
   ];
   // Lounge furniture beyond the sofa: coffee table and the coffee counter.
   colliders.push(...props.filter((p) => p.solid).map((p) => rectOf(p.box)));

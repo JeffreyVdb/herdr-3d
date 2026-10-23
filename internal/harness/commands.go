@@ -197,7 +197,7 @@ func CodexCommands(ctx context.Context, log *slog.Logger, bin, dir string) ([]pr
 		return nil, fmt.Errorf("skills/list needs an absolute cwd, got %q", dir)
 	}
 	list, err := probeIn(ctx, bin, dir, []string{"app-server"}, func(s *stream) (codexSkillsList, error) {
-		if err := s.codexInit(); err != nil {
+		if err := s.codexInit(nil); err != nil {
 			return codexSkillsList{}, err
 		}
 		var list codexSkillsList

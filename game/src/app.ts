@@ -145,6 +145,8 @@ import { WhiteboardOverlay } from './ui/whiteboard';
 import { OverviewOverlay, type ViewRect } from './ui/overview';
 import { OverviewFilterPrefs, OverviewPrefs } from './ui/overviewPrefs';
 import { RackLink } from './rack/link';
+import { McpLink } from './mcp/link';
+import { McpOverview } from './ui/mcpOverview';
 import { buildCityOverview, buildOverview, cityCountItems, countItems, type CityOverviewData, type OverviewData } from './world/overview';
 import { loadBoardTexture } from './render/whiteboardTexture';
 import type { WhiteboardState } from './net/protocol';
@@ -354,6 +356,18 @@ export class App {
     markUnsupported: () => void this.unsupported.add('host.watch'),
     now: () => performance.now(),
   });
+  /** #196: the MCP & skills wall's link to the bridge: when to ask `mcp.inventory`, each floor's context, what came back. */
+  readonly mcp = new McpLink({
+    request: (t, args, timeoutMs) => this.client.request(t, args as never, { timeoutMs }),
+    hudInfo: (line) => this.hud.setPropInfo('screen.mcp', line),
+    unsupported: () => this.unsupported.has('mcp.inventory'),
+    markUnsupported: () => void this.unsupported.add('mcp.inventory'),
+    now: () => performance.now(),
+    clock: () => Date.now(),
+    changed: () => this.mcpPage?.refresh(),
+  });
+  /** #196: the MCP & skills overview (E at the wall screen, the command palette). */
+  readonly mcpPage: McpOverview;
   /** M13: the whiteboard overlay, each floor's board as last heard of, and the `whiteboard.get`s the game sent by itself (test hook; not in `sent`). */
   readonly whiteboard: WhiteboardOverlay;
   /** #118: the floor overview page, and when the wall screen and the page last had the world as it is. */
@@ -961,6 +975,20 @@ export class App {
       new OverviewPrefs(),
       new OverviewFilterPrefs(),
     );
+    this.mcpPage = new McpOverview({
+      view: (floor) => this.mcp.view(floor),
+      choose: (floor, c) => this.mcp.choose(floor, c),
+      refresh: () => this.mcp.refresh(),
+      check: (h) => this.mcp.check(h),
+      profiles: () => this.store.codexProfiles.state?.profiles.filter((p) => !p.hidden) ?? null,
+      saveExpected: (floor, names) => this.send('floor.settings.set', { floor, expected_mcp: names }),
+      floorName: (floor) => this.store.floorName(floor),
+      now: () => Date.now(),
+      closed: () => {
+        this.updateHint();
+        this.activity(true);
+      },
+    });
     this.changes = new ChangesPanel(this.hud.root, {
       ...dialogHost,
       blur: () => (document.activeElement as HTMLElement | null)?.blur?.(),
@@ -1857,7 +1885,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.secretsReview.isOpen || this.revokeSecrets.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.hirePresets.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
+    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.secretsReview.isOpen || this.revokeSecrets.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.hirePresets.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen || this.mcpPage.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -2949,6 +2977,53 @@ export class App {
     });
   }
 
+  /**
+   * #196: the MCP & skills wall's polling: wanted while its screen is in view on the floor you stand on or its page is
+   * open (the link decides when to ask the bridge); the page's ages move once a minute.
+   */
+  private stepMcp(): void {
+    const connected = this.conn.phase === 'live';
+    this.mcp.step({
+      office: this.office,
+      here: this.mode === 'floor' && this.place.area === 'floor' && !this.planOpen,
+      live: !document.hidden && connected,
+      connected,
+      page: this.mcpPage.isOpen ? this.mcpPageFloor : null,
+      camera: this.fpCam,
+    });
+    // The page follows the link's changes (`changed`); its ages move once a minute.
+    const minute = Math.floor(Date.now() / 60_000);
+    if (minute !== this.mcpMinute) {
+      this.mcpMinute = minute;
+      this.mcpPage.refresh();
+    }
+  }
+
+  /** #196: the floor the MCP & skills page is open for, and the minute its ages were last drawn in. */
+  private mcpPageFloor: string | null = null;
+  private mcpMinute = 0;
+
+  /** #196: E at the MCP & skills screen, or the palette: the overview of the floor you are on. */
+  openMcp(): void {
+    const floor = this.hereFloor();
+    if (!floor) {
+      this.hud.toast('The MCP & skills screen is on each office floor, over the server rack.', 2600);
+      return;
+    }
+    this.walker.release();
+    this.walker.stop();
+    this.panels.close();
+    if (this.planOpen) this.setPlan(false);
+    this.mcpPageFloor = floor;
+    this.mcpPage.open(floor);
+    this.updateHint();
+  }
+
+  /** #196: what the MCP wall, its link and its page show (test hook). */
+  mcpInfo(): { link: ReturnType<McpLink['info']>; screen: ReturnType<OfficeView['mcpInfo']>; page: ReturnType<McpOverview['summary']>; sent: McpLink['log'] } {
+    return { link: this.mcp.info(), screen: this.office?.mcpInfo() ?? null, page: this.mcpPage.summary(), sent: this.mcp.log };
+  }
+
   /** #74: shows or hides the floor's rack (test hook). */
   rackShown(on: boolean): void {
     this.office?.setRackShown(on);
@@ -3496,6 +3571,7 @@ export class App {
     },
     'whiteboard.open': () => this.openWhiteboard(),
     'overview.open': () => this.openOverview(true),
+    'mcp.open': () => this.openMcp(), // #196
     // #65: a floor's departures board, a lobby group: that floor's schedules; the lobby board elsewhere: every floor's.
     'departures.open': () => this.aimed('board', (t) => this.openSchedules(departuresScope(t.floor, this.office?.id ?? null))),
     'radio.genre': () => this.radio.cycle(),
@@ -3681,6 +3757,7 @@ export class App {
     if (command.id === 'about') return this.hud.openAbout();
     if (command.id === 'overview.all') return this.openCityOverview(); // #188
     if (command.id === 'schedules') return this.openSchedules(); // #64 schedules
+    if (command.id === 'mcp') return this.openMcp(); // #196
     const b = binding(command.id);
     const chord = b.keys[0];
     this.actions[command.id as DispatchedId]({ binding: b, chord: chord ?? {}, code: chord?.code ?? '' });
@@ -4010,6 +4087,7 @@ export class App {
     this.stepDaylight(dt);
     this.stepOverview(performance.now()); // #118
     this.stepRack(); // #74
+    this.stepMcp(); // #196
     this.stepDepartures(); // #65
     if (this.mode === 'floor' && this.building) {
       if (this.walker.step(dt, this.walkWorldNow())) {
@@ -4140,7 +4218,8 @@ export class App {
       // M15: the radio is a thing on the counter, not a placeholder to label; M17: nor is a look-only prop (the clock on the partition).
       // #118: nor is the overview's screen, on the lounge wall the Lounge label already marks; #65: nor the departures
       // board, on the partition whose three boards are labelled already.
-      if (p.id === 'radio' || p.id === 'screen.overview' || p.id === 'board.departures' || p.milestone === null) continue;
+      // #196: nor the MCP & skills screen, over the rack on the lounge's north wall.
+      if (p.id === 'radio' || p.id === 'screen.overview' || p.id === 'screen.mcp' || p.id === 'board.departures' || p.milestone === null) continue;
       const c = toScreen((p.box.min[0] + p.box.max[0]) / 2, 0, (p.box.min[2] + p.box.max[2]) / 2);
       labels.push({ ...c, text: p.label, kind: 'prop' });
     }
@@ -4791,7 +4870,7 @@ function aimScope(t: Target): Scope | null {
     case 'board':
       return t.id === 'board.issues' || t.id === 'board.prs' ? 'aim:board' : t.id === 'board.departures' ? 'aim:departures' : null;
     case 'prop':
-      return t.id === 'elevator' ? 'aim:elevator' : t.id === 'whiteboard' ? 'aim:whiteboard' : t.id === 'radio' ? 'aim:radio' : t.id === 'reception' ? 'aim:reception' : t.id === 'screen.overview' ? 'aim:overview' : t.id === 'filing' ? 'aim:cabinet' : null;
+      return t.id === 'elevator' ? 'aim:elevator' : t.id === 'whiteboard' ? 'aim:whiteboard' : t.id === 'radio' ? 'aim:radio' : t.id === 'reception' ? 'aim:reception' : t.id === 'screen.overview' ? 'aim:overview' : t.id === 'screen.mcp' ? 'aim:mcp' : t.id === 'filing' ? 'aim:cabinet' : null;
   }
 }
 

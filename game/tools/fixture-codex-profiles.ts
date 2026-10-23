@@ -95,6 +95,12 @@ export class CodexProfilesSim {
     return out;
   }
 
+  /** #196: a profile by key (null: the default), as `mcp.inventory` resolves `codex_profile`; null when there is none such. */
+  find(key: string | null): { key: string; name: string } | null {
+    const p = key === null ? this.profiles.find((x) => x.default) : this.profiles.find((x) => x.key === key);
+    return p ? { key: p.key, name: p.name } : null;
+  }
+
   decorate(world: Obj): void {
     world.codex_profiles = this.view();
   }

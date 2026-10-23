@@ -115,6 +115,13 @@ type Options struct {
 	// #138: Prompts rewrites a composer prompt for its worker's harness
 	// (nil: prompts go as typed).
 	Prompts PromptTranslator
+	// #196: MCP answers mcp.inventory and mcp.check (*mcpinv.Service;
+	// nil: they fail as unsupported). MCPClaudeDir is Claude Code's config
+	// dir (the Claude cache key's home, shown as claude_config); MCPCodexHome
+	// the Codex home of the default profile while no profile is listed.
+	MCP          MCPInventory
+	MCPClaudeDir string
+	MCPCodexHome string
 	// Caps are the worker caps (zero: DefaultCaps).
 	Caps Caps
 	// HireOptions, if set, replaces what can be hired (the harness catalogs).
@@ -520,12 +527,13 @@ type Hub struct {
 	cx codexState  // #155 shared Codex server
 	nt notifyState // #11 notifications
 
-	rr repoRefsState      // #247 repositories on other floors
-	ps promptSecretsState // #108 prompt secrets
-	rd repoDiscState      // #54 repository discovery
-	sc scheduleState      // #62 scheduled agents
-	hs hostState          // #74 server rack
-	ch childState         // #22 native child agents
+	rr  repoRefsState      // #247 repositories on other floors
+	ps  promptSecretsState // #108 prompt secrets
+	rd  repoDiscState      // #54 repository discovery
+	sc  scheduleState      // #62 scheduled agents
+	hs  hostState          // #74 server rack
+	ch  childState         // #22 native child agents
+	mcp mcpState           // #196 MCP & skills: worker observations
 
 	hirePresets map[string]store.HirePreset // #93: by id (mirrors hire_preset)
 }
@@ -743,6 +751,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		limits:        map[string]proto.Limits{},
 		limitsPoller:  newLimitsPoller(opts.Limits),
 		dg:            map[string]*transcript.Digest{},
+		mcp:           mcpState{obs: map[string]*mcpObs{}},
 	}
 	h.initTerm()        // M5 term
 	h.initTranscripts() // M16 transcript
@@ -1201,6 +1210,11 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startWhiteboardPin
 		case proto.CmdDropsList:
 			start = h.startDropsList
+		// #196 MCP & skills
+		case proto.CmdMCPInventory:
+			start = h.startMCPInventory
+		case proto.CmdMCPCheck:
+			start = h.startMCPCheck
 		// #74 server rack
 		case proto.CmdHostWatch:
 			start = h.startHostWatch

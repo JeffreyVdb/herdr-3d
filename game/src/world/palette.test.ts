@@ -111,8 +111,16 @@ describe('commands', () => {
   it('lists every palette row of the table, once, in the order the palette keeps', () => {
     const inTable = (BINDINGS as readonly { id: string; palette?: unknown }[]).filter((b) => b.palette).map((b) => b.id);
     for (const id of inTable) expect(COMMAND_ORDER, id).toContain(id);
-    for (const id of COMMAND_ORDER) expect([...inTable, 'presets', 'about', 'overview.all', 'schedules', 'bridge.switch'], id).toContain(id);
+    for (const id of COMMAND_ORDER) expect([...inTable, 'presets', 'about', 'overview.all', 'schedules', 'mcp', 'bridge.switch'], id).toContain(id);
     expect(new Set(COMMAND_ORDER).size).toBe(COMMAND_ORDER.length);
+  });
+
+  it('#196: MCP & skills is a row everywhere, acting on a floor: off one, Enter asks which', () => {
+    for (const active of [live('floor'), live('city')]) {
+      const row = paletteCommands(active, false).find((c) => c.id === 'mcp');
+      expect(row).toMatchObject({ name: 'MCP & skills', floor: true, pick: 'See MCP & skills of which floor?', caps: [] });
+    }
+    expect(paletteCommands(live('city'), false).find((c) => c.id === 'schedules')?.floor).toBe(false);
   });
 
   it('on a floor: the floor’s rows too; in the city: the buildings, and no floor-only rows', () => {

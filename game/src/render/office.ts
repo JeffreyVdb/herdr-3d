@@ -22,6 +22,8 @@ import { PropViewer } from './propView';
 import type { RackInfo } from './rack';
 import type { HostDiskRate, HostStats } from '../net/protocol';
 import type { RackMode } from '../world/hostStats';
+import type { McpWallModel } from '../world/mcp';
+import type { McpScreenInfo } from './mcpScreen';
 import type { OverviewData } from '../world/overview';
 import { floorDepartures } from '../world/departures';
 import type { ScheduleBook } from '../world/schedule';
@@ -32,6 +34,8 @@ import { DEFAULT_UI_THEME, type UiThemeId } from '../ui/uiTheme';
 const OVERVIEW_READABLE = 0.3;
 /** #74: the server rack counts as seen (its LEDs, its monitor) once its box spans this share of the view's height. */
 const RACK_VISIBLE = 0.03;
+/** #196: the MCP & skills screen counts as looked at once its box spans this share of the view's height. */
+const MCP_VISIBLE = 0.05;
 /** #65: the departures board keeps its countdowns going while it spans this share of the view's height or more. */
 const DEPARTURES_VISIBLE = 0.04;
 import { lookOf, NOON, type Look } from './daylook';
@@ -90,7 +94,7 @@ export const SEAT_Y = 0.45;
 export const CARD_Y = 1.62;
 export const REACH = 3;
 /** #124: the props T can pick, in the order it goes through them. */
-const KEY_PROPS = ['board.issues', 'board.prs', 'board.departures', 'whiteboard', 'radio', 'elevator', 'screen.overview', 'filing'];
+const KEY_PROPS = ['board.issues', 'board.prs', 'board.departures', 'whiteboard', 'radio', 'elevator', 'screen.overview', 'screen.mcp', 'filing'];
 
 export interface OfficeOptions {
   shadows: boolean;
@@ -858,6 +862,26 @@ export class OfficeView {
     return i ? { ...i, share: +this.rackShare.toFixed(3) } : null;
   }
 
+  /** #196: whether the MCP & skills screen is in view of `camera` and big enough on it to be looked at (MCP_VISIBLE). */
+  tickMcp(camera: THREE.Camera): boolean {
+    const p = this.layout.props.find((x) => x.id === 'screen.mcp');
+    this.mcpShare = p && this.root.visible ? this.viewer.share(p.box, this.root, camera) : 0;
+    return this.mcpShare >= MCP_VISIBLE;
+  }
+
+  /** #196: the MCP & skills screen's picture; it redraws only when what it says changes. */
+  setMcpScreen(m: McpWallModel): void {
+    this.props.mcp?.set(m);
+  }
+
+  /** #196: what the MCP & skills screen shows (test hook); null without one. */
+  mcpInfo(): (McpScreenInfo & { share: number }) | null {
+    const i = this.props.mcp?.info();
+    return i ? { ...i, share: +this.mcpShare.toFixed(3) } : null;
+  }
+
+  /** #196: the share of the view's height the MCP screen spans (test hook). */
+  mcpShare = 0;
   /** #118: the share of the view's height the wall screen spans (test hook). */
   ovShare = 0;
   /** #74: the share the server rack spans (test hook). */

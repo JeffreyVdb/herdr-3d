@@ -135,11 +135,72 @@ func probe[T any](ctx context.Context, bin string, args []string, run func(*stre
 // harness CLI run in dir. It retains the same clean environment used when
 // herdr launches a worker.
 func probeIn[T any](ctx context.Context, bin, dir string, args []string, run func(*stream) (T, error)) (T, error) {
+	return Run(ctx, Spawn{Bin: bin, Dir: dir, Args: args}, func(s *Stream) (T, error) { return run(s.s) })
+}
+
+// Spawn is how Run starts a harness CLI.
+type Spawn struct {
+	Bin, Dir string
+	Args     []string
+	// Env is added to the clean environment herdr launches workers with
+	// (a later entry of a name wins: CODEX_HOME, CLAUDE_CONFIG_DIR).
+	Env []string
+	// Timeout bounds the whole run, cleanup aside (0: 10 s).
+	Timeout time.Duration
+}
+
+// Stream is a running harness's protocol connection: one JSON value per
+// line each way, its output capped at 8 MiB and 1 MiB a line.
+type Stream struct{ s *stream }
+
+// Send writes one message.
+func (s *Stream) Send(v any) error { return s.s.write.Encode(v) }
+
+// Next reads the next message into v.
+func (s *Stream) Next(v any) error { return s.s.next(v) }
+
+// RPC makes one JSON-RPC request and decodes its result into result,
+// skipping notifications and other responses. A JSON-RPC error is an
+// *RPCError.
+func (s *Stream) RPC(id int, method string, params, result any) error {
+	return s.s.rpc(id, method, params, result)
+}
+
+// CodexInit opens an app-server connection: initialize, then initialized.
+// The initialize result is decoded into reply when it is not nil.
+func (s *Stream) CodexInit(reply any) error { return s.s.codexInit(reply) }
+
+// ClaudeInit sends Claude Code's SDK initialize control request and decodes
+// its success reply into reply.
+func (s *Stream) ClaudeInit(reply any) error { return s.s.claudeInit(reply) }
+
+// RPCError is a JSON-RPC error reply (its message is not kept: it is the
+// harness's text).
+type RPCError struct {
+	Method string
+	Code   int
+}
+
+// RPCMethod is the method the error answered.
+func (e *RPCError) RPCMethod() string { return e.Method }
+
+func (e *RPCError) Error() string {
+	return fmt.Sprintf("%s failed (JSON-RPC code %d)", e.Method, e.Code)
+}
+
+// Run starts sp's CLI in its own process group, hands its protocol stream
+// to run and ends it: bounded by sp.Timeout (and ctx), the group killed and
+// the process reaped before Run returns, also when run fails.
+func Run[T any](ctx context.Context, sp Spawn, run func(*Stream) (T, error)) (T, error) {
 	var zero T
-	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	timeout := sp.Timeout
+	if timeout <= 0 {
+		timeout = probeTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, execpath.Resolve(bin), args...)
-	cmd.Dir, cmd.Env = dir, probeEnv()
+	cmd := exec.CommandContext(ctx, execpath.Resolve(sp.Bin), sp.Args...)
+	cmd.Dir, cmd.Env = sp.Dir, append(probeEnv(), sp.Env...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
@@ -168,7 +229,7 @@ func probeIn[T any](ctx context.Context, bin, dir string, args []string, run fun
 	}()
 	scanner := bufio.NewScanner(io.LimitReader(out, 8<<20))
 	scanner.Buffer(make([]byte, 64<<10), 1<<20)
-	result, err := run(&stream{write: json.NewEncoder(in), read: scanner})
+	result, err := run(&Stream{&stream{write: json.NewEncoder(in), read: scanner}})
 	if err != nil && ctx.Err() != nil {
 		err = ctx.Err()
 	}
@@ -205,17 +266,23 @@ func (s *stream) rpc(id int, method string, params any, result any) error {
 			continue // notifications and unrelated responses
 		}
 		if msg.Error != nil {
-			return fmt.Errorf("%s failed (JSON-RPC code %d)", method, msg.Error.Code)
+			return &RPCError{Method: method, Code: msg.Error.Code}
 		}
 		return json.Unmarshal(msg.Result, result)
 	}
 }
 
-// codexInit opens an app-server connection: initialize, then initialized.
-func (s *stream) codexInit() error {
+// codexInit opens an app-server connection: initialize (its result into
+// reply, if not nil), then initialized.
+func (s *stream) codexInit(reply any) error {
 	var initialized json.RawMessage
 	if err := s.rpc(1, "initialize", map[string]any{"clientInfo": map[string]string{"name": "herdr_3d", "version": "1"}}, &initialized); err != nil {
 		return err
+	}
+	if reply != nil {
+		if err := json.Unmarshal(initialized, reply); err != nil {
+			return err
+		}
 	}
 	return s.write.Encode(map[string]any{"method": "initialized", "params": map[string]any{}})
 }
@@ -226,7 +293,7 @@ func Codex(ctx context.Context, bin string) (proto.HarnessOptions, error) {
 		bin = "codex"
 	}
 	return probe(ctx, bin, []string{"app-server"}, func(s *stream) (proto.HarnessOptions, error) {
-		if err := s.codexInit(); err != nil {
+		if err := s.codexInit(nil); err != nil {
 			return proto.HarnessOptions{}, err
 		}
 		var models []model

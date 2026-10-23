@@ -22,8 +22,9 @@ export const NARROW = '(max-width: 760px)';
 // the tab needs, palette.css), and the tab, which lives inside the topmost screen, is the palette's own, so it stays clickable.
 // #213: so is the dictation bar, the palette's sibling (dictation.css keeps the same gutter). #223: the filing cabinet
 // fills the screen like a board does; #64 schedules: so do the scheduled agents dialog and its form (tall, header right).
+// #196: so does the MCP & skills overview (a Sheet up to 90 % of the window, its close button top right).
 export const PALETTE = 'dialog.palette[open], dialog.dictation[open]';
-export const SCREEN = `dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dlg--item[open], dialog.desk-dlg--hire[open], dialog.desk-dlg--secrets[open], dialog.shortcuts[open], dialog.settings[open], dialog.cab[open], dialog.sch[open], dialog.desk-dlg--sched[open], .wb[open], .ov[open], ${PALETTE}`;
+export const SCREEN = `dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dlg--item[open], dialog.desk-dlg--hire[open], dialog.desk-dlg--secrets[open], dialog.shortcuts[open], dialog.settings[open], dialog.cab[open], dialog.sch[open], dialog.desk-dlg--sched[open], dialog.mcp[open], .wb[open], .ov[open], ${PALETTE}`;
 
 /**
  * The seated reading overlay (the conversation, the Images tab; laptop/index.ts marks the page with `data-reading`) is a

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { blocked, moveWithCollision, pickNearest, rayBox } from './collide';
-import { assignDesks, deskCountFallback, displayStatus, modelCue, modelText, taskLine } from './derive';
-import { COUNTER_RECT, COUNTER_TOP, departuresBoardBox, EYE_HEIGHT, HEAD, floorLayout, openingsFor, outlineOf, overviewScreenBox, podGrid, POST_W, RACK_BOX, ROOM_HEIGHT, seatRect, slotBoxes, wallPieces, type Rect } from './layout';
+import { assignDesks, deskCountFallback, displayStatus, MAX_DESKS, modelCue, modelText, taskLine } from './derive';
+import { COUNTER_RECT, COUNTER_TOP, departuresBoardBox, EYE_HEIGHT, HEAD, floorLayout, MCP_SCREEN_BOX, openingsFor, outlineOf, overviewScreenBox, podGrid, POST_W, RACK_BOX, ROOM_HEIGHT, seatRect, slotBoxes, wallPieces, type Rect } from './layout';
 
 describe('deskCountFallback', () => {
   it.each([
@@ -136,7 +136,7 @@ describe('floorLayout', () => {
   it('has every placeholder prop, labelled', () => {
     const ids = floorLayout(20).props.map((p) => p.id);
     expect(ids.sort()).toEqual(
-      ['board.departures', 'board.issues', 'board.prs', 'board.services', 'clock', 'dropzone', 'elevator', 'filing', 'lounge', 'radio', 'screen.overview', 'server.rack', 'tv', 'whiteboard'].sort(),
+      ['board.departures', 'board.issues', 'board.prs', 'board.services', 'clock', 'dropzone', 'elevator', 'filing', 'lounge', 'radio', 'screen.mcp', 'screen.overview', 'server.rack', 'tv', 'whiteboard'].sort(),
     );
   });
 
@@ -343,6 +343,74 @@ describe('floorLayout', () => {
       const d: [number, number, number] = [mid[0] - from[0], mid[1] - from[1], mid[2] - from[2]];
       const len = Math.hypot(...d);
       expect(pickNearest(from, [d[0] / len, d[1] / len, d[2] / len], l.props.map((p) => ({ boxes: [p.box], value: p.id })), 3)?.value, `${n} desks`).toBe('server.rack');
+    }
+  });
+
+  it('#196: hangs the MCP & skills screen on the north wall over the rack, clear of everything, on every floor size and outline', () => {
+    const outlines = [undefined, { width: 18, depth: 14 }, { width: 24, depth: 17.8 }, { width: 31, depth: 23.1 }, { width: 40, depth: 28.4 }, outlineOf([MAX_DESKS])];
+    const inside = (a: { min: readonly number[]; max: readonly number[] }, o: { min: readonly number[]; max: readonly number[] }) =>
+      [0, 1, 2].every((i) => (a.min[i] as number) < (o.max[i] as number) && (a.max[i] as number) > (o.min[i] as number));
+    for (let n = 0; n <= MAX_DESKS; n++) {
+      for (const outline of outlines) {
+        const l = floorLayout(n, outline);
+        const at = `${n} desks, ${l.width} x ${l.depth}`;
+        const screen = l.props.find((p) => p.id === 'screen.mcp');
+        expect(screen, at).toMatchObject({ label: 'MCP & skills', milestone: '#196', solid: false });
+        const b = (screen as NonNullable<typeof screen>).box;
+        expect(b, at).toEqual({ min: [MCP_SCREEN_BOX[0], MCP_SCREEN_BOX[1], MCP_SCREEN_BOX[2]], max: [MCP_SCREEN_BOX[3], MCP_SCREEN_BOX[4], MCP_SCREEN_BOX[5]] });
+        // A thin bezel box on the north wall, facing +z, above the rack's monitor and under the window heads.
+        expect(b.min[2], at).toBe(0);
+        expect(b.max[2], at).toBeLessThanOrEqual(0.1);
+        expect(b.min[1] - RACK_BOX[4], at).toBeGreaterThanOrEqual(0.2);
+        expect(b.max[1], at).toBeLessThan(HEAD);
+        // It overlaps no other prop (the rack, the whiteboard, the TV, the boards, the overview screen…), with room to spare on the wall.
+        for (const p of l.props) {
+          if (p.id === 'screen.mcp') continue;
+          expect(inside(b, p.box), `${p.id} at ${at}`).toBe(false);
+          if (p.box.min[2] < 0.2 && p.id !== 'server.rack') expect(p.box.min[0] - b.max[0] >= 0.3 || b.min[0] - p.box.max[0] >= 0.3 || p.box.min[1] - b.max[1] >= 0.3 || b.min[1] - p.box.max[1] >= 0.3, `${p.id} margin at ${at}`).toBe(true);
+        }
+        // Clear of the north windows' frames (5 cm past the hole) by 0.2 m, and of the mezzanine (slab, glass, posts and their room).
+        for (const o of l.openings.filter((o) => o.wall === 'north')) {
+          expect(b.min[0] >= o.u1 + 0.05 + 0.2 || b.max[0] <= o.u0 - 0.05 - 0.2 || b.max[1] <= o.y0, `window ${o.u0}-${o.u1} at ${at}`).toBe(true);
+        }
+        const m = l.mezzanine;
+        expect(b.max[0] < m.rect.x0 - 1, at).toBe(true);
+        expect(inside(b, m.slab), at).toBe(false);
+        for (const g of m.glass) expect(inside(b, g), at).toBe(false);
+        for (const p of m.posts) expect(p.x - POST_W / 2 > b.max[0] + 0.5 || p.z - POST_W / 2 > b.max[2] + 0.5, `post at ${p.x},${p.z} at ${at}`).toBe(true);
+        // Nor any wall but the north one it hangs on: the partition and the board wall are far south.
+        expect(l.boardWall.z0, at).toBeGreaterThan(5);
+      }
+    }
+  });
+
+  it('#196: the MCP screen is read from where you stand in front of the rack and from the lounge, and the rack stays its own pick', () => {
+    for (const n of [0, 6, 13, 20, 62, 96]) {
+      const l = floorLayout(n);
+      const b = l.props.find((p) => p.id === 'screen.mcp')?.box as NonNullable<ReturnType<typeof floorLayout>['props'][number]>['box'];
+      const props = l.props.map((p) => ({ boxes: [p.box], value: p.id }));
+      const pick = (from: [number, number, number], to: [number, number, number]) => {
+        const d: [number, number, number] = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+        const len = Math.hypot(...d);
+        return pickNearest(from, [d[0] / len, d[1] / len, d[2] / len], props, 4, l.walls)?.value;
+      };
+      const mid: [number, number, number] = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, b.max[2]];
+      // From the rack's front, looking up at the screen; from the lounge's east end, looking north-east.
+      for (const from of [
+        [6.2, EYE_HEIGHT, 1.9],
+        [5.4, EYE_HEIGHT, 2.4],
+        [4.6, EYE_HEIGHT, 3.0],
+      ] as Array<[number, number, number]>) {
+        expect(blocked({ x: from[0], z: from[2] }, 0.28, l.colliders), `stand ${from} at ${n}`).toBe(false);
+        expect(pick(from, mid), `from ${from} at ${n} desks`).toBe('screen.mcp');
+        // A comfortable reading distance for a 2.1 m screen: about 2 to 3.5 m.
+        const dist = Math.hypot(mid[0] - from[0], mid[1] - from[1], mid[2] - from[2]);
+        expect(dist).toBeGreaterThan(1.5);
+        expect(dist).toBeLessThan(4);
+      }
+      // Looking at the rack's monitor from in front of it still picks the rack.
+      const rack = l.props.find((p) => p.id === 'server.rack')?.box as typeof b;
+      expect(pick([6.2, EYE_HEIGHT, 1.7], [6.2, 1.25, rack.max[2]]), `${n} desks`).toBe('server.rack');
     }
   });
 

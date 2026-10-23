@@ -9,6 +9,7 @@ import { buildRadio, type RadioMesh } from './radio';
 import { buildOverviewScreen, type OverviewScreenMesh } from './overviewScreen';
 import { buildFloorDepartures, type FloorDeparturesMesh } from './departuresBoard';
 import { buildRack, type RackMesh } from './rack';
+import { buildMcpScreen, type McpScreenMesh } from './mcpScreen';
 import { buildTv, type TvMesh } from './tv';
 
 /** Static placeholder props (boards, lounge, cabinet, …): a few meshes per floor, textures drawn once. */
@@ -162,6 +163,8 @@ export interface PropMeshes {
   departures: FloorDeparturesMesh | null;
   /** #74: the server rack with its monitor and its disk-driven LEDs (null when the layout has none). */
   rack: RackMesh | null;
+  /** #196: the MCP & skills screen over the rack (null when the layout has none). */
+  mcp: McpScreenMesh | null;
   /** M13: puts the board's render on the whiteboard (null: back to the placeholder); the one it replaces is disposed. */
   setWhiteboard(tex: THREE.Texture | null): void;
   /** #223: the cabinet's drawers, top to bottom, with this many folder tabs each (`world/handoff.drawerFill`). */
@@ -256,6 +259,11 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
   const rackProp = byId.get('server.rack');
   const rack = rackProp ? buildRack(rackProp.box, pool) : null;
   if (rack) group.add(rack.group);
+
+  // #196: the MCP & skills screen over the rack (render/mcpScreen.ts); the app feeds it what the bridge read.
+  const mcpProp = byId.get('screen.mcp');
+  const mcp = mcpProp ? buildMcpScreen(mcpProp.box, P.screens) : null;
+  if (mcp) group.add(mcp.group);
 
   const filing = byId.get('filing');
   // #223: the drawers fill: manila folder tabs peek over each drawer's front, bottom drawer first (`drawerFill`).
@@ -461,6 +469,7 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
     overview,
     departures,
     rack,
+    mcp,
     setDrawers(fill) {
       const key = fill.join(',');
       if (!drawFiling || key === filingShown) return;
@@ -475,6 +484,7 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
       overview?.dispose(); // its two canvas textures
       departures?.dispose(); // its canvas texture
       rack?.dispose(); // its screen's canvas texture and the LEDs
+      mcp?.dispose(); // its canvas texture
       wbShown?.dispose();
       group.traverse((o) => {
         if (o instanceof THREE.Mesh && !pool?.owns(o)) {

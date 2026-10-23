@@ -115,6 +115,19 @@ describe('Sheet (#187)', () => {
     expect(closes).toEqual(['backdrop']);
   });
 
+  it('with `backdrop: none` (it holds an edit) a press and click on the backdrop leave it open; Esc and the button still close it', () => {
+    const { sheet, closes } = make({ backdrop: 'none' });
+    sheet.open();
+    boxed(sheet);
+    expect(sheet.el.getAttribute('closedby')).toBe('closerequest');
+    press(sheet.el, 20, 20);
+    expect(sheet.isOpen).toBe(true);
+    sheet.el.dispatchEvent(new Event('cancel', { cancelable: true }));
+    sheet.open();
+    (sheet.el.querySelector('.sheet-close') as HTMLButtonElement).click();
+    expect(closes).toEqual(['esc', 'button']);
+  });
+
   it('can open again after closing, and each close is reported', () => {
     const { sheet, closes } = make();
     sheet.open();

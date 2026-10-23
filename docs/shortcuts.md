@@ -76,6 +76,7 @@ Look at it with the crosshair, or pick it without the mouse: T and Shift+T cycle
 | `E` | Reception: the floor directory |
 | `E` | Whiteboard: draw |
 | `E` | Lounge screen: the floor overview, growing out of it |
+| `E` | MCP & skills screen: the MCP servers and skills of the floor’s agents |
 | `E` | Departures board: its floor’s scheduled agents (in a lobby: a floor’s group, that floor’s; elsewhere on the board, every floor’s) |
 | `E` | Filing cabinet: the floor’s handoffs (search, read, copy, hire from one) |
 | `E` | Radio: next genre |
