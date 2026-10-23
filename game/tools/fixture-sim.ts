@@ -75,6 +75,8 @@ import { ActivitySim } from './fixture-activity.ts';
 import { CodexQuestionsSim } from './fixture-codex-questions.ts';
 // #74: the server rack's host stats (`host.watch`, `sim.host`, `simhost=<scenario>`, `simfail=no_host`).
 import { HostSim } from './fixture-host.ts';
+// #196: the MCP & skills wall (`mcp.inventory`, `mcp.check`, `sim.mcp`, `simmcpcheckms=<ms>`, `simfail=no_mcp`).
+import { McpSim } from './fixture-mcp.ts';
 // #223: literal handoffs and the filing cabinet (`worker.handoff*`, `handoff.*`, `sim.final`, `simhandoffs=<n>`, `simfail=no_handoff`).
 import { HandoffSim } from './fixture-handoff.ts';
 // #64 schedules: scheduled agents (`schedule.*`, `sim.schedule_fire`, `sim.schedule_fail`, `simschedules=<n>`, `simfail=no_schedules`; #127 `simfail=no_schedule_instructions`).
@@ -115,6 +117,8 @@ export interface SimOptions {
   /** #74: the host stats' scripted numbers (`simhost=ok|hot|noupdates|busy`) and their period (`simhostms=<ms>`, default 5000; tools/fixture-host.ts). */
   host?: string;
   hostMs?: number;
+  /** #196: how long an `mcp.check` takes (`simmcpcheckms=<ms>`, default 600; tools/fixture-mcp.ts). */
+  mcpCheckMs?: number;
   /** #51: this many extra Claude models (`claude-lab-01`…) on top of the three, to see a long model list (`simmodels=<n>`). */
   models?: number;
   /** #74: the bridge's pane zoom as played by the screens (tools/fixture-screen.ts; `simzoom=`; absent: a bridge before it). */
@@ -240,6 +244,8 @@ const FLOOR_ARG = new Set([
   'pr.get',
   'pr.comment',
   'pr.merge',
+  'mcp.inventory',
+  'mcp.check',
 ]);
 
 /** #58: events naming a worker's floor by `session` inside the sim (`floor_id` on the wire). */
@@ -458,6 +464,34 @@ export class SimWorld {
       this.now,
       (code, message) => new CmdError(code, message),
     );
+    this.mcp = new McpSim(
+      {
+        checkouts: (floor) => {
+          const f = this.floor({ session: floor });
+          const d = this.defaultCwd(f);
+          const all = [d];
+          for (const w of this.workers) {
+            const r = w.session === f.session ? this.rootOf(w) : undefined;
+            if (r && !all.includes(r)) all.push(r);
+          }
+          return { default: d, all };
+        },
+        expected: (floor) => this.floors.get(floor)?.settings?.expected_mcp,
+        profile: (key) => (this.codexProfiles ? this.codexProfiles.find(key) : key === null || key === 'codex' ? { key: 'codex', name: 'codex' } : null),
+        later: (fn, ms) => {
+          const h = this.setT(() => {
+            this.timers.delete(h);
+            fn();
+          }, ms);
+          this.timers.add(h);
+          return h;
+        },
+        now: this.now,
+        error: (code, message) => new CmdError(code, message),
+      },
+      o.fail !== 'no_mcp',
+      o.mcpCheckMs,
+    );
     this.codexProfiles = o.codexProfiles ? new CodexProfilesSim({ emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: this.now }, o.codexProfiles) : null; // #138
     this.limits = new LimitsSim(o.limits ?? 'ok', o.fail !== 'no_m10', this.now, (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message), this.codexProfiles);
     this.codexProfiles?.seed(this.workers); // #139
@@ -523,6 +557,8 @@ export class SimWorld {
   private readonly limits: LimitsSim;
   /** #74: the host stats of the server rack (tools/fixture-host.ts). */
   private readonly host: HostSim;
+  /** #196: the MCP & skills wall (tools/fixture-mcp.ts). */
+  private readonly mcp: McpSim;
   /** #92: the AI integration (tools/fixture-ai.ts). */
   private readonly ai: AiSim;
   /** #98: "Classify unknown commands" (tools/fixture-activity-settings.ts). */
@@ -848,6 +884,7 @@ export class SimWorld {
       if (this.boards.handle(m.t, a, send, ack, fail)) return;
       if (this.limits.handle(m.t, send, ack)) return;
       if (this.host.handle(m.t, a, send, ack)) return; // #74
+      if (this.mcp.handle(m.t, a, ack, fail)) return; // #196
       if (this.ai.handle(m.t, a, send, ack, fail)) return; // #92
       if (this.activitySettings.handle(m.t, a, send, ack)) return; // #98
       if (this.codexServer.handle(m.t, a, send, ack)) return; // #155
@@ -1131,7 +1168,18 @@ export class SimWorld {
   }
 
   private checkSettings(a: Obj): void {
-    onlyKeys(a, ['session', 'repo', 'project', 'status_field', 'default_cwd', 'default_hire', 'tracker', 'kaneo']);
+    onlyKeys(a, ['session', 'repo', 'project', 'status_field', 'default_cwd', 'default_hire', 'tracker', 'kaneo', ...(this.fail === 'no_mcp' ? [] : ['expected_mcp'])]);
+    // #196: the expected MCP servers, checked like the bridge's (docs/protocol.md "MCP and skills").
+    const em = a.expected_mcp;
+    if (em !== undefined && em !== null) {
+      if (!Array.isArray(em) || em.length > 32) throw bad('expected_mcp must be at most 32 names');
+      const seen = new Set<string>();
+      for (const n of em) {
+        if (typeof n !== 'string' || n !== n.trim() || !n || bytes(n) > 100 || /[\u0000-\u001f\u007f]/.test(n)) throw bad('expected_mcp: each name is 1-100 bytes, trimmed, no control characters');
+        if (seen.has(n)) throw bad(`expected_mcp: ${n} is listed twice`);
+        seen.add(n);
+      }
+    }
     const repo = a.repo;
     if (repo !== undefined && repo !== null && (typeof repo !== 'string' || !/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(repo))) {
       throw bad('repo must be owner/repo');
@@ -1182,9 +1230,9 @@ export class SimWorld {
     // A connection watching the floor gets the board of its new link, like the bridge's watchers.
     const watcher = 'tracker' in a || 'kaneo' in a || 'repo' in a ? (this.kaneo.release(f.session) ?? this.boards.release(f.session)) : null;
     const set = s as Record<string, unknown>;
-    for (const k of ['repo', 'project', 'status_field', 'default_cwd', 'default_hire'] as const) {
+    for (const k of ['repo', 'project', 'status_field', 'default_cwd', 'default_hire', 'expected_mcp'] as const) {
       if (!(k in a)) continue;
-      if (a[k] === null) delete set[k];
+      if (a[k] === null || (k === 'expected_mcp' && Array.isArray(a[k]) && a[k].length === 0)) delete set[k];
       else set[k] = a[k];
     }
     if (Object.keys(s).length) f.settings = s;

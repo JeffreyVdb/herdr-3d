@@ -32,6 +32,9 @@
 // worker's transcript watch that long after the turn takes it (tools/fixture-panels.ts; absent: never).
 // #74: `simhost=ok|hot|noupdates|busy` scripts the server rack's host stats and `simhostms=<ms>` their period (default 5000;
 // tools/fixture-host.ts), `simfail=no_host` plays a bridge before them.
+// #196: `mcp.inventory` / `mcp.check` play the MCP & skills wall's bridge (tools/fixture-mcp.ts; `sim.mcp` scripts a stale,
+// failed, pending or missing provider and slow replies per Codex profile), `simmcpcheckms=<ms>` how long a check takes,
+// `simfail=no_mcp` a bridge before it.
 // #92: `simjev=<url>` is where the simulated bridge calls Jev (the e2e's fake), `simai=off` a bridge without the AI service, `simfail=no_ai` one before it
 // (tools/fixture-ai.ts). #90: `sim.turn {id, text}` ends a worker's turn with that message, and follow-up questions
 // run on it once switched on (tools/fixture-followup.ts).
@@ -230,6 +233,8 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             // #74: the server rack's host stats: the scripted numbers and their period (tools/fixture-host.ts).
             ...(q.get('simhost') ? { host: q.get('simhost') as string } : {}),
             ...(q.get('simhostms') ? { hostMs: Math.max(100, Number(q.get('simhostms')) || 5000) } : {}),
+            // #196: how long an MCP connection check takes (tools/fixture-mcp.ts).
+            ...(q.get('simmcpcheckms') !== null ? { mcpCheckMs: Math.max(0, Number(q.get('simmcpcheckms')) || 0) } : {}),
             // #92: AI integration: Jev's address (the e2e's fake) and a bridge without the service.
             ...(q.get('simjev') ? { jev: q.get('simjev') as string } : {}),
             ...(q.get('simai') === 'off' ? { ai: 'off' as const } : {}),

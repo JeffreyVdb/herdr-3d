@@ -83,6 +83,8 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'board.unwatch': 'show the issues and pull request boards',
   'host.watch': 'read the server rack’s host stats',
   'host.unwatch': 'read the server rack’s host stats',
+  'mcp.inventory': 'read the MCP servers and skills',
+  'mcp.check': 'check the MCP connections',
   'board.refresh': 'show the issues and pull request boards',
   'limits.refresh': 'read the plan limits',
   'ai.get': 'keep the AI integration',
