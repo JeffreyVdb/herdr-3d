@@ -21,6 +21,9 @@ mise use direnv@latest
 `
 
 // script writes an executable shell script named name into dir.
+// Tests using it stay sequential: writing an executable while another test
+// forks can leave the child holding its writable descriptor until exec,
+// causing a concurrent launch of the script to fail with "text file busy".
 func script(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -47,7 +50,6 @@ func status(rc string) string {
 }
 
 func TestPreflightRealRunner(t *testing.T) {
-	t.Parallel()
 	for name, tc := range map[string]struct {
 		direnv string
 		want   func(t *testing.T, err error)
@@ -103,7 +105,6 @@ func TestPreflightRealRunner(t *testing.T) {
 		}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			t.Parallel()
 			p, dir := preflightWith(t, tc.direnv)
 			err := p.Check(context.Background(), dir)
 			tc.want(t, err)
@@ -114,7 +115,6 @@ func TestPreflightRealRunner(t *testing.T) {
 		})
 	}
 	t.Run("missing executable", func(t *testing.T) {
-		t.Parallel()
 		p, dir := preflightWith(t, status("null"))
 		p.Direnv = filepath.Join(t.TempDir(), "no-direnv")
 		if err := p.Check(context.Background(), dir); err != nil {
@@ -126,7 +126,6 @@ func TestPreflightRealRunner(t *testing.T) {
 // The one-line text is the note's reason and the game's contract
 // (game/src/world/codexServer.test.ts has the same words).
 func TestPreflightRealRunnerNoteText(t *testing.T) {
-	t.Parallel()
 	p, dir := preflightWith(t, "cat >&2 <<'EOF'\n"+miseNoVersion+"EOF\nexit 1\n")
 	err := p.Check(context.Background(), dir)
 	if want := "direnv is installed through mise but has no version selected for " + dir; err == nil || err.Error() != want {
@@ -137,7 +136,6 @@ func TestPreflightRealRunnerNoteText(t *testing.T) {
 // ExecError keeps the text callers have always had, the exec error to match
 // and the whole (bounded) stderr.
 func TestExecError(t *testing.T) {
-	t.Parallel()
 	bin := t.TempDir()
 	long := script(t, bin, "long", "i=0\nwhile [ $i -lt 2000 ]; do echo 'abcdefghij' >&2; i=$((i+1)); done\nexit 2\n")
 	_, err := ExecRunner(os.Environ())(context.Background(), bin, long)
