@@ -1,35 +1,71 @@
 package hireintent
 
 import (
+	"cmp"
+	"context"
 	"fmt"
 	"slices"
 	"strings"
 	"unicode"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 )
 
 // Resolve turns the parser's answer into a Result: the intent, and for a
 // hire the proposal, every value checked against cat. sources are the
 // sentences, the pending proposal's then the one interpreted (the last, at
 // least one); pending is that
-// proposal (nil: none), already checked.
+// proposal (nil: none), already checked. Nothing is hidden and no
+// classifier is asked (Interpret's Request has both).
 //
 // The rules:
 //   - not a hire: the intent, nothing else; more than one action or worker:
 //     unsupported, nothing else (never a part of it);
-//   - a harness named that has no models in cat is Invalid;
-//   - a model is an exact id or readable label of the harness named, or,
-//     with no harness named, of exactly one harness (which is then
-//     resolved); anything else is Invalid, never another model or harness;
-//   - an effort counts only when its word is in the dictation outside the
-//     task; it is checked against the model's levels;
+//   - a harness said outside the task (in the latest sentence that says
+//     one) is the harness, whatever the parser read; both said, no model is
+//     taken. A harness named that has no (visible) models is Invalid;
+//   - a model counts only where its words were said outside the task (else
+//     Missing), and a brand alone ("Codex", "GPT") is none (Missing). It is
+//     never one when the parser named a model word that was not said at all,
+//     or when the user said a word with the model's that names none ("GPT
+//     Banana", a version in words) (Invalid). Said as an exact id or
+//     readable label, it is that model, of the harness named, else of its
+//     own harness (which is then resolved): a hidden one, or one of another
+//     harness than named, is Invalid. Said otherwise, it is the visible model of the harness
+//     named (else of any) whose words cover the words said (#190: "GPT
+//     Sol", "Sol"): one is that model, several are Invalid and asked among
+//     exactly those. A near miss ("GPT soul") goes to the classifier
+//     (Select), which may pick it; anything else is Invalid, never another
+//     model or harness;
+//   - an effort's spoken forms ("x high", "extra-high", "maximum") are its
+//     level, in the answer too; it counts only when its word is in the
+//     dictation outside the task, and is checked against the model's
+//     levels;
 //   - the task is an exact part of a source: its span is in the latest
 //     source holding it, at its last occurrence there. A task that is in no
 //     source is an error (CodeBadSpan);
 //   - with a pending proposal, a field the answer leaves out keeps the
 //     pending one, and its task changes only to a part of the reply. An
 //     effort kept from it that the newly chosen model does not support is
-//     Missing again.
+//     Missing again. Every kept value is resolved again, against the
+//     current catalog and visibility: a pending model is that very id while
+//     it is visible (and of the harness said), else Invalid, never another
+//     version of its family. Only a reply that says a model's words itself
+//     (outside the task) changes a pending model, whatever the parser
+//     answered: it is then a selection from the reply's words alone.
 func Resolve(a *Answer, pending *Interpretation, sources []string, cat Catalog) Result {
+	return resolve(context.Background(), a, pending, sources, scope{full: cat, vis: cat})
+}
+
+// scope is what a resolution reads: the bridge's whole catalog, the visible
+// part of it (the whole one minus Request.Hidden), and the classifier (nil:
+// none).
+type scope struct {
+	full, vis Catalog
+	cls       ai.Classifier
+}
+
+func resolve(ctx context.Context, a *Answer, pending *Interpretation, sources []string, sc scope) Result {
 	text := sources[len(sources)-1]
 	res := Result{Text: text, Intent: a.Intent}
 	if a.Intent != IntentHire {
@@ -43,33 +79,71 @@ func Resolve(a *Answer, pending *Interpretation, sources []string, cat Catalog) 
 	if err != nil {
 		return Result{Text: text, Error: &Failure{Code: CodeBadSpan, Message: err.Error()}}
 	}
-	sel := selection(sources, task, taskBytes)
+	parts := selectionParts(sources, task, taskBytes)
+	selText := strings.Join(parts, "\n")
+	sel := strings.ToLower(selText)
 
 	harness := word(a.Harness)
 	model := word(a.Model)
-	effort := strings.ToLower(word(a.Effort))
+	effort := canonicalEffort(word(a.Effort))
 	keptEffort := false
 	if pending != nil {
 		if harness == "" && pending.Harness.Provenance == Dictated {
 			harness = pending.Harness.Value
 		}
-		if model == "" {
-			model = said(pending.Model)
+		if model == "" && !pending.Model.Valid() {
+			model = said(pending.Model) // the words of an invalid one, through the rules again
 		}
-		if p := said(pending.Effort); effort == "" || effort == strings.ToLower(p) {
-			effort, keptEffort = strings.ToLower(p), p != ""
+		if p := canonicalEffort(said(pending.Effort)); effort == "" || effort == p {
+			effort, keptEffort = p, p != ""
 		}
 	}
+	// A harness said binds, whatever the LLM read (#190). Both said: no
+	// model of either is taken.
+	named := saidHarnesses(parts)
+	switch {
+	case len(named) == 1:
+		harness = named[0]
+	case len(named) > 1:
+		harness = ""
+	}
 
-	hf, mf := resolveModel(cat, harness, model, sel)
-	ef := resolveEffort(cat, hf, mf, effort, sel)
+	var m modelRes
+	switch reply := parts[len(parts)-1]; {
+	case pending == nil || !pending.Model.Valid():
+		m = sc.resolveModel(harness, model, sel, parts)
+	case !sc.saysModel(reply, model):
+		// The parser may repeat the pending model ("GPT Sol", its id):
+		// that is no new selection.
+		m = sc.keepModel(harness, pending, sel)
+	default:
+		m = sc.resolveModel(harness, model, strings.ToLower(reply), []string{reply})
+		if harness != "" {
+			m.harness = sc.harnessField(harness, sel) // said in an earlier sentence too
+		}
+	}
+	if len(named) > 1 && (m.model.Valid() || len(m.near) > 0) {
+		said := cmp.Or(model, m.model.Said, m.model.Value)
+		m = modelRes{harness: Field{Provenance: Missing}, model: Field{Provenance: Invalid, Said: said}}
+	}
+	hf, mf := m.harness, m.model
+	ef, nearEfforts := sc.resolveEffort(hf, mf, effort, sel)
+	if len(m.near) > 0 || len(nearEfforts) > 0 {
+		hf, mf, ef, m.choices = sc.classify(ctx, selText, sel, m, ef, effort, nearEfforts)
+		m.byFamily = m.byFamily || len(m.near) > 0 && mf.Valid()
+	}
 	modelChanged := pending != nil && mf.Value != pending.Model.Value
 	if ef.Provenance == Invalid && keptEffort && modelChanged && mf.Valid() {
 		ef = Field{Provenance: Missing}
 	}
 
 	in := &Interpretation{Sources: sources, Harness: hf, Model: mf, Effort: ef, Task: task, Questions: []Question{}}
-	in.Questions = questions(cat, in, a.SelectionUnclear)
+	// The LLM finds the selection unclear when it cannot map a family to an
+	// id itself ("GPT Sol" is in no hire_options): that is what the rules
+	// did. It still counts when the model was said exactly, or when another
+	// model is named outside the task ("GPT Sol or maybe Opus").
+	unclear := a.SelectionUnclear && !(m.byFamily && mf.Valid() && !sc.otherModelSaid(sel, Choice{Harness: hf.Value, Model: mf.Value}))
+	in.Questions = questions(sc.vis, in, unclear, m.choices)
 	in.ReadyForReview = len(in.Questions) == 0 && hf.Valid() && mf.Valid() && ef.Valid() && task.Provenance == Dictated
 	res.Hire = in
 	return res
@@ -130,15 +204,31 @@ func resolveTask(t *string, pending *Interpretation, sources []string) (Task, [2
 	return Task{}, [2]int{}, fmt.Errorf("the task the language model read is not part of what was dictated")
 }
 
-// selection is the dictation without the task: where a harness, model or
-// effort may have been said. The sources are joined by a line break.
-func selection(sources []string, task Task, at [2]int) string {
+// selectionParts are the dictation without the task, a part per source:
+// where a harness, model or effort may have been said. Joined by a line
+// break (the task is one too), they are the selection, what the classifier
+// reads (Select); the rules read it in lower case.
+func selectionParts(sources []string, task Task, at [2]int) []string {
 	parts := slices.Clone(sources)
 	if task.Span != nil {
 		s := parts[task.Span.Source]
 		parts[task.Span.Source] = s[:at[0]] + "\n" + s[at[1]:]
 	}
-	return strings.ToLower(strings.Join(parts, "\n"))
+	return parts
+}
+
+// saidHarnesses are the harnesses named in the latest part that names one
+// ("Codex", "Claude Code", "Claude"): an earlier sentence's are a choice
+// the user has since changed.
+func saidHarnesses(parts []string) []string {
+	for i := len(parts) - 1; i >= 0; i-- {
+		words := nameTokens(parts[i])
+		named := slices.DeleteFunc(slices.Clone(Harnesses), func(h string) bool { return !slices.Contains(words, h) })
+		if len(named) > 0 {
+			return named
+		}
+	}
+	return nil
 }
 
 // hasWord reports whether w (lower case) is in text (lower case) as a word:
@@ -198,39 +288,249 @@ func lookup(hc HarnessCatalog, said string) (string, bool) {
 	return "", false
 }
 
-// resolveModel resolves the harness named and the model said (see Resolve).
-func resolveModel(cat Catalog, harness, model string, sel string) (Field, Field) {
-	hf := Field{Provenance: Missing}
-	if hc, _ := cat.Harness(harness); harness != "" && len(hc.Models) == 0 {
-		hf = Field{Provenance: Invalid, Said: harness} // nothing of it to hire now
-	} else if harness != "" {
-		hf = Field{Provenance: provenance(harness, sel), Value: harness}
+// modelRes is a model resolved: the harness and model fields, the choices
+// of its question (nil: the harness's), and the near candidates the
+// classifier is asked about (the model Invalid meanwhile).
+type modelRes struct {
+	harness, model Field
+	choices        []Choice
+	near           []Choice
+	// byFamily: taken by this package's rules (a family, a near miss), not
+	// as the exact id or label the LLM gave.
+	byFamily bool
+}
+
+// harnessField is the harness named (see Resolve): Missing for none,
+// Invalid for one with no visible models.
+func (sc scope) harnessField(harness, sel string) Field {
+	switch hc, _ := sc.vis.Harness(harness); {
+	case harness == "":
+		return Field{Provenance: Missing}
+	case len(hc.Models) == 0:
+		return Field{Provenance: Invalid, Said: harness} // nothing of it to hire now
 	}
-	if model == "" {
-		return hf, Field{Provenance: Missing}
-	}
-	var found []Choice
-	for _, h := range Harnesses {
-		hc, _ := cat.Harness(h)
-		if id, ok := lookup(hc, model); ok {
-			found = append(found, Choice{Harness: h, Model: id})
+	return Field{Provenance: provenance(harness, sel), Value: harness}
+}
+
+// keepModel is a follow-up's pending model when the reply names none
+// (#190): that very model while it is still visible and of the harness
+// named, else Invalid, asked among the visible ones. Never another
+// version of its family.
+func (sc scope) keepModel(harness string, p *Interpretation, sel string) modelRes {
+	r := modelRes{harness: sc.harnessField(harness, sel), model: p.Model}
+	ph, id := p.Harness.Value, p.Model.Value
+	if hc, _ := sc.vis.Harness(ph); harness == "" && len(hc.Models) > 0 {
+		r.harness = Field{Provenance: Resolved, Value: ph}
+		if p.Harness.Valid() {
+			r.harness = p.Harness
 		}
 	}
-	if harness != "" {
-		found = slices.DeleteFunc(found, func(c Choice) bool { return c.Harness != harness })
+	if hc, _ := sc.vis.Harness(ph); (harness != "" && harness != ph) || !slices.Contains(hc.Models, id) {
+		said := p.Model.Said // asked again in the words the user said, not the id
+		if said == "" {
+			said = id
+		}
+		r.model = Field{Provenance: Invalid, Said: said}
 	}
-	if len(found) != 1 {
-		return hf, Field{Provenance: Invalid, Said: model}
+	return r
+}
+
+// saysModel reports whether part (a source without the task) says a model:
+// a number, in digits or words, or a word of a model of the catalog that is
+// no brand or glue, or a near miss of one; a brand said as a model's ("GPT
+// Banana", "Claude" alone; "Codex" and "Claude Code" name the harness,
+// which binds as said); or a word of model, the LLM's answer, that is no
+// glue ("Banana"). A word too many only asks: the reply's words are then
+// all a model may be taken from.
+func (sc scope) saysModel(part, model string) bool {
+	stop, brand := sc.glueWords(), brands(sc.full)
+	var vocab, firsts []string
+	for _, c := range choices(sc.full, "") {
+		for _, w := range modelWords(sc.full, c) {
+			if !stop[w] && !brand[w] && !isNumber(w) {
+				vocab = append(vocab, w)
+			}
+		}
+		firsts = append(firsts, append(nameTokens(c.Model), "")[0])
 	}
-	c := found[0]
-	if harness == "" {
-		hf = Field{Provenance: Resolved, Value: c.Harness}
+	answer := slices.DeleteFunc(nameTokens(model), func(w string) bool { return stop[w] })
+	toks := tokens(part)
+	harnessName := func(i int) bool {
+		for _, ws := range harnessWords {
+			k := slices.Index(ws, toks[i].w)
+			if k >= 0 && i-k >= 0 && i-k+len(ws) <= len(toks) && slices.EqualFunc(toks[i-k:i-k+len(ws)], ws, func(t token, w string) bool { return t.w == w }) {
+				return true
+			}
+		}
+		return false
 	}
-	mf := Field{Provenance: provenance(c.Model, sel), Value: c.Model}
-	if model != c.Model {
-		mf.Said = model
+	for i, t := range toks {
+		switch {
+		case isNumber(t.w), slices.Contains(numberWords, t.w) && !isGlue(stop, toks, i, 0, len(toks)):
+			return true
+		case slices.Contains(answer, t.w):
+			return true
+		case brand[t.w]:
+			if slices.Contains(firsts, t.w) && !harnessName(i) {
+				return true
+			}
+		case stop[t.w]:
+		case slices.ContainsFunc(vocab, func(v string) bool { return v == t.w || nearWord(t.w, v) }):
+			return true
+		}
 	}
-	return hf, mf
+	return false
+}
+
+// resolveModel resolves the harness named and the model said (see Resolve).
+func (sc scope) resolveModel(harness, model string, sel string, parts []string) modelRes {
+	r := modelRes{harness: sc.harnessField(harness, sel), model: Field{Provenance: Missing}}
+	if model == "" {
+		return r
+	}
+	gen := generic(sc.full)
+	sp := sayName(model, nameTokens(sel), gen)
+	sc.sayAround(&sp, model, parts)
+	if !hasName(sp.words, brands(sc.full)) && !sp.unknown {
+		// Said only inside the task, not at all, or only a harness's or
+		// brand's words: no model, asked among those the words cover.
+		if len(sp.words) > 0 && !sp.weak {
+			r.choices, _ = familyMatches(sc.vis, choices(sc.vis, harness), sp.words, false)
+		}
+		return r
+	}
+	invalid := func(choices []Choice) modelRes {
+		said := model
+		if sp.unknown {
+			said = sp.said // asked in the user's words, all of them
+		}
+		r.model, r.choices = Field{Provenance: Invalid, Said: said}, choices
+		return r
+	}
+	if sp.alien || sp.unknown {
+		return invalid(nil) // a model the user did not say, or one they said that is none
+	}
+	take := func(c Choice) modelRes {
+		if harness == "" {
+			r.harness = Field{Provenance: Resolved, Value: c.Harness}
+		}
+		r.model = Field{Provenance: provenance(c.Model, sel), Value: c.Model}
+		if model != c.Model {
+			r.model.Said = model
+		}
+		return r
+	}
+	if sp.whole {
+		var found []Choice
+		for _, h := range Harnesses {
+			hc, _ := sc.full.Harness(h)
+			if id, ok := lookup(hc, model); ok {
+				found = append(found, Choice{Harness: h, Model: id})
+			}
+		}
+		if harness != "" {
+			found = slices.DeleteFunc(found, func(c Choice) bool { return c.Harness != harness })
+		}
+		switch {
+		case len(found) == 1 && hiddenIn(sc.full, sc.vis, found[0].Harness, found[0].Model):
+			return invalid(nil)
+		case len(found) == 1:
+			return take(found[0])
+		case len(found) > 1 || slices.ContainsFunc(Harnesses, func(h string) bool {
+			hc, _ := sc.full.Harness(h)
+			_, ok := lookup(hc, model)
+			return ok
+		}):
+			return invalid(nil) // another harness's model, never substituted
+		}
+	}
+	cands := choices(sc.vis, harness) // none for a harness named with no models
+	if !sp.weak {
+		switch fam, _ := familyMatches(sc.vis, cands, sp.words, false); len(fam) {
+		case 1:
+			r.byFamily = true
+			return take(fam[0])
+		case 0:
+		default:
+			return invalid(fam) // never a version picked for the user
+		}
+	}
+	near, sigs := familyMatches(sc.vis, cands, sp.words, true)
+	if len(near) == 0 {
+		return invalid(nil)
+	}
+	for i := range sigs {
+		if slices.Contains(sigs[i+1:], sigs[i]) {
+			return invalid(near) // the words said do not tell them apart
+		}
+	}
+	r = invalid(nil)
+	r.near = near
+	return r
+}
+
+// otherModelSaid reports whether sel (the selection, lower case) has a word
+// that names a model of the whole catalog other than c: one of its words
+// that c does not have, not generic, not a number.
+func (sc scope) otherModelSaid(sel string, c Choice) bool {
+	words := nameTokens(sel)
+	gen := generic(sc.full)
+	mine := modelWords(sc.full, c)
+	for _, o := range choices(sc.full, "") {
+		if o == (Choice{Harness: c.Harness, Model: c.Model, Label: o.Label}) {
+			continue
+		}
+		for _, w := range modelWords(sc.full, o) {
+			if !isNumber(w) && !gen[w] && !slices.Contains(mine, w) && slices.Contains(words, w) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// harnessOf is f's value when it is valid, else "".
+func harnessOf(f Field) string {
+	if f.Valid() {
+		return f.Value
+	}
+	return ""
+}
+
+// classify asks the classifier about the near candidates (Select) and
+// applies its picks: a model picked is Resolved (its harness too, when none
+// was named), an effort picked is checked against the model's levels.
+// Ambiguous asks among the candidates it names; anything else (unknown, no
+// classifier, a failure) leaves the fields as they are, Invalid and asked.
+func (sc scope) classify(ctx context.Context, selText, sel string, m modelRes, ef Field, effort string, nearEfforts []string) (Field, Field, Field, []Choice) {
+	hf, mf, choices := m.harness, m.model, m.choices
+	if sc.cls == nil {
+		return hf, mf, ef, choices
+	}
+	ctx, cancel := selectTimeout(ctx)
+	defer cancel()
+	got, err := Select(ctx, sc.cls, selText, m.near, nearEfforts)
+	if err != nil {
+		return hf, mf, ef, choices
+	}
+	switch got.Model.Outcome {
+	case Picked:
+		i := slices.IndexFunc(m.near, func(c Choice) bool { return modelKey(c) == got.Model.Value })
+		c := m.near[i]
+		if !hf.Valid() {
+			hf = Field{Provenance: Resolved, Value: c.Harness}
+		}
+		mf = Field{Provenance: Resolved, Value: c.Model, Said: mf.Said}
+		if len(nearEfforts) == 0 && effort != "" {
+			ef, _ = sc.resolveEffort(hf, mf, effort, sel) // now checked against its levels
+		}
+	case Ambiguous:
+		choices = slices.DeleteFunc(slices.Clone(m.near), func(c Choice) bool { return !slices.Contains(got.Model.Candidates, modelKey(c)) })
+	}
+	if got.Effort.Outcome == Picked {
+		ef = sc.checkEffort(hf, mf, Field{Provenance: Resolved, Value: got.Effort.Value})
+	}
+	return hf, mf, ef, choices
 }
 
 // effortWords are the spoken forms of an effort level besides its own word.
@@ -239,12 +539,30 @@ var effortWords = map[string][]string{
 	"max":   {"maximum"},
 }
 
+// canonicalEffort is an effort as the parser read it, in lower case, its
+// spoken forms as their level (#190: "X high", "extra-high" are xhigh,
+// "maximum" is max): before it is checked, whichever form the answer has.
+func canonicalEffort(e string) string {
+	e = strings.ToLower(strings.TrimSpace(e))
+	norm := strings.Join(strings.FieldsFunc(e, func(r rune) bool { return r == '-' || unicode.IsSpace(r) }), " ")
+	for level, words := range effortWords {
+		for _, w := range words {
+			if norm == strings.ReplaceAll(w, "-", " ") {
+				return level
+			}
+		}
+	}
+	return e
+}
+
 // resolveEffort resolves the effort said (see Resolve): Missing unless one
 // of its words is in sel, checked against the model's levels once the model
-// is valid, else against every level the catalog knows.
-func resolveEffort(cat Catalog, hf, mf Field, effort, sel string) Field {
+// is valid, else against every level the visible catalog knows. A word
+// said that is no level, but a near miss of some ("medum"), is Invalid,
+// with those levels for the classifier.
+func (sc scope) resolveEffort(hf, mf Field, effort, sel string) (Field, []string) {
 	if effort == "" {
-		return Field{Provenance: Missing}
+		return Field{Provenance: Missing}, nil
 	}
 	prov := ""
 	switch {
@@ -253,28 +571,58 @@ func resolveEffort(cat Catalog, hf, mf Field, effort, sel string) Field {
 	case slices.ContainsFunc(effortWords[effort], func(w string) bool { return hasWord(sel, w) }):
 		prov = Resolved
 	default:
-		return Field{Provenance: Missing} // said only inside the task, or not at all
+		return Field{Provenance: Missing}, nil // said only inside the task, or not at all
 	}
-	var levels []string
-	if mf.Valid() {
-		hc, _ := cat.Harness(hf.Value)
-		levels = hc.EffortsFor(mf.Value)
-	} else {
+	f := sc.checkEffort(hf, mf, Field{Provenance: prov, Value: effort})
+	if f.Provenance != Invalid || slices.Contains(sc.levels(Field{}, Field{}), effort) {
+		return f, nil
+	}
+	var near []string
+	for _, l := range sc.levels(hf, mf) {
+		if nearWord(effort, l) || slices.ContainsFunc(effortWords[l], func(w string) bool { return nearWord(effort, w) }) {
+			near = append(near, l)
+		}
+	}
+	return f, near
+}
+
+// levels are the effort levels of the model when it is valid, else every
+// level of the harness named (of all without one), in the visible catalog.
+func (sc scope) levels(hf, mf Field) []string {
+	var out []string
+	add := func(ls ...string) {
+		for _, l := range ls {
+			if !slices.Contains(out, l) {
+				out = append(out, l)
+			}
+		}
+	}
+	switch {
+	case mf.Valid():
+		hc, _ := sc.vis.Harness(hf.Value)
+		add(hc.EffortsFor(mf.Value)...)
+	default:
 		for _, h := range Harnesses {
 			if hf.Valid() && h != hf.Value {
 				continue
 			}
-			hc, _ := cat.Harness(h)
-			levels = append(levels, hc.Efforts...)
-			for _, extra := range hc.ExtraEfforts {
-				levels = append(levels, extra...)
+			hc, _ := sc.vis.Harness(h)
+			add(hc.Efforts...)
+			for _, id := range hc.Models {
+				add(hc.ExtraEfforts[id]...)
 			}
 		}
 	}
-	if !slices.Contains(levels, effort) {
-		return Field{Provenance: Invalid, Said: effort}
+	return out
+}
+
+// checkEffort is f (a level said) checked against the levels (see levels):
+// Invalid, its word kept, when it is not one of them.
+func (sc scope) checkEffort(hf, mf Field, f Field) Field {
+	if !slices.Contains(sc.levels(hf, mf), f.Value) {
+		return Field{Provenance: Invalid, Said: f.Value}
 	}
-	return Field{Provenance: prov, Value: effort}
+	return f
 }
 
 // choices are the models of harness h, every harness's for "".
@@ -292,6 +640,16 @@ func choices(cat Catalog, h string) []Choice {
 	return out
 }
 
+// withLabels is cs with their readable names.
+func withLabels(cat Catalog, cs []Choice) []Choice {
+	out := make([]Choice, len(cs))
+	for i, c := range cs {
+		hc, _ := cat.Harness(c.Harness)
+		out[i] = Choice{Harness: c.Harness, Model: c.Model, Label: hc.ModelLabels[c.Model]}
+	}
+	return out
+}
+
 // label is a model's readable name, else its id.
 func label(cat Catalog, h, model string) string {
 	hc, _ := cat.Harness(h)
@@ -303,17 +661,24 @@ func label(cat Catalog, h, model string) string {
 
 // questions are what in must ask, in order: the model, the effort, the
 // task; the selection when the parser found it unclear though it validated.
-func questions(cat Catalog, in *Interpretation, unclear bool) []Question {
+// The model's choices are among (the models its words matched), else the
+// harness's; every one visible (cat).
+func questions(cat Catalog, in *Interpretation, unclear bool, among []Choice) []Question {
 	qs := []Question{}
-	h := ""
-	if in.Harness.Valid() {
-		h = in.Harness.Value
+	h := harnessOf(in.Harness)
+	offer := choices(cat, h)
+	if among != nil {
+		offer = withLabels(cat, among)
 	}
 	switch in.Model.Provenance {
 	case Missing:
-		qs = append(qs, Question{Field: AskModel, Text: "Which model should this agent use?", Choices: choices(cat, h)})
+		qs = append(qs, Question{Field: AskModel, Text: "Which model should this agent use?", Choices: offer})
 	case Invalid:
-		qs = append(qs, Question{Field: AskModel, Text: fmt.Sprintf("Which model did you mean by “%s”?", in.Model.Said), Choices: choices(cat, h)})
+		text := fmt.Sprintf("Which model did you mean by “%s”?", in.Model.Said)
+		if among != nil {
+			text = fmt.Sprintf("“%s” matches several models. Which one did you mean?", in.Model.Said)
+		}
+		qs = append(qs, Question{Field: AskModel, Text: text, Choices: offer})
 	default:
 		if unclear && in.Effort.Provenance != Invalid {
 			qs = append(qs, Question{Field: AskSelection, Text: "Which harness, model and effort did you mean?", Choices: choices(cat, "")})

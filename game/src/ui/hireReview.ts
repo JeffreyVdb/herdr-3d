@@ -1,6 +1,7 @@
 import type { CommandArgs, HireGit, HireInterpretation, HirePrepare } from '../net/protocol';
 import { capacityView, capBlocker, firstFreeDesk, formFromPrepare, hireArgs, hireBlocker, HARNESS_LABEL, modelsFor, newerGit, offeredOptions, OriginFetches, optionsBlocker, promptBlocker, resolveHireDesk, worktreeUsable, type CapacityView, type HireForm } from '../world/hire';
 import {
+  agentQuestion,
   applyInterpretation,
   editTask,
   effortChoices,
@@ -11,6 +12,7 @@ import {
   modelOk,
   needsAttention,
   ORIGIN_LABEL,
+  pickAgent,
   pickEffort,
   pickHarness,
   pickModel,
@@ -22,7 +24,7 @@ import {
   type ReviewChoice,
   type ReviewSection,
 } from '../world/hireReview';
-import { labelsOf, modelLabel } from '../world/modelLabel';
+import { labelsOf, modelEntries, modelLabel } from '../world/modelLabel';
 import type { HeldReview } from '../world/palette';
 import { backdropPolicy } from './dismiss';
 import { dialogChips, secretPreviewNodes, secretRefLine, secretsDirOf } from './secretChips';
@@ -546,7 +548,8 @@ export class HireReviewDialog {
     const cat = this.host.store.hireOptions;
     const c = this.choice;
     if (this.state === 'hiring') return 'The hire is on its way.';
-    if (!harnessOk(c, cat)) return 'Choose a harness.';
+    // #190: the interpreter's question offers models, each with its harness.
+    if (!harnessOk(c, cat)) return agentQuestion(c, this.pending, cat)?.choices.length ? 'Choose a model.' : 'Choose a harness.';
     if (!modelOk(c, cat)) return 'Choose a model.';
     if (!effortOk(c, cat)) return 'Choose an effort.';
     if (!taskOk(c)) return 'Say what the agent should work on.';
@@ -709,7 +712,8 @@ export class HireReviewDialog {
       case 'agent': {
         const h = c.harness ? (HARNESS_LABEL[c.harness] ?? c.harness) : '';
         const m = c.model ? modelLabel(c.harness, c.model, labelsOf(cat, c.harness)) : '';
-        const miss = !c.harness ? `Choose a harness${c.said.harness ? ` (“${c.said.harness}” is not available)` : ''}` : !m ? `no model chosen${c.said.model ? ` (“${c.said.model}” is not available)` : ''}` : '';
+        const asked = !m && !!agentQuestion(c, this.pending, cat)?.choices.length;
+        const miss = asked ? 'Choose a model' : !c.harness ? `Choose a harness${c.said.harness ? ` (“${c.said.harness}” is not available)` : ''}` : !m ? `no model chosen${c.said.model ? ` (“${c.said.model}” is not available)` : ''}` : '';
         return { sum: [h, m].filter(Boolean).join(' · ') + (miss ? `${h ? ' · ' : ''}${miss}` : ''), origins: [c.origin.harness, c.origin.model] };
       }
       case 'effort':
@@ -788,7 +792,8 @@ export class HireReviewDialog {
     const offered = this.offered();
     const taken = this.takenBy();
 
-    this.panel('agent', [c.harness, c.model, c.origin.harness, c.origin.model, c.said.harness, c.said.model, labelsOf(cat, c.harness), this.host.modelPrefs?.version, busy, this.keep.length], () => this.agentPanel(offered));
+    const ask = agentQuestion(c, this.pending, cat);
+    this.panel('agent', [c.harness, c.model, c.origin.harness, c.origin.model, c.said.harness, c.said.model, labelsOf(cat, c.harness), this.host.modelPrefs?.version, busy, this.keep.length, ask], () => this.agentPanel(offered));
     this.panel('effort', [c.harness, c.model, c.effort, c.origin.effort, c.said.effort, busy, this.pending?.questions.find((q) => q.field === 'effort')?.text], () => this.effortPanel());
     this.panel('where', [this.floor, this.desk, this.state, this.prep, this.f.worktree, this.refetching, taken, this.host.store.limits.version, busy, where], () => this.wherePanel(taken));
     // Busy, not disabled, while the hire is on its way (#216 decisions row 14).
@@ -829,10 +834,25 @@ export class HireReviewDialog {
     const busy = this.state === 'hiring';
     nodes.push(chips('harness', 'Harness', Object.keys(offered), c.harness, (v) => this.pick('harness', v)));
     const models = c.harness ? modelsFor(offered, c.harness) : [];
-    if (c.harness && models.length) nodes.push(modelField(c.harness, models, c.model, labelsOf(this.host.store.hireOptions, c.harness), this.modelQuery, (v) => this.pick('model', v), (q) => (this.modelQuery = q)));
+    // #190: the interpreter's question (a family that names several models, one it could not take): its words and
+    // exactly its choices, until the human picks; a harness picked instead opens that harness's models.
+    const ask = agentQuestion(c, this.pending, this.host.store.hireOptions);
+    if (ask?.choices.length) {
+      const cat = this.host.store.hireOptions;
+      nodes.push(h('p', { class: 'rv-ask', id: 'review-model-q', 'data-hook': 'model-question' }, ask.text));
+      const many = ask.choices.length > 1;
+      for (const g of ask.choices) {
+        const legend = many ? (HARNESS_LABEL[g.harness] ?? g.harness) : 'Model';
+        const value = g.harness === c.harness ? c.model : '';
+        const group = chips(many ? `model-${g.harness}` : 'model', legend, g.models, value, (v) => this.pickChoice(g.harness, v), null, modelEntries(g.harness, g.models, labelsOf(cat, g.harness)));
+        group.setAttribute('aria-describedby', 'review-model-q');
+        nodes.push(group);
+      }
+    } else if (c.harness && models.length) nodes.push(modelField(c.harness, models, c.model, labelsOf(this.host.store.hireOptions, c.harness), this.modelQuery, (v) => this.pick('model', v), (q) => (this.modelQuery = q)));
     else if (c.harness) nodes.push(h('p', { class: 'dd-callout', 'data-hook': 'no-models', role: 'status' }, `Every ${HARNESS_LABEL[c.harness] ?? c.harness} model is hidden in Settings, so there is none to choose.`));
     else nodes.push(h('p', { class: 'field-hint' }, 'Choose a harness to see its models.'));
-    const say = (what: string, o: Origin, said?: string) => h('li', {}, `${what} `, this.originTape(o), said && (o === 'invalid' || o === 'missing') ? ` “${said}” is not in the catalog.` : '');
+    // A name that matches nothing; the question says what else went wrong (several matches, a harness said with another's).
+    const say = (what: string, o: Origin, said?: string) => h('li', {}, `${what} `, this.originTape(o), said && !ask?.choices.length && (o === 'invalid' || o === 'missing') ? ` “${said}” is not in the catalog.` : '');
     nodes.push(h('ul', { class: 'rv-prov-list', 'data-hook': 'agent-origin' }, say('Harness', c.origin.harness, c.said.harness), say('Model', c.origin.model, c.said.model)));
     if (busy) for (const el of nodes) if (el instanceof HTMLElement) for (const i of el.querySelectorAll<HTMLInputElement>('input')) i.disabled = true;
     return nodes;
@@ -958,6 +978,15 @@ export class HireReviewDialog {
       this.statusEl.hidden = !blocker || this.state !== 'ready';
       this.statusEl.textContent = this.statusEl.hidden ? '' : (blocker ?? '');
     }
+  }
+
+  /** #190: one of the interpreter's choices: its harness and model together. */
+  private pickChoice(harness: string, model: string): void {
+    this.modelQuery = '';
+    this.choice = pickAgent(this.choice, harness, model, this.host.store.hireOptions);
+    this.keep.push({ harness: this.choice.harness, model: this.choice.model });
+    this.reopen();
+    this.render();
   }
 
   /** The pick of a harness, model or effort: a section that needs a choice opens, the others stay as the human left them. */

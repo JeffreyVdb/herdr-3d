@@ -112,7 +112,9 @@ export function fromHandoff(e: Pick<HandoffEntry, 'harness' | 'model'>, task: st
 export function fromInterpretation(h: HireInterpretation, cat: HireOptions): ReviewChoice {
   const harness = read(h.harness, (v) => !!cat[v]);
   const model = read(h.model, (v) => !!harness.value && modelsFor(cat, harness.value).includes(v));
-  const supported = (v: string) => (model.value ? effortsFor(cat, harness.value, model.value).includes(v) : !!harness.value && (cat[harness.value]?.efforts ?? []).includes(v));
+  // #190: with no harness yet (a family that names several, a choice to make), an effort some harness takes is held.
+  const anyHarness = (v: string) => Object.keys(cat).some((hn) => modelsFor(cat, hn).some((m) => effortsFor(cat, hn, m).includes(v)));
+  const supported = (v: string) => (model.value ? effortsFor(cat, harness.value, model.value).includes(v) : harness.value ? (cat[harness.value]?.efforts ?? []).includes(v) : anyHarness(v));
   const effort = read(h.effort, supported);
   const task = h.task.provenance === 'dictated' && h.task.value ? h.task.value : '';
   const c: ReviewChoice = {
@@ -169,6 +171,42 @@ export function pickModel(c: ReviewChoice, model: string, cat: HireOptions): Rev
   const next: ReviewChoice = { ...touch(c, 'model'), model, origin: { ...c.origin, model: 'chosen' }, said: { ...c.said } };
   delete next.said.model;
   return recheckEffort(next, cat);
+}
+
+/**
+ * #190: the human picked one of the interpreter's choices: its harness and model together, the effort checked against
+ * that model (a level only it has, such as an extra, stays).
+ */
+export function pickAgent(c: ReviewChoice, harness: string, model: string, cat: HireOptions): ReviewChoice {
+  if (!modelsFor(cat, harness).includes(model)) return c;
+  if (harness === c.harness) return pickModel(c, model, cat);
+  const next: ReviewChoice = { ...touch(c, 'harness', 'model'), harness, model, origin: { ...c.origin, harness: 'chosen', model: 'chosen' }, said: { ...c.said } };
+  delete next.said.harness;
+  delete next.said.model;
+  return recheckEffort(next, cat);
+}
+
+/** #190: the interpreter's model question, as the review asks it: its words and its choices by harness, in its order. */
+export interface AgentQuestion {
+  text: string;
+  choices: Array<{ harness: string; models: string[] }>;
+}
+
+/**
+ * #190: the interpreter's question about the model (one it could not take, a family that names several, a selection it
+ * found unclear) while the human has not picked a harness or model since. Its choices are exactly its own, those the
+ * catalog still has. Null: no question, or the human answered it.
+ */
+export function agentQuestion(c: ReviewChoice, h: HireInterpretation | null, cat: HireOptions): AgentQuestion | null {
+  const q = h?.questions.find((x) => x.field === 'model' || x.field === 'selection');
+  if (!q || c.origin.harness === 'chosen' || c.origin.model === 'chosen') return null;
+  const choices: AgentQuestion['choices'] = [];
+  for (const ch of q.choices ?? []) {
+    if (!modelsFor(cat, ch.harness).includes(ch.model)) continue;
+    const group = choices.find((g) => g.harness === ch.harness) ?? choices[choices.push({ harness: ch.harness, models: [] }) - 1]!;
+    if (!group.models.includes(ch.model)) group.models.push(ch.model);
+  }
+  return { text: q.text, choices };
 }
 
 /**

@@ -1017,6 +1017,8 @@ export interface CommandArgs {
     /** #108 round 2: the review of `text`, and the last answer's `secrets_pending` (its sentences need no review again). */
     secrets?: SecretsReview;
     secrets_pending?: string;
+    /** #190: Settings → Harness models' hidden ids per harness: the bridge interprets against its catalog without them (it only narrows it; unknown ids are ignored). Left out: none hidden. */
+    hidden_models?: Record<string, string[]>;
   };
   'worker.hire': {
     floor: string;

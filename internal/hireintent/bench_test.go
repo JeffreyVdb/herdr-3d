@@ -218,7 +218,7 @@ func checkRequest(t *testing.T, llm *ai.FakeLLM, c benchCase, cat hireintent.Cat
 		t.Fatalf("%d calls", len(calls))
 	}
 	req := calls[0]
-	if !req.JSON || req.MaxTokens != 1400 || !req.NoPartial || req.ReasoningEffort != "" || req.Temperature != nil || req.BudgetWins {
+	if !req.JSON || req.MaxTokens != hireintent.MaxTokens || !req.NoPartial || req.ReasoningEffort != "" || req.Temperature != nil || req.BudgetWins {
 		t.Fatalf("request %+v", req)
 	}
 	if len(req.Messages) != 2 || req.Messages[0].Role != "system" || req.Messages[0].Content != hireintent.Prompt || req.Messages[1].Role != "user" {

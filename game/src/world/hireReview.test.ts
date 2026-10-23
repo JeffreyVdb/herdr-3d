@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { HireInterpretation, HireOptions } from '../net/protocol';
 import {
+  agentQuestion,
   applyInterpretation,
   editTask,
   effortChoices,
@@ -9,6 +10,7 @@ import {
   fromInterpretation,
   modelOk,
   needsAttention,
+  pickAgent,
   pickEffort,
   pickHarness,
   pickModel,
@@ -186,5 +188,58 @@ describe('fromHandoff (#223)', () => {
     expect(c.said.model).toBe('claude-opus-4');
     const none = fromHandoff({}, task, CAT);
     expect(none.origin).toMatchObject({ harness: 'missing', model: 'missing' });
+  });
+});
+
+describe('#190: the interpreter\'s model question', () => {
+  const ASKED: HireInterpretation = {
+    ...FULL,
+    harness: field('missing'),
+    model: field('invalid', undefined, 'GPT Sol'),
+    questions: [
+      { field: 'model', text: 'Which?', choices: [{ harness: 'codex', model: 'gpt-6-sol' }, { harness: 'claude', model: 'claude-opus-5-5' }, { harness: 'codex', model: 'gpt-gone' }, { harness: 'codex', model: 'gpt-6-luna' }] },
+    ],
+    ready_for_review: false,
+  };
+
+  it('is its text and its choices the catalog has, by harness in its order, until the human picks', () => {
+    const c = fromInterpretation(ASKED, CAT);
+    expect(agentQuestion(c, ASKED, CAT)).toEqual({
+      text: 'Which?',
+      choices: [
+        { harness: 'codex', models: ['gpt-6-sol', 'gpt-6-luna'] },
+        { harness: 'claude', models: ['claude-opus-5-5'] },
+      ],
+    });
+    expect(agentQuestion(c, FULL, CAT)).toBeNull();
+    expect(agentQuestion(c, null, CAT)).toBeNull();
+    expect(agentQuestion(pickHarness(c, 'codex', CAT), ASKED, CAT)).toBeNull();
+    expect(agentQuestion(pickAgent(c, 'claude', 'claude-opus-5-5', CAT), ASKED, CAT)).toBeNull();
+  });
+
+  it('a choice picked sets the harness and the model together; the effort said before is checked now', () => {
+    const c = fromInterpretation(ASKED, CAT);
+    // Held without a harness: a level some harness takes.
+    expect(c).toMatchObject({ harness: '', model: '', effort: 'high' });
+    const picked = pickAgent(c, 'codex', 'gpt-6-sol', CAT);
+    expect(picked).toMatchObject({ harness: 'codex', model: 'gpt-6-sol', effort: 'high', origin: { harness: 'chosen', model: 'chosen' } });
+    expect(effortOk(picked, CAT)).toBe(true);
+    // gpt-6-luna has no medium: cleared, its word kept.
+    const medium = fromInterpretation({ ...ASKED, effort: field('dictated', 'medium') }, CAT);
+    expect(medium.effort).toBe('medium');
+    expect(pickAgent(medium, 'codex', 'gpt-6-luna', CAT)).toMatchObject({ effort: '', said: { effort: 'medium' } });
+    // Not in the catalog: nothing changes.
+    expect(pickAgent(c, 'codex', 'gpt-gone', CAT)).toBe(c);
+  });
+
+  it('keeps an effort only the picked model has (an extra), checked against the model, not the harness first', () => {
+    const max = fromInterpretation({ ...ASKED, effort: field('dictated', 'max') }, CAT);
+    expect(max.effort).toBe('max');
+    const picked = pickAgent(max, 'claude', 'claude-opus-5-5', CAT);
+    expect(picked).toMatchObject({ harness: 'claude', model: 'claude-opus-5-5', effort: 'max', origin: { harness: 'chosen', model: 'chosen', effort: 'dictated' } });
+    expect(effortOk(picked, CAT)).toBe(true);
+    expect(needsAttention(picked, CAT).has('effort')).toBe(false);
+    // A model without it still clears it, its word kept.
+    expect(pickAgent(max, 'codex', 'gpt-6-sol', CAT)).toMatchObject({ effort: '', origin: { effort: 'invalid' }, said: { effort: 'max' } });
   });
 });

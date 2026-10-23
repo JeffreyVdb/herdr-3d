@@ -12,7 +12,10 @@
 //   `provider_failed` (the endpoint answered non-200), `unreachable`, `bad_response`, and `timeout` when the answer takes
 //   longer than the bound (35 s like the bridge; `sim.interpret {timeout_ms}` changes it, the simulator's own command);
 // - the command itself fails only on its args (`bad_request`: unknown fields, a text that is empty, over 8 KiB or with
-//   NUL); a pending proposal that is not one, or one with 6 sources already, is the ack's `bad_pending`, with no call.
+//   NUL, a `hidden_models` that is not `{harness: [id, …]}` within the bridge's bounds); a pending proposal that is not
+//   one, or one with 6 sources already, is the ack's `bad_pending`, with no call;
+// - #190 `hidden_models`: the catalog the LLM reads is the fixture's without those models (their labels and extra efforts
+//   too), as the bridge's; ids it does not have are ignored.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { HireOptions } from '../src/net/protocol.ts';
@@ -29,6 +32,10 @@ export interface InterpretHost {
 
 const MAX_TEXT = 8 * 1024;
 const MAX_SOURCES = 6;
+/** #190: internal/hireintent CheckHidden's bounds. */
+const MAX_HIDDEN_HARNESSES = 8;
+const MAX_HIDDEN_MODELS = 256;
+const MAX_HIDDEN_ID_BYTES = 200;
 const PROVENANCE = ['dictated', 'resolved', 'missing', 'invalid'];
 const INTENTS = ['hire', 'unsupported', 'unclear'];
 
@@ -77,6 +84,39 @@ export function interpretationProblem(v: unknown): 'shape' | 'span' | null {
   return null;
 }
 
+/** Why `v` is not a `hidden_models` list (null: it is one), as the bridge's CheckHidden. */
+export function hiddenProblem(v: unknown): string | null {
+  if (!isObj(v)) return 'hidden_models must be an object of harness → model ids';
+  const entries = Object.entries(v);
+  if (entries.length > MAX_HIDDEN_HARNESSES) return `hidden_models: at most ${MAX_HIDDEN_HARNESSES} harnesses`;
+  const id = (s: unknown) => typeof s === 'string' && s !== '' && Buffer.byteLength(s, 'utf8') <= MAX_HIDDEN_ID_BYTES && !s.includes('\u0000');
+  for (const [harness, ids] of entries) {
+    if (!id(harness)) return 'hidden_models: a harness must be 1-200 bytes of text';
+    if (!Array.isArray(ids)) return `hidden_models: ${harness} must be a list of model ids`;
+    if (ids.length > MAX_HIDDEN_MODELS) return `hidden_models: ${harness}: at most ${MAX_HIDDEN_MODELS} models`;
+    if (!ids.every(id)) return `hidden_models: ${harness}: a model must be 1-200 bytes of text`;
+  }
+  return null;
+}
+
+/** #190: `options` without the hidden models, their labels and extra efforts (the bridge's Catalog.Without). */
+export function withoutHidden(options: HireOptions, hidden: Record<string, string[]> | undefined): HireOptions {
+  if (!hidden) return options;
+  const out: HireOptions = {};
+  for (const [harness, o] of Object.entries(options)) {
+    const off = new Set(hidden[harness] ?? []);
+    if (!off.size) {
+      out[harness] = o;
+      continue;
+    }
+    const keep = (r: Record<string, unknown> | undefined) => (r ? Object.fromEntries(Object.entries(r).filter(([m]) => !off.has(m))) : undefined);
+    const extra = keep(o.extra_efforts) as Record<string, string[]> | undefined;
+    const labels = keep(o.model_labels) as Record<string, string> | undefined;
+    out[harness] = { models: o.models.filter((m) => !off.has(m)), efforts: o.efforts, ...(extra ? { extra_efforts: extra } : {}), ...(labels ? { model_labels: labels } : {}) };
+  }
+  return out;
+}
+
 export class InterpretSim {
   /** How long an interpretation may take (the bridge's bound); `sim.interpret {timeout_ms}` changes it. */
   private timeoutMs = 35_000;
@@ -96,22 +136,25 @@ export class InterpretSim {
       return true;
     }
     if (t !== 'hire.interpret') return false;
-    for (const k of Object.keys(a)) if (k !== 'text' && k !== 'pending') throw this.h.error('bad_request', `bad args: json: unknown field "${k}"`);
+    for (const k of Object.keys(a)) if (k !== 'text' && k !== 'pending' && k !== 'hidden_models') throw this.h.error('bad_request', `bad args: json: unknown field "${k}"`);
     const text = a.text;
     if (typeof text !== 'string' || !text || Buffer.byteLength(text, 'utf8') > MAX_TEXT || text.includes('\u0000')) {
       throw this.h.error('bad_request', 'bad args: text must be 1-8192 bytes of UTF-8 without NUL');
     }
+    const hidden = a.hidden_models;
+    const problem = hidden === undefined ? null : hiddenProblem(hidden);
+    if (problem) throw this.h.error('bad_request', problem);
     const pending = a.pending;
-    this.interpret(text, pending).then(ack, fail);
+    this.interpret(text, pending, hidden as Record<string, string[]> | undefined).then(ack, fail);
     return true;
   }
 
-  private async interpret(text: string, pending: unknown): Promise<Obj> {
+  private async interpret(text: string, pending: unknown, hidden: Record<string, string[]> | undefined): Promise<Obj> {
     try {
       if (pending !== undefined && (interpretationProblem(pending) !== null || (pending as { sources: string[] }).sources.length >= MAX_SOURCES)) throw new Refused('bad_pending');
       if (!this.h.ai.ready('llm')) throw new Refused('not_ready');
       const sources = pending === undefined ? [text] : [...(pending as { sources: string[] }).sources, text];
-      const answer = await this.call(text, pending);
+      const answer = await this.call(text, pending, hidden);
       return { text, ...this.result(answer, sources) };
     } catch (e) {
       const code = e instanceof Refused ? e.code : typeof (e as { code?: unknown })?.code === 'string' ? (e as { code: string }).code : 'bad_response';
@@ -120,8 +163,8 @@ export class InterpretSim {
   }
 
   /** The LLM's answer, or `timeout` past the bound (the call is not waited for any longer). */
-  private call(text: string, pending: unknown): Promise<string> {
-    const user = JSON.stringify({ command: text, pending_hire: pending ?? null, hire_options: this.h.hireOptions() });
+  private call(text: string, pending: unknown, hidden: Record<string, string[]> | undefined): Promise<string> {
+    const user = JSON.stringify({ command: text, pending_hire: pending ?? null, hire_options: withoutHidden(this.h.hireOptions(), hidden) });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const late = new Promise<never>((_, no) => (timer = setTimeout(() => no(new Refused('timeout')), this.timeoutMs)));
     const call = this.h.ai.complete(

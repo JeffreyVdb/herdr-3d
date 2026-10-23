@@ -1035,7 +1035,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `packup.set` | `{"enabled"?: bool, "threshold"?: 0.05–0.99}` | its state | `packup.update` (before the ack) |
 | `packup.test` | `{"threshold"?: 0.05–0.99}` | `{"ok", "reason"?, "threshold", "samples": [{"text", "expect", "core"?, "score", "matched", "task"?, "want_task"?, "right", "error"?}], "right", "total", "latency_ms"}` | `packup.update` when it changes `tested` |
 | `packup.detect` | `{"id", "text", "secrets"?: SecretsReview}` | `{"matched", "task"?, "removed"?: [{"start", "end"}], "score", "sent"?, "protected"?, "secrets_pending"?}`; `matched` false: send `text` as written (#108: `sent` when there is one, with `secrets_pending`) | — |
-| `hire.interpret` | `{"text", "pending"?, "secrets"?: SecretsReview, "secrets_pending"?}` | `{"text", "intent"?, "reason"?, "hire"?, "error"?, "protected"?, "secrets_pending"?}` (#108: `text` is what the LLM read): a hire proposal for review, `unsupported` or `unclear`, or an operational `error` (see [Hire interpretation](#hire-interpretation)); never hires | — |
+| `hire.interpret` | `{"text", "pending"?, "secrets"?: SecretsReview, "secrets_pending"?, "hidden_models"?}` | `{"text", "intent"?, "reason"?, "hire"?, "error"?, "protected"?, "secrets_pending"?}` (#108: `text` is what the LLM read): a hire proposal for review, `unsupported` or `unclear`, or an operational `error` (see [Hire interpretation](#hire-interpretation)); never hires | — |
 | `worker.answer_followup` | `{"id", "turn_id", "answers": [{"id", "value", "note"?}…], "note"?, "secrets"?: {"note"?, "answers[N].value"?, "answers[N].note"?: SecretsReview}}` | `worker.prompt`'s | the worker's upsert without its `followup` |
 | `worker.dismiss_followup` | `{"id", "turn_id"}` | — | the worker's upsert without its `followup` (before the ack) |
 | `worker.retry_followup` (#60) | `{"id", "turn_id"}` | `{"source", "error"?}` once the extraction ran again | the worker's upsert with the new `followup` (before the ack) |
@@ -4843,7 +4843,7 @@ keeps them. Until they go, a revoke removes them (above).
 
 #211 (phase 2 of #209: dictated hiring; #108: with prompt secrets reviewed, the LLM reads the sentence and the pending
 proposal's only with their protected secrets as file references, see [Prompt secrets](#prompt-secrets), "The
-hand-over"). **`hire.interpret {text, pending?}`** reads one dictated sentence ("Hire a
+hand-over"). **`hire.interpret {text, pending?, hidden_models?}`** reads one dictated sentence ("Hire a
 Claude Code agent on Haiku 5.5 with high effort. Task: fix the login bug.") with the [AI integration](#ai-integration)'s
 LLM and answers a **hire proposal for review**, or that the sentence is not a hire. It never hires: it sends no
 `worker.hire`, calls no herdr and keeps nothing on the bridge. A complete, valid proposal is only `ready_for_review`;
@@ -4859,11 +4859,21 @@ with the text kept. The client waits 40 s for the ack.)
 {"t":"ack","req_id":"i2","data":{"text":"High effort, please.","intent":"hire","hire":{"sources":["Hire a Claude Code agent on Haiku 5.5 to fix the login bug.","High effort, please."],"harness":{…},"model":{…},"effort":{"provenance":"dictated","value":"high"},"task":{…},"questions":[],"ready_for_review":true}}}
 ```
 
+**The models you see (#190).** `hidden_models` (optional) is `{"claude": [ids], "codex": [ids]}`, the game's Settings →
+Harness models list (`h3d.hire.hiddenModels`): the game sends it with every `hire.interpret`, new or follow-up, as it is
+when the sentence goes, and leaves it out when nothing is hidden. Interpretation reads the bridge's catalog **without**
+those models (their `model_labels` and `extra_efforts` too): the LLM's `hire_options`, the models a word can name, the
+effort levels and every question's `choices`. It can only take models away: an id or harness the catalog does not have
+is ignored, and a harness with every model hidden has none (named, it is `invalid`). At most 8 harnesses, 256 ids each,
+each 1-200 bytes of text: anything else (not that shape, too many, an empty or overlong id) is `bad_request`. What the
+bridge accepts is not narrowed: `worker.hire`, settings and presets still check the whole catalog.
+
 **One call, then rules.** The LLM gets the research's prompt (`internal/hireintent/prompt.txt`, from
 `docs/research/dictation-hiring-bench`) and `{"command": text, "pending_hire"?: [the pending proposal's sources],
-"hire_options": <the bridge's current catalog>}`, in JSON mode with a 1,400-token budget, no partial answer and the
-provider's default reasoning; the AI integration's timeout, retry and concurrency limit apply, and the bridge bounds
-the whole at 35 s. Its answer must be exactly `{intent, harness, model, effort, task, multiple, selection_unclear}`
+"hire_options": <the bridge's current catalog without the hidden models>}`, in JSON mode with a 3,000-token budget
+(#190; it was 1,400), no partial answer and low reasoning effort when the model's catalog says it takes it (else the
+provider's default); the AI integration's timeout, retry and concurrency limit apply, and the bridge bounds
+the whole at 35 s (#190: the model's reasoning metadata and the classifier included). Its answer must be exactly `{intent, harness, model, effort, task, multiple, selection_unclear}`
 (`intent` `hire` | `unsupported` | `unclear`, `harness` `claude` | `codex` | null, booleans for the last two, short
 strings or null for the others); anything else is the error `bad_answer`. Then, deterministically:
 
@@ -4877,38 +4887,74 @@ strings or null for the others); anything else is the error `bad_answer`. Then, 
   other harness, contradictory such as "Claude on GPT-5.5 Haiku", an effort the model does not support, or a harness
   with no models in the current catalog; `said` keeps the words, there is no `value`). `value` is always an exact
   launch id of the **current** catalog; nothing is ever defaulted (not from the floor's settings, the last hire or
-  `hire.prepare`'s choice) or substituted. A model is never chosen from a harness. An effort counts only when its word
+  `hire.prepare`'s choice) or substituted. A model is never chosen from a harness. **A harness said outside the task
+  binds (#190)**: "Codex", "Claude Code" or "Claude" in the latest sentence that names a harness is the harness,
+  whatever the LLM read (its `harness` left out, or the other one), so a model of the other harness is asked, never
+  taken; both said, no model is taken. An effort counts only when its word
   is said outside the task ("Task: make the high effort setting visible" has no effort); before the model is valid it
   is only checked against the catalog's levels.
+- **Models by name or family (#190).** A model counts only where its words were said outside the task (else
+  `missing`), and never when the LLM's answer names a model word the user did not say at all (`invalid`). A harness's
+  or brand's words alone ("Codex", "Claude Code", "GPT" where every Codex model is a GPT) name no model: `missing`,
+  its question offering the models they cover. **Every word said with the model's counts**: the words around and
+  between the LLM's model words, in one clause, up to the sentence's glue ("a", "agent", "on", "with", an effort level…).
+  A version or a model word there joins the words said, whatever the LLM kept ("GPT Sol 6" answered "GPT Sol" is
+  gpt-6-sol); any other word names no model and the model is `invalid`, asked in the user's words ("GPT Banana"
+  answered "GPT", a version said in words: "GPT six point one Sol" is asked, never matched). Said as an
+  exact id or readable label it is that model: of another harness than the one named, or hidden, it is `invalid`. Said
+  otherwise ("GPT Sol", "Sol", "Opus"), it is the visible model of the harness named (any harness without one) whose
+  words — its id's and label's, split into words and versions: gpt-6.1-sol is gpt, 6.1, sol — cover every word said,
+  so a version said must be its version ("GPT 6 Sol" is never gpt-6.1-sol, whatever version the LLM answered). One
+  such model is `resolved` (`said` keeps the words); several are `invalid` and the model question ("“GPT Sol” matches
+  several models. Which one did you mean?") offers exactly those, never a version picked for you. A
+  near miss of a word said ("GPT soul" for Sol: one edit, three letters or more) goes to the AI integration's
+  **classifier** when it is ready: it reads only the sentence without the task and one yes/no question per near
+  candidate (at most 16 per call, calls in parallel), and picks a candidate scoring at least 0.3 and 0.15 above the
+  runner-up (`resolved`; measured, see docs/decisions.md #190); otherwise, or with the classifier off, failing or slow, the model is `invalid` and asked.
+  The classifier never runs for a model or effort the LLM left out, nor overrides a value the words settle.
+- **Efforts by spoken form (#190).** "x high", "X high", "x-high", "extra high", "extra-high" and "xhigh" are `xhigh`,
+  "maximum" is `max`, in the LLM's answer too, before they are checked. A word said that is no level but a near miss of
+  one ("medum") goes to the classifier like a model's.
 - **`task`** is `dictated` with its `span` — `sources[source]` from `start` to `end` in **UTF-16 code units**
   (packup's units) — or `missing`. It is always an exact part of what was said, punctuation and later sentences
   included; commands inside it are its content. A task the LLM read that is not in the sentences is the error
   `bad_span`. Said twice, the span is in the latest sentence holding it, at its last occurrence there.
 - **`questions`**, in order, never null: `model` (missing or invalid: "Which model should this agent use?" / "Which
-  model did you mean by “…”?", with `choices` `[{harness, model, label?}]`: the harness's models, every model without
-  one), `effort` (missing: exactly "What effort level should this agent use?"; unsupported: a correction; `efforts`
+  model did you mean by “…”?" / "“…” matches several models. Which one did you mean?", with `choices` `[{harness, model, label?}]`: the visible models a family named, else the
+  harness's visible models, every visible model without one), `effort` (missing: exactly "What effort level should this agent use?"; unsupported: a correction; `efforts`
   are the selected model's levels, none before a model is valid), `task` ("What should this agent work on?"), and
-  `selection` when the LLM found the selection unclear though every value validated. **`ready_for_review`** is true
+  `selection` when the LLM found the selection unclear though every value validated (#190: not for a model these rules
+  took by family or near miss with no other model's word said outside the task: the LLM flags what it could not map). **`ready_for_review`** is true
   only with every field valid and no question.
 
 **Follow-ups.** A reply ("high", "High effort, please.", "Use Sonnet 5.5 instead.") is sent with the pending proposal
 as `pending`, exactly as it came; its `sources` grow by the reply (at most 6). The pending proposal is checked in full
 first (its sources, its task's span against them, its fields' shape, a valid harness `claude` or `codex`; else the
-error `bad_pending`, no call) and its values are resolved again against the **current** catalog: a model that left it
-is `invalid` again, and so is a harness with no models left (its model question offering every model of the catalog).
+error `bad_pending`, no call) and its values are resolved again against the **current** catalog without the models
+hidden **on this call** (#190: the bridge keeps no visibility either). A pending model is that very id: still visible
+(and of the harness said), it is kept; one that left the catalog, or is hidden now, is `invalid` again (asked in the
+words first said, among the visible models), never another version of its family. Only the reply's own words outside
+the task (a model's name, family, version or a near miss of one) change a pending model, whatever the LLM answers; it
+is then a selection from the reply's words alone. A brand said as a model's ("GPT Banana", "Claude" alone; "Codex"
+and "Claude Code" only bind the harness) or a word of the LLM's model said in the reply ("Banana") is such a word
+too, so an unknown model in a reply is asked, never the pending one kept. A pending model that was not valid
+goes through the rules again in its words: a family that now names several visible models is asked among them, one
+that names one visible model is that model. A harness with no models left is asked too (its model question offering
+every visible model).
 The reply fills or changes only what it targets: a field the LLM leaves out keeps the pending one, and the task
 changes only to a part of the reply. A model change keeps a still-supported effort; an effort it does not support is
 `missing` again. A cancellation is `unclear` (drop the pending proposal), and a reply without a pending proposal
 ("high") is `unclear`: it never makes a proposal ready.
 
-**Errors.** The command itself fails only on its args: unknown fields (a client catalog is refused) or a `text` over
-8 KiB, not UTF-8 or with NUL: `bad_request`. Everything else is an ack. An **operational error** is `error {code,
+**Errors.** The command itself fails only on its args: unknown fields (a client catalog is refused), a `text` over
+8 KiB, not UTF-8 or with NUL, or a malformed `hidden_models`: `bad_request`. Everything else is an ack. An **operational error** is `error {code,
 message}` with `text` kept and no `intent` nor `hire`: `not_ready` (no LLM ready, or no AI integration: no call),
 `timeout`, `provider_failed`, `truncated`, `empty_answer`, `rate_limited`, `auth_failed`, `unreachable`,
 `bad_response` (the AI integration's kinds), `bad_answer`, `bad_span`, `bad_pending`. The message is fixed text, never
 the provider's.
 
-**Privacy.** Every sentence and the pending proposal's sources go to the LLM endpoint, with the hire catalog. The
+**Privacy.** Every sentence and the pending proposal's sources go to the LLM endpoint, with the hire catalog (the
+visible part); with a near miss, the sentences without the task go to the classifier with the candidates' names. The
 bridge logs only the intent, whether it is ready, how many questions and the error code; the audit keeps the text's
 length and the pending sources' count, never a sentence.
 

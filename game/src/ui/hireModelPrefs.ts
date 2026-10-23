@@ -67,6 +67,11 @@ export class HireModelPrefs {
     return list ? new Set(list) : NONE;
   }
 
+  /** #190: every harness's hidden slugs, a copy (what `hire.interpret` sends as `hidden_models`; empty when none). */
+  all(): HiddenModels {
+    return Object.fromEntries(Object.entries(this.hidden_).map(([h, slugs]) => [h, [...slugs]]));
+  }
+
   isShown(harness: string, slug: string): boolean {
     return !this.hidden(harness).has(slug);
   }

@@ -3601,7 +3601,15 @@ export class App {
       go = out;
     }
     const send = async (g: Go): Promise<CommandResult> => {
-      const r = await this.send('hire.interpret', { text, ...(pending ? { pending } : {}), ...(g.secrets ? { secrets: g.secrets } : {}), ...(handover ? { secrets_pending: handover } : {}) });
+      // #190: the models Settings hides, as they are now: the bridge reads only the ones you see (never more than its own).
+      const hidden = this.hireModelPrefs.all();
+      const r = await this.send('hire.interpret', {
+        text,
+        ...(pending ? { pending } : {}),
+        ...(g.secrets ? { secrets: g.secrets } : {}),
+        ...(handover ? { secrets_pending: handover } : {}),
+        ...(Object.keys(hidden).length ? { hidden_models: hidden } : {}),
+      });
       // The open review's own sentences were never reviewed (it came before the switch, or its hand-over was lost), or its
       // hand-over is stale (expired, a restart, the switch): a new review of this sentence would not change that, so this
       // is the bar's line, never a review again.

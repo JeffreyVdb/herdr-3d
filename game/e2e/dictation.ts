@@ -12,6 +12,8 @@ export const LLM_KEY = 'sk-test-llm-key-abcdef';
 
 export interface Fake {
   url: string;
+  /** #190: the `hire_options` of each interpretation the fake answered, in order. */
+  options: Array<Record<string, { models: string[] }>>;
   close(): Promise<void>;
 }
 
@@ -22,7 +24,7 @@ export interface Interp {
   model: Field;
   effort: Field;
   task: { provenance: string; value?: string; span?: { source: number; start: number; end: number } };
-  questions: Array<{ field: string; text: string }>;
+  questions: Array<{ field: string; text: string; choices?: Array<{ harness: string; model: string }> }>;
   ready_for_review: boolean;
 }
 
@@ -59,12 +61,37 @@ function hireOf(cmd: string): Interp {
   };
 }
 
+/**
+ * #190: the screenshot's sentence ("Please spawn a GPT Sol agent on high reasoning to solve …"): the model is the one
+ * model of `options` (the catalog the bridge sent, without the models Settings hides) whose id has every word said, as
+ * the bridge resolves a family; several are asked about among exactly those, as the bridge asks, none too. The effort is
+ * the word before "reasoning"; the task all that follows "to".
+ */
+function familyHire(cmd: string, options: Record<string, { models: string[] }>): Interp {
+  const [, said = '', effort = '', task = ''] = /^Please spawn an? (.+?) agent on (\S+) reasoning to (.+)$/s.exec(cmd) ?? [];
+  const words = said.toLowerCase().split(/[\s-]+/);
+  const found = Object.entries(options).flatMap(([h, o]) => o.models.filter((m) => words.every((w) => m.split('-').includes(w))).map((m) => [h, m] as const));
+  const one = found.length === 1 ? found[0] : undefined;
+  const start = cmd.lastIndexOf(task);
+  const several = found.length > 1 ? { text: `“${said}” matches several models. Which one did you mean?`, choices: found.map(([harness, model]) => ({ harness, model })) } : null;
+  const questions = one ? [] : [{ field: 'model', ...(several ?? { text: `Which model did you mean by “${said}”?` }) }];
+  return {
+    sources: [cmd],
+    harness: one ? { provenance: 'resolved', value: one[0] } : { provenance: 'missing' },
+    model: one ? { provenance: 'resolved', value: one[1], said } : { provenance: 'invalid', said },
+    effort: { provenance: 'dictated', value: effort.toLowerCase() },
+    task: { provenance: 'dictated', value: task, span: { source: 0, start, end: start + task.length } },
+    questions,
+    ready_for_review: questions.length === 0,
+  };
+}
+
 const UNSUPPORTED = [/^Open Settings/, /^Fire the idle agent/, /^Tell Sprout/, /two agents/];
 const UNCLEAR = [/^Do not hire/, /^“Hire an agent,” she said/, /^What if I hired/, /^Yesterday I hired/];
 const HIRE = /^(Spawn|Hire|Let) (an?|two) (agent|worker)/i;
 
 /** The final result for one request, as the bridge would answer it. */
-function decide(cmd: string, pending: Interp | null): unknown {
+function decide(cmd: string, pending: Interp | null, options: Record<string, { models: string[] }>): unknown {
   if (/^(high|High effort, please\.)$/i.test(cmd.trim())) {
     // A reply fills the pending proposal's effort; with none it is unclear (it never makes a proposal by itself).
     if (!pending) return { intent: 'unclear' };
@@ -74,6 +101,7 @@ function decide(cmd: string, pending: Interp | null): unknown {
   if (UNSUPPORTED.some((re) => re.test(cmd))) return { intent: 'unsupported', ...(/two agents/.test(cmd) ? { reason: 'multiple' } : {}) };
   if (UNCLEAR.some((re) => re.test(cmd))) return { intent: 'unclear' };
   if (HIRE.test(cmd)) return { intent: 'hire', hire: hireOf(cmd) };
+  if (/^Please spawn /.test(cmd)) return { intent: 'hire', hire: familyHire(cmd, options) };
   return { intent: 'unclear' };
 }
 
@@ -87,6 +115,7 @@ function body(req: IncomingMessage): Promise<string> {
 
 /** An OpenAI-compatible endpoint (JSON mode): the AI test's object, else `decide`'s result. FAIL answers 500, SLOW after 2.5 s. */
 export function fakeOpenAI(): Promise<Fake> {
+  const options: Fake['options'] = [];
   const server: Server = createServer((req, res) => {
     res.setHeader('content-type', 'application/json');
     if (req.headers.authorization !== `Bearer ${LLM_KEY}`) return void res.writeHead(401).end('{"error":{"message":"bad key"}}');
@@ -95,9 +124,10 @@ export function fakeOpenAI(): Promise<Fake> {
     void body(req).then((b) => {
       if (b.includes('Reply with exactly this JSON')) return void res.end(JSON.stringify({ choices: [{ message: { content: '{"ok": true}' } }] }));
       const msgs = (JSON.parse(b) as { messages: Array<{ content: string }> }).messages;
-      const user = JSON.parse(msgs.at(-1)?.content ?? '{}') as { command: string; pending_hire: Interp | null };
+      const user = JSON.parse(msgs.at(-1)?.content ?? '{}') as { command: string; pending_hire: Interp | null; hire_options: Record<string, { models: string[] }> };
+      options.push(user.hire_options ?? {});
       if (user.command.includes('FAIL')) return void res.writeHead(500).end('{"error":{"message":"upstream exploded"}}');
-      const answer = () => res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(decide(user.command, user.pending_hire)) } }] }));
+      const answer = () => res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(decide(user.command, user.pending_hire, user.hire_options ?? {})) } }] }));
       if (user.command.includes('SLOW')) setTimeout(answer, 2500);
       else answer();
     });
@@ -105,7 +135,7 @@ export function fakeOpenAI(): Promise<Fake> {
   return new Promise((done) => {
     server.listen(0, '127.0.0.1', () => {
       const { port } = server.address() as AddressInfo;
-      done({ url: `http://127.0.0.1:${port}`, close: () => new Promise((r) => (server.closeAllConnections(), server.close(() => r()))) });
+      done({ url: `http://127.0.0.1:${port}`, options, close: () => new Promise((r) => (server.closeAllConnections(), server.close(() => r()))) });
     });
   });
 }

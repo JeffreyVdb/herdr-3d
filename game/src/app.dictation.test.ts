@@ -5,6 +5,7 @@ import { App } from './app';
 import type { CommandResult } from './net/client';
 import type { HireInterpretation } from './net/protocol';
 import { HANDOVER_EXPIRED, PENDING_UNREVIEWED } from './ui/dictationModel';
+import { HireModelPrefs } from './ui/hireModelPrefs';
 import { PromptSecretsFlow } from './ui/secretsFlow';
 import type { SecretsReviewRequest } from './ui/secretsReview';
 import { PromptSecretsBook } from './world/promptSecrets';
@@ -19,7 +20,7 @@ import { FULL } from './world/hireReviewFixtures';
 const SENTENCE = 'Hire a Claude agent to deploy with TOKEN=ghp_abcdefghijklmnopqrstu1';
 
 /** `goneAtScan`: the bar is closed (or closed and opened again) as that scan is asked. */
-function parts(o: { on?: boolean; open?: { pending: HireInterpretation; handover: string | null }; answers?: CommandResult[]; goneAtScan?: number } = {}) {
+function parts(o: { on?: boolean; open?: { pending: HireInterpretation; handover: string | null }; answers?: CommandResult[]; goneAtScan?: number; prefs?: HireModelPrefs } = {}) {
   const book = new PromptSecretsBook();
   book.reset({ enabled: o.on ?? true, available: true });
   const sim = new SecretsSim({ emit: () => {}, error: (code, message) => Object.assign(new Error(message), { code }), takeFailure: () => false }, { on: o.on ?? true });
@@ -40,6 +41,7 @@ function parts(o: { on?: boolean; open?: { pending: HireInterpretation; handover
   const self = {
     secrets,
     send,
+    hireModelPrefs: o.prefs ?? new HireModelPrefs(null),
     hireReview: {
       begin: () => (o.open ? { epoch: 1, rev: 0 } : null),
       pendingInterpretation: () => o.open?.pending ?? null,
@@ -131,5 +133,30 @@ describe('App.interpretDictation and prompt secrets (#108 round 4)', () => {
     expect(await p.run(SENTENCE)).toEqual({ kind: 'done' });
     expect(p.reviews).toHaveLength(1);
     expect(p.sent.filter(([t]) => t === 'hire.interpret')).toHaveLength(1);
+  });
+
+  it('#190: every hire.interpret, new and follow-up, carries the models Settings hides, as they are when it goes; none hidden sends nothing', async () => {
+    const prefs = new HireModelPrefs(null);
+    let p = parts({ on: false, prefs });
+    await p.run('Please spawn a GPT Sol agent on high reasoning to solve the issue with the frontend.');
+    expect(p.sent.find(([t]) => t === 'hire.interpret')![1]).not.toHaveProperty('hidden_models');
+
+    prefs.setShown('codex', 'gpt-6-luna', false);
+    prefs.setShown('codex', 'gpt-6-astra', false);
+    p = parts({ on: false, prefs });
+    await p.run('Please spawn a GPT Sol agent on high reasoning to solve the issue with the frontend.');
+    expect(p.sent.find(([t]) => t === 'hire.interpret')![1].hidden_models).toEqual({ codex: ['gpt-6-luna', 'gpt-6-astra'] });
+
+    // A Settings change before the follow-up: the reply goes with the list as it is then.
+    prefs.setShown('codex', 'gpt-6-luna', true);
+    prefs.setShown('claude', 'claude-opus-5-5', false);
+    p = parts({ on: false, prefs, open: { pending: FULL, handover: null } });
+    await p.run('High effort, please.');
+    expect(p.sent.find(([t]) => t === 'hire.interpret')![1]).toEqual({ text: 'High effort, please.', pending: FULL, hidden_models: { codex: ['gpt-6-astra'], claude: ['claude-opus-5-5'] } });
+
+    // The list sent is a copy: a later change does not reach a request already made.
+    const sent = p.sent.find(([t]) => t === 'hire.interpret')![1].hidden_models;
+    prefs.showAll('codex');
+    expect(sent).toEqual({ codex: ['gpt-6-astra'], claude: ['claude-opus-5-5'] });
   });
 });

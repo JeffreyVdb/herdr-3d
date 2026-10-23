@@ -27,8 +27,17 @@ const (
 	// MaxSources bounds the sentences of one proposal: the first and its
 	// follow-up replies.
 	MaxSources = 6
-	// MaxTokens is the LLM's completion budget (the research's).
-	MaxTokens = 1400
+	// MaxTokens is the LLM's completion budget. #190: the research's 1,400
+	// left the configured reasoning model (inception/mercury-3, default
+	// effort medium) cut off on 10 of 78 bench sentences and 41 of 66 of the
+	// command bar's; 3,000 with ReasoningEffort: 0 and 1 (docs/decisions.md
+	// #190).
+	MaxTokens = 3000
+	// ReasoningEffort is the LLM's reasoning effort when its catalog says it
+	// takes it (Request.Reasoning); else none is sent, the provider's
+	// default. #190: low kept every bench answer's task exact where none
+	// dropped final periods.
+	ReasoningEffort = "low"
 	// DefaultTimeout bounds one interpretation on the bridge: room for the
 	// AI integration's two attempts of ai.DefaultLLMTimeout each (the
 	// research measured a median of 2 s, p95 under 3 s).
@@ -50,31 +59,57 @@ type Request struct {
 	Pending *Interpretation
 	// Catalog is the bridge's current hire catalog.
 	Catalog Catalog
+	// Hidden are the models the user hides (#190, CheckHidden): the LLM and
+	// the rules read Catalog without them. nil: none.
+	Hidden Hidden
+	// Classifier is asked about near misses (Select); nil: never, they are
+	// asked of the user.
+	Classifier ai.Classifier
+	// Reasoning is what is known of the LLM's reasoning efforts: low is
+	// asked for only when it allows it (zero: nothing known, none sent).
+	Reasoning ai.Reasoning
+}
+
+// Reasoner is what the AI integration knows of the LLM's reasoning efforts
+// (*ai.Service); Roles may implement it.
+type Reasoner interface {
+	ModelReasoning(ctx context.Context) ai.Reasoning
 }
 
 // Roles is what the package needs of the AI integration: *ai.Service.
 type Roles interface {
 	State(r ai.Role) ai.State
 	LLM() ai.LLM
+	Classifier() ai.Classifier
 }
 
-// Run interprets req with the roles' LLM within timeout (0: none). An LLM
-// that is not ready is a not_ready failure, and no call is made.
+// Run interprets req with the roles' LLM within timeout (0: none), and
+// their classifier when it is ready (#190). An LLM that is not ready is a
+// not_ready failure, and no call is made.
 func Run(ctx context.Context, roles Roles, timeout time.Duration, req Request) Result {
 	if roles == nil || roles.State(ai.RoleLLM) != ai.StateReady {
 		return Result{Text: req.Text, Error: failure(ai.ErrNotReady)}
 	}
+	// The bound is the whole interpretation's: the reasoning metadata (a
+	// fetch on a cache miss), the LLM and the classifier.
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
+	if req.Classifier == nil && roles.State(ai.RoleClassifier) == ai.StateReady {
+		req.Classifier = roles.Classifier()
+	}
+	if rs, ok := roles.(Reasoner); ok && req.Reasoning.Support == "" {
+		req.Reasoning = rs.ModelReasoning(ctx)
+	}
 	return Interpret(ctx, roles.LLM(), req)
 }
 
 // Interpret makes one call to l and resolves its answer against the
-// catalog. Every failure is a Result with Error and no proposal; Text is
-// always kept.
+// catalog without the hidden models, asking req.Classifier about near
+// misses. Every failure is a Result with Error and no proposal; Text is
+// always kept. A classifier failing is not one: its field is asked.
 func Interpret(ctx context.Context, l ai.LLM, req Request) Result {
 	res := Result{Text: req.Text}
 	var sources []string
@@ -93,7 +128,8 @@ func Interpret(ctx context.Context, l ai.LLM, req Request) Result {
 		res.Error = failure(ai.ErrNotReady)
 		return res
 	}
-	state := map[string]any{"command": req.Text, "hire_options": req.Catalog}
+	vis := req.Catalog.Without(req.Hidden)
+	state := map[string]any{"command": req.Text, "hire_options": vis}
 	if len(sources) > 0 {
 		state["pending_hire"] = sources
 	}
@@ -102,11 +138,20 @@ func Interpret(ctx context.Context, l ai.LLM, req Request) Result {
 		res.Error = failure(err)
 		return res
 	}
+	effort := ""
+	if req.Reasoning.Support == ai.SupportYes && req.Reasoning.Allows(ReasoningEffort) {
+		effort = ReasoningEffort
+	}
+	if err := ctx.Err(); err != nil {
+		res.Error = failure(err) // the bound passed before the call: none is made
+		return res
+	}
 	answer, err := l.Complete(ctx, ai.Request{
-		Messages:  []ai.Message{{Role: "system", Content: Prompt}, {Role: "user", Content: string(payload)}},
-		JSON:      true,
-		MaxTokens: MaxTokens,
-		NoPartial: true,
+		Messages:        []ai.Message{{Role: "system", Content: Prompt}, {Role: "user", Content: string(payload)}},
+		JSON:            true,
+		MaxTokens:       MaxTokens,
+		ReasoningEffort: effort,
+		NoPartial:       true,
 	})
 	if err == nil && ctx.Err() != nil {
 		err = ctx.Err() // the answer came after the bound: not waited on
@@ -120,7 +165,8 @@ func Interpret(ctx context.Context, l ai.LLM, req Request) Result {
 		res.Error = &Failure{Code: CodeBadAnswer, Message: "the language model's answer is not a valid interpretation: " + err.Error()}
 		return res
 	}
-	return Resolve(a, req.Pending, append(append([]string(nil), sources...), req.Text), req.Catalog)
+	sc := scope{full: req.Catalog, vis: vis, cls: req.Classifier}
+	return resolve(ctx, a, req.Pending, append(append([]string(nil), sources...), req.Text), sc)
 }
 
 // failure is the Failure of an error of the LLM's call: its ai.Kind, a

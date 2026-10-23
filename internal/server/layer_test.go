@@ -297,7 +297,8 @@ func TestPackupUsesOnlyAIInterfaces(t *testing.T) {
 	}
 }
 
-// #211: dictated hiring takes only internal/ai's LLM interface: it imports
+// #211: dictated hiring takes only internal/ai's LLM and Classifier (#190)
+// interfaces: it imports
 // no vendor client and nothing of the bridge (only internal/ai from this
 // module, no net/http; not proto: the server hands it the catalog), and
 // never names the service or a provider.

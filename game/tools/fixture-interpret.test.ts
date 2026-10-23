@@ -56,6 +56,19 @@ describe('the fixture’s hire.interpret (#213)', () => {
     expect(JSON.parse(f.calls[0]!.at(-1)!.content).pending_hire).toEqual(pending);
   });
 
+  it('#190: hidden_models takes models out of the catalog the LLM reads (labels and extra efforts too); unknown ids are ignored; a malformed list is a bad request', async () => {
+    const t = sim();
+    await t.run({ text: TEXT, hidden_models: { codex: ['gpt-6-luna', 'gpt-6-astra', 'gpt-9-nova'], gemini: ['g-1'] } });
+    const options = JSON.parse(t.calls[0]!.at(-1)!.content).hire_options;
+    expect(options.codex.models).toEqual(['gpt-6-sol']);
+    expect(Object.keys(options.codex.extra_efforts ?? {})).toEqual(['gpt-6-sol']);
+    expect(Object.keys(options.codex.model_labels ?? {}).filter((m: string) => m !== 'gpt-6-sol')).toEqual([]);
+    expect(options.claude).toEqual(SIM_HIRE_OPTIONS.claude);
+    for (const bad of [['gpt-6-sol'], { codex: 'gpt-6-sol' }, { codex: [''] }, { codex: Array(257).fill('x') }, { codex: ['x'.repeat(201)] }]) {
+      await expect(sim().run({ text: TEXT, hidden_models: bad })).rejects.toMatchObject({ code: 'bad_request' });
+    }
+  });
+
   it('passes unsupported and unclear on, with nothing else', async () => {
     expect(await sim({ answer: async () => '{"intent":"unsupported","reason":"multiple"}' }).run({ text: 'Hire two agents.' })).toEqual({ text: 'Hire two agents.', intent: 'unsupported', reason: 'multiple' });
     expect(await sim({ answer: async () => '{"intent":"unclear"}' }).run({ text: 'high' })).toEqual({ text: 'high', intent: 'unclear' });

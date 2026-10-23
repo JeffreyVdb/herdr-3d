@@ -3,10 +3,12 @@ package server
 // #211 dictated hiring, phase 2: hire.interpret reads one sentence with the
 // AI integration's LLM off the hub goroutine, bounded by
 // hireintent.DefaultTimeout (Options.HireIntentTimeout), against the hire
-// catalog of the moment, and answers internal/hireintent's result. It sends
-// no worker.hire, calls no herdr and keeps nothing: a follow-up reply comes
-// with the pending proposal the client holds. The text is never logged nor
-// audited (only its length), nor is a provider's error text: only codes.
+// catalog of the moment without the models the client hides (#190), asking
+// the classifier about near misses, and answers internal/hireintent's
+// result. It sends no worker.hire, calls no herdr and keeps nothing: a
+// follow-up reply comes with the pending proposal the client holds. The
+// text is never logged nor audited (only its length), nor is a provider's
+// error text: only codes.
 
 import (
 	"context"
@@ -30,8 +32,9 @@ func hireCatalog(o proto.HireOptions) hireintent.Catalog {
 	return hireintent.Catalog{Claude: conv(o.Claude), Codex: conv(o.Codex)}
 }
 
-// hireIntentRoles is the LLM's owner (Options.HireIntentRoles, else the AI
-// integration; nil: none, every interpretation is not_ready).
+// hireIntentRoles is the LLM's and the classifier's owner
+// (Options.HireIntentRoles, else the AI integration; nil: none, every
+// interpretation is not_ready).
 func (h *Hub) hireIntentRoles() hireintent.Roles {
 	if h.opts.HireIntentRoles != nil {
 		return h.opts.HireIntentRoles
@@ -56,6 +59,9 @@ func (h *Hub) startHireInterpret(ctx context.Context, c *Client, cmd proto.Comma
 	if !hireintent.ValidText(a.Text) {
 		return bad("text must be at most %d bytes of UTF-8 without NUL, got %d bytes", hireintent.MaxTextBytes, len(a.Text))
 	}
+	if err := hireintent.CheckHidden(a.HiddenModels); err != nil {
+		return bad("hidden_models: %v", err)
+	}
 	gate, err := h.previewGate("", a.Text, a.Secrets, a.SecretsPending)
 	if err != nil {
 		return err
@@ -70,7 +76,7 @@ func (h *Hub) startHireInterpret(ctx context.Context, c *Client, cmd proto.Comma
 		}
 	}
 	rev := h.ps.rev
-	req := hireintent.Request{Text: a.Text, Pending: a.Pending, Catalog: hireCatalog(h.hireOptions())}
+	req := hireintent.Request{Text: a.Text, Pending: a.Pending, Catalog: hireCatalog(h.hireOptions()), Hidden: a.HiddenModels}
 	roles, timeout := h.hireIntentRoles(), h.opts.HireIntentTimeout
 	if timeout <= 0 {
 		timeout = hireintent.DefaultTimeout

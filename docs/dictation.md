@@ -36,7 +36,17 @@ A complete request names the harness or model, the effort and the task:
 > regression test.
 
 Model names and readable labels both work ("Opus 5.5", "GPT-6-Sol", `claude-opus-5-5`), checked against the models your
-harnesses offer right now. The task is kept exactly as you said it, punctuation and later sentences included.
+harnesses offer right now **and that Settings → Harness models shows**: a model you hid is never picked. A family name is
+enough when it fits one shown model ("GPT Sol", "Sol", "Opus"). When it fits several, the review opens with the
+question ("“GPT Sol” matches several models. Which one did you mean?") and exactly those models to choose from: choosing
+one sets the harness and the model (choosing a harness instead shows all of its models). Every word you say with the
+model's must fit it: a version must match ("GPT 6 Sol" is never GPT-6.1-Sol), and a word that names no model ("GPT
+Banana", a version said in words such as "six point one") is asked about, never dropped. A harness you name holds:
+"Claude Code … GPT Sol" is asked, never hired on Codex, and "Codex" or "GPT" alone names no model. On a follow-up the
+model already proposed stays exactly that model; hidden since, you are asked again. A misheard name ("GPT soul") is
+checked with the classifier of Settings → AI integration when it is set up, and asked otherwise. Efforts can be said as you
+speak them: "X high", "x-high", "extra high" and "xhigh" are all xhigh, "maximum" is max. The task is kept exactly as
+you said it, punctuation and later sentences included.
 
 Anything else gets one of two answers, and nothing opens or is hired:
 
