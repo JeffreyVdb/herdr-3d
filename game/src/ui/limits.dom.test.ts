@@ -314,6 +314,25 @@ describe('the plan-limits plate over Settings (#49)', () => {
   });
 });
 
+// #196: the MCP & skills overview is a tall Sheet with its close button top right: the plate steps out of it like Settings.
+describe('the plan-limits plate over the MCP & skills overview (#196)', () => {
+  it('the overview is a screen for the corner: the plate is never left over its header', async () => {
+    const corner = new CornerWatch(() => undefined);
+    const { w } = widget();
+    const mcp = dialog('sheet mcp', WIDTH - 16);
+    openIt(mcp);
+    await settle();
+    expect(corner.screen).toBe(true);
+    expect(corner.topScreen()).toBe(mcp);
+    expect(w.root.dataset.dock).not.toBe('');
+    closeIt(mcp);
+    await settle();
+    expect(w.root.dataset.dock).toBe('');
+    w.dispose();
+    corner.dispose();
+  });
+});
+
 describe('the plan-limits plate on every world event (#144)', () => {
   it('seated, does not measure or ask the corner again until where it goes may have changed; a new reading still shows', async () => {
     let now = NOW;

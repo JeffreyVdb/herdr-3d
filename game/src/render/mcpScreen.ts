@@ -7,8 +7,8 @@ import { WALL, type WallPalette } from './palette';
 /**
  * #196: the MCP & skills screen on the north wall, over the server rack: a dark bezel box a few cm off the wall, facing
  * +z, and in it one canvas texture: the title and the scope (checkout, Codex profile) on top, then a column per provider
- * (Claude Code, Codex) with its configured MCP count, what needs attention, its skills and the age of the last read and
- * check. Unlit (not tone mapped), so it reads like a screen in any light (M17). Calm screens for a bridge without the
+ * (Claude Code, Codex) with its configured MCP count, what needs attention, its skills, the age of the last read and
+ * of the last connection check (grey, "may be out of date", past 10 minutes). Unlit (not tone mapped), so it reads like a screen in any light (M17). Calm screens for a bridge without the
  * command, no connection, nobody looking yet and the first read.
  *
  * It is drawn only when what it shows changes (the model's `key`: its words and a coarse age bucket), never per frame.
@@ -28,8 +28,8 @@ export interface McpScreenInfo {
   draws: number;
   /** What the last draw said, in order. */
   lines: string[];
-  /** Per provider column, the colour its attention line took: amber for something to do, grey when stale, else plain. */
-  tones: Array<{ harness: string; tone: ProviderTone; ink: 'warn' | 'grey' | 'text' }>;
+  /** Per provider column, the colour its attention line took: amber for something to do, grey when stale, else plain; and its check line's ('' when there is none). */
+  tones: Array<{ harness: string; tone: ProviderTone; ink: 'warn' | 'grey' | 'text'; check: 'grey' | 'text' | '' }>;
 }
 
 export interface McpScreenMesh {
@@ -165,7 +165,7 @@ export function buildMcpScreen(box: Box3, c: Readonly<WallPalette> = WALL): McpS
       g.fillText(fit(g, p.attention, max), left, top + 182);
       out.push(p.attention);
     }
-    tones.push({ harness: p.harness, tone: p.tone, ink });
+    tones.push({ harness: p.harness, tone: p.tone, ink, check: p.check ? (p.checkOld ? 'grey' : 'text') : '' });
     g.fillStyle = c.text2;
     g.font = font(600, 32);
     g.fillText(fit(g, p.skills, max), left, top + 238);
@@ -175,6 +175,14 @@ export function buildMcpScreen(box: Box3, c: Readonly<WallPalette> = WALL): McpS
       g.font = font(500, 28);
       g.fillText(fit(g, p.age, max), left, top + 290);
       out.push(p.age);
+    }
+    if (p.check) {
+      // An old check's line says so, in grey; it gets smaller (28 px down to 22) before it is shortened.
+      g.fillStyle = p.checkOld ? GREY : c.text3;
+      let cpx = 28;
+      for (g.font = font(500, cpx); cpx > 22 && g.measureText(p.check).width > max; cpx -= 2) g.font = font(500, cpx - 2);
+      g.fillText(fit(g, p.check, max), left, top + 330);
+      out.push(p.check);
     }
   };
 

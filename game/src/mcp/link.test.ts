@@ -235,6 +235,142 @@ describe('McpLink: contexts (AC6)', () => {
     expect(r.link.view('ops').received?.snap.providers.claude.servers).toHaveLength(2);
   });
 
+  it('A → B → A: the abandoned A reply is dropped, never shown over the newer A, and never clears the newer marker', async () => {
+    const r = rig();
+    r.step({ page: 'lab' });
+    const a1 = r.held[0];
+    r.link.choose('lab', { codex_profile: 'b' });
+    const b1 = r.held[1];
+    r.link.choose('lab', {});
+    const a2 = r.held[2];
+    expect([a1, b1, a2].map((x) => x?.args)).toEqual([{ floor: 'lab' }, { floor: 'lab', codex_profile: 'b' }, { floor: 'lab' }]);
+    // The abandoned A1 answers first: dropped, and A2 is still out.
+    await a1?.answer({ ok: true, data: snap({ floor: 'lab' }, 9) });
+    expect(r.link.view('lab').received).toBeNull();
+    expect(r.link.view('lab').asking).toBe(true);
+    expect(r.link.info().asking).toBe(true);
+    // One at a time still: the poll does not send another A while A2 is out.
+    r.advance(MCP_POLL_MS + 1, { page: 'lab' });
+    expect(r.held).toHaveLength(3);
+    await a2?.answer({ ok: true, data: snap({ floor: 'lab' }, 2) });
+    await b1?.answer({ ok: true, data: snap({ floor: 'lab', codex_profile: 'b' }, 5) });
+    expect(r.link.view('lab').received?.snap.providers.claude.servers).toHaveLength(2);
+    expect(r.link.log.map((e) => [e.args.codex_profile ?? 'default', e.result])).toEqual([
+      ['default', 'dropped'],
+      ['b', 'dropped'],
+      ['default', 'ok'],
+    ]);
+  });
+
+  it('A → B → A the other way round: A2 lands first, then the abandoned A1 does not replace it', async () => {
+    const r = rig();
+    r.step({ page: 'lab' });
+    r.link.choose('lab', { codex_profile: 'b' });
+    r.link.choose('lab', {});
+    await r.held[2]?.answer({ ok: true, data: snap({ floor: 'lab' }, 2) });
+    await r.held[0]?.answer({ ok: true, data: snap({ floor: 'lab' }, 9) });
+    expect(r.link.view('lab').received?.snap.providers.claude.servers).toHaveLength(2);
+    expect(r.link.log.map((e) => e.result)).toEqual(['dropped', undefined, 'ok']);
+  });
+
+  it('a floor change and back, and a check across A → B → A: the abandoned replies are dropped, the new context asks at once', async () => {
+    const r = rig();
+    r.step({ page: 'lab' });
+    const l1 = r.held[0];
+    r.link.check('codex');
+    const c1 = r.held[1];
+    r.office('ops');
+    r.step({ page: null });
+    r.office('lab');
+    r.step({ page: 'lab' });
+    // Back on lab: a new request goes at once (the old one is abandoned), and the check can be asked again.
+    const l2 = r.held[2];
+    expect(l2?.t).toBe('mcp.inventory');
+    expect(r.link.view('lab').checking.codex).toBe(false);
+    r.link.check('codex');
+    const c2 = r.held[3];
+    expect(c2?.t).toBe('mcp.check');
+    await l1?.answer({ ok: true, data: snap({ floor: 'lab' }, 9) });
+    await c1?.answer({ ok: true, data: snap({ floor: 'lab' }, 8) });
+    expect(r.link.view('lab').received).toBeNull();
+    expect(r.link.view('lab').asking).toBe(true);
+    expect(r.link.view('lab').checking.codex).toBe(true);
+    await l2?.answer({ ok: true, data: snap({ floor: 'lab' }, 2) });
+    expect(r.link.view('lab').received?.snap.providers.claude.servers).toHaveLength(2);
+    await c2?.answer({ ok: true, data: snap({ floor: 'lab' }, 3) });
+    expect(r.link.view('lab').received?.snap.providers.claude.servers).toHaveLength(3);
+    expect(r.link.view('lab').checking.codex).toBe(false);
+    expect(r.link.log.map((e) => [e.t, e.result])).toEqual([
+      ['mcp.inventory', 'dropped'],
+      ['mcp.check', 'dropped'],
+      ['mcp.inventory', 'ok'],
+      ['mcp.check', 'ok'],
+    ]);
+  });
+
+  it('keeps the A data it has when you come back to A (it is A’s), and a reconnect in between drops the old reply', async () => {
+    const r = rig();
+    r.step({ page: 'lab' });
+    await r.held[0]?.answer({ ok: true, data: snap({ floor: 'lab' }, 4) });
+    r.link.choose('lab', { codex_profile: 'b' });
+    expect(r.link.view('lab').received).toBeNull();
+    r.link.choose('lab', {});
+    expect(r.link.view('lab').received?.snap.providers.claude.servers).toHaveLength(4);
+    const a2 = r.held.at(-1);
+    r.step({ page: 'lab', connected: false, live: false });
+    r.step({ page: 'lab' });
+    const a3 = r.held.at(-1);
+    expect(a3).not.toBe(a2);
+    await a2?.answer({ ok: true, data: snap({ floor: 'lab' }, 9) });
+    expect(r.link.view('lab').received).toBeNull();
+    await a3?.answer({ ok: true, data: snap({ floor: 'lab' }, 1) });
+    expect(r.link.view('lab').received?.snap.providers.claude.servers).toHaveLength(1);
+  });
+
+  it('queues a Refresh made while a request is out, and sends it when that one ends (only while still wanted)', async () => {
+    const r = rig();
+    r.step({ page: 'lab' });
+    expect(r.held).toHaveLength(1);
+    const before = r.link.view('lab').sent;
+    r.link.refresh();
+    r.link.refresh();
+    expect(r.held).toHaveLength(1); // one at a time
+    await r.held[0]?.answer({ ok: true, data: snap({ floor: 'lab' }) });
+    expect(r.held).toHaveLength(2); // the queued one, once
+    expect(r.link.view('lab').seq).toBeLessThanOrEqual(before);
+    await r.held[1]?.answer({ ok: true, data: snap({ floor: 'lab' }) });
+    expect(r.link.view('lab').seq).toBeGreaterThan(before);
+    expect(r.held).toHaveLength(2);
+    // Queued, then the page shut and you look away: it is not sent.
+    r.advance(MCP_POLL_MS + 1, { page: 'lab' });
+    expect(r.held).toHaveLength(3);
+    r.link.refresh();
+    r.office(null);
+    r.step({ page: null, here: false });
+    await r.held[2]?.answer({ ok: true, data: snap({ floor: 'lab' }) });
+    expect(r.held).toHaveLength(3);
+  });
+
+  it('numbers each request, and says which one the shown Snapshot came from', async () => {
+    const r = rig();
+    expect(r.link.view('lab')).toMatchObject({ seq: 0, sent: 0 });
+    r.step({ page: 'lab' });
+    expect(r.link.view('lab')).toMatchObject({ seq: 0, sent: 1 });
+    r.link.check('claude');
+    expect(r.link.view('lab').sent).toBe(2);
+    await r.held[1]?.answer({ ok: true, data: snap({ floor: 'lab' }, 3) });
+    expect(r.link.view('lab').seq).toBe(2);
+    // The inventory asked before the check answers after it: older than what is shown, dropped.
+    await r.held[0]?.answer({ ok: true, data: snap({ floor: 'lab' }, 1) });
+    expect(r.link.view('lab').seq).toBe(2);
+    expect(r.link.view('lab').received?.snap.providers.claude.servers).toHaveLength(3);
+    expect(r.link.log.map((e) => [e.t, e.result])).toEqual([
+      ['mcp.inventory', 'dropped'],
+      ['mcp.check', 'ok'],
+    ]);
+    expect(r.link.view('lab').asking).toBe(false);
+  });
+
   it('shows the bridge’s refusal of a context in words, and a timeout is just asked again', async () => {
     const r = rig();
     r.step({ page: 'lab' });

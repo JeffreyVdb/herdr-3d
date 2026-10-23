@@ -4,7 +4,8 @@ import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CommandResult } from '../net/client';
 import type { CodexProfile, McpHarness, McpProvider, McpSnapshot } from '../net/protocol';
-import type { McpChoice, McpView } from '../mcp/link';
+import { McpLink, type McpChoice, type McpView } from '../mcp/link';
+import { MCP_POLL_MS } from '../world/mcp';
 import { McpOverview, type McpOverviewHost } from './mcpOverview';
 
 const T0 = Date.parse('2026-10-23T12:00:00Z');
@@ -87,7 +88,7 @@ const profiles: CodexProfile[] = [
 ];
 
 function rig(view: Partial<McpView> = {}) {
-  let v: McpView = { floor: 'lab', choice: {}, received: { snap: snapshot(), at: T0 }, asking: false, checking: { claude: false, codex: false }, error: null, unsupported: false, live: true, ...view };
+  let v: McpView = { floor: 'lab', choice: {}, received: { snap: snapshot(), at: T0 }, seq: 1, sent: 1, asking: false, checking: { claude: false, codex: false }, error: null, unsupported: false, live: true, ...view };
   const chose: McpChoice[] = [];
   const checks: McpHarness[] = [];
   const saved: Array<string[] | null> = [];
@@ -173,8 +174,9 @@ describe('the MCP & skills overview (#196)', () => {
     ]);
     const gh = r.$('.mcp-row[data-name="github"] .mcp-cell[data-harness="claude"]');
     expect(gh.querySelector('.mcp-status--ok')).not.toBeNull();
-    expect(gh.textContent).toMatch(/User · stdio · Fresh probe · \d\d:\d\d/);
-    expect(r.$('.mcp-row[data-name="github"] .mcp-cell[data-harness="codex"]').textContent).toContain('Configuration');
+    expect(gh.querySelector('.mcp-meta')?.textContent).toBe('User · stdio · Separate check · checked 1 min ago');
+    // A configuration-backed cell says when the configuration was read (UX-R3).
+    expect(r.$('.mcp-row[data-name="github"] .mcp-cell[data-harness="codex"] .mcp-meta').textContent).toBe('User · stdio · Configuration · read just now');
     const sentry = r.$('.mcp-row[data-name="sentry"] .mcp-cell[data-harness="claude"]');
     expect(sentry.textContent).toContain('Authentication required');
     expect(sentry.textContent).toContain('Sign in with /mcp in Claude Code.');
@@ -211,6 +213,58 @@ describe('the MCP & skills overview (#196)', () => {
     const gh = r.$('.mcp-row[data-name="github"] .mcp-cell[data-harness="claude"]');
     expect(gh.querySelector('.mcp-status--ok')).toBeNull();
     expect(gh.textContent).toContain('stale');
+  });
+
+  it('never shows an old check or worker status green, though the configuration was read just now, and says how old it is', () => {
+    const r = rig();
+    const s = snapshot();
+    const day = T0 - 86_400_000;
+    s.providers.claude.servers[0] = server('github', { status: 'connected', status_scope: 'probe', status_at: iso(day) });
+    s.providers.claude.check = { state: 'ok', at: iso(day), note: '' };
+    s.providers.codex.servers[0] = server('github', { status: 'connected', status_scope: 'worker', status_at: iso(T0 - 11 * 60_000), worker: { id: 'w1', name: 'Juniper' } });
+    r.set({ received: { snap: s, at: T0 } });
+    r.page.open('lab');
+    expect(r.page.summary().providers.map((p) => p.tone)).toEqual(['ok', 'ok']); // the configuration is fresh
+    for (const hh of ['claude', 'codex']) {
+      const cell = r.$(`.mcp-row[data-name="github"] .mcp-cell[data-harness="${hh}"]`);
+      expect(cell.querySelector('.mcp-status--ok'), hh).toBeNull();
+      expect(cell.querySelector('.mcp-tag--stale'), hh).not.toBeNull();
+    }
+    expect(r.$('.mcp-row[data-name="github"] .mcp-cell[data-harness="claude"] .mcp-meta').textContent).toBe('User · stdio · Separate check · checked 1 d ago, may be out of date');
+    expect(r.$('.mcp-row[data-name="github"] .mcp-cell[data-harness="codex"] .mcp-meta').textContent).toBe('User · stdio · Worker Juniper · seen 11 min ago, may be out of date');
+    expect(r.$('.mcp-prov[data-harness="claude"] .mcp-check-age').textContent).toBe('Checked 1 d ago, may be out of date');
+  });
+
+  it('never closes on a backdrop click (it holds an edit), only by its close button and Esc; the draft stays while open', () => {
+    const r = rig();
+    r.page.open('lab');
+    expect(r.page.el.getAttribute('closedby')).toBe('closerequest');
+    r.$<HTMLInputElement>('#mcp-exp-input').value = 'new-expected';
+    r.$<HTMLButtonElement>('[data-key="exp-add"]').click();
+    const down = new MouseEvent('pointerdown', { button: 0, clientX: 2, clientY: 2, bubbles: true });
+    Object.defineProperty(down, 'isPrimary', { value: true });
+    r.page.el.dispatchEvent(down);
+    r.page.el.dispatchEvent(new MouseEvent('click', { button: 0, clientX: 2, clientY: 2, bubbles: true }));
+    expect(r.page.isOpen).toBe(true);
+    expect(r.page.summary().expected).toEqual(['github', 'notion', 'new-expected']);
+    r.$<HTMLButtonElement>('.sheet-close').click();
+    expect(r.page.isOpen).toBe(false);
+  });
+
+  it('names the provider of every cell for assistive tech at every width (UX-R2)', () => {
+    const r = rig();
+    r.page.open('lab');
+    for (const cell of r.page.el.querySelectorAll<HTMLElement>('.mcp-cell')) {
+      const label = cell.querySelector('.mcp-cell-prov');
+      expect(label?.textContent).toBe(cell.dataset.harness === 'claude' ? 'Claude Code' : 'Codex');
+      expect(label?.getAttribute('aria-hidden')).toBeNull();
+    }
+    // Wide: hidden visually, not from the accessibility tree (never display: none outside the narrow layout).
+    const css = readFileSync(resolve(import.meta.dirname, 'mcpOverview.css'), 'utf8');
+    const wide = css.slice(0, css.indexOf('@media (max-width: 720px)'));
+    const rule = wide.match(/\.mcp-cell-prov \{([^}]*)\}/)?.[1] ?? '';
+    expect(rule).not.toMatch(/display:\s*none/);
+    expect(rule).toMatch(/clip-path: inset\(50%\)/);
   });
 
   it('has calm states: an old bridge, no connection, the first read, a refused context', () => {
@@ -303,6 +357,76 @@ describe('the MCP & skills overview (#196)', () => {
     expect(old.page.el.querySelector('#mcp-exp-input')).toBeNull();
   });
 
+  it('keeps the saved expected list until an inventory asked after the save comes; a Refresh during a poll is queued; two quick saves keep both names', async () => {
+    const held: Array<{ t: string; resolve(r: CommandResult): void }> = [];
+    let now = 1000;
+    let page: McpOverview | null = null;
+    const link = new McpLink({
+      request: (t) => new Promise<CommandResult>((resolve) => void held.push({ t, resolve })),
+      hudInfo: () => {},
+      unsupported: () => false,
+      markUnsupported: () => {},
+      now: () => now,
+      clock: () => T0,
+      changed: () => page?.refresh(),
+    });
+    const step = () => link.step({ office: { id: 'lab', tickMcp: () => false, setMcpScreen: () => {} }, here: true, live: true, connected: true, page: 'lab', camera: {} as never });
+    const answer = async (i: number, expected: string[]) => {
+      held[i]?.resolve({ ok: true, data: snapshot({ expected }) });
+      for (let k = 0; k < 4; k++) await Promise.resolve();
+    };
+    const saved: Array<string[] | null> = [];
+    page = new McpOverview({
+      view: (f) => link.view(f),
+      choose: (f, c) => link.choose(f, c),
+      refresh: () => link.refresh(),
+      check: (h) => link.check(h),
+      profiles: () => null,
+      saveExpected: async (_f, names) => (saved.push(names), { ok: true, data: undefined }),
+      floorName: () => 'Lab',
+      now: () => T0,
+      closed: () => {},
+    });
+    step();
+    await answer(0, []);
+    page.open('lab');
+    now += MCP_POLL_MS + 1;
+    step();
+    expect(held).toHaveLength(2); // a poll is out, its expected list read before any save
+    const $ = <T extends HTMLElement>(sel: string) => page?.el.querySelector(sel) as T;
+    const addAndSave = async (name: string) => {
+      $<HTMLInputElement>('#mcp-exp-input').value = name;
+      $<HTMLButtonElement>('[data-key="exp-add"]').click();
+      $<HTMLButtonElement>('[data-key="exp-save"]').click();
+      await vi.waitFor(() => expect($('.mcp-exp-msg').textContent).toContain('Saved'));
+    };
+    await addAndSave('alpha');
+    expect(saved).toEqual([['alpha']]);
+    expect(page.summary().expected).toEqual(['alpha']);
+    expect(page.summary().rows.map((x) => [x.name, x.expected])).toEqual([['alpha', true], ['github', false], ['linear', false], ['sentry', false]]);
+    expect($<HTMLButtonElement>('[data-key="exp-save"]').disabled).toBe(true);
+    expect(held).toHaveLength(2); // the Refresh is queued behind the poll out
+    await addAndSave('beta');
+    expect(saved).toEqual([['alpha'], ['alpha', 'beta']]);
+    // Closed and opened again before the bridge's list came: still the saved one.
+    page.close();
+    page.open('lab');
+    expect(page.summary().expected).toEqual(['alpha', 'beta']);
+    // The poll asked before the saves answers with the old list: not believed; the queued Refresh goes now.
+    await answer(1, []);
+    expect(page.summary().expected).toEqual(['alpha', 'beta']);
+    expect(held).toHaveLength(3);
+    // The inventory asked after the saves: the bridge's list counts again, whatever it says.
+    await answer(2, ['alpha', 'beta']);
+    expect(page.summary().expected).toEqual(['alpha', 'beta']);
+    now += MCP_POLL_MS + 1;
+    step();
+    await answer(3, ['alpha']);
+    expect(page.summary().expected).toEqual(['alpha']);
+    expect($('.mcp-chips').textContent).toContain('alpha');
+    expect($('.mcp-chips').textContent).not.toContain('beta');
+  });
+
   it('lists the skills per provider: incomplete label, disabled ones kept, load errors', () => {
     const r = rig();
     r.page.open('lab');
@@ -321,7 +445,7 @@ describe('the MCP & skills overview (#196)', () => {
     const css = readFileSync(resolve(import.meta.dirname, 'mcpOverview.css'), 'utf8');
     const narrow = css.slice(css.indexOf('@media (max-width: 720px)'));
     expect(narrow).toMatch(/\.mcp-providers,\s*\.mcp-skills \{\s*grid-template-columns: minmax\(0, 1fr\);/);
-    expect(narrow).toMatch(/\.mcp-cell-prov \{\s*display: block;/);
+    expect(narrow).toMatch(/\.mcp-cell-prov \{\s*position: static;/);
     expect(css.slice(css.indexOf('@media (max-width: 420px)'))).toMatch(/\.mcp-row \{\s*grid-template-columns: minmax\(0, 1fr\);/);
   });
 });

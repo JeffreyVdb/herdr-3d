@@ -299,7 +299,13 @@
   min-width: 0;
 }
 .mcp-cell-prov {
-  display: none;
+  /* Wide: the column headings say it to the eye; it stays in the accessibility tree (a cell names its provider). */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
   color: var(--text-3);
   font-size: 11px;
   font-weight: 700;
@@ -469,7 +475,12 @@
     grid-column: 1 / -1;
   }
   .mcp-cell-prov {
-    display: block;
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
   }
 }
 @media (max-width: 420px) {

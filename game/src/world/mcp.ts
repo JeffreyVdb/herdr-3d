@@ -7,11 +7,11 @@ import type { McpHarness, McpProvider, McpServer, McpSnapshot } from '../net/pro
  * the page ui/mcpOverview.ts, the polling mcp/link.ts.
  *
  * Rules (contract.md, AC5): both providers are always shown; a name absent from a provider whose configuration read is
- * ok or partial is "not configured" there (informational), and only a name in `expected` counts as a missing
- * configuration alert; absent from a provider whose read failed, is pending, unavailable or unsupported it is "unknown",
- * never "not configured" (a failed read never implies no configuration). Disabled, auth required, failed and approval
- * required are configured servers, never missing. A configuration read never says connected. Stale results (the bridge
- * says so, or the read is over 2 minutes old) never look healthy.
+ * ok is "not configured" there (informational), and only a name in `expected` counts as a missing configuration alert;
+ * absent from a provider whose read is partial, failed, pending, unavailable or unsupported it is "unknown", never "not
+ * configured" (only a whole read proves a name absent). Disabled, auth required, failed and approval required are
+ * configured servers, never missing. A configuration read never says connected. Stale results (the bridge says so, or
+ * the read is over 2 minutes old) never look healthy; nor does a status from a check or a worker over 10 minutes old.
  */
 
 export const HARNESSES: readonly McpHarness[] = ['claude', 'codex'];
@@ -20,6 +20,8 @@ export const PROVIDER_NAME: Readonly<Record<McpHarness, string>> = { claude: 'Cl
 export const MCP_POLL_MS = 20_000;
 /** A read older than this is stale (contract.md), whatever the bridge says. */
 export const MCP_STALE_MS = 2 * 60_000;
+/** A connection status (a separate check's or a worker's) older than this may be out of date: never healthy. */
+export const MCP_EVIDENCE_STALE_MS = 10 * 60_000;
 
 /** When a Snapshot came: its `generated_at` and the client's clock when its ack arrived (ages are the bridge's, never the clocks' skew). */
 export interface Received {
@@ -56,9 +58,14 @@ export function ageText(ms: number | null): string {
   return `${Math.floor(hr / 24)} d ago`;
 }
 
-/** The provider's configuration is known: read ok or partially (only then does an absent name mean "not configured"). */
+/** The provider's configuration is known: read ok or partially (its servers can be shown and counted). */
 export function configKnown(p: McpProvider): boolean {
   return p.config.state === 'ok' || p.config.state === 'partial';
+}
+
+/** The provider's configuration was read whole: only then does an absent name mean "not configured" (a partial read may have missed it). */
+export function configWhole(p: McpProvider): boolean {
+  return p.config.state === 'ok';
 }
 
 /** The provider's configuration result is stale: the bridge says so, or it was read over `MCP_STALE_MS` ago (or never says when). */
@@ -81,9 +88,9 @@ export function skillsStale(p: McpProvider, r: Received, now: number): boolean {
 export const ATTENTION_STATUS: ReadonlySet<string> = new Set(['failed', 'auth_required', 'approval_required']);
 
 /**
- * One provider's cell of a row: `present` (configured there: its server), `not_configured` (its read is known and the
- * name is not in it), `missing` (the same, and the name is expected: an alert), `unknown` (its read failed, is pending,
- * unavailable or unsupported: nothing can be said).
+ * One provider's cell of a row: `present` (configured there: its server), `not_configured` (its read is whole and the
+ * name is not in it), `missing` (the same, and the name is expected: an alert), `unknown` (its read is partial, failed,
+ * pending, unavailable or unsupported: nothing can be said).
  */
 export type McpCellKind = 'present' | 'not_configured' | 'missing' | 'unknown';
 
@@ -109,7 +116,7 @@ const byName = (a: string, b: string) => a.localeCompare(b, undefined, { sensiti
 export function cellOf(p: McpProvider, name: string, expected: boolean): McpCell {
   const server = p.servers.find((s) => s.name === name) ?? null;
   if (server) return { kind: 'present', server, attention: ATTENTION_STATUS.has(server.status) };
-  if (!configKnown(p)) return { kind: 'unknown', server: null, attention: false };
+  if (!configWhole(p)) return { kind: 'unknown', server: null, attention: false };
   return expected ? { kind: 'missing', server: null, attention: true } : { kind: 'not_configured', server: null, attention: false };
 }
 
@@ -128,10 +135,10 @@ export function mcpRows(snap: Pick<McpSnapshot, 'providers' | 'expected'>): McpR
   });
 }
 
-/** A provider's attention count: its configured servers that need you, and the expected names it is missing (when its read is known). */
+/** A provider's attention count: its configured servers that need you, and the expected names it is missing (when its read is whole). */
 export function attentionCount(p: McpProvider, expected: readonly string[] = []): number {
   let n = p.servers.filter((s) => ATTENTION_STATUS.has(s.status)).length;
-  if (configKnown(p)) for (const name of new Set(expected)) if (!p.servers.some((s) => s.name === name)) n++;
+  if (configWhole(p)) for (const name of new Set(expected)) if (!p.servers.some((s) => s.name === name)) n++;
   return n;
 }
 
@@ -174,17 +181,67 @@ export function statusTone(s: string, stale: boolean): StatusTone {
   return 'muted';
 }
 
-/** Where a status came from, in words: the configuration, a fresh probe the check started, or a running worker (named). */
+/** Where a status came from, in words: the configuration, a separate check (its own process, not a worker), or a running worker (named). */
 export function evidenceText(s: McpServer): string {
-  if (s.status_scope === 'probe') return 'Fresh probe';
+  if (s.status_scope === 'probe') return 'Separate check';
   if (s.status_scope === 'worker') return s.worker?.name ? `Worker ${s.worker.name}` : 'Running worker';
   return 'Configuration';
 }
 
-/** A server's source and scope in words (`plugin` names its plugin). */
+/** The status came from a check or a worker: it has its own time (`status_at`) and ages on its own. */
+const observed = (s: McpServer) => s.status_scope === 'probe' || s.status_scope === 'worker';
+
+/** A check's or a worker's status is over `MCP_EVIDENCE_STALE_MS` old (or never says when). */
+export function evidenceStale(s: McpServer, r: Received, now: number): boolean {
+  const age = ageOf(s.status_at, r, now);
+  return age === null || age > MCP_EVIDENCE_STALE_MS;
+}
+
+/**
+ * A cell's data may be out of date: its provider's configuration is stale (or the last read failed and these are the
+ * servers it kept), or its status came from a check or a worker too long ago. Then it never looks healthy.
+ */
+export function cellStale(c: McpCell, p: McpProvider, r: Received, now: number): boolean {
+  if (configStale(p, r, now) || (p.config.state === 'failed' && c.kind === 'present')) return true;
+  return !!c.server && observed(c.server) && evidenceStale(c.server, r, now);
+}
+
+const OUT_OF_DATE = ', may be out of date';
+
+/**
+ * When a server's status was observed, in words: the configuration's read (`read 1 min ago`), the check's (`checked 3
+ * min ago`) or the worker's (`seen just now`); a check or a worker status past `MCP_EVIDENCE_STALE_MS` says it may be out
+ * of date.
+ */
+export function observedText(s: McpServer, p: McpProvider, r: Received, now: number): string {
+  if (!observed(s)) {
+    const age = ageText(ageOf(p.config.read_at, r, now));
+    return age ? `read ${age}` : 'read time unknown';
+  }
+  const age = ageText(ageOf(s.status_at, r, now));
+  const when = age ? `${s.status_scope === 'probe' ? 'checked' : 'seen'} ${age}` : 'time unknown';
+  return evidenceStale(s, r, now) ? `${when}${OUT_OF_DATE}` : when;
+}
+
+/** The provider's last connection check is over `MCP_EVIDENCE_STALE_MS` old (false when there was none). */
+export function checkStale(p: McpProvider, r: Received, now: number): boolean {
+  if (p.check.state === 'none' || !p.check.at) return false;
+  const age = ageOf(p.check.at, r, now);
+  return age === null || age > MCP_EVIDENCE_STALE_MS;
+}
+
+/** The provider's last connection check in words (`Checked 3 min ago`, `Check failed 1 h ago, may be out of date`), or '' when there was none. */
+export function checkText(p: McpProvider, r: Received, now: number): string {
+  if (p.check.state === 'none' || !p.check.at) return '';
+  const word = p.check.state === 'ok' ? 'Checked' : p.check.state === 'timeout' ? 'Check timed out' : p.check.state === 'skipped' ? 'Check skipped' : 'Check failed';
+  const text = `${word} ${ageText(ageOf(p.check.at, r, now))}`;
+  return checkStale(p, r, now) ? `${text}${OUT_OF_DATE}` : text;
+}
+
+/** A server's or a skill's source and scope in words (`plugin` names its plugin). */
 export function sourceText(s: Pick<McpServer, 'source' | 'plugin'>): string {
   if (s.source === 'plugin') return s.plugin ? `Plugin ${s.plugin}` : 'Plugin';
-  const words: Record<string, string> = { user: 'User', local: 'Local', project: 'Project', managed: 'Managed', connector: 'Connector', system: 'System' };
+  const words: Record<string, string> = { user: 'User', local: 'Local', project: 'Project', managed: 'Managed', connector: 'Connector', system: 'System', repo: 'Repository', admin: 'Admin' };
   return words[s.source] ?? 'Unknown source';
 }
 
@@ -212,7 +269,7 @@ export function providerNextStep(h: McpHarness, p: McpProvider): string {
   if (!p.available || p.config.state === 'unavailable') return `Install the ${cli} CLI on the bridge host (or put it on its PATH), then Refresh.`;
   if (p.config.state === 'pending') return 'Reading the configuration; it shows here when it is in.';
   if (p.config.state === 'failed') return 'The configuration could not be read. It is tried again by itself; Refresh tries now.';
-  if (configKnown(p) && p.servers.length === 0) return h === 'claude' ? 'No MCP servers configured here. Add one with claude mcp add.' : 'No MCP servers configured here. Add one with codex mcp add.';
+  if (configWhole(p) && p.servers.length === 0) return h === 'claude' ? 'No MCP servers configured here. Add one with claude mcp add.' : 'No MCP servers configured here. Add one with codex mcp add.';
   return '';
 }
 
@@ -244,8 +301,12 @@ export interface McpWallProvider {
   attention: string;
   attentionCount: number;
   skills: string;
-  /** "Read 3 min ago · checked 1 h ago". */
+  /** "Read 3 min ago". */
   age: string;
+  /** "Checked 4 min ago", "Checked 2 h ago, may be out of date", or '' (never checked). */
+  check: string;
+  /** The last check is over `MCP_EVIDENCE_STALE_MS` old: its line is grey. */
+  checkOld: boolean;
   /** A tag on the column: "stale", "partial", "" (fresh). */
   tag: string;
 }
@@ -292,10 +353,9 @@ export function wallProvider(h: McpHarness, r: Received, now: number): McpWallPr
   const sk = p.skills;
   const skills = sk.state === 'ok' || sk.state === 'partial' || (sk.items.length > 0 && sk.read_at) ? `${sk.items.length}${sk.complete ? '' : '+'} ${sk.items.length === 1 && sk.complete ? 'skill' : 'skills'}` : sk.state === 'pending' ? 'Skills: reading…' : 'Skills unknown';
   const read = ageText(ageOf(p.config.read_at, r, now));
-  const checked = ageText(ageOf(p.check.at, r, now));
-  const age = [read && `Read ${read}`, checked && `checked ${checked}`].filter(Boolean).join(' · ');
+  const age = read ? `Read ${read}` : '';
   const tag = tone === 'stale' ? 'stale' : tone === 'partial' ? 'partial' : '';
-  return { harness: h, name: PROVIDER_NAME[h], tone, big, attention, attentionCount: known ? n : 0, skills, age, tag };
+  return { harness: h, name: PROVIDER_NAME[h], tone, big, attention, attentionCount: known ? n : 0, skills, age, check: checkText(p, r, now), checkOld: checkStale(p, r, now), tag };
 }
 
 /** What the wall says now. `r`: the Snapshot of the shown context (null: none yet). `error`: the bridge refused the request (its words). */

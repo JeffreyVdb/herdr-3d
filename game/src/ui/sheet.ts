@@ -16,6 +16,11 @@ export interface SheetOptions {
   onClose?: (why: SheetCloseReason) => void;
   /** Where focus lands on open (default: the first focusable control in `body`, else the dialog itself). */
   initialFocus?: () => HTMLElement | null;
+  /**
+   * What a press and click on the backdrop do: `sheet` (the default) closes it, `none` nothing (a sheet that holds an
+   * edit it does not keep across a close: CONTRIBUTING's "dialogs never close by accident").
+   */
+  backdrop?: 'sheet' | 'none';
 }
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
@@ -44,7 +49,7 @@ function closeIcon(): SVGSVGElement {
  *
  * Ways out, each reported once to `onClose`: Esc (the dialog's `cancel`, taken over so the reason is known), the close
  * button, a press and click both on the backdrop (dismiss.ts's `sheet` policy: what is typed inside survives a close,
- * the caller keeps it), and `close()`. A close the browser makes without a `cancel` (Chrome skips it on a repeated Esc
+ * the caller keeps it; `backdrop: 'none'` turns it off for a sheet that does not), and `close()`. A close the browser makes without a `cancel` (Chrome skips it on a repeated Esc
  * without a user gesture in between) is Esc too. `destroy()` closes without a word.
  *
  * Keys pressed inside are the sheet's: they stop at the dialog (the game's and the laptop's handlers listen on the
@@ -108,7 +113,8 @@ export class Sheet {
     });
     this.el.addEventListener('keydown', (e) => e.stopPropagation());
     this.el.addEventListener('focusin', (e) => this.reveal(e.target));
-    backdropPolicy(this.el, 'sheet', () => this.shut('backdrop'));
+    if (opts.backdrop === 'none') backdropPolicy(this.el, 'none');
+    else backdropPolicy(this.el, 'sheet', () => this.shut('backdrop'));
   }
 
   get isOpen(): boolean {

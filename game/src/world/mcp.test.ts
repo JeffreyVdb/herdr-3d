@@ -4,17 +4,24 @@ import {
   ageOf,
   ageText,
   attentionCount,
+  cellStale,
   cellText,
+  checkText,
   configStale,
+  evidenceText,
   expectedNameError,
   HARNESSES,
   hudLine,
   mcpRows,
+  MCP_EVIDENCE_STALE_MS,
   MCP_STALE_MS,
+  observedText,
   providerTone,
+  sourceText,
   statusTone,
   wallModel,
   wallProvider,
+  type McpCell,
   type Received,
 } from './mcp';
 
@@ -83,7 +90,8 @@ describe('mcpRows: the client merge rule, every combination', () => {
       ['codex', xs, inX],
     ] as Array<[McpHarness, string, boolean]>) {
       const c = row.cells[h];
-      const known = state === 'ok' || state === 'partial';
+      // Only an ok read proves a name absent: a partial one may have missed it (round 2 amendment).
+      const known = state === 'ok';
       // Both providers always have a cell.
       expect(c, h).toBeDefined();
       if (present) {
@@ -93,7 +101,7 @@ describe('mcpRows: the client merge rule, every combination', () => {
         expect(c.kind, h).toBe(expected ? 'missing' : 'not_configured');
         expect(cellText(c, h)).toMatch(/not configured in/i);
       } else {
-        // A failed, pending, unavailable or unsupported read never says "not configured".
+        // A partial, failed, pending, unavailable or unsupported read never says "not configured".
         expect(c.kind, h).toBe('unknown');
         expect(cellText(c, h)).toBe('Unknown');
       }
@@ -101,8 +109,8 @@ describe('mcpRows: the client merge rule, every combination', () => {
       expect(c.attention, h).toBe(!present && known && expected);
     }
     expect(row.missing).toBe(HARNESSES.some((h) => row.cells[h].kind === 'missing'));
-    // Expected but absent from both known reads: shown as not configured, an alert on both.
-    if (expected && !inC && !inX && (cs === 'ok' || cs === 'partial') && (xs === 'ok' || xs === 'partial')) {
+    // Expected but absent from both ok reads: shown as not configured, an alert on both.
+    if (expected && !inC && !inX && cs === 'ok' && xs === 'ok') {
       expect(row.cells.claude.kind).toBe('missing');
       expect(row.cells.codex.kind).toBe('missing');
     }
@@ -213,9 +221,9 @@ describe('the wall', () => {
     const m = wallModel({ unsupported: false, live: true, asking: false, r: received(base()), now: T0 });
     expect(m.mode).toBe('data');
     expect(m.scope).toBe('~/repos/x · Codex profile codex');
-    expect(m.providers.map((p) => [p.name, p.big, p.attention, p.skills, p.age, p.tag])).toEqual([
-      ['Claude Code', '3 MCP servers', '2 need attention', '1+ skills', 'Read just now · checked 3 min ago', ''],
-      ['Codex', '1 MCP server', '1 needs attention', '0 skills', 'Read just now', ''],
+    expect(m.providers.map((p) => [p.name, p.big, p.attention, p.skills, p.age, p.check, p.tag])).toEqual([
+      ['Claude Code', '3 MCP servers', '2 need attention', '1+ skills', 'Read just now', 'Checked 3 min ago', ''],
+      ['Codex', '1 MCP server', '1 needs attention', '0 skills', 'Read just now', '', ''],
     ]);
     expect(hudLine(m)).toBe('Claude Code 3 MCP (2 need you) · Codex 1 MCP (1 needs you)');
   });
@@ -266,11 +274,79 @@ describe('the wall', () => {
     s.providers.claude.config.stale = true;
     s.providers.codex.config.state = 'partial';
     const m = wallModel({ unsupported: false, live: true, asking: false, r: received(s), now: T0 });
+    // A partial read cannot prove notion absent: it is not counted against Codex.
     expect(m.providers.map((p) => [p.tone, p.tag, p.attentionCount])).toEqual([
       ['stale', 'stale', 2],
-      ['partial', 'partial', 1],
+      ['partial', 'partial', 0],
     ]);
     expect(hudLine(m)).toContain('stale');
+  });
+});
+
+describe('connection evidence (round 2: probe and worker statuses age on their own)', () => {
+  const at = (scope: 'config' | 'probe' | 'worker', ageMs: number | null) => server('github', { status: 'connected', status_scope: scope, status_at: ageMs === null ? null : iso(T0 - ageMs), ...(scope === 'worker' ? { worker: { id: 'w1', name: 'Juniper' } } : {}) });
+  const cellAt = (s: McpServer, o: Partial<McpProvider> = {}) => {
+    const p = provider('ok', [s], o);
+    const r = received(snapshot(p, provider('ok')));
+    return { p, r, c: mcpRows(r.snap)[0]?.cells.claude as McpCell };
+  };
+
+  it('is stale after 10 minutes, or without a time; a fresh configuration read does not make it fresh', () => {
+    expect(MCP_EVIDENCE_STALE_MS).toBe(10 * 60_000);
+    for (const scope of ['probe', 'worker'] as const) {
+      const fresh = cellAt(at(scope, 9 * 60_000));
+      expect(cellStale(fresh.c, fresh.p, fresh.r, T0), scope).toBe(false);
+      expect(statusTone('connected', cellStale(fresh.c, fresh.p, fresh.r, T0))).toBe('ok');
+      // The configuration was read 5 s ago; the check is a day old: not green.
+      const old = cellAt(at(scope, 86_400_000));
+      expect(configStale(old.p, old.r, T0)).toBe(false);
+      expect(cellStale(old.c, old.p, old.r, T0), scope).toBe(true);
+      expect(statusTone('connected', cellStale(old.c, old.p, old.r, T0))).toBe('muted');
+      const none = cellAt(at(scope, null));
+      expect(cellStale(none.c, none.p, none.r, T0), scope).toBe(true);
+      // The same fresh one looked at 10 minutes on.
+      expect(cellStale(fresh.c, fresh.p, fresh.r, T0 + 60_001), scope).toBe(true);
+    }
+    // A configuration status has no status_at: its freshness is the read's.
+    const cfg = cellAt(at('config', null));
+    expect(cellStale(cfg.c, cfg.p, cfg.r, T0)).toBe(false);
+    expect(cellStale(cfg.c, cfg.p, cfg.r, T0 + MCP_STALE_MS)).toBe(true);
+  });
+
+  it('names where it came from and when: the configuration read, a separate check, a worker; old evidence says so', () => {
+    expect(evidenceText(at('probe', 0))).toBe('Separate check');
+    expect(evidenceText(at('worker', 0))).toBe('Worker Juniper');
+    expect(evidenceText(at('config', null))).toBe('Configuration');
+    const t = (s: McpServer) => {
+      const x = cellAt(s);
+      return observedText(x.c.server as McpServer, x.p, x.r, T0);
+    };
+    expect(t(at('config', null))).toBe('read just now');
+    expect(t(at('probe', 3 * 60_000))).toBe('checked 3 min ago');
+    expect(t(at('probe', 2 * 3600_000))).toBe('checked 2 h ago, may be out of date');
+    expect(t(at('worker', 30_000))).toBe('seen just now');
+    expect(t(at('worker', 11 * 60_000))).toBe('seen 11 min ago, may be out of date');
+    expect(t(at('probe', null))).toBe('time unknown, may be out of date');
+  });
+
+  it('ages the provider’s last check the same way, on the page and on the wall', () => {
+    const p = (state: string, ageMs: number | null) => provider('ok', [], { check: { state, at: ageMs === null ? null : iso(T0 - ageMs), note: '' } });
+    const r = received(snapshot(provider('ok'), provider('ok')));
+    expect(checkText(p('none', null), r, T0)).toBe('');
+    expect(checkText(p('ok', 3 * 60_000), r, T0)).toBe('Checked 3 min ago');
+    expect(checkText(p('ok', 2 * 3600_000), r, T0)).toBe('Checked 2 h ago, may be out of date');
+    expect(checkText(p('failed', 60_000), r, T0)).toBe('Check failed 1 min ago');
+    expect(checkText(p('timeout', 60_000), r, T0)).toBe('Check timed out 1 min ago');
+    expect(checkText(p('skipped', 20 * 60_000), r, T0)).toBe('Check skipped 20 min ago, may be out of date');
+    const s = snapshot(p('ok', 2 * 3600_000), p('none', null));
+    expect(wallModel({ unsupported: false, live: true, asking: false, r: received(s), now: T0 }).providers.map((x) => x.check)).toEqual(['Checked 2 h ago, may be out of date', '']);
+  });
+});
+
+describe('sources', () => {
+  it('names every scope the bridge sends, skills’ repo and admin too', () => {
+    expect(['user', 'local', 'project', 'managed', 'connector', 'system', 'repo', 'admin', 'odd'].map((source) => sourceText({ source, plugin: '' }))).toEqual(['User', 'Local', 'Project', 'Managed', 'Connector', 'System', 'Repository', 'Admin', 'Unknown source']);
+    expect(sourceText({ source: 'plugin', plugin: 'gh' })).toBe('Plugin gh');
   });
 });
 

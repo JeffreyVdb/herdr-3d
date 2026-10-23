@@ -89,6 +89,10 @@ test('a missing expected server and a server that needs a sign-in: the expected 
   await dlg.locator('#mcp-exp-input').press('Enter');
   await dlg.locator('#mcp-exp-input').fill('github');
   await dlg.locator('[data-key="exp-add"]').click();
+  // It holds an edit: a click on the backdrop leaves it open, the unsaved list with it.
+  await page.mouse.click(4, 4);
+  await expect(dlg).toBeVisible();
+  expect((await mcp(page)).page.expected).toEqual(['notion', 'github']);
   await dlg.locator('[data-key="exp-save"]').click();
   await expect(dlg.locator('.mcp-exp-msg')).toContainText('Saved');
   await expect.poll(async () => (await mcp(page)).page.rows.find((r) => r.name === 'notion')).toEqual({ name: 'notion', expected: true, claude: 'Expected, not configured in Claude Code', codex: 'Expected, not configured in Codex', missing: true });

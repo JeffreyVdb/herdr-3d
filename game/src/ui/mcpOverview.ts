@@ -6,13 +6,16 @@ import {
   ageText,
   attentionCount,
   cellNextStep,
+  cellStale,
   cellText,
+  checkText,
   configKnown,
-  configStale,
+  configWhole,
   evidenceText,
   expectedNameError,
   HARNESSES,
   mcpRows,
+  observedText,
   PROVIDER_NAME,
   providerNextStep,
   providerTone,
@@ -36,6 +39,9 @@ import './mcpOverview.css';
  * worker: the next steps it shows say what to do, where.
  *
  * A modal `Sheet` (ui/sheet.ts): focus stays inside, Esc closes, focus goes back where it was, a bottom sheet on a phone.
+ * It holds an edit (the expected list), so a click on the backdrop never closes it (CONTRIBUTING: dialogs never close
+ * by accident). A saved list is the page's until an inventory asked after the save answers: one asked before may still
+ * carry the old list (the bridge reads it when a read starts), and the next edit starts from what was saved.
  * The rows come from the client merge rule (world/mcp.ts `mcpRows`); both providers are always shown, each cell per
  * provider (the same name in both is one row, not one service). What the page shows is the link's (mcp/link.ts): the
  * Snapshot of exactly the chosen context, never a late one of another.
@@ -73,11 +79,6 @@ export interface McpOverviewSummary {
 
 const USER_SCOPE = '\u0000user';
 const DEFAULT = '\u0000default';
-const clock = (iso: string | null) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-};
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 const TONE_WORD: Record<ProviderTone, string> = {
@@ -107,15 +108,17 @@ export class McpOverview {
   private readonly expMsg = h('p', { class: 'mcp-exp-msg', role: 'status' });
   private readonly expSave: HTMLButtonElement;
   private floor = '';
-  /** The expected list being edited (null: as the bridge has it). */
+  /** The expected list being edited (null: as saved). */
   private draft: string[] | null = null;
+  /** The list the bridge acknowledged saving for `floor`: it stands until a Snapshot of a request after `after` (McpView.sent then) comes. */
+  private acked: { floor: string; names: string[]; after: number } | null = null;
   private saving = false;
   private expText = '';
   private expError = false;
   private lastSig = '';
 
   constructor(private readonly host: McpOverviewHost) {
-    this.sheet = new Sheet({ label: 'MCP & skills', className: 'mcp', onClose: () => this.host.closed(), initialFocus: () => this.cwdSel });
+    this.sheet = new Sheet({ label: 'MCP & skills', className: 'mcp', backdrop: 'none', onClose: () => this.host.closed(), initialFocus: () => this.cwdSel });
     this.refreshBtn = h('button', { class: 'btn btn--sm', 'data-key': 'refresh', title: 'Read the configuration again', onclick: () => this.host.refresh() }, icon(ICON.refresh), h('span', {}, 'Refresh'));
     this.profField = h('label', { class: 'mcp-field', for: 'mcp-profile' }, h('span', {}, 'Codex profile'), this.profSel);
     this.ctxBar.append(h('label', { class: 'mcp-field', for: 'mcp-cwd' }, h('span', {}, 'Checkout'), this.cwdSel), this.profField, h('div', { class: 'mcp-refresh' }, this.refreshBtn, this.readEl));
@@ -185,8 +188,10 @@ export class McpOverview {
   private render(force: boolean): void {
     const v = this.view();
     const now = this.host.now();
+    // The bridge's list counts again once a Snapshot asked after the save is in.
+    if (this.acked?.floor === this.floor && v.received && v.seq > this.acked.after) this.acked = null;
     // Only what is shown: a minute's ages, the data, the requests out, the draft; never every frame.
-    const sig = JSON.stringify([v, this.draft, this.saving, this.expText, Math.floor(now / 60_000), this.host.profiles()]);
+    const sig = JSON.stringify([v, this.draft, this.acked, this.saving, this.expText, Math.floor(now / 60_000), this.host.profiles()]);
     if (!force && sig === this.lastSig) return;
     this.lastSig = sig;
     this.renderContext(v, now);
@@ -247,13 +252,14 @@ export class McpOverview {
 
   private data(v: McpView, r: Received, now: number): Node[] {
     const snap = r.snap;
-    const expected = this.draft ?? snap.expected ?? [];
-    const rows = mcpRows({ providers: snap.providers, expected: snap.expected ?? [] });
+    const saved = this.savedExpected();
+    const expected = this.draft ?? saved;
+    const rows = mcpRows({ providers: snap.providers, expected: saved });
     const out: Node[] = [];
     if (v.error) out.push(h('p', { class: 'mcp-error', role: 'alert' }, v.error));
 
     // The providers: what each has, its read's state, its check.
-    out.push(h('div', { class: 'mcp-providers' }, ...HARNESSES.map((hh) => this.providerTile(hh, snap.providers[hh], r, v, now, snap.expected ?? []))));
+    out.push(h('div', { class: 'mcp-providers' }, ...HARNESSES.map((hh) => this.providerTile(hh, snap.providers[hh], r, v, now, saved))));
 
     // MCP servers.
     const list = h('ul', { class: 'mcp-rows', 'aria-label': 'MCP servers' });
@@ -271,10 +277,10 @@ export class McpOverview {
       'section',
       { class: 'mcp-section', 'aria-labelledby': 'mcp-servers-title' },
       h('div', { class: 'mcp-section-head' }, h('h3', { id: 'mcp-servers-title' }, 'MCP servers'), h('div', { class: 'mcp-cols', 'aria-hidden': 'true' }, h('span', {}, PROVIDER_NAME.claude), h('span', {}, PROVIDER_NAME.codex))),
-      rows.length ? list : h('p', { class: 'mcp-empty' }, HARNESSES.every((hh) => configKnown(snap.providers[hh])) ? 'Neither provider has an MCP server configured for this checkout.' : 'Nothing to list until a provider’s configuration has been read.'),
+      rows.length ? list : h('p', { class: 'mcp-empty' }, HARNESSES.every((hh) => configWhole(snap.providers[hh])) ? 'Neither provider has an MCP server configured for this checkout.' : 'Nothing to list until a provider’s configuration has been read.'),
     );
     if (snap.expected !== undefined) {
-      this.renderExpected(expected, snap.expected);
+      this.renderExpected(expected, saved);
       servers.append(this.expectedBox);
     }
     out.push(servers);
@@ -300,12 +306,7 @@ export class McpOverview {
     const where = ctx.cwd === null ? 'user scope only' : ctx.cwd_display || ctx.cwd;
     const next = providerNextStep(hh, p);
     const checking = v.checking[hh];
-    const checkAge = ageText(ageOf(p.check.at, r, now));
-    const checkLine = checking
-      ? 'Checking…'
-      : p.check.state === 'none' || !p.check.at
-        ? 'Not checked yet'
-        : `${p.check.state === 'ok' ? 'Checked' : p.check.state === 'timeout' ? 'Check timed out' : p.check.state === 'skipped' ? 'Check skipped' : 'Check failed'} ${checkAge}`;
+    const checkLine = checking ? 'Checking…' : checkText(p, r, now) || 'Not checked yet';
     const canCheck = p.available && p.config.state !== 'unsupported' && v.live && !v.unsupported;
     return h(
       'article',
@@ -327,10 +328,11 @@ export class McpOverview {
   }
 
   private cell(c: McpCell, hh: McpHarness, p: McpProvider, r: Received, now: number): HTMLElement {
-    const stale = configStale(p, r, now) || (p.config.state === 'failed' && c.kind === 'present');
+    const stale = cellStale(c, p, r, now);
     const s = c.server;
     const tone = c.kind === 'present' && s ? statusTone(s.status, stale) : c.kind === 'missing' ? 'warn' : 'muted';
-    const meta = s ? [sourceText(s), s.transport !== 'unknown' ? s.transport : '', evidenceText(s), clock(s.status_at)].filter(Boolean).join(' · ') : '';
+    // Where the status came from and when: the configuration's read, the separate check's or the worker's time.
+    const meta = s ? [sourceText(s), s.transport !== 'unknown' ? s.transport : '', evidenceText(s), observedText(s, p, r, now)].filter(Boolean).join(' · ') : '';
     const next = cellNextStep(c, hh);
     return h(
       'div',
@@ -397,7 +399,9 @@ export class McpOverview {
     this.expMsg.classList.toggle('mcp-exp-msg--error', this.expError);
   }
 
+  /** The floor's expected list as saved: the one the bridge acknowledged, until a later Snapshot has it, else the Snapshot's. */
   private savedExpected(): string[] {
+    if (this.acked?.floor === this.floor) return [...this.acked.names];
     return [...(this.view().received?.snap.expected ?? [])];
   }
 
@@ -428,9 +432,12 @@ export class McpOverview {
     const names = this.draft;
     this.saving = true;
     this.render(true);
-    const r = await this.host.saveExpected(this.floor, names.length ? names : null);
+    const floor = this.floor;
+    const r = await this.host.saveExpected(floor, names.length ? names : null);
     this.saving = false;
     if (r.ok) {
+      // Saved: this list stands until an inventory asked from now on answers (one out now may carry the old one).
+      this.acked = { floor, names: [...names], after: this.host.view(floor).sent };
       this.draft = null;
       this.say('Saved. The list is read again.', false);
       this.host.refresh();
@@ -451,7 +458,8 @@ export class McpOverview {
     const v = this.view();
     const r = v.received;
     const now = this.host.now();
-    const rows = r ? mcpRows({ providers: r.snap.providers, expected: r.snap.expected ?? [] }) : [];
+    const saved = this.savedExpected();
+    const rows = r ? mcpRows({ providers: r.snap.providers, expected: saved }) : [];
     const state: McpOverviewSummary['state'] = v.unsupported ? 'unsupported' : !v.live ? 'offline' : r ? 'data' : v.error ? 'error' : 'loading';
     const skills = (hh: McpHarness) => {
       const s = r?.snap.providers[hh].skills;
@@ -468,7 +476,7 @@ export class McpOverview {
           harness: hh,
           tone: p && r ? providerTone(p, r, now) : null,
           servers: p?.servers.length ?? 0,
-          attention: p ? attentionCount(p, r?.snap.expected ?? []) : 0,
+          attention: p ? attentionCount(p, saved) : 0,
           checking: v.checking[hh],
           check: p?.check.state ?? 'none',
         };
@@ -476,7 +484,7 @@ export class McpOverview {
       rows: rows.map((x) => ({ name: x.name, expected: x.expected, claude: cellText(x.cells.claude, 'claude'), codex: cellText(x.cells.codex, 'codex'), missing: x.missing })),
       skills: { claude: skills('claude'), codex: skills('codex') },
       expectedEditable: r?.snap.expected !== undefined,
-      expected: this.draft ?? r?.snap.expected ?? [],
+      expected: this.draft ?? (r?.snap.expected !== undefined ? saved : []),
       status: this.expText,
     };
   }

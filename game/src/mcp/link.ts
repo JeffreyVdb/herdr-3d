@@ -57,9 +57,14 @@ export interface McpChoice {
 /** One request the link sent, and what came of it (test hook). */
 export interface McpLogEntry {
   t: 'mcp.inventory' | 'mcp.check';
+  /** The context it was asked for (floor, checkout, profile, connection). */
   key: string;
+  /** Its number: every request the link sends gets the next one. */
+  seq: number;
+  /** The context generation it was asked in: a reply from an older one is dropped, even when the context came back since. */
+  ctx: number;
   args: McpRequest & { harness?: McpHarness };
-  /** ok, an error code, or `dropped` (the reply was for a context that is no longer shown). */
+  /** ok, an error code, or `dropped` (the reply was for a context left since, or older than what is shown). */
   result?: 'ok' | 'dropped' | string;
 }
 
@@ -69,6 +74,10 @@ export interface McpView {
   choice: McpChoice;
   /** The Snapshot of exactly this context, and when it came (null: none yet). */
   received: Received | null;
+  /** The number of the request `received` answered (0: none). */
+  seq: number;
+  /** The number of the last request the link sent (0: none): a Snapshot with a higher `seq` was asked after now. */
+  sent: number;
   /** An `mcp.inventory` for this context is out. */
   asking: boolean;
   /** A check per provider for this context is out. */
@@ -86,9 +95,12 @@ export interface McpView {
  * old bridge (`unknown_command`) gets the calm "No MCP inventory on this bridge" screen and is never asked again.
  *
  * Every request carries the context it was made for, its key: the floor, the chosen checkout and Codex profile, and the
- * connection's generation. A reply whose key is not the shown one any more (the floor, checkout or profile changed, the
- * connection dropped) is dropped, never shown (AC6). Checks (`mcp.check`) go only from the page's buttons, one per
- * provider and context at a time, keyed the same way.
+ * connection's generation; and the context generation it was sent in, which moves on every change of context (another
+ * checkout or profile, another floor, a dropped connection). A reply is shown only when both are still the shown ones:
+ * a reply for a context left since is dropped, never shown, also when you came back to that context meanwhile (A → B →
+ * A: A's first reply is abandoned, AC6), and so is a reply older than the one shown. Checks (`mcp.check`) go only from
+ * the page's buttons, one per provider and context at a time, treated the same way. A Refresh while a request is out is
+ * queued and sent when it ends.
  */
 export class McpLink {
   private readonly gate = new HostWatchGate({ onMs: 300, offMs: 3000 });
@@ -98,13 +110,19 @@ export class McpLink {
   private live = false;
   private connected = false;
   private office: McpOffice | null = null;
-  private got: { key: string; r: Received } | null = null;
+  /** The context generation: moves on every change of the shown context. */
+  private ctx = 0;
+  private seq = 0;
+  private got: { key: string; seq: number; r: Received } | null = null;
   private err: { key: string; text: string } | null = null;
-  /** The key of the inventory request out, and when it went (monotonic). */
-  private out: string | null = null;
+  /** The inventory request out for the shown context (null: none, or it was abandoned). */
+  private out: McpLogEntry | null = null;
+  /** A Refresh came while `out` was out: ask again when it ends. */
+  private queued = false;
   private askedKey: string | null = null;
   private askedAt = -Infinity;
-  private readonly checks = new Set<string>();
+  /** The checks out, by `${key}|${harness}`, in the current context generation. */
+  private readonly checks = new Map<string, McpLogEntry>();
   private fed = '';
   private hud = '';
   private wanted = false;
@@ -133,9 +151,21 @@ export class McpLink {
     if (c.codex_profile !== undefined) next.codex_profile = c.codex_profile;
     if (was.cwd === next.cwd && was.codex_profile === next.codex_profile) return;
     this.choices.set(floor, next);
-    this.d.changed();
     // A new context is asked at once (the page is open: it is wanted), and its predecessor's reply will be dropped.
-    if (floor === this.floor) this.poll(true);
+    if (floor === this.floor) {
+      this.moved();
+      this.poll(true);
+    }
+    this.d.changed();
+  }
+
+  /** The shown context changed: what is out was asked for another one and is abandoned, its reply dropped if it comes. */
+  private moved(): void {
+    this.ctx++;
+    this.out = null;
+    this.queued = false;
+    this.checks.clear();
+    this.askedKey = null;
   }
 
   /** Once per frame. */
@@ -148,6 +178,7 @@ export class McpLink {
     const floor = s.page ?? (s.here ? (s.office?.id ?? null) : null);
     if (floor !== this.floor) {
       this.floor = floor;
+      this.moved();
       this.d.changed();
     }
     if (s.connected !== this.connected) {
@@ -168,31 +199,37 @@ export class McpLink {
   /** The connection dropped: what was out is for an old generation now. */
   connLost(): void {
     this.gen++;
-    this.out = null;
-    this.checks.clear();
-    this.askedKey = null;
+    this.moved();
     this.gate.reset();
   }
 
-  /** The page's Refresh: ask now (unless that very request is out). */
+  /** The page's Refresh: ask now, or, while a request for this context is out, as soon as it ends. */
   refresh(): void {
-    this.poll(true);
+    if (this.out && this.out.key === this.key) this.queued = true;
+    else this.poll(true);
   }
 
   /** The page's "Check connections" for one provider: `mcp.check` for the shown context, once at a time. */
   check(h: McpHarness): void {
     const key = this.key;
     const floor = this.floor;
-    if (key === null || floor === null || !this.live || this.d.unsupported() || this.checks.has(`${key}|${h}`)) return;
-    this.checks.add(`${key}|${h}`);
+    const id = `${key}|${h}`;
+    if (key === null || floor === null || !this.live || this.d.unsupported() || this.checks.has(id)) return;
     const args = { ...this.args(floor), harness: h };
-    const entry: McpLogEntry = { t: 'mcp.check', key, args };
-    this.push(entry);
+    const entry = this.entry('mcp.check', key, args);
+    this.checks.set(id, entry);
     this.d.changed();
     void this.d.request('mcp.check', args, CHECK_TIMEOUT_MS).then((r) => {
-      this.checks.delete(`${key}|${h}`);
-      this.settle(entry, key, r);
+      if (this.checks.get(id) === entry) this.checks.delete(id);
+      this.settle(entry, r);
     });
+  }
+
+  private entry(t: McpLogEntry['t'], key: string, args: McpLogEntry['args']): McpLogEntry {
+    const e: McpLogEntry = { t, key, seq: ++this.seq, ctx: this.ctx, args };
+    this.log.push(e);
+    if (this.log.length > 400) this.log.shift();
+    return e;
   }
 
   private args(floor: string): McpRequest {
@@ -208,23 +245,29 @@ export class McpLink {
     const floor = this.floor;
     if (key === null || floor === null || !this.live || this.d.unsupported()) return;
     if (!force && !this.wanted) return;
-    if (this.out === key) return; // that very request is out
+    if (this.out) return; // one at a time (an abandoned one is not `out` any more)
     const now = this.d.now();
     if (!force && this.askedKey === key && now - this.askedAt < MCP_POLL_MS) return;
     this.askedKey = key;
     this.askedAt = now;
-    this.out = key;
     const args = this.args(floor);
-    const entry: McpLogEntry = { t: 'mcp.inventory', key, args };
-    this.push(entry);
+    const entry = this.entry('mcp.inventory', key, args);
+    this.out = entry;
     this.d.changed();
     void this.d.request('mcp.inventory', args, INVENTORY_TIMEOUT_MS).then((r) => {
-      if (this.out === key) this.out = null;
-      this.settle(entry, key, r);
+      const mine = this.out === entry;
+      if (mine) this.out = null;
+      this.settle(entry, r);
+      // A Refresh that came while this was out: sent now, if the page or the wall still wants it.
+      if (mine && this.queued) {
+        this.queued = false;
+        if (this.wanted) this.poll(true);
+      }
     });
   }
 
-  private settle(entry: McpLogEntry, key: string, r: CommandResult): void {
+  private settle(entry: McpLogEntry, r: CommandResult): void {
+    const key = entry.key;
     if (!r.ok && r.code === 'unknown_command') {
       entry.result = r.code;
       this.d.markUnsupported();
@@ -232,13 +275,15 @@ export class McpLink {
       this.d.changed();
       return;
     }
-    if (key !== this.key) {
+    // Another context, or this one left and come back to since it was asked, or older than what is shown: dropped.
+    if (key !== this.key || entry.ctx !== this.ctx || (r.ok && this.got?.key === key && this.got.seq > entry.seq)) {
       entry.result = 'dropped';
+      this.d.changed();
       return;
     }
     if (r.ok) {
       entry.result = 'ok';
-      this.got = { key, r: { snap: r.data as McpSnapshot, at: this.d.clock() } };
+      this.got = { key, seq: entry.seq, r: { snap: r.data as McpSnapshot, at: this.d.clock() } };
       if (this.err?.key === key) this.err = null;
     } else {
       entry.result = r.code;
@@ -249,15 +294,15 @@ export class McpLink {
     this.feed();
   }
 
-  private push(e: McpLogEntry): void {
-    this.log.push(e);
-    if (this.log.length > 400) this.log.shift();
-  }
-
   /** The shown context's Snapshot (never another context's). */
   private shown(): Received | null {
     const key = this.key;
     return this.got && key !== null && this.got.key === key ? this.got.r : null;
+  }
+
+  /** An inventory request for the shown context is out. */
+  private get asking(): boolean {
+    return this.out !== null && this.out.key === this.key;
   }
 
   model(): McpWallModel {
@@ -265,7 +310,7 @@ export class McpLink {
     return wallModel({
       unsupported: this.d.unsupported(),
       live: this.connected,
-      asking: this.out !== null && this.out === key,
+      asking: this.asking,
       r: this.shown(),
       error: this.err && this.err.key === key ? this.err.text : null,
       now: this.d.clock(),
@@ -291,11 +336,14 @@ export class McpLink {
     const c = this.choice(floor);
     const key = this.keyOf(floor, c);
     const mine = floor === this.floor;
+    const received = mine ? this.shown() : null;
     return {
       floor,
       choice: c,
-      received: mine ? this.shown() : null,
-      asking: mine && this.out === key,
+      received,
+      seq: received ? (this.got?.seq ?? 0) : 0,
+      sent: this.seq,
+      asking: mine && this.asking,
       checking: { claude: this.checks.has(`${key}|claude`), codex: this.checks.has(`${key}|codex`) },
       error: mine && this.err?.key === key ? this.err.text : null,
       unsupported: this.d.unsupported(),
@@ -305,7 +353,7 @@ export class McpLink {
 
   /** What the link knows (test hook). */
   info(): { floor: string | null; key: string | null; wanted: boolean; watching: boolean; asking: boolean; mode: McpWallModel['mode']; hud: string; context: McpSnapshot['context'] | null } {
-    return { floor: this.floor, key: this.key, wanted: this.wanted, watching: this.gate.watching, asking: this.out !== null && this.out === this.key, mode: this.model().mode, hud: this.hud, context: this.shown()?.snap.context ?? null };
+    return { floor: this.floor, key: this.key, wanted: this.wanted, watching: this.gate.watching, asking: this.asking, mode: this.model().mode, hud: this.hud, context: this.shown()?.snap.context ?? null };
   }
 }
 
