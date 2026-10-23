@@ -78,7 +78,9 @@ func TestMCPInventoryContext(t *testing.T) {
 		CodexProfiles: codexaccount.New(home, filepath.Join(home, ".codex"))})
 	w := worker("w1", "CODE|w1", "", "idle")
 	w.Cwd = wdir
-	b.floor("s", true, w)
+	gone := worker("w2", "CODE|w2", "", "idle") // its checkout does not exist: no choice
+	gone.Cwd = filepath.Join(home, "gone")
+	b.floor("s", true, gone, w)
 	b.floor("asleep", false)
 	c := b.connect(proto.Hello{Client: "mcp"})
 	c.snapshot()

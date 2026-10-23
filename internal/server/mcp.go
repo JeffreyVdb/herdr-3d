@@ -160,6 +160,9 @@ func (h *Hub) mcpScopeOf(floor string, cwdArg, profileArg proto.Optional[string]
 			continue
 		}
 		seen[dir] = true
+		if dir != def && h.opts.StatDir(dir) != nil { // gone: not a choice
+			continue
+		}
 		label := filepath.Base(dir)
 		if dir == def {
 			label += " (default)"
