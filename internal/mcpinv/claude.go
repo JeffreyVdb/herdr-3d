@@ -90,13 +90,21 @@ type claudeProject struct {
 type approvals struct {
 	Enabled   []string `json:"enabledMcpjsonServers"`
 	Disabled  []string `json:"disabledMcpjsonServers"`
-	EnableAll bool     `json:"enableAllProjectMcpServers"`
+	EnableAll *bool    `json:"enableAllProjectMcpServers"`
 }
 
-func (a *approvals) add(b approvals) {
-	a.Enabled = append(a.Enabled, b.Enabled...)
+// add layers b, a more specific source, over a (measured with get_settings
+// on 2.1.309): the lists add up and b's enableAllProjectMcpServers, when
+// set, replaces a's. A source that may not approve (a project settings
+// file of a folder not trusted) only takes approvals away.
+func (a *approvals) add(b approvals, approve bool) {
+	if approve {
+		a.Enabled = append(a.Enabled, b.Enabled...)
+	}
 	a.Disabled = append(a.Disabled, b.Disabled...)
-	a.EnableAll = a.EnableAll || b.EnableAll
+	if b.EnableAll != nil && (approve || !*b.EnableAll) {
+		a.EnableAll = b.EnableAll
+	}
 }
 
 // claudeSettings are the settings keys a read uses.
@@ -166,9 +174,13 @@ func readFile(path string, limit int64) ([]byte, error) {
 	return b, err
 }
 
-// settingsFiles are the settings files of cwd from lowest to highest
-// precedence, and whether each may approve project servers (a checked-in
-// project settings file only in a trusted folder).
+// settings reads the settings files of cwd from lowest to highest
+// precedence: user, project, local, managed. The project entry of the
+// global config counts as local settings below settings.local.json, and
+// its enableAllProjectMcpServers only when true (both measured on 2.1.309).
+// Project and local settings approve project servers only in a trusted
+// folder (local ones also in the user's own config home); elsewhere they
+// may only take approvals away.
 func (r *claudeRead) settings() {
 	type file struct {
 		path    string
@@ -176,14 +188,23 @@ func (r *claudeRead) settings() {
 	}
 	files := []file{{filepath.Join(r.f.Dir, "settings.json"), true}}
 	if r.cwd != "" {
+		home := r.cwd == filepath.Clean(r.f.Home) || r.cwd == filepath.Dir(filepath.Clean(r.f.Dir))
 		files = append(files, file{filepath.Join(r.cwd, ".claude", "settings.json"), r.project.Trusted},
-			file{filepath.Join(r.cwd, ".claude", "settings.local.json"), true})
+			file{"", true}, file{filepath.Join(r.cwd, ".claude", "settings.local.json"), r.project.Trusted || home})
 	}
 	if r.f.Managed != "" {
 		files = append(files, file{filepath.Join(r.f.Managed, "managed-settings.json"), true})
 	}
 	r.plugins, r.overrides = map[string]bool{}, map[string]string{}
 	for _, f := range files {
+		if f.path == "" {
+			entry := r.project.approvals
+			if entry.EnableAll != nil && !*entry.EnableAll {
+				entry.EnableAll = nil
+			}
+			r.approve.add(entry, f.approve)
+			continue
+		}
 		var s claudeSettings
 		if !r.readJSON(f.path, maxSmallJSON, &s) {
 			continue
@@ -198,9 +219,7 @@ func (r *claudeRead) settings() {
 				r.overrides[k] = o
 			}
 		}
-		if f.approve {
-			r.approve.add(s.approvals)
-		}
+		r.approve.add(s.approvals, f.approve)
 	}
 }
 
@@ -316,7 +335,6 @@ func loadClaude(f ClaudeFiles, cwd string) claudeConfig {
 	c.global = global.MCPServers
 	if cwd != "" {
 		r.project = global.Projects[cwd]
-		r.approve.add(r.project.approvals)
 	}
 	r.settings()
 	var managed struct {
@@ -366,7 +384,7 @@ func (c claudeConfig) approval(name string) string {
 	switch {
 	case slices.Contains(c.approve.Disabled, name):
 		return proto.MCPApprovalRejected
-	case c.approve.EnableAll || slices.Contains(c.approve.Enabled, name):
+	case c.approve.EnableAll != nil && *c.approve.EnableAll || slices.Contains(c.approve.Enabled, name):
 		return proto.MCPApprovalApproved
 	}
 	return proto.MCPApprovalPending
