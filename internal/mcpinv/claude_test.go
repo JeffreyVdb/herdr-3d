@@ -76,6 +76,10 @@ func claudeFixture(t *testing.T) (ClaudeFiles, string) {
 	})
 	writeJSON(t, filepath.Join(cwd, ".mcp.json"), map[string]any{"mcpServers": map[string]any{
 		"approved": stdio("/opt/project-secret"), "pending": stdio("/opt/project-secret"), "rejected": stdio("/opt/project-secret")}})
+	// Claude Code also loads the .mcp.json of every folder above, past the
+	// repository root; the closest definition of a name wins.
+	writeJSON(t, filepath.Join(home, "repos", ".mcp.json"), map[string]any{"mcpServers": map[string]any{
+		"ancestor": remote("http"), "approved": remote("http")}})
 	writeJSON(t, filepath.Join(f.Dir, "settings.json"), map[string]any{
 		"enabledPlugins": map[string]any{"tools@market": true, "off@market": false, "inline@market": true},
 		"skillOverrides": map[string]any{"hidden": "off", "tools-skill": "off"}})
@@ -118,6 +122,7 @@ func TestReadClaude(t *testing.T) {
 	want := []row{
 		{"local-only", "local", "", "stdio", "n/a", "not_checked"},
 		{"shadowed", "local", "", "http", "n/a", "not_checked"},
+		{"ancestor", "project", "", "http", "pending", "approval_required"},
 		{"approved", "project", "", "stdio", "approved", "not_checked"},
 		{"pending", "project", "", "stdio", "pending", "approval_required"},
 		{"rejected", "project", "", "stdio", "rejected", "disabled"},
@@ -171,7 +176,7 @@ func TestReadClaude(t *testing.T) {
 	}
 	assertSafe(t, p)
 
-	if got, ok := ClaudeUnapproved(f, cwd); !ok || !slices.Equal(got, []string{"pending", "rejected"}) {
+	if got, ok := ClaudeUnapproved(f, cwd); !ok || !slices.Equal(got, []string{"ancestor", "pending", "rejected"}) {
 		t.Fatalf("unapproved = %v %v", got, ok)
 	}
 }
@@ -212,6 +217,11 @@ func TestReadClaudeUserScope(t *testing.T) {
 	}
 	if got, ok := ClaudeUnapproved(f, ""); !ok || got != nil {
 		t.Fatalf("unapproved = %v", got)
+	}
+	// An unreadable .mcp.json above the checkout leaves them unknown too.
+	writeText(t, filepath.Join(f.Home, "repos", ".mcp.json"), "{")
+	if _, ok := ClaudeUnapproved(f, filepath.Join(f.Home, "repos", "x", "sub")); ok {
+		t.Fatal("an unreadable ancestor .mcp.json leaves the unapproved servers unknown")
 	}
 }
 

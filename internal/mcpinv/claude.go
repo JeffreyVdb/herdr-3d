@@ -300,8 +300,8 @@ type claudeConfig struct {
 	global    map[string]claudeEntry // user scope
 	managed   map[string]claudeEntry
 	exclusive bool                   // managed-mcp.json decides
-	mcpjson   map[string]claudeEntry // cwd's .mcp.json
-	mcpjsonOK bool                   // it is absent or was read
+	mcpjson   map[string]claudeEntry // the .mcp.json files of cwd and its ancestors
+	mcpjsonOK bool                   // each was absent or read
 	plugins   []plugin
 }
 
@@ -325,17 +325,40 @@ func loadClaude(f ClaudeFiles, cwd string) claudeConfig {
 	c.exclusive = f.Managed != "" && r.readJSON(filepath.Join(f.Managed, "managed-mcp.json"), maxSmallJSON, &managed)
 	c.managed = managed.MCPServers
 	if cwd != "" {
-		var project struct {
-			MCPServers map[string]claudeEntry `json:"mcpServers"`
-		}
-		path := filepath.Join(cwd, ".mcp.json")
-		if _, err := os.Lstat(path); err == nil || !errors.Is(err, fs.ErrNotExist) {
-			c.mcpjsonOK = r.readJSON(path, maxSmallJSON, &project)
-		}
-		c.mcpjson = project.MCPServers
+		c.mcpjson, c.mcpjsonOK = r.mcpJSON(cwd)
 	}
 	c.plugins = r.installedPlugins()
 	return c
+}
+
+// mcpJSON are the project-scope servers Claude Code loads in cwd: those of
+// the .mcp.json of cwd and of every ancestor up to / (also above the
+// repository root), the closest definition of a name winning (measured on
+// 2.1.309). ok is false when one of the files exists but could not be read.
+func (r *claudeRead) mcpJSON(cwd string) (map[string]claudeEntry, bool) {
+	out, ok := map[string]claudeEntry{}, true
+	for d := filepath.Clean(cwd); ; {
+		path := filepath.Join(d, ".mcp.json")
+		if _, err := os.Lstat(path); err == nil || !errors.Is(err, fs.ErrNotExist) {
+			var file struct {
+				MCPServers map[string]claudeEntry `json:"mcpServers"`
+			}
+			if r.readJSON(path, maxSmallJSON, &file) {
+				for name, e := range file.MCPServers {
+					if _, closer := out[name]; !closer {
+						out[name] = e
+					}
+				}
+			} else {
+				ok = false
+			}
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return out, ok
+		}
+		d = parent
+	}
 }
 
 // approval is a project-scope server's approval.
@@ -415,10 +438,11 @@ func ReadClaude(f ClaudeFiles, cwd string) proto.MCPProvider {
 	return p
 }
 
-// ClaudeUnapproved are the names, exactly as written, of cwd's .mcp.json
-// servers that Claude Code has not been told to use: a headless probe would
-// start them without asking. False when cwd's .mcp.json exists but could not
-// be read: then which ones is not known.
+// ClaudeUnapproved are the names, exactly as written, of the .mcp.json
+// servers of cwd and its ancestors that Claude Code has not been told to
+// use: a headless probe in cwd would start them without asking. False when
+// one of those files exists but could not be read: then which ones is not
+// known.
 func ClaudeUnapproved(f ClaudeFiles, cwd string) ([]string, bool) {
 	if cwd == "" {
 		return nil, true

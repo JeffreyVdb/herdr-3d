@@ -328,6 +328,9 @@ func ApplyObservation(p *proto.MCPProvider, o WorkerObservation) {
 }
 
 func apply(p *proto.MCPProvider, rows []Observed, scope string, at time.Time, w *proto.MCPWorker) {
+	if at.IsZero() {
+		return // an observation of no time cannot be placed
+	}
 	index := map[string]int{}
 	for i, s := range p.Servers {
 		index[s.Name] = i

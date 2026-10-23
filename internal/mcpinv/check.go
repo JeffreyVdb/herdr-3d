@@ -63,19 +63,26 @@ func claudeCheckArgs(settings string) []string {
 // Timeout (rows still pending are then connecting). Only initialize and
 // mcp_status are sent: never a user message, a toggle, a reload or a call.
 //
-// Headless Claude Code starts a project's .mcp.json servers without asking,
-// so the ones the user has not approved are passed as disabledMcpjsonServers
-// in --settings (measured on 2.1.309: such a server is then never started).
-// When which ones cannot be known (cwd's .mcp.json is unreadable), the check
-// is skipped.
+// Headless Claude Code starts the .mcp.json servers of cwd and of every
+// folder above it without asking, so the ones the user has not approved are
+// passed as disabledMcpjsonServers in --settings (measured on 2.1.309: such
+// a server is then never started). When which ones cannot be known (one of
+// those files is unreadable), the check is skipped.
 func (c ClaudeRunner) CheckClaude(ctx context.Context, cwd string) (CheckResult, error) {
 	if !c.Available() {
 		return CheckResult{State: proto.MCPCheckSkipped, Note: "Claude Code CLI not found on the bridge"}, nil
 	}
-	unapproved, ok := ClaudeUnapproved(c.Files, cwd)
+	dir, done, err := scopeDir(cwd)
+	if err != nil {
+		return CheckResult{}, &Failure{Note: "Claude Code check failed", Cause: err}
+	}
+	defer done()
+	// The .mcp.json files and approvals are those of where Claude Code runs
+	// (for user scope: the private dir's and its ancestors', none approved).
+	unapproved, ok := ClaudeUnapproved(c.Files, dir)
 	if !ok {
 		return CheckResult{State: proto.MCPCheckSkipped,
-			Note: "Skipped: the checkout's .mcp.json could not be read, so its unapproved servers could not be kept from starting"}, nil
+			Note: "Skipped: a .mcp.json of the checkout or a folder above it could not be read, so its unapproved servers could not be kept from starting"}, nil
 	}
 	settings, err := json.Marshal(map[string]any{"disableAllHooks": true, "disabledMcpjsonServers": append([]string{}, unapproved...)})
 	if err != nil {
@@ -92,11 +99,6 @@ func (c ClaudeRunner) CheckClaude(ctx context.Context, cwd string) (CheckResult,
 	if c.ConfigDirEnv != "" {
 		env = []string{"CLAUDE_CONFIG_DIR=" + c.ConfigDirEnv}
 	}
-	dir, done, err := scopeDir(cwd)
-	if err != nil {
-		return CheckResult{}, &Failure{Note: "Claude Code check failed", Cause: err}
-	}
-	defer done()
 	deadline := time.Now().Add(timeout)
 	// The process's own bound leaves room for the last poll's answer.
 	res, err := harness.Run(ctx, harness.Spawn{Bin: c.bin(), Dir: dir, Args: claudeCheckArgs(string(settings)), Env: env, Timeout: timeout + 3*time.Second},

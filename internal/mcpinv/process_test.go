@@ -148,16 +148,22 @@ func fakeClaude(scenario string, in *bufio.Scanner, out *json.Encoder, trace *os
 			disabled = s.Disabled
 		}
 	}
-	var project struct {
-		MCPServers map[string]any `json:"mcpServers"`
-	}
-	if b, err := os.ReadFile(".mcp.json"); err == nil {
-		_ = json.Unmarshal(b, &project)
-	}
 	var names []string
-	for name := range project.MCPServers {
-		if !slices.Contains(disabled, name) {
-			names = append(names, name)
+	cwd, _ := os.Getwd()
+	for d := cwd; ; d = filepath.Dir(d) { // every .mcp.json from cwd up
+		var project struct {
+			MCPServers map[string]any `json:"mcpServers"`
+		}
+		if b, err := os.ReadFile(filepath.Join(d, ".mcp.json")); err == nil {
+			_ = json.Unmarshal(b, &project)
+		}
+		for name := range project.MCPServers {
+			if !slices.Contains(disabled, name) && !slices.Contains(names, name) {
+				names = append(names, name)
+			}
+		}
+		if filepath.Dir(d) == d {
+			break
 		}
 	}
 	slices.Sort(names)
@@ -487,7 +493,7 @@ func TestCheckClaude(t *testing.T) {
 	}
 	i := slices.Index(meta.Args, "--tools")
 	j := slices.Index(meta.Args, "--settings")
-	if i < 0 || meta.Args[i+1] != "" || j < 0 || meta.Args[j+1] != `{"disableAllHooks":true,"disabledMcpjsonServers":["pending","rejected"]}` {
+	if i < 0 || meta.Args[i+1] != "" || j < 0 || meta.Args[j+1] != `{"disableAllHooks":true,"disabledMcpjsonServers":["ancestor","pending","rejected"]}` {
 		t.Fatalf("args = %q", meta.Args)
 	}
 	var subtypes []string
