@@ -181,7 +181,9 @@ type RPCError struct {
 	Code   int
 }
 
-func (e *RPCError) Error() string { return fmt.Sprintf("%s failed (JSON-RPC code %d)", e.Method, e.Code) }
+func (e *RPCError) Error() string {
+	return fmt.Sprintf("%s failed (JSON-RPC code %d)", e.Method, e.Code)
+}
 
 // Run starts sp's CLI in its own process group, hands its protocol stream
 // to run and ends it: bounded by sp.Timeout (and ctx), the group killed and

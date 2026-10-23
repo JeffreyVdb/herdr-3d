@@ -114,7 +114,9 @@ func fakeCLI(scenario string) {
 }
 
 func codexConfigFixture() map[string]any {
-	origin := func(t string) map[string]any { return map[string]any{"name": map[string]any{"type": t, "file": "/secret/path"}, "version": "x"} }
+	origin := func(t string) map[string]any {
+		return map[string]any{"name": map[string]any{"type": t, "file": "/secret/path"}, "version": "x"}
+	}
 	return map[string]any{
 		"config": map[string]any{"mcp_servers": map[string]any{
 			"good":     map[string]any{"command": "/opt/secret-command", "args": []string{"--secret-arg"}, "env": map[string]string{"TOKEN": "sk-live-SECRETENV"}, "enabled": true},
