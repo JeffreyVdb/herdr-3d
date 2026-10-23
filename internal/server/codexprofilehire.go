@@ -240,15 +240,15 @@ func (h *Hub) checkHomeProfile(ctx context.Context, p *codexProfileRun, rec *sto
 // (mode: its launch's): herdr's session hook (herdr-agent-state.sh) is how
 // herdr learns the worker's Codex session. The bridge learns it another
 // way (#139 S1e, S1b): a shared worker's from its own Codex server, which
-// does not follow a new session the terminal starts (/new); a legacy one's
-// by its folder in the profile's sessions.
+// does not follow a new session the terminal starts (/new). A legacy worker
+// waits for explicit identity before its transcript is read (#192).
 func noHookNote(name, mode string) string {
 	if mode == store.CodexShared {
 		return name + " has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, so the bridge takes " +
 			"its thread from the worker's own Codex server and does not follow a new session started in its terminal (/new)."
 	}
-	return name + " has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, so the bridge finds it " +
-		"by the worker's folder in " + name + "'s sessions (for its usage, and at sleep, so a wake resumes it)."
+	return name + " has no hooks.json with herdr's hook: herdr is not told the worker's Codex session. " +
+		"Its conversation and usage stay pending until its session is reported."
 }
 
 // profileChecked writes a check's outcome into rec, with the setup's note

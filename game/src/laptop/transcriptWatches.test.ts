@@ -241,10 +241,10 @@ describe('TranscriptWatches', () => {
     h.w.closed({ t: 'transcript.closed', id: 'a', reason: 'session_changed' });
     expect(h.closed).toEqual([['a', 'session_changed']]);
     expect(h.sent.map((s) => s.t)).toEqual(['transcript.watch', 'transcript.watch']);
-    // The old view stays until the new ack (no stop in between).
-    expect(h.log).toEqual(['reset a old']);
+    // The old session is gone even while the replacement ack is delayed.
+    expect(h.log).toEqual(['reset a old', 'reset a ']);
     await h.answer(1, h.ack([item('new')], { session: 's2' }));
-    expect(h.log).toEqual(['reset a old', 'reset a new']);
+    expect(h.log).toEqual(['reset a old', 'reset a ', 'reset a new']);
   });
 
   it('resync and not_found watch again, not more often than every 2 s', async () => {

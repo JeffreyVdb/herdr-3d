@@ -270,7 +270,9 @@ export class TranscriptWatches {
     const last = this.lastClose.get(key) ?? -Infinity;
     this.lastClose.set(key, now);
     if ((w.child ? CHILD_REWATCH : REWATCH).has(c.reason)) {
-      // The view keeps what it shows until the new watch's ack replaces it; a close right after the last one waits.
+      // #192: a replacement invalidates the old conversation immediately, including during retry back-off.
+      if (c.reason === 'session_changed') this.host.sink.reset(w.id, watchAck({ pending: true }), w.child);
+      // A resync of the same session keeps its view until the replacement ack.
       if (c.reason !== 'not_found' && now - last >= RETRY_MS) this.watch(w, w.limit);
       else this.retryAt.set(key, now + RETRY_MS);
     } else {

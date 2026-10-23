@@ -102,90 +102,33 @@ func codexRollout(t *testing.T, root, stamp, id, cwd string, in int) {
 	}
 }
 
-// A Codex agent herdr knows no session of gets the usage of the newest
-// rollout of its cwd that no other worker of its floor has (the sleep
-// backfill's rule), without an agent_session of its own; looked for again
-// after usage.MissRescan.
+// #192: no transcript-derived state until the worker's session is identified.
 func TestUsageCodexWithoutSession(t *testing.T) {
 	t.Parallel()
-	const (
-		oldID  = "0c0d0e0f-0000-4000-8000-000000000001"
-		midID  = "0c0d0e0f-0000-4000-8000-000000000002"
-		newID  = "0c0d0e0f-0000-4000-8000-000000000003"
-		elseID = "0c0d0e0f-0000-4000-8000-000000000004"
-		nextID = "0c0d0e0f-0000-4000-8000-000000000005"
-	)
+	const session = "0c0d0e0f-0000-4000-8000-000000000001"
 	root := t.TempDir()
-	codexRollout(t, root, "2026-09-28T09-00-00", oldID, "/repo", 100)
-	codexRollout(t, root, "2026-09-29T09-00-00", midID, "/repo", 200)
-	codexRollout(t, root, "2026-09-29T10-00-00", newID, "/repo", 300)
-	codexRollout(t, root, "2026-09-29T11-00-00", elseID, "/elsewhere", 400)
-	lookups := 0
+	codexRollout(t, root, "2026-09-28T09-00-00", session, "/repo", 100)
 	tr := newUsageTracker(UsageConfig{Roots: usage.Roots{CodexSessions: root}})
-	find := tr.cfg.FindCodex
-	tr.cfg.FindCodex = func(cwd string, skip func(string) bool) (string, error) {
-		lookups++
-		return find(cwd, skip)
-	}
-	t0 := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
-	inputs := func(ups []usageUpdate) map[string]int64 {
-		out := map[string]int64{}
-		for _, u := range ups {
-			if u.usage == nil {
-				out[u.id] = -1
-			} else {
-				out[u.id] = u.usage.Input
-			}
+	defer tr.closeLogs()
+	ws := []usageWorker{{id: "new", harness: "codex", cwd: "/repo", watched: true}}
+	now := time.Now()
+	for _, at := range []time.Time{now, now.Add(usage.MissRescan)} {
+		if got := tr.poll(ws, at); len(got) != 0 || tr.sessions["new"] != nil || tr.logs["new"] != nil || tr.lines["new"] != nil {
+			t.Fatalf("unidentified worker read a rollout: %+v", got)
 		}
-		return out
 	}
-
-	// a has the newest rollout as its own session (herdr knows it); b and c,
-	// Codex in the same folder without one, get the next newest in id order;
-	// d on another floor may have the newest; e is not Codex.
-	ws := []usageWorker{
-		{id: "a", harness: "codex", session: newID, floor: "s1"},
-		{id: "c", harness: "codex", floor: "s1", codexCwd: "/repo"},
-		{id: "b", harness: "codex", floor: "s1", codexCwd: "/repo"},
-		{id: "d", harness: "codex", floor: "s2", codexCwd: "/repo"},
-		{id: "e", harness: "claude", floor: "s1"},
+	ws[0].session = session
+	if got := tr.poll(ws, now.Add(2*usage.MissRescan)); len(got) != 1 || got[0].usage.Input != 100 {
+		t.Fatalf("identified resume: %+v", got)
 	}
-	got := inputs(tr.poll(ws, t0))
-	if want := map[string]int64{"a": 300, "b": 200, "c": 100, "d": 300}; !maps.Equal(got, want) {
-		t.Fatalf("first = %v, want %v", got, want)
-	}
-	if lookups != 3 {
-		t.Fatalf("%d lookups", lookups)
-	}
-	// Found once, then kept: no lookups until the rescan.
-	codexRollout(t, root, "2026-09-29T12-00-00", nextID, "/repo", 500)
-	tr.poll(ws, t0.Add(2*time.Second))
-	if lookups != 3 {
-		t.Fatalf("%d lookups within the rescan", lookups)
-	}
-	// After it: b now has the newest free one, c the one b had; d the newest.
-	got = inputs(tr.poll(ws, t0.Add(usage.MissRescan)))
-	if want := map[string]int64{"b": 500, "c": 200, "d": 500}; !maps.Equal(got, want) {
-		t.Fatalf("after the rescan = %v, want %v", got, want)
-	}
-	// herdr learns b's session (the sleep backfill): it is b's own now, and
-	// nothing changes for it.
-	ws[2].session, ws[2].codexCwd = nextID, ""
-	if got = inputs(tr.poll(ws, t0.Add(usage.MissRescan+time.Second))); len(got) != 0 {
-		t.Fatalf("known now: %v", got)
-	}
-	// The agent gone (no agent kind): its found session and its usage go.
-	ws[1].codexCwd, ws[1].shown = "", true
-	if got = inputs(tr.poll(ws, t0.Add(usage.MissRescan+2*time.Second))); !maps.Equal(got, map[string]int64{"c": -1}) {
-		t.Fatalf("gone = %v", got)
-	}
-	if _, ok := tr.found["c"]; ok {
-		t.Fatal("c's found session kept")
+	ws[0].session, ws[0].shown = "", true
+	if got := tr.poll(ws, now.Add(3*usage.MissRescan)); len(got) != 1 || got[0].usage != nil || tr.sessions["new"] != nil {
+		t.Fatalf("replacement kept previous usage: %+v", got)
 	}
 }
 
 // #139: a Codex worker on another profile reads its rollouts in that
-// profile's own sessions folder, by its session or by its folder: never in
+// profile's own sessions folder, by its identified session: never in
 // --codex-sessions (the default home's), also not when its profile is gone.
 // A worker whose folder changes (a wake on the default) reads afresh.
 func TestUsageCodexProfileRoot(t *testing.T) {
@@ -213,10 +156,10 @@ func TestUsageCodexProfileRoot(t *testing.T) {
 		return out
 	}
 	ws := []usageWorker{
-		{id: "found", harness: "codex", floor: "s1", codexCwd: "/repo", codexOther: true, codexHome: work, watched: true},
-		{id: "known", harness: "codex", session: bothID, floor: "s2", codexOther: true, codexHome: work},
-		{id: "gone", harness: "codex", session: defID, floor: "s3", codexOther: true},
-		{id: "own", harness: "codex", floor: "s4", codexCwd: "/repo"},
+		{id: "found", harness: "codex", session: workID, codexOther: true, codexHome: work, watched: true},
+		{id: "known", harness: "codex", session: bothID, codexOther: true, codexHome: work},
+		{id: "gone", harness: "codex", session: defID, codexOther: true},
+		{id: "own", harness: "codex", session: defID},
 	}
 	t0 := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
 	got := inputs(tr.poll(ws, t0))
@@ -399,7 +342,7 @@ func TestUsageCodexProfileChildTranscript(t *testing.T) {
 			tr := newUsageTracker(UsageConfig{Roots: roots})
 			defer tr.closeLogs()
 			kid := txKid{key: "child-watch", native: child, session: parent, harness: "codex", avail: proto.TranscriptAvailable}
-			w := usageWorker{id: "w", harness: "codex", session: parent, floor: "s", codexOther: other, kids: []txKid{kid}}
+			w := usageWorker{id: "w", harness: "codex", session: parent, codexOther: other, kids: []txKid{kid}}
 			if other {
 				w.codexHome = home
 			}

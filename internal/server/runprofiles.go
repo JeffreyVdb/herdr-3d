@@ -180,12 +180,11 @@ func teamNotes(list []codexaccount.Account, a codexaccount.Account) []string {
 
 // teamHookNote is what a role's home that runs no herdr hook changes: herdr
 // is not told the session of an agent the orchestrator starts there, so
-// the bridge finds its sessions by its folder in that home (codexHomeOf's
-// token). Unlike a hire's (noHookNote), it promises nothing of a wake: the
-// bridge does not resume such an agent on another home.
+// its conversation and usage wait for explicit session identity. The bridge
+// does not resume such an agent on another home.
 func teamHookNote(name string) string {
 	return name + " has no hooks.json with herdr's hook: herdr is not told the Codex session of an agent the orchestrator " +
-		"starts on it, so the bridge finds its sessions by the agent's folder in " + name + "'s sessions (its usage and transcript)."
+		"starts on it. Its conversation and usage stay pending until its session is reported."
 }
 
 // teamReport puts what resolving the team found into the run's start

@@ -45,7 +45,7 @@ var handoffOp = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 // handoffCand is a worker's candidate and the transcript file it was read
 // from (its path, the file as the tail read it, and where the tail had read
 // to), under the agent session herdr reported of the worker then (agent;
-// "" for a Codex agent whose rollout was found by its cwd).
+// "" for a Codex thread identified by the worker's own app-server).
 type handoffCand struct {
 	c     transcript.Candidate
 	path  string

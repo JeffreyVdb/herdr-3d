@@ -54,7 +54,7 @@ function rig() {
   });
   const watches = new TranscriptWatches({
     send,
-    sink: { reset: (id, ack) => mode.reset(id, ack), push: (id, items, updates) => mode.push(id, items, updates), stop: () => {} },
+    sink: { reset: (id, ack) => mode.reset(id, ack), push: (id, items, updates, head) => mode.push(id, items, updates, head), stop: () => {} },
     failed: () => {},
     closed: () => {},
     now: () => 0,
@@ -67,6 +67,43 @@ let layer: HTMLElement | null = null;
 afterEach(() => layer?.remove());
 
 describe('transcript mode with the real render module', () => {
+  it('clears a replaced session immediately, stays loading, and ignores late old responses', async () => {
+    const r = rig();
+    layer = r.layer;
+    r.mode.sit('w1', 'Nibble', true, 'codex');
+    r.watches.sync(new Set(['w1']));
+    const item = (text: string): TranscriptItem => ({ id: text, seq: 1, ts: 0, kind: 'user', parts: [{ text }] });
+    r.last('transcript.watch').resolve({ ok: true, data: { harness: 'codex', session: 'old', items: [item('OLD CONVERSATION')], cursor: 'c:2', has_more: true } });
+    await settle(() => layer?.textContent?.includes('OLD CONVERSATION') === true);
+    const jump = r.mode.jump({ item_id: 'older', origin: 'input', source: 'inline' });
+    const page = r.last('transcript.page');
+    // A refresh is in flight when the bridge identifies a replacement.
+    r.watches.refresh('w1');
+    r.watches.sync(new Set(['w1']));
+    const oldWatch = r.last('transcript.watch');
+    r.watches.closed({ t: 'transcript.closed', id: 'w1', reason: 'session_changed' });
+    expect(layer.textContent).not.toContain('OLD CONVERSATION');
+    expect(r.mode.itemCount).toBe(0);
+    expect(layer.querySelector<HTMLElement>('.txl')?.hidden).toBe(false);
+    oldWatch.resolve({ ok: true, data: { session: 'old', items: [item('LATE OLD WATCH')] } });
+    page.resolve({ ok: true, data: { items: [item('LATE OLD PAGE')] } });
+    await jump;
+    await Promise.resolve();
+    expect(r.mode.itemCount).toBe(0);
+    r.last('transcript.watch').resolve({ ok: true, data: { harness: 'codex', session: 'new', pending: true, items: [] } });
+    await Promise.resolve();
+    expect(layer.querySelector<HTMLElement>('.txl')?.hidden).toBe(false);
+    r.watches.items({ t: 'transcript.items', id: 'w1', harness: 'codex', session: 'new', pending: false, items: [item('NEW CONVERSATION')], updates: [] });
+    await settle(() => layer?.textContent?.includes('NEW CONVERSATION') === true);
+    expect(layer.textContent).not.toContain('OLD');
+    expect(layer.querySelector<HTMLElement>('.txl')?.hidden).toBe(true);
+    // A second close in the retry window clears the view before the delayed re-watch too.
+    r.watches.closed({ t: 'transcript.closed', id: 'w1', reason: 'session_changed' });
+    expect(layer.textContent).not.toContain('NEW CONVERSATION');
+    expect(layer.querySelector<HTMLElement>('.txl')?.hidden).toBe(false);
+    r.mode.stand();
+  });
+
   it('Claude: sit, the watch acks, the view mounts over the bridge’s items; a subagent loads as a page', async () => {
     const r = rig();
     layer = r.layer;
@@ -304,8 +341,8 @@ describe('transcript mode with the real render module', () => {
     await Promise.resolve();
     const box = r.mode.box as HTMLElement;
     await settle(() => !!box.querySelector('.tx'));
-    expect((box.querySelector('.tx-empty') as HTMLElement).hidden).toBe(false);
-    expect((box.querySelector('.txl') as HTMLElement).hidden).toBe(true); // #126: answered: empty, not opening
+    expect((box.querySelector('.tx-empty') as HTMLElement).hidden).toBe(true);
+    expect((box.querySelector('.txl') as HTMLElement).hidden).toBe(false); // #192: pending identity stays loading
     r.watches.items({ t: 'transcript.items', id: 'w3', items: CLAUDE.slice(0, 3), updates: [], harness: 'claude', session: 's3', version: '2.1.0', cursor: 'c:1', has_more: false, pending: false });
     expect(box.querySelectorAll('.tx-list > .tx-item').length).toBe(3);
     expect((box.querySelector('.tx-empty') as HTMLElement).hidden).toBe(true);
