@@ -39,7 +39,7 @@ const provider = (o: Partial<McpProvider> = {}): McpProvider => ({
 
 function snapshot(o: Partial<McpSnapshot> = {}): McpSnapshot {
   return {
-    context: { floor: 'lab', cwd: '/home/me/repos/x', cwd_display: '~/repos/x', codex_profile: null, codex_profile_name: 'codex', claude_config: '~/.claude' },
+    context: { floor: 'lab', cwd: '/home/me/repos/x', cwd_display: '~/repos/x', codex_profile: 'codex', codex_profile_name: 'codex', claude_config: '~/.claude' },
     checkouts: [
       { path: '/home/me/repos/x', display: '~/repos/x', label: 'x (default)' },
       { path: '/home/me/repos/y', display: '~/repos/y', label: 'y' },

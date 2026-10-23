@@ -477,7 +477,7 @@ export class SimWorld {
           return { default: d, all };
         },
         expected: (floor) => this.floors.get(floor)?.settings?.expected_mcp,
-        profile: (key) => (this.codexProfiles ? this.codexProfiles.find(key) : key === null || key === 'codex' ? { key: 'codex', name: 'codex' } : null),
+        profile: (key) => (this.codexProfiles ? this.codexProfiles.find(key) : key === null ? { key: '', name: '' } : null),
         later: (fn, ms) => {
           const h = this.setT(() => {
             this.timers.delete(h);

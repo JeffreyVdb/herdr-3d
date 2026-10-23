@@ -29,7 +29,7 @@ export interface McpSimHost {
   checkouts(floor: string): { default: string; all: string[] };
   /** The floor's expected server names (absent: none set). */
   expected(floor: string): string[] | undefined;
-  /** A Codex profile by key (null: the default), or null when there is none such. */
+  /** A Codex profile by key (null: the default), or null when there is none such; key and name `""` when the bridge lists no profiles. */
   profile(key: string | null): { key: string; name: string } | null;
   later(fn: () => void, ms: number): unknown;
   now(): number;
@@ -124,7 +124,7 @@ export class McpSim {
     const harness = t === 'mcp.check' ? (a.harness as Harness) : null;
     if (t === 'mcp.check' && harness !== 'claude' && harness !== 'codex') throw this.h.error('bad_request', 'bad args: harness must be claude or codex');
     this.log.push({ t, floor, cwd, codex_profile: profile.key, ...(harness ? { harness } : {}) });
-    const ms = (this.script.delay.get(profile.key) ?? 0) + (harness ? this.checkMs : 0);
+    const ms = (this.script.delay.get(profile.key || 'codex') ?? 0) + (harness ? this.checkMs : 0);
     const answer = () => {
       try {
         if (harness) this.checks.set(`${cwd}|${profile.key}|${harness}`, this.h.now());
@@ -142,13 +142,13 @@ export class McpSim {
     const now = this.h.now();
     const expected = this.h.expected(floor) ?? [];
     return {
-      context: { floor, cwd, cwd_display: cwd === null ? '' : display(cwd), codex_profile: profile.key === 'codex' ? null : profile.key, codex_profile_name: profile.name, claude_config: '~/.claude' },
+      context: { floor, cwd, cwd_display: cwd === null ? '' : display(cwd), codex_profile: profile.key, codex_profile_name: profile.name, claude_config: '~/.claude' },
       checkouts: all.map((p, i) => ({ path: p, display: display(p), label: `${p.split('/').pop() ?? p}${i === 0 ? ' (default)' : ''}` })),
       ...(this.script.expected ? { expected } : {}),
       generated_at: iso(now),
       providers: {
         claude: this.provider('claude', CLAUDE, cwd, profile.key, now),
-        codex: this.provider('codex', CODEX[profile.key] ?? [], cwd, profile.key, now),
+        codex: this.provider('codex', CODEX[profile.key || 'codex'] ?? [], cwd, profile.key, now),
       },
     };
   }

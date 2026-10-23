@@ -54,7 +54,7 @@ test('looking at the wall asks for the inventory and shows it; E opens the overv
   await expect.poll(async () => (await mcp(page)).screen?.mode, { timeout: 15_000 }).toBe('data');
   const s = (await mcp(page)).screen;
   expect(s?.lines).toEqual(expect.arrayContaining(['MCP & skills', 'Claude Code', '4 MCP servers', '1 needs attention', 'Codex', '2 MCP servers', 'Nothing needs attention', '2+ skills', '3 skills']));
-  expect(s?.lines.some((l) => /· Codex profile codex$/.test(l))).toBe(true);
+  expect(s?.lines.some((l) => /· Codex profile default$/.test(l))).toBe(true);
   await expect(bar).toContainText('Claude Code 4 MCP (1 needs you) · Codex 2 MCP');
   // Looking on: no redraw and no second request for 20 s.
   const draws = s?.draws ?? 0;

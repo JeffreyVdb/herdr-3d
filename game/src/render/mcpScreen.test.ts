@@ -18,7 +18,7 @@ const provider = (o: Partial<McpProvider> = {}): McpProvider => ({
   ...o,
 });
 const snap = (claude: McpProvider, codex: McpProvider): McpSnapshot => ({
-  context: { floor: 'lab', cwd: '/home/me/x', cwd_display: '~/x', codex_profile: null, codex_profile_name: 'codex', claude_config: '~/.claude' },
+  context: { floor: 'lab', cwd: '/home/me/x', cwd_display: '~/x', codex_profile: 'codex', codex_profile_name: 'codex', claude_config: '~/.claude' },
   checkouts: [],
   expected: [],
   generated_at: iso(T0),

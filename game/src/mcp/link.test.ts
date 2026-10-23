@@ -17,7 +17,7 @@ const provider = (n: number): McpProvider => ({
 });
 
 const snap = (a: McpRequest, n = 1): McpSnapshot => ({
-  context: { floor: a.floor, cwd: a.cwd === undefined ? '/repo' : a.cwd, cwd_display: a.cwd === undefined ? '~/repo' : (a.cwd ?? ''), codex_profile: a.codex_profile ?? null, codex_profile_name: a.codex_profile ?? 'codex', claude_config: '~/.claude' },
+  context: { floor: a.floor, cwd: a.cwd === undefined ? '/repo' : a.cwd, cwd_display: a.cwd === undefined ? '~/repo' : (a.cwd ?? ''), codex_profile: a.codex_profile ?? 'codex', codex_profile_name: a.codex_profile ?? 'codex', claude_config: '~/.claude' },
   checkouts: [],
   expected: [],
   generated_at: new Date(T0).toISOString(),

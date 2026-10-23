@@ -3114,7 +3114,8 @@ export interface McpContext {
   floor: string;
   cwd: string | null;
   cwd_display: string;
-  codex_profile: string | null;
+  /** The resolved Codex profile's key (the default's too) and name; `""` when the bridge lists no Codex profiles. */
+  codex_profile: string;
   codex_profile_name: string;
   claude_config: string;
 }

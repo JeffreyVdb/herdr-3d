@@ -49,7 +49,7 @@ const provider = (state: string, servers: McpServer[] = [], o: Partial<McpProvid
 });
 
 const snapshot = (claude: McpProvider, codex: McpProvider, expected?: string[]): McpSnapshot => ({
-  context: { floor: 'lab', cwd: '/home/me/repos/x', cwd_display: '~/repos/x', codex_profile: null, codex_profile_name: 'codex', claude_config: '~/.claude' },
+  context: { floor: 'lab', cwd: '/home/me/repos/x', cwd_display: '~/repos/x', codex_profile: 'codex', codex_profile_name: 'codex', claude_config: '~/.claude' },
   checkouts: [{ path: '/home/me/repos/x', display: '~/repos/x', label: 'x (default)' }],
   ...(expected ? { expected } : {}),
   generated_at: iso(T0),

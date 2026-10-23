@@ -56,7 +56,7 @@ describe('the fixture bridge’s MCP & skills (tools/fixture-mcp.ts)', () => {
     const r = rig();
     const a = r.cmd('mcp.inventory', { floor: 'lab' });
     const s = a.data as Snap;
-    expect(s.context).toMatchObject({ floor: 'lab', codex_profile: null, codex_profile_name: 'codex' });
+    expect(s.context).toMatchObject({ floor: 'lab', codex_profile: '', codex_profile_name: '' }); // no profiles on this bridge
     expect(s.context.cwd).toBe(s.checkouts[0]?.path);
     expect(s.expected).toEqual([]);
     expect(s.providers.claude.servers.map((x) => [x.name, x.status])).toEqual([

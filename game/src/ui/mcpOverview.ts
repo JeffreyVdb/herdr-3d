@@ -61,7 +61,7 @@ export interface McpOverviewSummary {
   open: boolean;
   floor: string;
   /** The checkout and profile the shown data is for (null: none shown yet). */
-  context: { cwd: string | null; codex_profile: string | null } | null;
+  context: { cwd: string | null; codex_profile: string } | null;
   state: 'unsupported' | 'offline' | 'loading' | 'error' | 'data';
   providers: Array<{ harness: McpHarness; tone: ProviderTone | null; servers: number; attention: number; checking: boolean; check: string }>;
   rows: Array<{ name: string; expected: boolean; claude: string; codex: string; missing: boolean }>;
