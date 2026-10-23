@@ -1,8 +1,10 @@
 package mcpinv
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +27,13 @@ const (
 	DefaultMaxBackoff = 5 * time.Minute
 	DefaultCheckEvery = 30 * time.Second
 	DefaultMax        = 64
+	DefaultConcurrent = 4
+)
+
+// Notes of answers that started nothing: the bridge was busy.
+const (
+	noteBusyRead  = "Other inventory reads are running; this one starts on a later refresh"
+	noteBusyCheck = "Other connection checks or reads are running; try again in a moment"
 )
 
 // Options configure a Service.
@@ -40,38 +49,50 @@ type Options struct {
 	MinBackoff, MaxBackoff time.Duration
 	// CheckEvery is the least time between two checks of a key.
 	CheckEvery time.Duration
-	// Max bounds the keys kept (least recently used dropped first).
+	// Max bounds the keys kept, those with a read or check in flight
+	// included (the least recently used idle one is dropped first), and
+	// the keys checked within CheckEvery.
 	Max int
+	// Concurrent bounds the reads and checks running at once.
+	Concurrent int
 }
 
 // Service answers inventories and checks from a bridge-wide cache per Key:
 // a fresh read at once; an older one at once while one read refreshes it
 // in the background; a first read waited for, up to Wait (then pending: a
 // later request gets it). Concurrent requests share one read per key. A
-// failed read keeps the last good one, marked stale, and the next waits
-// MinBackoff, doubling to MaxBackoff; with none, the answer is failed,
-// never an empty success. Checks are coalesced per key, at most one per
-// CheckEvery (a request inside it answers the last), never retried; the
-// last check's statuses stay on the key's later answers.
+// read whose config or skills half fails keeps that half's last good read,
+// marked stale, and the next read waits MinBackoff, doubling to
+// MaxBackoff; with none, the half is failed, never an empty success.
+// Checks are coalesced per key, at most one per CheckEvery (a request
+// inside it answers the last, also after the key was dropped), never
+// retried; the last check's statuses stay on the key's later answers. At
+// most Max keys are kept and Concurrent reads and checks run: a request
+// that cannot start one starts nothing and is answered pending (a read) or
+// skipped (a check).
 type Service struct {
-	ctx  context.Context // the bridge's: a read outlives the request that started it
-	o    Options
-	wg   sync.WaitGroup
-	mu   sync.Mutex
-	keys map[Key]*entry
-	tick uint64
+	ctx     context.Context // the bridge's: a read outlives the request that started it
+	o       Options
+	wg      sync.WaitGroup
+	mu      sync.Mutex
+	keys    map[Key]*entry
+	recent  map[Key]*checked // the checks of the last CheckEvery, kept apart from keys
+	running int              // reads and checks in flight
+	tick    uint64
 }
 
 type entry struct {
-	good     *proto.MCPProvider // the last good read (nil: none yet)
-	readAt   time.Time          // when it ended
-	failed   bool               // the latest read failed (good is stale)
-	failNote string
-	failures int       // failed reads in a row
-	retryAt  time.Time // no read before it (backoff)
-	reading  chan struct{}
+	good *proto.MCPProvider // the last read, each half its last good one (nil: none yet)
+	// When each half of good was read (zero: never), and why its latest
+	// read failed ("": it did not; good's half is then current).
+	cfgAt, skillsAt     time.Time
+	cfgFail, skillsFail string
+	readAt              time.Time // when the last read that did not fail ended
+	failures            int       // failed reads in a row
+	retryAt             time.Time // no read before it (backoff)
+	reading             chan struct{}
 
-	check    *checked
+	check    *checked // the last check (kept while the key is)
 	checking chan struct{}
 
 	used uint64
@@ -104,7 +125,10 @@ func New(ctx context.Context, o Options) *Service {
 	if o.Max <= 0 {
 		o.Max = DefaultMax
 	}
-	return &Service{ctx: ctx, o: o, keys: map[Key]*entry{}}
+	if o.Concurrent <= 0 {
+		o.Concurrent = DefaultConcurrent
+	}
+	return &Service{ctx: ctx, o: o, keys: map[Key]*entry{}, recent: map[Key]*checked{}}
 }
 
 // Wait waits for the reads and checks in flight.
@@ -125,10 +149,16 @@ func (s *Service) Check(ctx context.Context, key Key) proto.MCPProvider {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e := s.entry(key)
-	if e.checking == nil && (e.check == nil || s.o.Now().Sub(e.check.at) >= s.o.CheckEvery) {
-		s.startCheck(key, e)
+	s.prune()
+	busy := e == nil
+	if e != nil && e.checking == nil && s.recent[key] == nil {
+		if s.running < s.o.Concurrent && len(s.recent) < s.o.Max {
+			s.startCheck(key, e)
+		} else {
+			busy = true
+		}
 	}
-	if wait := e.checking; wait != nil {
+	if wait := e.waitCheck(); wait != nil {
 		s.mu.Unlock()
 		select {
 		case <-wait:
@@ -137,30 +167,44 @@ func (s *Service) Check(ctx context.Context, key Key) proto.MCPProvider {
 		s.mu.Lock()
 	}
 	s.waitFirst(ctx, e)
-	return s.answer(e)
+	p := s.answer(e)
+	if busy { // nothing started: not a check, so it is not the last one either
+		p.Check = proto.MCPCheck{State: proto.MCPCheckSkipped, Note: noteBusyCheck}
+	}
+	return p
 }
 
-// entry is key's entry, its read started when due (s.mu held).
+func (e *entry) waitCheck() chan struct{} {
+	if e == nil {
+		return nil
+	}
+	return e.checking
+}
+
+// entry is key's entry, its read started when due and Concurrent allows
+// (s.mu held); nil when Max keys are kept and each has work in flight.
 func (s *Service) entry(key Key) *entry {
 	e := s.keys[key]
 	if e == nil {
-		e = &entry{}
+		if len(s.keys) >= s.o.Max && !s.evict(key) {
+			return nil
+		}
+		e = &entry{check: s.recent[key]}
 		s.keys[key] = e
 	}
 	s.tick++
 	e.used = s.tick
 	now := s.o.Now()
-	if e.reading == nil && !now.Before(e.retryAt) && (e.good == nil || now.Sub(e.readAt) > s.o.Fresh) {
+	if e.reading == nil && !now.Before(e.retryAt) && (e.good == nil || now.Sub(e.readAt) > s.o.Fresh) && s.running < s.o.Concurrent {
 		s.startRead(key, e)
 	}
-	s.evict(key)
 	return e
 }
 
 // waitFirst waits up to Wait for a first read in flight (s.mu held; it is
 // released while waiting).
 func (s *Service) waitFirst(ctx context.Context, e *entry) {
-	if e.good != nil || e.reading == nil {
+	if e == nil || e.good != nil || e.reading == nil {
 		return
 	}
 	wait := e.reading
@@ -175,31 +219,40 @@ func (s *Service) waitFirst(ctx context.Context, e *entry) {
 	s.mu.Lock()
 }
 
-// answer is e's provider now (s.mu held).
+// answer is e's provider now (s.mu held); e nil: pending, nothing started.
 func (s *Service) answer(e *entry) proto.MCPProvider {
-	var p proto.MCPProvider
-	switch {
-	case e.good != nil:
-		p = clone(*e.good)
-		at := stamp(e.readAt)
-		p.Config.ReadAt, p.Skills.ReadAt = at, at
-		if e.failed {
-			p.Config.Stale, p.Skills.Stale = true, true
-			p.Config.Note = joinNotes("Showing the last good read: "+e.failNote, p.Config.Note)
-		}
-	case e.failed:
-		p = emptyProvider()
-		p.Config = proto.MCPRead{State: proto.MCPStateFailed, Note: e.failNote}
-		p.Skills.State, p.Skills.Note = proto.MCPStateFailed, e.failNote
-	default:
-		p = emptyProvider()
+	if e == nil || e.good == nil {
+		p := emptyProvider()
 		p.Config = proto.MCPRead{State: proto.MCPStatePending, Note: "Reading the configuration"}
+		if e == nil || e.reading == nil {
+			p.Config.Note = noteBusyRead
+		}
 		p.Skills.State = proto.MCPStatePending
+		if e != nil && e.check != nil {
+			applyCheck(&p, e.check.res, e.check.at)
+		}
+		return p
+	}
+	p := clone(*e.good)
+	p.Config.ReadAt, p.Skills.ReadAt = stamp(e.cfgAt), stamp(e.skillsAt)
+	if e.cfgFail != "" {
+		p.Config.Stale = true
+		p.Config.Note = joinNotes(lastFailed(e.cfgFail, e.cfgAt), p.Config.Note)
+	}
+	if e.skillsFail != "" {
+		p.Skills.Stale = true
+		p.Skills.Note = joinNotes(lastFailed(e.skillsFail, e.skillsAt), p.Skills.Note)
 	}
 	if e.check != nil {
 		applyCheck(&p, e.check.res, e.check.at)
 	}
 	return p
+}
+
+// lastFailed is the note of a half whose latest read failed for why and
+// that shows the read of at.
+func lastFailed(why string, at time.Time) string {
+	return "Last read failed: " + why + "; showing the read from " + at.UTC().Format("2006-01-02 15:04:05 UTC")
 }
 
 func joinNotes(notes ...string) string {
@@ -226,6 +279,7 @@ func (s *Service) startRead(key Key, e *entry) {
 	read := s.o.Read[key.Harness]
 	done := make(chan struct{})
 	e.reading = done
+	s.running++
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -239,20 +293,82 @@ func (s *Service) startRead(key Key, e *entry) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		now := s.o.Now()
-		if err != nil {
-			e.failed, e.failNote = true, failureNote(err, "Read failed")
+		if failed := e.store(p, err, now); failed != "" {
 			e.failures++
 			e.retryAt = now.Add(s.backoff(e.failures))
 			s.o.Log.Warn("mcp inventory read failed", "harness", key.Harness, "cwd", key.Cwd, "home", key.Home,
-				"kept", e.good != nil, "retry_in", e.retryAt.Sub(now), "err", err)
+				"retry_in", e.retryAt.Sub(now), "why", failed, "err", err)
 		} else {
-			p = clone(p)
-			e.good, e.readAt, e.failed, e.failNote, e.failures, e.retryAt = &p, now, false, "", 0, time.Time{}
+			e.readAt, e.failures, e.retryAt = now, 0, time.Time{}
 		}
 		e.reading = nil
+		s.running--
 		close(done)
-		s.evict(key)
 	}()
+}
+
+// rank orders a half's read states by what they show: a later read of a
+// lower rank than the kept one failed and does not replace it. States
+// without a rank (unavailable, unsupported) are facts and always replace.
+func rank(state string) (int, bool) {
+	switch state {
+	case proto.MCPStateOK:
+		return 2, true
+	case proto.MCPStatePartial:
+		return 1, true
+	case proto.MCPStateFailed:
+		return 0, true
+	}
+	return 0, false
+}
+
+// store puts a read that ended at now on e, half by half: a half that
+// failed (a failed state; partial where the kept half is ok) keeps the
+// kept half, its time and rows, marked stale; with none it is shown as
+// read. A whole failure (err) fails both halves. failed is why, "" when
+// no half failed.
+func (e *entry) store(p proto.MCPProvider, err error, now time.Time) (failed string) {
+	if err != nil {
+		note := failureNote(err, "Read failed")
+		p = emptyProvider()
+		p.Config = proto.MCPRead{State: proto.MCPStateFailed, Note: note}
+		p.Skills.State, p.Skills.Note = proto.MCPStateFailed, note
+		if e.good != nil {
+			p.Available, p.Version, p.Reason = e.good.Available, e.good.Version, e.good.Reason
+		}
+	}
+	p = clone(p)
+	// keep is whether the kept half, of state old, stays over a read of new.
+	keep := func(old, new string) bool {
+		o, oRanked := rank(old)
+		n, nRanked := rank(new)
+		return e.good != nil && oRanked && nRanked && n < o
+	}
+	var why []string
+	switch {
+	case e.good != nil && keep(e.good.Config.State, p.Config.State):
+		e.cfgFail = cmp.Or(p.Config.Note, "Read failed")
+		p.Config, p.Servers = e.good.Config, e.good.Servers
+		why = append(why, e.cfgFail)
+	case p.Config.State == proto.MCPStateFailed:
+		e.cfgFail, e.cfgAt = "", time.Time{}
+		why = append(why, cmp.Or(p.Config.Note, "Read failed"))
+	default:
+		e.cfgFail, e.cfgAt = "", now
+	}
+	switch {
+	case e.good != nil && keep(e.good.Skills.State, p.Skills.State):
+		e.skillsFail = cmp.Or(p.Skills.Note, "Read failed")
+		p.Skills = e.good.Skills
+		why = append(why, e.skillsFail)
+	case p.Skills.State == proto.MCPStateFailed:
+		e.skillsFail, e.skillsAt = "", time.Time{}
+		why = append(why, cmp.Or(p.Skills.Note, "Read failed"))
+	default:
+		e.skillsFail, e.skillsAt = "", now
+	}
+	e.good = &p
+	return joinNotes(slices.Compact(why)...)
 }
 
 // startCheck starts key's check (s.mu held). It runs under the service's
@@ -261,6 +377,7 @@ func (s *Service) startCheck(key Key, e *entry) {
 	check := s.o.Check[key.Harness]
 	done := make(chan struct{})
 	e.checking = done
+	s.running++
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -277,28 +394,38 @@ func (s *Service) startCheck(key Key, e *entry) {
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		e.check, e.checking = &checked{res: res, at: s.o.Now()}, nil
+		c := &checked{res: res, at: s.o.Now()}
+		e.check, e.checking, s.recent[key] = c, nil, c
+		s.running--
 		close(done)
-		s.evict(key)
 	}()
 }
 
-// evict drops the least recently used keys beyond Max, except keep and
-// keys with a read or check in flight (s.mu held).
-func (s *Service) evict(keep Key) {
-	for len(s.keys) > s.o.Max {
-		var oldest *Key
-		var used uint64
-		for k, e := range s.keys {
-			if k != keep && e.reading == nil && e.checking == nil && (oldest == nil || e.used < used) {
-				oldest, used = &k, e.used
-			}
+// prune drops the checks older than CheckEvery (s.mu held).
+func (s *Service) prune() {
+	now := s.o.Now()
+	for k, c := range s.recent {
+		if now.Sub(c.at) >= s.o.CheckEvery {
+			delete(s.recent, k)
 		}
-		if oldest == nil {
-			return
-		}
-		delete(s.keys, *oldest)
 	}
+}
+
+// evict drops the least recently used key other than keep without a read
+// or check in flight (s.mu held); false when there is none.
+func (s *Service) evict(keep Key) bool {
+	var oldest *Key
+	var used uint64
+	for k, e := range s.keys {
+		if k != keep && e.reading == nil && e.checking == nil && (oldest == nil || e.used < used) {
+			oldest, used = &k, e.used
+		}
+	}
+	if oldest == nil {
+		return false
+	}
+	delete(s.keys, *oldest)
+	return true
 }
 
 // applyCheck puts a check's statuses on p's servers (status_scope probe):
