@@ -79,6 +79,19 @@ func TestRunBelowThresholdCallsNoLLM(t *testing.T) {
 	}
 }
 
+func TestRunNoQuestionsDoesNotFlag(t *testing.T) {
+	r := newRoles()
+	r.cls.Score = 0.96
+	r.llm.Text = `{"questions":[]}`
+	res, err := followup.Run(context.Background(), r.cls, r.llm, "All review blockers were fixed and the tests pass.", 0.7)
+	if err != nil || res.Flag || len(res.Questions) != 0 || res.ExtractErr != "" {
+		t.Fatalf("Run = %+v, %v; want no open questions or needs-you flag", res, err)
+	}
+	if c, l := r.calls(); c != 1 || l != 1 {
+		t.Fatalf("calls = %d classifier, %d llm; want 1, 1", c, l)
+	}
+}
+
 func TestRunExtracts(t *testing.T) {
 	r := newRoles()
 	r.cls.Score = 0.96
@@ -187,7 +200,10 @@ func TestRunFallsBack(t *testing.T) {
 		"invalid json": {Text: `{"questions": [`},
 		"no json":      {Text: "There are two questions."},
 		"too long":     {Text: fmt.Sprintf(`{"questions":[{"question":%q,"kind":"open"}]}`, strings.Repeat("a", 301))},
-		"none":         {Text: `{"questions":[]}`},
+		"missing list": {Text: `{}`},
+		"null list":    {Text: `{"questions":null}`},
+		"wrong type":   {Text: `{"questions":"none"}`},
+		"unlisted":     {Text: `{"questions":[],"more":2}`},
 		"bad kind":     {Text: `{"questions":[{"question":"Which?","kind":"multi"}]}`},
 		"none valid":   {Text: `{"questions":[{"question":"","kind":"open"},{"question":"Which?","kind":"multi"}]}`},
 	} {

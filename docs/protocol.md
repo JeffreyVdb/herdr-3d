@@ -4245,9 +4245,11 @@ assistant `response_item` (else `task_complete`'s `last_agent_message`). A new p
    nor called the agent's recommendation (an `option` it names still is: the option goes whole). The call: an 8,192-token completion budget, reasoning effort `low` when the model's
    catalog lists it (never sent when the catalog does not describe the model), no partial answer, its own 45 s
    timeout and no retry of a call that may have reached the provider; cut off at the budget or empty, it is asked once
-   more with effort `none` (or `minimal`, the first the model takes). An answer with no valid question, or an LLM
+   more with effort `none` (or `minimal`, the first the model takes). An explicit `{"questions":[]}` with `more`
+   absent or zero means no questions: no follow-up, Open questions button or needs-you flag is created by this
+   detection. A missing/null question list, a nonempty list with no valid question, or an LLM
    failure, is the **fallback**: one `open` item ("The agent asked you something") with the message's last 1,200
-   characters as `tail` and why as `error`. A positive gate is never dropped.
+   characters as `tail` and why as `error`. An empty list that reports unlisted questions also falls back.
 5. **Once**: each message looked at is recorded by worker and SHA-256 (`followup_seen`, with its follow-up while it is
    open, the last 20 per worker). A restart or a re-read never classifies it again; an open follow-up comes back as it
    was, a cleared one never. A classifier failure is not recorded (logged; a later restart may try again). A fallback is
@@ -4305,7 +4307,8 @@ is of (`text`, its last 96,000 characters; `cut` when it is longer), kept in mem
 the transcript has it), never in the worker's upsert; `stale` likewise. **`worker.retry_followup {id, turn_id}`** runs
 the extraction of a fallback again (the round reader, then the LLM; never the classifier) and replaces the follow-up of
 the same turn with what it made of it (in `followup_seen` too: a restart brings back the recovered questions): the
-questions, or the fallback again with the new `error`; `retries` counts them. The ack is `{source, error?}` once it
+questions, or the fallback again with the new `error`; `retries` counts them. A successful empty extraction clears
+the follow-up and keeps it cleared after a restart. The ack is `{source, error?}` once it
 ran. `stale` likewise (also when it was answered, dismissed or moot meanwhile), `bad_request` when its questions were
 read (no fallback), `busy` while a retry of it runs, `invalid_state` after 3 retries or while the feature is not
 `ready`.
