@@ -53,10 +53,12 @@ describe('the MCP wall screen (#196)', () => {
     m.dispose();
   });
 
-  it('is green only for a fresh full read: stale, partial and failed reads are not', () => {
+  it('is never green (a config read is not a connection): amber for what needs you, grey when stale', () => {
     const m = buildMcpScreen(box);
     m.set(model(snap(provider(), provider())));
-    expect(m.info().tones.map((t) => t.ink)).toEqual(['ok', 'ok']);
+    expect(m.info().tones.map((t) => t.ink)).toEqual(['text', 'text']);
+    m.set(model(snap(provider({ servers: [{ name: 'x', source: 'user', plugin: '', transport: 'stdio', enabled: true, approval: 'n/a', status: 'auth_required', status_scope: 'probe', status_at: null, reason: '' }] }), provider())));
+    expect(m.info().tones.map((t) => t.ink)).toEqual(['warn', 'text']);
     m.set(model(snap(provider({ config: { state: 'ok', read_at: iso(T0 - 600_000), stale: true, note: '' } }), provider({ config: { state: 'partial', read_at: iso(T0), stale: false, note: '' } }))));
     expect(m.info().tones.map((t) => [t.tone, t.ink])).toEqual([
       ['stale', 'grey'],
@@ -65,7 +67,6 @@ describe('the MCP wall screen (#196)', () => {
     expect(m.info().lines).toEqual(expect.arrayContaining(['stale', 'partial']));
     m.set(model(snap(provider({ config: { state: 'failed', read_at: null, stale: false, note: '' }, servers: [] }), provider({ available: false, config: { state: 'unavailable', read_at: null, stale: false, note: '' }, servers: [] }))));
     expect(m.info().lines).toEqual(expect.arrayContaining(['Couldn’t read', 'CLI not found']));
-    expect(m.info().tones.every((t) => t.ink !== 'ok')).toBe(true);
     m.dispose();
   });
 

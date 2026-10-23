@@ -12,14 +12,13 @@ import { WALL, type WallPalette } from './palette';
  * command, no connection, nobody looking yet and the first read.
  *
  * It is drawn only when what it shows changes (the model's `key`: its words and a coarse age bucket), never per frame.
- * Nothing on it is green unless the provider's result is fresh and read in full: stale, partial, pending, unknown and
- * unsupported data are grey or amber.
+ * Nothing on it is green (a configuration read never says a server connects): what needs you is amber, stale, pending,
+ * unknown and unsupported data grey.
  */
 
 const BEZEL = 0.05;
 /** The canvas: wide enough for the text to read at 2–3 m (the rack's 180 px a metre would be ~380 px: too coarse). */
 const W = 1024;
-const OK = '#4be28a';
 const WARN = '#ffc233';
 const GREY = '#8a93ab';
 
@@ -29,8 +28,8 @@ export interface McpScreenInfo {
   draws: number;
   /** What the last draw said, in order. */
   lines: string[];
-  /** Per provider column, the colour its attention line took: 'ok' only for a fresh full read with nothing to do. */
-  tones: Array<{ harness: string; tone: ProviderTone; ink: 'ok' | 'warn' | 'grey' | 'text' }>;
+  /** Per provider column, the colour its attention line took: amber for something to do, grey when stale, else plain. */
+  tones: Array<{ harness: string; tone: ProviderTone; ink: 'warn' | 'grey' | 'text' }>;
 }
 
 export interface McpScreenMesh {
@@ -130,7 +129,6 @@ export function buildMcpScreen(box: Box3, c: Readonly<WallPalette> = WALL): McpS
 
   const column = (p: McpWallProvider, left: number, width: number, out: string[]) => {
     if (!g) return;
-    const fresh = p.tone === 'ok';
     const grey = p.tone === 'stale' || p.tone === 'unavailable' || p.tone === 'unsupported' || p.tone === 'pending' || p.tone === 'failed';
     const top = 136;
     const max = width - 8;
@@ -153,13 +151,16 @@ export function buildMcpScreen(box: Box3, c: Readonly<WallPalette> = WALL): McpS
       out.push(p.tag);
     }
     g.fillStyle = grey ? GREY : c.text;
-    g.font = font(800, p.big.length > 14 ? 54 : 68);
+    // The big line as large as its column takes it (68 px down to 40), then shortened only if even that is too wide.
+    let px = 68;
+    for (g.font = font(800, px); px > 40 && g.measureText(p.big).width > max; px -= 4) g.font = font(800, px - 4);
     g.fillText(fit(g, p.big, max), left, top + 124);
     out.push(p.big);
     let ink: McpScreenInfo['tones'][number]['ink'] = 'text';
     if (p.attention) {
-      ink = p.tone === 'stale' ? 'grey' : p.attentionCount > 0 ? 'warn' : fresh ? 'ok' : 'text';
-      g.fillStyle = ink === 'grey' ? GREY : ink === 'warn' ? WARN : ink === 'ok' ? OK : c.text2;
+      // Nothing to do is said calmly, never in green: a configuration read does not say a server connects (AC5).
+      ink = p.tone === 'stale' ? 'grey' : p.attentionCount > 0 ? 'warn' : 'text';
+      g.fillStyle = ink === 'grey' ? GREY : ink === 'warn' ? WARN : c.text2;
       g.font = font(700, 34);
       g.fillText(fit(g, p.attention, max), left, top + 182);
       out.push(p.attention);

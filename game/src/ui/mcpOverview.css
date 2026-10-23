@@ -43,7 +43,7 @@
 }
 .mcp-select,
 .mcp-input {
-  min-height: 34px;
+  min-height: 36px;
   min-width: 0;
   box-sizing: border-box;
   padding: 0 10px;
