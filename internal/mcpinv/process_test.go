@@ -197,6 +197,9 @@ func fakeClaude(scenario string, in *bufio.Scanner, out *json.Encoder, trace *os
 			os.Exit(4)
 		}
 		_ = json.NewEncoder(trace).Encode(msg)
+		if scenario == "claude-hang-child" {
+			continue
+		}
 		req, _ := msg["request"].(map[string]any)
 		id := msg["request_id"]
 		respond := func(r any) {
@@ -643,6 +646,21 @@ func TestCheckClaudeStillPending(t *testing.T) {
 	}
 	meta, _, _ := r.read(t)
 	gone(t, meta.PID)
+}
+
+// Timeout bounds the whole exchange: a Claude Code that never answers is
+// ended at Timeout, its process group gone.
+func TestCheckClaudeHangs(t *testing.T) {
+	r := fakeBin(t, "claude-hang-child")
+	f, cwd := claudeFixture(t)
+	start := time.Now()
+	res, err := ClaudeRunner{Run: harnessRun, Bin: r.bin, Files: f, Timeout: 300 * time.Millisecond}.CheckClaude(context.Background(), cwd)
+	if took := time.Since(start); err != nil || res.State != proto.MCPCheckTimeout || took > 2*time.Second {
+		t.Fatalf("check = %+v, %v after %v", res, err, took)
+	}
+	meta, _, child := r.read(t)
+	gone(t, meta.PID)
+	gone(t, child)
 }
 
 // An unreadable .mcp.json skips the check: no process starts.

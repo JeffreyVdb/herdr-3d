@@ -31,7 +31,8 @@ type ClaudeRunner struct {
 	// ConfigDirEnv is the bridge's $CLAUDE_CONFIG_DIR ("": unset), given to
 	// the probe explicitly: the clean environment drops every CLAUDE*.
 	ConfigDirEnv string
-	// Timeout bounds the polling (0: 20 s); Poll is its interval (0: 500 ms).
+	// Timeout bounds the whole check (0: 20 s); Poll is the interval of its
+	// mcp_status polls (0: 500 ms).
 	Timeout, Poll time.Duration
 }
 
@@ -109,9 +110,10 @@ func (c ClaudeRunner) CheckClaude(ctx context.Context, cwd string) (CheckResult,
 	if c.ConfigDirEnv != "" {
 		env = []string{"CLAUDE_CONFIG_DIR=" + c.ConfigDirEnv}
 	}
-	deadline := time.Now().Add(timeout)
-	// The process's own bound leaves room for the last poll's answer.
-	res, err := run(ctx, c.Run, Spawn{Bin: c.bin(), Dir: dir, Args: claudeCheckArgs(string(settings)), Env: env, Timeout: timeout + 3*time.Second},
+	// Timeout bounds the whole exchange (the process's own bound); the
+	// polling stops early enough for the last poll's answer.
+	deadline := time.Now().Add(timeout - min(2*time.Second, timeout/5))
+	res, err := run(ctx, c.Run, Spawn{Bin: c.bin(), Dir: dir, Args: claudeCheckArgs(string(settings)), Env: env, Timeout: timeout},
 		func(s Stream) (CheckResult, error) {
 			res := CheckResult{State: proto.MCPCheckOK}
 			var init struct {
