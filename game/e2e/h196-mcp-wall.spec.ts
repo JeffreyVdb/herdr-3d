@@ -182,6 +182,9 @@ test('works at 390 px: the providers and cells stack, nothing scrolls sideways',
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 390, height: 844 });
   await onLab(page);
+  await faceScreen(page, 3.2);
+  await expect.poll(async () => (await mcp(page)).screen?.mode, { timeout: 15_000 }).toBe('data');
+  await shot(page, 'h196-wall-390');
   await openPage(page);
   await page.locator('[data-key="check-codex"]').click();
   await expect.poll(async () => (await mcp(page)).page.providers[1]?.check, { timeout: 10_000 }).toBe('ok');

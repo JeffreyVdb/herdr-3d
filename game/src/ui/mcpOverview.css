@@ -175,11 +175,6 @@
   font-weight: 700;
   white-space: nowrap;
 }
-.mcp-state--ok {
-  border-color: var(--ok-border);
-  background: var(--ok-bg);
-  color: var(--ok-text);
-}
 .mcp-state--partial {
   border-color: var(--warn-border);
   background: var(--warn-bg);
