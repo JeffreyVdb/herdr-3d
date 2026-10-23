@@ -535,7 +535,9 @@ func TestServiceRealReadersKeepLastGood(t *testing.T) {
 		s.Inventory(context.Background(), key)
 		s.Wait()
 		p := s.Inventory(context.Background(), key)
-		if len(p.Servers) != 1 || !p.Config.Stale || p.Config.State != proto.MCPStateOK || !strings.Contains(p.Config.Note, "Could not parse ~/.claude.json") {
+		if len(p.Servers) != 1 || !p.Config.Stale || p.Config.State != proto.MCPStateOK ||
+			!strings.HasPrefix(p.Config.Note, "Last read failed: Could not parse ~/.claude.json; showing the read from") ||
+			strings.Count(p.Config.Note, noteConnectors) != 1 {
 			t.Fatalf("broken config = %+v %v", p.Config, p.Servers)
 		}
 	})

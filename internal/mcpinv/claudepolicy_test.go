@@ -1,6 +1,7 @@
 package mcpinv
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -62,6 +63,17 @@ func TestClaudeApprovalMatrix(t *testing.T) {
 		"local": filepath.Join(cwd, ".claude", "settings.local.json"), "managed": filepath.Join(f.Managed, "managed-settings.json")}
 	listScopes := []string{"", "user", "project", "entry", "local"}
 	values := []string{"", "true", "false"}
+	written := map[string]string{}
+	write := func(path string, v any) { // only what changed: the matrix is large
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if written[path] != string(b) {
+			writeText(t, path, string(b))
+			written[path] = string(b)
+		}
+	}
 	n := 0
 	var walk func(i int, all map[string]string)
 	walk = func(i int, all map[string]string) {
@@ -89,9 +101,9 @@ func TestClaudeApprovalMatrix(t *testing.T) {
 						layers[disabled]["disabledMcpjsonServers"] = []string{"s"}
 					}
 					layers["entry"]["hasTrustDialogAccepted"] = trusted
-					writeJSON(t, f.JSON, map[string]any{"projects": map[string]any{cwd: layers["entry"]}})
+					write(f.JSON, map[string]any{"projects": map[string]any{cwd: layers["entry"]}})
 					for scope, path := range paths {
-						writeJSON(t, path, layers[scope])
+						write(path, layers[scope])
 					}
 					want := wantApproval(all, enabled, disabled, trusted)
 					wantStatus := map[string]string{proto.MCPApprovalApproved: proto.MCPStatusNotChecked,

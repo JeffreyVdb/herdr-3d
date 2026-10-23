@@ -255,6 +255,18 @@ func lastFailed(why string, at time.Time) string {
 	return "Last read failed: " + why + "; showing the read from " + at.UTC().Format("2006-01-02 15:04:05 UTC")
 }
 
+// news is note without the sentences kept already says.
+func news(note, kept string) string {
+	old := strings.Split(kept, ". ")
+	var out []string
+	for _, n := range strings.Split(note, ". ") {
+		if !slices.Contains(old, n) {
+			out = append(out, n)
+		}
+	}
+	return joinNotes(out...)
+}
+
 func joinNotes(notes ...string) string {
 	var out []string
 	for _, n := range notes {
@@ -347,7 +359,7 @@ func (e *entry) store(p proto.MCPProvider, err error, now time.Time) (failed str
 	var why []string
 	switch {
 	case e.good != nil && keep(e.good.Config.State, p.Config.State):
-		e.cfgFail = cmp.Or(p.Config.Note, "Read failed")
+		e.cfgFail = cmp.Or(news(p.Config.Note, e.good.Config.Note), "Read failed")
 		p.Config, p.Servers = e.good.Config, e.good.Servers
 		why = append(why, e.cfgFail)
 	case p.Config.State == proto.MCPStateFailed:
@@ -358,7 +370,7 @@ func (e *entry) store(p proto.MCPProvider, err error, now time.Time) (failed str
 	}
 	switch {
 	case e.good != nil && keep(e.good.Skills.State, p.Skills.State):
-		e.skillsFail = cmp.Or(p.Skills.Note, "Read failed")
+		e.skillsFail = cmp.Or(news(p.Skills.Note, e.good.Skills.Note), "Read failed")
 		p.Skills = e.good.Skills
 		why = append(why, e.skillsFail)
 	case p.Skills.State == proto.MCPStateFailed:

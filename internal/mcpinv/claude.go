@@ -198,7 +198,8 @@ func (r *claudeRead) settings() {
 	}
 	files := []file{{filepath.Join(r.f.Dir, "settings.json"), true}}
 	if r.cwd != "" {
-		home := r.cwd == filepath.Clean(r.f.Home) || r.cwd == filepath.Dir(filepath.Clean(r.f.Dir))
+		dir := filepath.Clean(r.f.Dir)
+		home := r.cwd == filepath.Clean(r.f.Home) || filepath.Base(dir) == ".claude" && r.cwd == filepath.Dir(dir)
 		files = append(files, file{filepath.Join(r.cwd, ".claude", "settings.json"), r.project.Trusted},
 			file{"", true}, file{filepath.Join(r.cwd, ".claude", "settings.local.json"), r.project.Trusted || home})
 	}
