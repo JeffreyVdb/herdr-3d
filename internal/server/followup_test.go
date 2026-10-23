@@ -280,6 +280,26 @@ func TestFollowupNoFlag(t *testing.T) {
 		}
 		fb.noFollowups(t)
 	})
+	t.Run("extraction finds no questions", func(t *testing.T) {
+		roles := newFuRoles()
+		roles.cls.Func = nil
+		roles.cls.Score = 0.96 // A false positive from the classifier.
+		roles.llm.Text = `{"questions":[]}`
+		fb := startFuBridge(t, "", "", roles, on(), "")
+		fb.turn(t, "claude", "followup_summary.jsonl")
+		fb.turn(t, "codex", "followup_summary.jsonl")
+		waitFor(t, "two extractions", func() bool { _, l := roles.calls(); return l == 2 })
+		fuQuiet()
+		fb.noFollowups(t)
+		fb.stop()
+
+		fb2 := startFuBridge(t, fb.db, fb.dir, roles, on(), "")
+		fuQuiet()
+		fb2.noFollowups(t)
+		if c, l := roles.calls(); c != 2 || l != 2 {
+			t.Fatalf("calls after restart = %d, %d; want no repeated detection", c, l)
+		}
+	})
 }
 
 func (fb *fuBridge) noFollowups(t *testing.T) {
@@ -899,6 +919,36 @@ func TestFollowupRetry(t *testing.T) {
 	c3.snapshot()
 	if h := followupOf(c3, fb3.ids["w1"]).Followup; h.Source != proto.FollowupModel || len(h.Questions) != 2 || h.Retries != 2 {
 		t.Fatalf("after a restart = %+v", h)
+	}
+}
+
+// A successful retry can disprove the classifier's original positive gate.
+func TestFollowupRetryNoQuestionsClears(t *testing.T) {
+	t.Parallel()
+	roles := newFuRoles()
+	roles.llm.Text = "invalid JSON"
+	fb := startFuBridge(t, "", "", roles, on(), "")
+	c := fb.connect(proto.Hello{})
+	c.snapshot()
+	id := fb.ids["w1"]
+	fb.turn(t, "claude", "followup_questions.jsonl")
+	f := followupOf(c, id).Followup
+	roles.llm.Text = `{"questions":[],"more":0}`
+	evs, m := c.command(proto.CmdWorkerRetryFollowup, "retry", proto.WorkerRetryFollowupArgs{ID: id, TurnID: f.TurnID})
+	if m.env.T != proto.TAck || !strings.Contains(string(m.raw), `"source":"model"`) {
+		t.Fatalf("retry: %s", m.raw)
+	}
+	if len(evs) != 1 || evs[0].T != proto.EvWorkerUpsert || evs[0].Worker.Followup != nil {
+		t.Fatalf("retry must publish the cleared follow-up: %+v", evs)
+	}
+	fb.noFollowups(t)
+	fb.stop()
+
+	fb2 := startFuBridge(t, fb.db, fb.dir, roles, on(), "")
+	fuQuiet()
+	fb2.noFollowups(t)
+	if c, l := roles.calls(); c != 1 || l != 2 {
+		t.Fatalf("calls after restart = %d, %d; want one classification and two extractions", c, l)
 	}
 }
 

@@ -10,8 +10,8 @@
 //  2. the extraction: a grill round (❓ **Q1** … ➡️ …) is read as it is
 //     (ParseRound, #60); anything else, the LLM lists the questions as JSON,
 //     validated (Parse). When it fails or answers something invalid, the
-//     worker is still flagged with one open item: a positive gate is never
-//     dropped.
+//     worker is still flagged with one open item. A valid empty list means
+//     the gate was a false positive: there is nothing to flag.
 //
 // The package takes only the ai.Classifier and ai.LLM interfaces, never a
 // vendor client (TestFollowupUsesOnlyAIInterfaces). Nothing is called unless
@@ -155,7 +155,8 @@ type Followup struct {
 // Result is what Run made of a message.
 type Result struct {
 	Score float64
-	// Flag: the score reached the threshold.
+	// Flag: the score reached the threshold and extraction found questions
+	// (or failed, leaving a fallback item).
 	Flag bool
 	Extraction
 }
@@ -208,8 +209,8 @@ func run(ctx context.Context, c ai.Classifier, l ai.LLM, text string, threshold 
 	if ready != nil && !ready() {
 		return nil, ai.ErrNotReady
 	}
-	res.Flag = true
 	res.Extraction = Extract(ctx, l, text, r)
+	res.Flag = len(res.Questions) > 0
 	return res, nil
 }
 
@@ -246,6 +247,7 @@ Reply with only a JSON object, no prose and no code fence:
 {"questions":[{"label":"...","question":"...","kind":"yes_no"|"choice"|"open","options":["..."],"context":"...","recommendation":"...","recommended_option":1,"why":"..."}],"more":0}
 
 Rules:
+- If the message asks no questions the user is expected to answer, return {"questions":[],"more":0}.
 - Every question the message asks, in its order, up to 16. Merge duplicates. If it asks more than 16, list the first 16 and put how many more in "more".
 - When the message numbers its questions (Q8, Q9, 1., 2. …), list exactly one question per number: the sub-questions and bullets under a number belong to it (in its "context"), never questions of their own.
 - "label": the name the message gives the question ("Q9", "3"), else "".
@@ -326,7 +328,8 @@ func request(text, effort string) ai.Request {
 
 // Parse reads the LLM's answer (the first JSON object in it) and validates
 // it. The answer is rejected only as a whole when it is no question list,
-// or none of its questions is valid; else (#60), bounded:
+// or none of its listed questions is valid. An explicit empty list with no
+// unlisted questions is a successful extraction of no questions. Else (#60), bounded:
 //   - over MaxQuestions, the rest are counted (unlisted), as is the "more"
 //     the LLM reports (at most 100);
 //   - a question that is empty, over 300 characters or of an unknown kind is
@@ -359,8 +362,14 @@ func Parse(text string) ([]Question, int, error) {
 	if err := json.Unmarshal([]byte(obj), &raw); err != nil {
 		return nil, 0, fmt.Errorf("the LLM's JSON is not a question list: %v", err)
 	}
+	if raw.Questions == nil {
+		return nil, 0, fmt.Errorf("the LLM's JSON is missing a question list")
+	}
 	if len(raw.Questions) == 0 {
-		return nil, 0, fmt.Errorf("the LLM listed no question")
+		if raw.More != 0 {
+			return nil, 0, fmt.Errorf("the LLM reported unlisted questions without listing any")
+		}
+		return nil, 0, nil
 	}
 	unlisted := min(max(raw.More, 0), 100)
 	list := raw.Questions

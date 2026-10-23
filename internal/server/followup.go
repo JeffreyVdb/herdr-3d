@@ -713,6 +713,7 @@ func (h *Hub) sendFollowupAnswers(a proto.WorkerAnswerFollowupArgs, text string,
 // follow-up of the same turn (also in followup_seen, so a restart brings
 // back the recovered round) unless it was answered, dismissed or moot
 // meanwhile; a failure is the fallback again, with the new why.
+// A successful extraction with no questions clears the follow-up.
 func (h *Hub) startRetryFollowup(ctx context.Context, c *Client, cmd proto.Command) error {
 	var a proto.WorkerRetryFollowupArgs
 	if err := decodeArgs(cmd.Args, &a); err != nil {
@@ -757,6 +758,10 @@ func (h *Hub) retriedFollowup(ctx context.Context, a proto.WorkerRetryFollowupAr
 	cur, serr := h.followupOf(a.ID, a.TurnID)
 	if serr != nil || cur != s {
 		return proto.WorkerRetryFollowupResult{}, fmt.Errorf("%w: the questions were answered, dismissed or replaced meanwhile", errStale)
+	}
+	if len(ex.Questions) == 0 {
+		h.clearFollowup(ctx, a.ID)
+		return proto.WorkerRetryFollowupResult{Source: ex.Source}, nil
 	}
 	next := *s.f
 	next.Retries++
