@@ -64,10 +64,12 @@ func claudeCheckArgs(settings string) []string {
 // mcp_status are sent: never a user message, a toggle, a reload or a call.
 //
 // Headless Claude Code starts the .mcp.json servers of cwd and of every
-// folder above it without asking, so the ones the user has not approved are
-// passed as disabledMcpjsonServers in --settings (measured on 2.1.309: such
-// a server is then never started). When which ones cannot be known (one of
-// those files is unreadable), the check is skipped.
+// folder above it without asking, so the ones the user has not approved
+// (for user scope: all of them) are passed as disabledMcpjsonServers in
+// --settings, and the ones its MCP policy blocks as deniedMcpServers by
+// name (both measured on 2.1.309: such a server is then never started).
+// When which ones cannot be known (one of those files is unreadable), the
+// check is skipped.
 func (c ClaudeRunner) CheckClaude(ctx context.Context, cwd string) (CheckResult, error) {
 	if !c.Available() {
 		return CheckResult{State: proto.MCPCheckSkipped, Note: "Claude Code CLI not found on the bridge"}, nil
@@ -77,14 +79,22 @@ func (c ClaudeRunner) CheckClaude(ctx context.Context, cwd string) (CheckResult,
 		return CheckResult{}, &Failure{Note: "Claude Code check failed", Cause: err}
 	}
 	defer done()
-	// The .mcp.json files and approvals are those of where Claude Code runs
-	// (for user scope: the private dir's and its ancestors', none approved).
-	unapproved, ok := ClaudeUnapproved(c.Files, dir)
+	unapproved, blocked, ok := ClaudeExclusions(c.Files, cwd, dir)
 	if !ok {
 		return CheckResult{State: proto.MCPCheckSkipped,
 			Note: "Skipped: a .mcp.json of the checkout or a folder above it could not be read, so its unapproved servers could not be kept from starting"}, nil
 	}
-	settings, err := json.Marshal(map[string]any{"disableAllHooks": true, "disabledMcpjsonServers": append([]string{}, unapproved...)})
+	set := map[string]any{"disableAllHooks": true, "disabledMcpjsonServers": append([]string{}, unapproved...)}
+	var deny []map[string]string
+	for _, name := range blocked {
+		if name != "" && name == strings.TrimSpace(name) { // what a serverName entry may be
+			deny = append(deny, map[string]string{"serverName": name})
+		}
+	}
+	if deny != nil {
+		set["deniedMcpServers"] = deny
+	}
+	settings, err := json.Marshal(set)
 	if err != nil {
 		return CheckResult{}, err
 	}

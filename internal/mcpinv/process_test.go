@@ -143,36 +143,48 @@ func codexConfigFixture() map[string]any {
 
 // fakeClaude is Claude Code's SDK control protocol: the configured servers
 // "start" on their own (a project .mcp.json server unless --settings lists
-// it in disabledMcpjsonServers, as measured on 2.1.309), and mcp_status
-// reports them pending first.
+// it in disabledMcpjsonServers; a user server of $CLAUDE_CONFIG_DIR's
+// .claude.json too; either unless --settings denies its name in
+// deniedMcpServers, as measured on 2.1.309), and mcp_status reports them
+// pending first.
 func fakeClaude(scenario string, in *bufio.Scanner, out *json.Encoder, trace *os.File, start func(string)) {
-	var disabled []string
+	var disabled, denied []string
 	for i, a := range os.Args {
 		if a == "--settings" && i+1 < len(os.Args) {
 			var s struct {
-				Disabled []string `json:"disabledMcpjsonServers"`
+				Disabled []string            `json:"disabledMcpjsonServers"`
+				Denied   []map[string]string `json:"deniedMcpServers"`
 			}
 			_ = json.Unmarshal([]byte(os.Args[i+1]), &s)
 			disabled = s.Disabled
+			for _, d := range s.Denied {
+				denied = append(denied, d["serverName"])
+			}
 		}
 	}
 	var names []string
-	cwd, _ := os.Getwd()
-	for d := cwd; ; d = filepath.Dir(d) { // every .mcp.json from cwd up
-		var project struct {
+	add := func(path string, skip []string) {
+		var file struct {
 			MCPServers map[string]any `json:"mcpServers"`
 		}
-		if b, err := os.ReadFile(filepath.Join(d, ".mcp.json")); err == nil {
-			_ = json.Unmarshal(b, &project)
+		if b, err := os.ReadFile(path); err == nil {
+			_ = json.Unmarshal(b, &file)
 		}
-		for name := range project.MCPServers {
-			if !slices.Contains(disabled, name) && !slices.Contains(names, name) {
+		for name := range file.MCPServers {
+			if !slices.Contains(skip, name) && !slices.Contains(denied, name) && !slices.Contains(names, name) {
 				names = append(names, name)
 			}
 		}
+	}
+	cwd, _ := os.Getwd()
+	for d := cwd; ; d = filepath.Dir(d) { // every .mcp.json from cwd up
+		add(filepath.Join(d, ".mcp.json"), disabled)
 		if filepath.Dir(d) == d {
 			break
 		}
+	}
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		add(filepath.Join(dir, ".claude.json"), nil)
 	}
 	slices.Sort(names)
 	for _, n := range names {
@@ -533,6 +545,90 @@ func TestCheckClaude(t *testing.T) {
 		}
 	}
 	assertSafe(t, p)
+}
+
+// The review's case: user settings approve every project server and the
+// checkout's settings.local.json revokes it, so the check starts none.
+func TestCheckClaudeLocalRevocation(t *testing.T) {
+	r := fakeBin(t, "claude-child")
+	f := DefaultClaudeFiles("", t.TempDir())
+	f.Managed = ""
+	cwd := filepath.Join(f.Home, "proj")
+	writeJSON(t, filepath.Join(f.Dir, "settings.json"), map[string]any{"enableAllProjectMcpServers": true})
+	writeJSON(t, filepath.Join(cwd, ".claude", "settings.local.json"), map[string]any{"enableAllProjectMcpServers": false})
+	writeJSON(t, filepath.Join(cwd, ".mcp.json"), map[string]any{"mcpServers": map[string]any{"unapproved": stdio("fixture")}})
+	if _, err := (ClaudeRunner{Run: harnessRun, Bin: r.bin, Files: f, Poll: time.Millisecond}).CheckClaude(context.Background(), cwd); err != nil {
+		t.Fatal(err)
+	}
+	if starts := r.started(t); len(starts) != 0 {
+		t.Fatalf("started %v", starts)
+	}
+}
+
+// A user-scope check starts no project server: not one of a .mcp.json above
+// its private dir, approved or not, nor of ~/.mcp.json.
+func TestCheckClaudeUserScopeStartsNoProjectServer(t *testing.T) {
+	r := fakeBin(t, "claude-child")
+	clean, otherHome := t.TempDir(), t.TempDir()
+	f := DefaultClaudeFiles("", t.TempDir())
+	f.Managed = ""
+	writeJSON(t, filepath.Join(f.Dir, "settings.json"), map[string]any{"enableAllProjectMcpServers": true})
+	writeJSON(t, filepath.Join(f.Home, ".mcp.json"), map[string]any{"mcpServers": map[string]any{"project-only": stdio("fixture")}})
+	tmp := filepath.Join(f.Home, "tmp")
+	writeJSON(t, filepath.Join(tmp, ".mcp.json"), map[string]any{"mcpServers": map[string]any{"above-probe": stdio("fixture")}})
+	t.Setenv("TMPDIR", tmp)
+	if _, err := (ClaudeRunner{Run: harnessRun, Bin: r.bin, Files: f, Poll: time.Millisecond}).CheckClaude(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if starts := r.started(t); len(starts) != 0 {
+		t.Fatalf("user-scope check started %v", starts)
+	}
+	meta, _, _ := r.read(t)
+	if filepath.Dir(meta.Cwd) != tmp {
+		t.Fatalf("ran in %s", meta.Cwd)
+	}
+	// Another home's .mcp.json, not above the probe dir, is kept out too.
+	r = fakeBin(t, "claude")
+	t.Setenv("TMPDIR", clean)
+	other := DefaultClaudeFiles("", otherHome)
+	other.Managed = ""
+	writeJSON(t, filepath.Join(other.Home, ".mcp.json"), map[string]any{"mcpServers": map[string]any{"home-only": stdio("fixture")}})
+	if _, err := (ClaudeRunner{Run: harnessRun, Bin: r.bin, Files: other, Poll: time.Millisecond}).CheckClaude(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	meta, _, _ = r.read(t)
+	j := slices.Index(meta.Args, "--settings")
+	if j < 0 || !strings.Contains(meta.Args[j+1], `"disabledMcpjsonServers":["home-only"]`) {
+		t.Fatalf("args = %q", meta.Args)
+	}
+}
+
+// A server the MCP policy blocks is denied by name in --settings, so the
+// check never starts it, whatever its scope.
+func TestCheckClaudeStartsNoBlockedServer(t *testing.T) {
+	r := fakeBin(t, "claude-child")
+	home := t.TempDir()
+	f := DefaultClaudeFiles(filepath.Join(home, "cfg"), home)
+	f.Managed = ""
+	cwd := filepath.Join(home, "proj")
+	writeJSON(t, f.JSON, map[string]any{"mcpServers": map[string]any{"user-ok": stdio("ok"), "user-denied": stdio("bad")},
+		"projects": map[string]any{cwd: map[string]any{"hasTrustDialogAccepted": true}}})
+	writeJSON(t, filepath.Join(f.Dir, "settings.json"), map[string]any{"enableAllProjectMcpServers": true,
+		"deniedMcpServers": []any{map[string]any{"serverCommand": []string{"bad", "--secret-arg"}}, map[string]any{"serverName": "proj-denied"}}})
+	writeJSON(t, filepath.Join(cwd, ".mcp.json"), map[string]any{"mcpServers": map[string]any{"proj-ok": stdio("ok"), "proj-denied": stdio("ok")}})
+	c := ClaudeRunner{Run: harnessRun, Bin: r.bin, Files: f, ConfigDirEnv: f.Dir, Poll: time.Millisecond}
+	if _, err := c.CheckClaude(context.Background(), cwd); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.started(t); !slices.Equal(got, []string{"proj-ok", "user-ok"}) {
+		t.Fatalf("started %v", got)
+	}
+	meta, _, _ := r.read(t)
+	j := slices.Index(meta.Args, "--settings")
+	if j < 0 || meta.Args[j+1] != `{"deniedMcpServers":[{"serverName":"proj-denied"},{"serverName":"user-denied"}],"disableAllHooks":true,"disabledMcpjsonServers":[]}` {
+		t.Fatalf("args = %q", meta.Args)
+	}
+	gone(t, meta.PID)
 }
 
 // Rows still pending at the deadline are connecting, and the check says it
