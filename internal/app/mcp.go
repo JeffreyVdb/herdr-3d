@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/codex"
+	"github.com/JeffreyVdb/herdr-3d/internal/harness"
 	"github.com/JeffreyVdb/herdr-3d/internal/mcpinv"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
@@ -19,8 +20,8 @@ func mcpInventory(ctx context.Context, log *slog.Logger, claudeBin, codexBin str
 	userHome, _ := os.UserHomeDir()
 	configDir := os.Getenv("CLAUDE_CONFIG_DIR")
 	files := mcpinv.DefaultClaudeFiles(configDir, userHome)
-	claude := mcpinv.ClaudeRunner{Bin: claudeBin, Files: files, ConfigDirEnv: configDir}
-	cx := mcpinv.CodexRunner{Bin: codexBin, UserHome: userHome}
+	claude := mcpinv.ClaudeRunner{Bin: claudeBin, Run: harnessRun, Files: files, ConfigDirEnv: configDir}
+	cx := mcpinv.CodexRunner{Bin: codexBin, Run: harnessRun, UserHome: userHome}
 	codexHome = codex.DefaultHome()
 	resolved, err := filepath.EvalSymlinks(codexHome)
 	if err != nil {
@@ -53,4 +54,11 @@ func mcpInventory(ctx context.Context, log *slog.Logger, claudeBin, codexBin str
 		},
 	})
 	return svc, files.Dir, codexHome
+}
+
+// harnessRun is mcpinv's Runner: harness.Run's bounded, reaped process.
+func harnessRun(ctx context.Context, sp mcpinv.Spawn, fn func(mcpinv.Stream) error) error {
+	_, err := harness.Run(ctx, harness.Spawn{Bin: sp.Bin, Dir: sp.Dir, Args: sp.Args, Env: sp.Env, Timeout: sp.Timeout},
+		func(s *harness.Stream) (struct{}, error) { return struct{}{}, fn(s) })
+	return err
 }

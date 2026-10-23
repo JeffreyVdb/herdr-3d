@@ -57,10 +57,10 @@ type mcpState struct {
 
 // mcpObs is a worker's last MCP status read.
 type mcpObs struct {
-	thread  string // the thread it was read on
-	at      time.Time
-	rows    []mcpinv.Observed // nil: the read failed
-	reading bool
+	thread string            // the thread it was read on
+	asked  time.Time         // when the last read began (one in flight or abandoned too)
+	at     time.Time         // when rows were read
+	rows   []mcpinv.Observed // nil: none yet, or the last read failed
 }
 
 // mcpScope is one request's context, resolved on the hub goroutine.
@@ -74,6 +74,7 @@ type mcpScope struct {
 // mcpWorker is a Codex worker whose MCP status a request reads.
 type mcpWorker struct {
 	id, name, thread string
+	asked            time.Time
 	r                mcpStatusReader
 }
 
@@ -170,8 +171,8 @@ func (h *Hub) mcpScopeOf(floor string, cwdArg, profileArg proto.Optional[string]
 	// The attached shared-server Codex workers of the floor in this
 	// checkout and profile: their own servers' status.
 	now := h.opts.Now()
-	for id, o := range h.mcp.obs {
-		if h.cx.watches[id] == nil && !o.reading {
+	for id := range h.mcp.obs {
+		if h.cx.watches[id] == nil {
 			delete(h.mcp.obs, id)
 		}
 	}
@@ -196,11 +197,15 @@ func (h *Hub) mcpScopeOf(floor string, cwdArg, profileArg proto.Optional[string]
 		if known && o.rows != nil {
 			s.cached = append(s.cached, mcpinv.WorkerObservation{Worker: proto.MCPWorker{ID: id, Name: w.Name}, At: o.at, Rows: o.rows})
 		}
-		if !observe || known && (o.reading || now.Sub(o.at) < mcpObserveEvery) {
+		if !observe || known && now.Sub(o.asked) < mcpObserveEvery {
 			continue
 		}
-		h.mcp.obs[id] = &mcpObs{thread: cw.thread, reading: true}
-		s.observe = append(s.observe, mcpWorker{id: id, name: w.Name, thread: cw.thread, r: r})
+		next := &mcpObs{thread: cw.thread, asked: now}
+		if known {
+			next.at, next.rows = o.at, o.rows
+		}
+		h.mcp.obs[id] = next
+		s.observe = append(s.observe, mcpWorker{id: id, name: w.Name, thread: cw.thread, asked: now, r: r})
 	}
 	return s, nil
 }
@@ -246,12 +251,12 @@ func (h *Hub) startMCPInventory(ctx context.Context, c *Client, cmd proto.Comman
 			now := h.opts.Now()
 			obs := s.cached
 			for i, w := range s.observe {
-				o := &mcpObs{thread: w.thread, at: now}
+				o := &mcpObs{thread: w.thread, asked: w.asked, at: now}
 				if read[i] != nil {
 					o.rows = mcpinv.MapCodexStatuses(codexStatuses(read[i]))
 					obs = append(obs, mcpinv.WorkerObservation{Worker: proto.MCPWorker{ID: w.id, Name: w.name}, At: now, Rows: o.rows})
 				}
-				if cur := h.mcp.obs[w.id]; cur != nil && cur.reading && cur.thread == w.thread {
+				if cur := h.mcp.obs[w.id]; cur != nil && cur.thread == w.thread && cur.asked.Equal(w.asked) {
 					h.mcp.obs[w.id] = o
 				}
 			}

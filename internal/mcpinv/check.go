@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/execpath"
-	"github.com/JeffreyVdb/herdr-3d/internal/harness"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
 
@@ -27,6 +26,7 @@ type CheckResult struct {
 // (a read never runs it).
 type ClaudeRunner struct {
 	Bin   string
+	Run   Runner
 	Files ClaudeFiles
 	// ConfigDirEnv is the bridge's $CLAUDE_CONFIG_DIR ("": unset), given to
 	// the probe explicitly: the clean environment drops every CLAUDE*.
@@ -101,8 +101,8 @@ func (c ClaudeRunner) CheckClaude(ctx context.Context, cwd string) (CheckResult,
 	}
 	deadline := time.Now().Add(timeout)
 	// The process's own bound leaves room for the last poll's answer.
-	res, err := harness.Run(ctx, harness.Spawn{Bin: c.bin(), Dir: dir, Args: claudeCheckArgs(string(settings)), Env: env, Timeout: timeout + 3*time.Second},
-		func(s *harness.Stream) (CheckResult, error) {
+	res, err := run(ctx, c.Run, Spawn{Bin: c.bin(), Dir: dir, Args: claudeCheckArgs(string(settings)), Env: env, Timeout: timeout + 3*time.Second},
+		func(s Stream) (CheckResult, error) {
 			res := CheckResult{State: proto.MCPCheckOK}
 			var init struct {
 				Version string `json:"claude_code_version"`
@@ -169,7 +169,7 @@ type claudeStatusRow struct {
 }
 
 // claudeStatus sends mcp_status request n and maps its rows.
-func claudeStatus(s *harness.Stream, n int) ([]Observed, error) {
+func claudeStatus(s Stream, n int) ([]Observed, error) {
 	id := "h3d-mcp-" + strconv.Itoa(n)
 	if err := s.Send(map[string]any{"type": "control_request", "request_id": id, "request": map[string]string{"subtype": "mcp_status"}}); err != nil {
 		return nil, err

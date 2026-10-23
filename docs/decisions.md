@@ -3179,7 +3179,8 @@ Code: `internal/hireintent` (`visible.go`, `family.go`, `select.go`, `resolve.go
 The wall screen and its overview show, per harness, the MCP servers and skills configured for a floor's checkout and
 Codex profile. The bridge part: `internal/mcpinv` (the reads, the checks and their cache), `internal/server/mcp.go`
 (`mcp.inventory`, `mcp.check`, the worker observations), `codexapp.Watcher.MCPStatus`, `harness.Run` (the probe runner,
-exported), the `expected_mcp` floor setting; protocol: [MCP and skills](protocol.md#mcp-and-skills); research:
+exported, wired into `mcpinv` by the app as its `Runner`: the hub reaches no harness package,
+`TestCommandCatalogIsProviderNeutral`), the `expected_mcp` floor setting; protocol: [MCP and skills](protocol.md#mcp-and-skills); research:
 `docs/research/mcp-skills-wall-display.md`.
 
 | # | Question | Decision |

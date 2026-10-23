@@ -181,6 +181,9 @@ type RPCError struct {
 	Code   int
 }
 
+// RPCMethod is the method the error answered.
+func (e *RPCError) RPCMethod() string { return e.Method }
+
 func (e *RPCError) Error() string {
 	return fmt.Sprintf("%s failed (JSON-RPC code %d)", e.Method, e.Code)
 }

@@ -16,8 +16,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/harness"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
+
+// harnessRun is the app's Runner (test imports are in no package's graph).
+func harnessRun(ctx context.Context, sp Spawn, fn func(Stream) error) error {
+	_, err := harness.Run(ctx, harness.Spawn{Bin: sp.Bin, Dir: sp.Dir, Args: sp.Args, Env: sp.Env, Timeout: sp.Timeout},
+		func(s *harness.Stream) (struct{}, error) { return struct{}{}, fn(s) })
+	return err
+}
 
 // The test executable stands in for the Codex and Claude Code CLIs: no
 // installed harness, credential or real MCP server is used. It traces its
@@ -308,7 +316,7 @@ func gone(t *testing.T, pid int) {
 func TestReadCodex(t *testing.T) {
 	r := fakeBin(t, "codex")
 	cwd := t.TempDir()
-	c := CodexRunner{Bin: r.bin, UserHome: "/h"}
+	c := CodexRunner{Run: harnessRun, Bin: r.bin, UserHome: "/h"}
 	p, err := c.ReadCodex(context.Background(), CodexHome{Home: "/h/.codex-work"}, cwd)
 	if err != nil {
 		t.Fatal(err)
@@ -376,7 +384,7 @@ func TestReadCodex(t *testing.T) {
 // A refused config/read fails that half only.
 func TestReadCodexRefused(t *testing.T) {
 	r := fakeBin(t, "codex-refuse-config")
-	p, err := CodexRunner{Bin: r.bin}.ReadCodex(context.Background(), CodexHome{Home: "/h/.codex", Default: true}, t.TempDir())
+	p, err := CodexRunner{Run: harnessRun, Bin: r.bin}.ReadCodex(context.Background(), CodexHome{Home: "/h/.codex", Default: true}, t.TempDir())
 	if err != nil || p.Config.State != proto.MCPStateFailed || p.Config.Note != "Codex app-server refused config/read" || p.Skills.State != proto.MCPStateOK {
 		t.Fatalf("refused = %+v, %v", p, err)
 	}
@@ -387,7 +395,7 @@ func TestReadCodexRefused(t *testing.T) {
 // server child too) killed and reaped; the failure says so, nothing raw.
 func TestCodexTimeoutKillsTheGroup(t *testing.T) {
 	r := fakeBin(t, "codex-hang-child")
-	c := CodexRunner{Bin: r.bin, ReadTimeout: 300 * time.Millisecond, CheckTimeout: 300 * time.Millisecond}
+	c := CodexRunner{Run: harnessRun, Bin: r.bin, ReadTimeout: 300 * time.Millisecond, CheckTimeout: 300 * time.Millisecond}
 	start := time.Now()
 	_, err := c.ReadCodex(context.Background(), CodexHome{Home: "/h/.codex", Default: true}, t.TempDir())
 	var f *Failure
@@ -417,7 +425,7 @@ func TestCodexTimeoutKillsTheGroup(t *testing.T) {
 // toolsAndAuthOnly, and follows nextCursor at most 4 more pages.
 func TestCheckCodex(t *testing.T) {
 	r := fakeBin(t, "codex")
-	res, err := CodexRunner{Bin: r.bin}.CheckCodex(context.Background(), CodexHome{Home: "/h/.codex-work"}, t.TempDir())
+	res, err := CodexRunner{Run: harnessRun, Bin: r.bin}.CheckCodex(context.Background(), CodexHome{Home: "/h/.codex-work"}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,7 +484,7 @@ func TestMapCodexStatuses(t *testing.T) {
 func TestCheckClaude(t *testing.T) {
 	r := fakeBin(t, "claude-child")
 	f, cwd := claudeFixture(t)
-	c := ClaudeRunner{Bin: r.bin, Files: f, ConfigDirEnv: "/cfg/claude", Poll: 10 * time.Millisecond}
+	c := ClaudeRunner{Run: harnessRun, Bin: r.bin, Files: f, ConfigDirEnv: "/cfg/claude", Poll: 10 * time.Millisecond}
 	res, err := c.CheckClaude(context.Background(), cwd)
 	if err != nil {
 		t.Fatal(err)
@@ -532,7 +540,7 @@ func TestCheckClaude(t *testing.T) {
 func TestCheckClaudeStillPending(t *testing.T) {
 	r := fakeBin(t, "claude-pending")
 	f, cwd := claudeFixture(t)
-	res, err := ClaudeRunner{Bin: r.bin, Files: f, Poll: 10 * time.Millisecond, Timeout: 100 * time.Millisecond}.CheckClaude(context.Background(), cwd)
+	res, err := ClaudeRunner{Run: harnessRun, Bin: r.bin, Files: f, Poll: 10 * time.Millisecond, Timeout: 100 * time.Millisecond}.CheckClaude(context.Background(), cwd)
 	if err != nil || res.State != proto.MCPCheckTimeout || len(res.Rows) != 5 || res.Rows[0] != (Observed{Name: "approved", Status: proto.MCPStatusConnecting,
 		Source: "project", Transport: "stdio"}) {
 		t.Fatalf("check = %+v, %v", res, err)
@@ -546,7 +554,7 @@ func TestCheckClaudeSkipsUnknownApprovals(t *testing.T) {
 	r := fakeBin(t, "claude")
 	f, cwd := claudeFixture(t)
 	writeText(t, filepath.Join(cwd, ".mcp.json"), "{")
-	res, err := ClaudeRunner{Bin: r.bin, Files: f}.CheckClaude(context.Background(), cwd)
+	res, err := ClaudeRunner{Run: harnessRun, Bin: r.bin, Files: f}.CheckClaude(context.Background(), cwd)
 	if err != nil || res.State != proto.MCPCheckSkipped || res.Note == "" {
 		t.Fatalf("check = %+v, %v", res, err)
 	}

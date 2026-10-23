@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/execpath"
-	"github.com/JeffreyVdb/herdr-3d/internal/harness"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
 
@@ -36,6 +35,7 @@ func (h CodexHome) env() []string {
 // Codex runs the installed Codex CLI's app-server for reads and checks.
 type CodexRunner struct {
 	Bin string
+	Run Runner
 	// UserHome is the home of display paths.
 	UserHome string
 	// ReadTimeout bounds a read (0: 10 s); CheckTimeout a check (0: 15 s).
@@ -84,12 +84,12 @@ func (i codexInit) version() string {
 // codexFailure is the display-safe Failure of a Codex process that did
 // not get through.
 func codexFailure(ctx context.Context, err error, what string) error {
-	var rpc *harness.RPCError
+	var rpc rpcError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil:
 		return &Failure{Note: "Codex app-server did not answer in time", Cause: err}
 	case errors.As(err, &rpc):
-		return &Failure{Note: "Codex app-server refused " + rpc.Method, Cause: err}
+		return &Failure{Note: "Codex app-server refused " + rpc.RPCMethod(), Cause: err}
 	case errors.Is(err, exec.ErrNotFound):
 		return &Failure{Note: "Codex CLI not found on the bridge", Cause: err}
 	}
@@ -110,8 +110,8 @@ func (c CodexRunner) ReadCodex(ctx context.Context, home CodexHome, cwd string) 
 		return proto.MCPProvider{}, codexFailure(ctx, err, "read")
 	}
 	defer done()
-	p, err := harness.Run(ctx, harness.Spawn{Bin: c.bin(), Dir: dir, Args: []string{"app-server"}, Env: home.env(), Timeout: c.ReadTimeout},
-		func(s *harness.Stream) (proto.MCPProvider, error) {
+	p, err := run(ctx, c.Run, Spawn{Bin: c.bin(), Dir: dir, Args: []string{"app-server"}, Env: home.env(), Timeout: c.ReadTimeout},
+		func(s Stream) (proto.MCPProvider, error) {
 			p := emptyProvider()
 			var init codexInit
 			if err := s.CodexInit(&init); err != nil {
@@ -123,7 +123,7 @@ func (c CodexRunner) ReadCodex(ctx context.Context, home CodexHome, cwd string) 
 			if cwd != "" {
 				params["cwd"] = cwd
 			}
-			var rpc *harness.RPCError
+			var rpc rpcError
 			switch err := s.RPC(2, "config/read", params, &cfg); {
 			case errors.As(err, &rpc):
 				p.Config = proto.MCPRead{State: proto.MCPStateFailed, Note: "Codex app-server refused config/read"}
@@ -438,8 +438,8 @@ func (c CodexRunner) CheckCodex(ctx context.Context, home CodexHome, cwd string)
 		return CheckResult{}, codexFailure(ctx, err, "check")
 	}
 	defer done()
-	res, err := harness.Run(ctx, harness.Spawn{Bin: c.bin(), Dir: dir, Args: []string{"app-server"}, Env: home.env(), Timeout: timeout},
-		func(s *harness.Stream) (CheckResult, error) {
+	res, err := run(ctx, c.Run, Spawn{Bin: c.bin(), Dir: dir, Args: []string{"app-server"}, Env: home.env(), Timeout: timeout},
+		func(s Stream) (CheckResult, error) {
 			res := CheckResult{State: proto.MCPCheckOK}
 			var init codexInit
 			if err := s.CodexInit(&init); err != nil {
