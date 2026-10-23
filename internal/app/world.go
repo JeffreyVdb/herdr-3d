@@ -888,6 +888,15 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		opts.Commands = catalog
 		opts.Prompts = harness.NewPrompts(catalog) // #138
 	}
+	{ // #196 MCP & skills
+		mctx, cancel := context.WithCancel(ctx)
+		svc, claudeDir, codexHome := mcpInventory(mctx, log, cfg.ClaudeCLI, cfg.CodexCLI)
+		defer func() {
+			cancel()
+			svc.Wait()
+		}()
+		opts.MCP, opts.MCPClaudeDir, opts.MCPCodexHome = svc, claudeDir, codexHome
+	}
 	if cfg.Git != nil { // #137
 		fctx, cancel := context.WithCancel(ctx)
 		files := fileindex.New(fctx, fileindex.Options{Git: cfg.Git, RG: &fileindex.RG{Bin: cfg.RG}, Log: log})

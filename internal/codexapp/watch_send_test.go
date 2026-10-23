@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -220,5 +222,47 @@ func TestClientIDs(t *testing.T) {
 	a, b := NewClientID(), NewClientID()
 	if a == b || !IsBridgeClientID(a) || IsBridgeClientID("9b0a4f98-28da-4ce4-92d0-6a5ad06370ff") || IsBridgeClientID("") {
 		t.Fatalf("client ids %q %q", a, b)
+	}
+}
+
+// #196: MCPStatus asks mcpServerStatus/list with the joined thread's id,
+// toolsAndAuthOnly, 100 a page, and follows nextCursor at most 4 more pages.
+func TestWatcherMCPStatus(t *testing.T) {
+	f := newFakeServer(t)
+	var asked []map[string]any
+	var mu sync.Mutex
+	f.respond = func(method string, p map[string]any) (any, any, bool) {
+		if method != "mcpServerStatus/list" {
+			return nil, map[string]any{"code": -32601, "message": "unexpected"}, false
+		}
+		mu.Lock()
+		asked = append(asked, p)
+		n := len(asked)
+		mu.Unlock()
+		return map[string]any{"nextCursor": fmt.Sprint(n), "data": []any{
+			map[string]any{"name": fmt.Sprint("s", n), "runtimeStatus": "connected", "authStatus": "unsupported", "httpOrigin": "https://x"},
+		}}, nil, false
+	}
+	r := newRecorder()
+	w := watch(t, f, r, nil)
+	r.wait(t, EvJoined)
+	rows, err := w.MCPStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 5 || rows[0].Name != "s1" || rows[0].RuntimeStatus == nil || *rows[0].RuntimeStatus != "connected" {
+		t.Fatalf("rows %+v", rows)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for i, p := range asked {
+		if p["threadId"] != "th1" || p["detail"] != "toolsAndAuthOnly" || p["limit"] != float64(100) || (i > 0) != (p["cursor"] != nil) {
+			t.Fatalf("page %d params %v", i, p)
+		}
+	}
+
+	w.Close()
+	if _, err := w.MCPStatus(context.Background()); !errors.Is(err, ErrNotAttached) {
+		t.Fatalf("closed: %v", err)
 	}
 }

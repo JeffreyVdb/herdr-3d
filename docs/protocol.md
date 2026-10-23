@@ -976,7 +976,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `building.delete` | `{"id": string}` | — | `floor.upsert` for each of its floors (now unassigned), `building.upsert` for buildings whose `sort` shifted, then `building.removed` |
 | `building.reorder` | `{"ids": [string…]}`: every building id exactly once, in the new order | — | `building.upsert` for each moved building |
 | `floor.assign` | `{"floor"|"session": string, "building": string \| null, "index"?: int}`: `null` moves the floor to the unassigned lot; `index` inserts at that position (clamped), omitted appends | — | `floor.upsert` for every floor whose position changed, `building.upsert` for the buildings involved |
-| `floor.settings.set` | `{"floor"|"session": string, "repo"?, "project"?, "status_field"?, "default_cwd"?, "default_hire"?}`: an absent key stays as it is, `null` clears it, a value sets it (see [Floor settings](#floor-settings)) | — | `floor.upsert` carrying the new `settings` (and `suggested`, when the chosen repo changes it); none when nothing changed |
+| `floor.settings.set` | `{"floor"|"session": string, "repo"?, "project"?, "status_field"?, "default_cwd"?, "default_hire"?, "tracker"?, "kaneo"?, "expected_mcp"?}`: an absent key stays as it is, `null` clears it, a value sets it (see [Floor settings](#floor-settings)) | — | `floor.upsert` carrying the new `settings` (and `suggested`, when the chosen repo changes it); none when nothing changed |
 | `floor.wake` | `{"floor"|"session": string}` | `{"workers": [{"id", "resume"}]}`: every worker of the floor in sidebar order, `resume` one of `confirmed`, `fallback`, `failed`, or `none` (no `agent_session`: nothing to resume) | `floor.upsert` with `transition: "waking"`, `worker.upsert` (`resume: "pending"`) for each resumable worker, then the floor running and its workers as the watcher sees them, `worker.upsert` as each `resume` settles, and a final `floor.upsert` without `transition` |
 | `floor.sleep` | `{"floor"|"session": string}` | — | `floor.upsert` with `transition: "sleeping"` (and `worker.upsert` for workers whose `resume` is cleared), then `floor.upsert` with `state: "asleep"` and no `transition`, then the asleep workers |
 | `session.create` | `{"name": string}`: #58, a new herdr session (see [New herdr sessions](#new-herdr-sessions)) | `{"session": string}`, once its floor is in the world | the new floor's `floor.upsert` (`state: "running"`, in the unassigned lot), before the ack |
@@ -1398,6 +1398,8 @@ later; with `?backend=webgl2` and without, check the TV's colours and letterboxi
 | `default_hire` | `{"harness", "model", "effort"}` | one of `hire_options`: a model of that harness, an effort of it or an `extra_efforts` entry of that model |
 | `tracker` | `"github"` \| `"kaneo"` | #184: the floor's issue tracker; `null` and `"github"` are GitHub, which every floor from before is (absent in `settings`). `"kaneo"` needs a `kaneo` link (stored or in the same call) |
 | `kaneo` | `{"workspace_id", "project_id"}` | #184: ids 1–200 bytes; the bridge asks Kaneo (the saved connection: `not_configured` without one) that the project is a live project of that workspace before it saves (`not_found`: deleted or invisible to the key; `bad_request`: another workspace's, or archived; `unauthorized`, `forbidden`, `unreachable`, `timeout` as Kaneo answered). Settings show it as `{"workspace_id", "workspace_name"?, "project_id", "project_name"?}` (the names as they were at the save) |
+
+| `expected_mcp` | `["name", …]` | #196: the MCP servers the floor expects its harnesses to have (the [MCP & skills wall](#mcp-and-skills) alerts on a missing one): 0–32 names, each trimmed, 1–100 bytes, no control characters, no name twice (exact match); `[]` clears it like `null`. Absent from `settings` when unset |
 
 Objects must not have other keys. Settings live in SQLite `floor_repo`.
 
@@ -6257,6 +6259,147 @@ updates on an Arch-based host, and its disks' activity. All of it is sampled **o
 ```json
 {"t":"host.disk","disks":[{"name":"nvme0n1","r_iops":12.0,"w_iops":240.0,"r_bps":49152,"w_bps":8388608}]}
 ```
+
+### MCP and skills
+
+#196. The office's MCP & skills wall shows, per harness (Claude Code and Codex), the MCP servers and skills configured
+for a floor's checkout and a Codex profile, whether each is expected, and what the last connection check or a running
+worker said of it. Two commands; both answer a **Snapshot**.
+
+- **Inventory read** (passive): configuration only. It never starts or connects to an MCP server, never sends a prompt or
+  turn, never calls a tool or a skill. Claude Code: its config files and `SKILL.md` folders, read by the bridge (no
+  process). Codex: a fresh `codex app-server` under the profile's `CODEX_HOME` (in the checkout; for user scope in an
+  empty private folder) sent `initialize`, `config/read {cwd, includeLayers:false}` and `skills/list {cwds:[cwd]}` only.
+- **Connection check** (`mcp.check`, on request only, never on a timer or on view): a fresh probe process that starts the
+  configured servers to observe them; its statuses are labelled `status_scope: "probe"` and describe that probe, never a
+  worker.
+- **Worker observation** (passive): an attached shared-server Codex worker's own `mcpServerStatus/list` with its thread id
+  (it reuses that thread's connections), labelled `status_scope: "worker"` with the worker. Claude Code has no equivalent:
+  the live status of a running Claude worker is not known.
+
+**`mcp.inventory`** `{"floor"|"session": string, "cwd"?: string|null, "codex_profile"?: string|null}` → ack `data` = Snapshot.
+
+- `cwd` absent: the floor's default checkout (`settings.default_cwd`, else `suggested.default_cwd`, else the first worker's
+  checkout that exists, else user scope). A string must be an existing absolute directory (`bad_request`); `null` is user
+  scope (no project layer).
+- `codex_profile`: a key of [Codex profiles](#codex-profiles); absent or `null`: the default profile. An unknown key, or one
+  whose folder is gone, is `not_found`. The floor may be asleep: nothing on it changes.
+- Served from one bridge-wide cache keyed by (harness, cwd, config home: Claude Code's config dir; the profile's resolved
+  `CODEX_HOME`), shared by all connections, at most 64 keys (least recently used dropped). A read at most 15 s old is
+  answered at once; an older one at once while one read refreshes it in the background; a key's first read is waited for
+  up to 10 s (then that provider is `pending`, and a later request gets the read). Concurrent requests share one read per
+  key. A failed read keeps the last good one marked `stale: true` (its note says the latest read failed); retries wait
+  30 s, doubling up to 5 min. With no good read the provider is `failed`, never an empty success.
+- Not written to the audit log (also when refused): the game polls it, every ~20 s only while the wall screen is in view
+  on the current floor or the overview is open, the tab visible and the bridge connected (as `host.watch`). A bridge from
+  before it answers `unknown_command`; the game then shows a calm "No MCP inventory on this bridge" screen.
+- While it is asked with a checkout, each attached shared-server Codex worker of the floor whose checkout is that one and
+  whose profile is the asked one is read (`mcpServerStatus/list` with its `threadId`, `detail: "toolsAndAuthOnly"`, at most
+  5 pages of 100, 10 s in all), at most once per 30 s per worker; a request inside that window gets the last read. With
+  nobody asking, no worker is read.
+
+**`mcp.check`** `{"floor"|"session", "cwd"?, "codex_profile"?, "harness": "claude"|"codex"}` → ack after the check,
+`data` = Snapshot with that provider's `check` and its servers' probe statuses. Audited: it starts the configured servers.
+
+- Claude Code: `claude --print --input-format stream-json --output-format stream-json --verbose --no-session-persistence
+  --tools "" --settings '{"disableAllHooks":true,"disabledMcpjsonServers":[…]}'` in the checkout (user scope: an empty
+  private folder), with the user's real setting sources (no `--strict-mcp-config`), the clean herdr environment and the
+  bridge's `CLAUDE_CONFIG_DIR` if it has one. It sends `initialize`, then `mcp_status` every 500 ms until no server is
+  `pending` or 20 s passed (still pending: `connecting`, and `check.state: "timeout"`). Headless Claude Code starts the
+  `.mcp.json` servers of the folder and of every folder above it without asking, so the ones the user has not approved
+  are passed as `disabledMcpjsonServers` (measured on 2.1.309: such a server is then never started). When one of those
+  files cannot be read, which ones is not known and the check is `skipped`. Never `mcp_toggle`, `reload_skills`,
+  `reload_plugins`, `mcp_reconnect`, `mcp_call` or a user message.
+- Codex: a fresh `codex app-server` (as for the read) asked `mcpServerStatus/list` without a thread (it starts every
+  enabled server, on each page), `limit: 100`, `detail: "toolsAndAuthOnly"`, following `nextCursor` at most 4 more pages,
+  15 s in all.
+- The process group is killed and reaped afterwards. Checks are coalesced per key and run at most once per key per 30 s:
+  a request inside that window answers the last check (its `check.at` tells its age). Never retried. The last check's
+  statuses stay on later `mcp.inventory` answers of the key. A missing CLI makes the check `skipped`.
+
+```json
+{"t":"mcp.inventory","req_id":"40","args":{"floor":"herdr-3d","codex_profile":"work"}}
+{"t":"ack","req_id":"40","data":{
+  "context":{"floor":"herdr-3d","cwd":"/home/me/repos/x","cwd_display":"~/repos/x","codex_profile":"work",
+             "codex_profile_name":"work","claude_config":"~/.claude"},
+  "checkouts":[{"path":"/home/me/repos/x","display":"~/repos/x","label":"x (default)"}],
+  "expected":["github","linear"],
+  "generated_at":"2026-10-23T12:00:00Z",
+  "providers":{
+    "claude":{"available":true,"version":"","reason":"",
+      "config":{"state":"ok","read_at":"2026-10-23T11:59:58Z","stale":false,
+                "note":"claude.ai connectors are not in the configuration files; Check connections lists them"},
+      "check":{"state":"none","at":null,"note":""},
+      "servers":[{"name":"github","source":"user","plugin":"","transport":"http","enabled":true,"approval":"n/a",
+                  "status":"not_checked","status_scope":"config","status_at":null,"reason":""}],
+      "skills":{"state":"ok","read_at":"2026-10-23T11:59:58Z","stale":false,"complete":false,
+                "note":"Found on disk; claude.ai-synced and lazily loaded skills are not listed",
+                "items":[{"name":"deploy","description":"Ship it","source":"user","plugin":"","enabled":true,
+                          "invocation":"both","where":"~/.claude/skills/deploy"}],"errors":[]}},
+    "codex":{"available":true,"version":"0.163.0","reason":"",
+      "config":{"state":"ok","read_at":"2026-10-23T11:59:59Z","stale":false,"note":""},
+      "check":{"state":"ok","at":"2026-10-23T11:58:40Z","note":""},
+      "servers":[{"name":"linear","source":"user","plugin":"","transport":"http","enabled":true,"approval":"n/a",
+                  "status":"auth_required","status_scope":"probe","status_at":"2026-10-23T11:58:40Z",
+                  "reason":"Authentication required"}],
+      "skills":{"state":"ok","read_at":"2026-10-23T11:59:59Z","stale":false,"complete":true,"note":"",
+                "items":[],"errors":[{"where":"~/.codex/skills/bad","message":"Invalid SKILL.md front matter"}]}}}}}
+```
+
+**Snapshot**: `context` (the floor; `cwd`, `null` for user scope, and its `cwd_display`; the resolved Codex profile's key
+and name, `""` when the bridge lists none; `claude_config`, Claude Code's config dir for display), `checkouts` (the
+choices of `cwd`: the floor's default first, labelled "(default)", then its suggested default and its workers'
+checkouts; the client adds user scope), `expected` (the floor's `expected_mcp`, `[]` when none), `generated_at`, and
+`providers.claude` and `providers.codex`, always both. A **provider**:
+
+| field | meaning |
+|---|---|
+| `available` | `false`: the CLI is not found on the bridge (`reason` says which); its `config` and `skills` are `unavailable` |
+| `version` | the CLI's version when a read or check reported it, else `""` (Claude Code's comes from a check) |
+| `config` | `state`: `ok`, `partial` (some file could not be read or parsed: `note` names it by display path), `failed` (`note` says why; `servers` then means nothing), `pending` (the first read is still running), `unavailable`; `read_at`; `stale` (a later read failed: this is the last good one); `note` |
+| `check` | the key's last connection check: `state` `none`, `ok`, `failed`, `skipped`, `timeout`; `at`; `note` |
+| `servers` | one row per name within this provider (names are never merged across providers here). `[]` means the read worked and nothing is configured, only when `config.state` is `ok` or `partial` |
+| `skills` | as `config`, with `complete` (`true` only when the harness enumerates its skills itself: Codex `skills/list`), `items` and `errors` (`where`: a display path; `message`: the bridge's category) |
+
+A **server**: `name`; `source` (Claude Code: `user` = `~/.claude.json` top-level, `local` = its `projects[<cwd>]`,
+`project` = a `.mcp.json` of the checkout or a folder above it, `plugin` = an enabled plugin's (named
+`plugin:<plugin>:<server>`, `plugin` set), `managed` = `/etc/claude-code/managed-mcp.json`, `connector` = a claude.ai
+connector a check saw; Codex: the config layer that defines it, `user`, `project`, `system`, `managed`; else `unknown`);
+`transport` (`stdio`, `http`, `sse`, `unknown`); `enabled` (`null`: not known); `approval` (Claude Code project servers:
+`approved` (`enabledMcpjsonServers` or `enableAllProjectMcpServers`, from `~/.claude.json`'s project entry or a settings
+file not checked in, or the project's own `.claude/settings.json` in a trusted folder), `rejected`
+(`disabledMcpjsonServers`), else `pending`; `n/a` otherwise); `status`, `status_scope` (`config`, `probe`, `worker`),
+`status_at`, `worker` (`{"id", "name"}`, for `worker` only) and `reason` (the bridge's short phrase).
+
+| `status` | from |
+|---|---|
+| `not_checked` | a configuration read only: configured, never seen running |
+| `disabled` | configured off (`disabledMcpServers` of the project, a rejected project server, Codex `enabled = false`), or a check or worker said so |
+| `approval_required` | a Claude Code project server not approved yet |
+| `blocked` | not allowed by managed configuration (`managed-mcp.json`, when present, decides alone) |
+| `connecting` | Claude `pending`; Codex `starting` |
+| `connected` | Claude `connected`; Codex `serverInfo` present (no thread) or `connected` |
+| `auth_required` | Claude `needs-auth`; Codex `authStatus: "notLoggedIn"` or `authenticationRequired` |
+| `failed` | Claude `failed`; Codex `toolsError` (no thread), `failed` or `cancelled`; `reason` a category ("Connection closed", "Authentication failed", "Timed out", "Command not found", "Connection refused", "Startup failed") |
+| `unknown` | a status the bridge does not recognize |
+
+A check or worker status replaces a config status (the newer of the two when both exist); a server the check or worker
+reports that the read did not list (a claude.ai connector) is added; a configured server it did not report keeps its
+config status, and so does a disabled, blocked or unapproved one it reports nothing useful of.
+
+A **skill**: `name`, `description`, `source` (`user`, `project`, `plugin`, `repo`, `system`, `admin`, `unknown`),
+`plugin`, `enabled` (`null`: not known), `invocation` (`both`, `user_only`, `model_only`, `unknown`) and `where` (its
+folder, for display). Claude Code: only `<root>/<name>/SKILL.md` folders, of the managed dir (`admin`), the config dir's
+`skills/` (`user`), `.claude/skills` of the checkout and each folder up to the repository root (outside a repository:
+up to below the home folder) (`project`) and the
+enabled plugins' `skills/` (`plugin`, named `<plugin>:<name>`); front matter `name`, `description`, `user-invocable`,
+`disable-model-invocation`; `skillOverrides: "off"` is `enabled: false` (plugin skills are not overridden); built-in
+commands, legacy commands and MCP prompts are never skills; never `complete`. At most 1000 folders a root, 2000 skills, 64
+KiB of front matter. Codex: every `skills/list` row, disabled ones too, and its load errors.
+
+**Safety**: the bridge sends names, skill descriptions, its own notes and reasons, scopes and sources, transports,
+booleans, times and display paths only. Never a config object, command, argument, environment value, header, URL (not
+even an HTTP origin), token, account data or raw error or stderr text: none is decoded into anything that is sent.
 
 ### Errors
 

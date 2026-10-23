@@ -338,6 +338,10 @@ type FloorSettings struct {
 	// Kaneo), so switching back finds it.
 	Tracker string     `json:"tracker,omitempty"`
 	Kaneo   *KaneoLink `json:"kaneo,omitempty"`
+	// #196: ExpectedMCP are the MCP server names the floor expects its
+	// harnesses to have configured (the MCP & skills wall alerts on a
+	// missing one).
+	ExpectedMCP []string `json:"expected_mcp,omitempty"`
 }
 
 // KaneoLink is a floor's Kaneo workspace and project: the ids, and the
@@ -767,6 +771,10 @@ type FloorSettingsArgs struct {
 	// it saves them (the project must be a live project of that workspace).
 	Tracker Optional[string]        `json:"tracker,omitzero"`
 	Kaneo   Optional[KaneoLinkArgs] `json:"kaneo,omitzero"`
+	// #196: ExpectedMCP are 0-MaxExpectedMCP unique server names of
+	// 1-MaxExpectedMCPName bytes (trimmed, no control characters); null or
+	// [] clears.
+	ExpectedMCP Optional[[]string] `json:"expected_mcp,omitzero"`
 }
 
 // KaneoLinkArgs are a floor's Kaneo ids in floor.settings.set.

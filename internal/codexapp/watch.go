@@ -495,6 +495,55 @@ func textInput(text string) []any {
 	return []any{map[string]any{"type": "text", "text": text, "text_elements": []any{}}}
 }
 
+// MCPServerStatus is one row of mcpServerStatus/list, the fields #196's
+// MCP & skills wall reads (never toolsError's text beyond a category, nor
+// httpOrigin, tools or resources).
+type MCPServerStatus struct {
+	Name          string          `json:"name"`
+	RuntimeStatus *string         `json:"runtimeStatus"`
+	PluginID      *string         `json:"pluginId"`
+	ServerInfo    json.RawMessage `json:"serverInfo"`
+	ToolsError    *string         `json:"toolsError"`
+	AuthStatus    string          `json:"authStatus"`
+}
+
+// Bounds of MCPStatus: rows per page, pages.
+const (
+	mcpStatusLimit = 100
+	mcpStatusPages = 5
+)
+
+// MCPStatus lists the MCP servers of the joined thread as its own runtime
+// has them (#196): mcpServerStatus/list with the thread's id, which reuses
+// that thread's MCP connections (it starts none of its own), detail
+// toolsAndAuthOnly, at most 5 pages of 100. An observation only: it changes
+// nothing on the thread.
+func (w *Watcher) MCPStatus(ctx context.Context) ([]MCPServerStatus, error) {
+	var out []MCPServerStatus
+	var cursor *string
+	seen := map[string]bool{}
+	for range mcpStatusPages {
+		params := map[string]any{"threadId": w.o.Thread, "detail": "toolsAndAuthOnly", "limit": mcpStatusLimit}
+		if cursor != nil {
+			params["cursor"] = *cursor
+		}
+		var res struct {
+			Data       []MCPServerStatus `json:"data"`
+			NextCursor *string           `json:"nextCursor"`
+		}
+		if err := w.send(ctx, "mcpServerStatus/list", params, &res); err != nil {
+			return nil, err
+		}
+		out = append(out, res.Data...)
+		if res.NextCursor == nil || *res.NextCursor == "" || seen[*res.NextCursor] {
+			break
+		}
+		seen[*res.NextCursor] = true
+		cursor = res.NextCursor
+	}
+	return out, nil
+}
+
 // send makes one request on the joined connection, bounded by CallTimeout.
 func (w *Watcher) send(ctx context.Context, method string, params, out any) error {
 	w.mu.Lock()
