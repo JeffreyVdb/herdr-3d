@@ -438,7 +438,7 @@ func TestProfileHireLegacy(t *testing.T) {
 	l := pb.launches(t)[res.ID]
 	if l.Mode != store.CodexLegacy || l.Profile != "team" || l.Account != store.AccountUnconfirmed ||
 		!strings.Contains(l.ProfileNote, "it has no Codex server of its own") || res.Codex == nil || res.Codex.Profile != "team" ||
-		!strings.Contains(l.ProfileNote, "the bridge finds it by the worker's folder in team's sessions") {
+		!strings.Contains(l.ProfileNote, "Its conversation and usage stay pending until its session is reported.") {
 		t.Fatalf("launch = %+v, result %s", l, m.raw)
 	}
 
@@ -1000,10 +1000,7 @@ func TestProfileSleepBackfillsOwnHome(t *testing.T) {
 	}
 }
 
-// S1a, S1b: a Codex worker on another profile whose session herdr does not
-// know gets the usage of the rollout of its folder in its own profile's
-// sessions folder, not the newer one of the same folder in --codex-sessions
-// (the default's), which is another worker's.
+// #192: an alternate home stays pending until its session is identified.
 func TestProfileUsageOwnHome(t *testing.T) {
 	t.Parallel()
 	const (
@@ -1015,16 +1012,21 @@ func TestProfileUsageOwnHome(t *testing.T) {
 	profileRollout(t, filepath.Join(pb.team, "sessions"), "2026-10-21T10-00-00", teamID, "/home/u/repo", 300,
 		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"review the team's pull requests"}]}}`)
 	res := ackData[proto.HireResult](t, func() msg { m, _ := pb.hire(t, 1, "team"); return m }())
+	c := pb.connect(proto.Hello{Client: "tx"})
+	c.snapshot()
+	_, ack := c.mustAck(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: res.ID})
+	if page := decode[proto.TranscriptWatchResult](t, ack); !page.Pending || len(page.Items) != 0 {
+		t.Fatalf("unidentified profile transcript: %+v", page)
+	}
+	pb.fl.update(res.WorkspaceID, func(w *world.WorkerObs) { w.AgentSession = teamID })
 	w := workersOf(pb.world(func(w proto.World) bool {
 		x := workersOf(w, "s")[res.WorkspaceID]
 		return x.Usage != nil
 	}), "s")[res.WorkspaceID]
-	if w.Usage.Input != 300 || w.AgentSession != "" {
+	if w.Usage.Input != 300 || w.AgentSession != teamID {
 		t.Fatalf("usage = %+v, agent session %q", w.Usage, w.AgentSession)
 	}
 	// Its transcript lines come from the same rollout (the watch's first page).
-	c := pb.connect(proto.Hello{Client: "tx"})
-	c.snapshot()
 	_, wack := c.mustAck(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: res.ID})
 	b, _ := json.Marshal(wack.Data)
 	var page proto.TranscriptWatchResult

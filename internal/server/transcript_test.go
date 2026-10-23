@@ -532,8 +532,7 @@ func TestTranscriptResync(t *testing.T) {
 }
 
 // A live Codex worker herdr knows no session of: its transcript is the
-// rollout picked by its cwd, as for its usage; a newer rollout there (after
-// /new) ends the watch with session_changed.
+// rollout identified by herdr; an identified /new ends the watch with session_changed.
 func TestTranscriptCodexRollout(t *testing.T) {
 	t.Parallel()
 	const (
@@ -555,7 +554,7 @@ func TestTranscriptCodexRollout(t *testing.T) {
 		Interval: 20 * time.Millisecond}, TranscriptFlush: 10 * time.Millisecond})
 	c := b.connect(proto.Hello{})
 	c.snapshot()
-	w := worker("w1", "a", "", "working")
+	w := worker("w1", "a", first, "working")
 	w.AgentKind, w.Harness = "codex", world.HarnessCodex
 	b.floor("s1", true, w)
 	id := c.until(proto.EvWorkerUpsert).Worker.ID
@@ -573,11 +572,139 @@ func TestTranscriptCodexRollout(t *testing.T) {
 		t.Fatalf("watch ack = %+v", res)
 	}
 	rollout(second, "rollout-2026-09-29T06-00-00")
+	w.AgentSession = second
+	b.floor("s1", true, w)
 	if _, cl := c.push(id); cl.Reason != proto.ClosedSessionChanged {
 		t.Fatalf("closed = %+v", cl)
 	}
 	_, ack = c.mustAck(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: id})
 	if res := decode[proto.TranscriptWatchResult](t, ack); res.Session != second {
 		t.Fatalf("re-watch = %+v", res)
+	}
+}
+
+// #192: a directory is not proof that a rollout belongs to a new worker.
+func TestTranscriptCodexWaitsForIdentity(t *testing.T) {
+	t.Parallel()
+	const old = "01a0eba4-0119-7e33-915b-1d458317a910"
+	const fresh = "01a0eba4-0119-7e33-915b-1d458317a911"
+	for _, tc := range []struct {
+		name, label, oldCwd                            string
+		identified, delayedFile, sameFloor, otherFloor bool
+	}{
+		{name: "different name", label: "brand new", oldCwd: "/home/u/w1"},
+		{name: "same name", label: "previous name", oldCwd: "/home/u/w1"},
+		{name: "other directory", label: "new", oldCwd: "/elsewhere"},
+		{name: "identified immediately", label: "new", oldCwd: "/home/u/w1", identified: true},
+		{name: "delayed rollout", label: "new", oldCwd: "/home/u/w1", delayedFile: true},
+		{name: "same floor", label: "new", oldCwd: "/home/u/w1", sameFloor: true},
+		{name: "different floors", label: "new", oldCwd: "/home/u/w1", otherFloor: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			rollout := func(session, stamp, cwd, content string) {
+				writeTranscript(t, filepath.Join(root, "2026", "09", "29", "rollout-2026-09-29T"+stamp+"-"+session+".jsonl"),
+					fmt.Sprintf(`{"type":"session_meta","payload":{"id":%q,"cwd":%q}}`+"\n"+
+						`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":%q}]}}`+"\n", session, cwd, content))
+			}
+			rollout(old, "05-32-46", tc.oldCwd, "OLD CONVERSATION")
+			b := startBridge(t, "", server.Options{Usage: &server.UsageConfig{Roots: usage.Roots{CodexSessions: root}, Interval: 20 * time.Millisecond}, TranscriptFlush: 10 * time.Millisecond})
+			c := b.connect(proto.Hello{})
+			c.snapshot()
+			w := worker("w1", tc.label, "", "working")
+			w.AgentKind, w.Harness = "codex", world.HarnessCodex
+			if tc.identified {
+				w.AgentSession = fresh
+			}
+			publish := func() {
+				others := []world.WorkerObs{w}
+				if tc.sameFloor || tc.otherFloor {
+					other := worker("w2", "previous name", old, "working")
+					other.AgentKind, other.Harness, other.Cwd = "codex", world.HarnessCodex, "/home/u/w1"
+					if tc.sameFloor {
+						others = append(others, other)
+					} else {
+						b.floor("s2", true, other)
+					}
+				}
+				b.floor("s1", true, others...)
+			}
+			publish()
+			id := ""
+			for id == "" {
+				ev := c.until(proto.EvWorkerUpsert)
+				if ev.Worker.Label == tc.label {
+					id = ev.Worker.ID
+				}
+			}
+			watch := func(c *client) proto.TranscriptWatchResult {
+				_, ack := c.mustAck(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: id})
+				return decode[proto.TranscriptWatchResult](t, ack)
+			}
+			pending := func() {
+				t.Helper()
+				res := watch(c)
+				if !res.Pending || len(res.Items) != 0 || (res.Session != "" && res.Session != fresh) {
+					t.Fatalf("new worker received historical conversation: %+v", res)
+				}
+			}
+			pending()
+			if !tc.delayedFile {
+				rollout(fresh, "06-00-00", "/home/u/w1", "NEW CONVERSATION")
+				// Even a new file is not identity: it could belong to another worker.
+				if !tc.identified {
+					pending()
+				}
+			}
+			if !tc.identified {
+				w.AgentSession = fresh
+				publish()
+				workerID(t, c, fresh)
+			}
+			if tc.delayedFile {
+				pending()
+				rollout(fresh, "06-00-00", "/home/u/w1", "NEW CONVERSATION")
+			}
+			p, cl := c.push(id)
+			var res proto.TranscriptWatchResult
+			if cl.Reason == proto.ClosedSessionChanged {
+				res = watch(c)
+			} else {
+				if cl.Reason != "" || p.TranscriptHead == nil {
+					t.Fatalf("arrival: %+v %+v", p, cl)
+				}
+				res = proto.TranscriptWatchResult{TranscriptHead: *p.TranscriptHead, Items: p.Items}
+			}
+			check := func(res proto.TranscriptWatchResult, session, text string) {
+				t.Helper()
+				body, _ := json.Marshal(res.Items)
+				if res.Pending || res.Session != session || !strings.Contains(string(body), text) {
+					t.Fatalf("identified conversation: %+v", res)
+				}
+				if session == fresh && strings.Contains(string(body), "OLD CONVERSATION") {
+					t.Fatal("old content mixed into new session")
+				}
+			}
+			check(res, fresh, "NEW CONVERSATION")
+			// Reconnecting uses the explicitly identified session, even if it is historical.
+			reconnected := b.connect(proto.Hello{})
+			reconnected.snapshot()
+			check(watch(reconnected), fresh, "NEW CONVERSATION")
+			w.AgentSession = old
+			publish()
+			workerID(t, c, old)
+			if _, cl = c.push(id); cl.Reason != proto.ClosedSessionChanged {
+				t.Fatalf("resume close: %+v", cl)
+			}
+			check(watch(c), old, "OLD CONVERSATION")
+			// Replacing the agent at the same worker slot must forget its previous reader.
+			w.AgentSession = ""
+			publish()
+			if _, cl = c.push(id); cl.Reason != proto.ClosedSessionChanged {
+				t.Fatalf("replacement close: %+v", cl)
+			}
+			pending()
+		})
 	}
 }

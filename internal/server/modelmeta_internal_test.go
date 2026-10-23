@@ -30,9 +30,9 @@ func TestShownModel(t *testing.T) {
 		{"an effort that is not one", modelEffort{"x", "high"}, &proto.Usage{Effort: "high!"}, usageTag{"s1", "s1"}, "s1", "x", "high"},
 		{"another session's usage", modelEffort{"x", "high"}, &proto.Usage{Model: "y", Effort: "low"}, usageTag{"s1", "s1"}, "s2", "x", "high"},
 		{"the session is gone", modelEffort{}, &proto.Usage{Model: "y", Effort: "low"}, usageTag{"s1", "s1"}, "", "", ""},
-		{"read before herdr named the session (a Codex found by its cwd), still none", modelEffort{"x", "high"}, &proto.Usage{Model: "y", Effort: "low"}, usageTag{"", "s1"}, "", "y", "low"},
-		{"found by its cwd, then herdr names that rollout", modelEffort{"x", "high"}, &proto.Usage{Model: "y", Effort: "low"}, usageTag{"", "s1"}, "s1", "y", "low"},
-		{"found by its cwd, then herdr names another session", modelEffort{"x", "high"}, &proto.Usage{Model: "y", Effort: "low"}, usageTag{"", "s1"}, "s2", "x", "high"},
+		{"read before herdr named the session (a Codex thread identified by its own server), still none", modelEffort{"x", "high"}, &proto.Usage{Model: "y", Effort: "low"}, usageTag{"", "s1"}, "", "y", "low"},
+		{"identified by its server, then herdr names that rollout", modelEffort{"x", "high"}, &proto.Usage{Model: "y", Effort: "low"}, usageTag{"", "s1"}, "s1", "y", "low"},
+		{"identified by its server, then herdr names another session", modelEffort{"x", "high"}, &proto.Usage{Model: "y", Effort: "low"}, usageTag{"", "s1"}, "s2", "x", "high"},
 		{"named s1 and read for it, then herdr names none", modelEffort{"x", "high"}, &proto.Usage{Model: "y", Effort: "low"}, usageTag{"s1", "s1"}, "", "x", "high"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

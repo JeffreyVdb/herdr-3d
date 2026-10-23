@@ -635,9 +635,10 @@ export class TranscriptMode {
     const view = s.view;
     if (!id || !view || s.revealing) return false;
     s.revealing = true;
+    const timeline = s.timeline;
     try {
       for (let pages = 0; ; pages++) {
-        if (this.s !== s) return false;
+        if (this.s !== s || s.timeline !== timeline) return false;
         if (s.index.has(id)) {
           if (!s.view?.hasItem(id)) s.view?.setItems([...s.items]);
           if (s.view?.scrollToItem(id)) {
@@ -647,7 +648,7 @@ export class TranscriptMode {
         }
         if (!s.hasMore || pages >= REVEAL_PAGES) break;
         const r = await this.host.send('transcript.page', { id: s.id, before: s.cursor, limit: REVEAL_LIMIT });
-        if (this.s !== s) return false;
+        if (this.s !== s || s.timeline !== timeline) return false;
         if (!r.ok) {
           this.host.status('error', failureText('transcript.page', r.code, r.message, { worker: s.name }));
           s.reveal = null;
@@ -1055,7 +1056,9 @@ export class TranscriptMode {
       },
       loadSubagent: async (agentId) => {
         // A subagent's own timeline: its newest page (the bridge finds <session>/subagents/agent-<id>.jsonl).
+        const timeline = s.timeline;
         const r = await this.host.send('transcript.page', { id: s.id, before: '', agent: agentId, limit: SUBAGENT_LIMIT });
+        if (!live() || s.timeline !== timeline) return [];
         if (!r.ok) throw new Error(failureText('transcript.page', r.code, r.message, { worker: s.name }));
         const items = subagentItems(r.data);
         // Their images are the bridge's to serve (it authorized them in this page); the feed asks for nothing else, and
@@ -1065,7 +1068,9 @@ export class TranscriptMode {
       },
       // #171: a change the list cut, in full (a subagent's: with its agent).
       loadItem: async (itemId, agent) => {
+        const timeline = s.timeline;
         const r = await this.host.send('transcript.item', { id: s.id, item: itemId, ...(agent ? { agent } : {}) });
+        if (!live() || s.timeline !== timeline) return null;
         if (!r.ok) throw new Error(failureText('transcript.item', r.code, r.message, { worker: s.name }));
         const item = (r.data as { item?: unknown } | null)?.item;
         const items = itemsOf([item]);
@@ -1340,17 +1345,21 @@ export class TranscriptMode {
     s.cursor = ack.cursor;
     s.hasMore = ack.has_more;
     s.view?.setItems([...s.items]);
-    // #126: from now on an empty timeline is empty (a re-watch's ack keeps what shows until it replaces it).
-    s.acked = true;
-    s.view?.setLoading?.(false);
+    // #192: a pending identity or rollout keeps the loading state until its first push.
+    s.acked = !ack.pending;
+    s.view?.setLoading?.(ack.pending);
     this.itemsChanged(s, s.items);
   }
 
   /** Live: new items and replacements, both by `id` (a new item already here replaces it). */
-  push(id: string, items: TranscriptItem[], updates: TranscriptItem[], head?: TimelineOf): void {
+  push(id: string, items: TranscriptItem[], updates: TranscriptItem[], head?: PushHead): void {
     const s = this.s;
     if (s?.id !== id) return;
     if (head) this.timeline(s, head);
+    if (head?.pending === false || items.length > 0 || updates.length > 0) {
+      s.acked = true;
+      s.view?.setLoading?.(false);
+    }
     const changed = [...items, ...updates];
     for (const it of changed) {
       const at = s.index.get(it.id);

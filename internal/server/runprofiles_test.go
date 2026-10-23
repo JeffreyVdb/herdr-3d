@@ -233,13 +233,13 @@ func TestTaggedFreelancerOnProfile(t *testing.T) {
 	profileRollout(t, filepath.Join(pb.def, "sessions"), "2026-10-21T11-00-00", defID, "/home/u/repo", 900)
 	profileRollout(t, filepath.Join(pb.team, "sessions"), "2026-10-21T10-00-00", teamID, "/home/u/repo", 300,
 		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"review the lobby"}]}}`)
-	agent := func(ws string, tokens map[string]string) world.WorkerObs {
+	agent := func(ws, session string, tokens map[string]string) world.WorkerObs {
 		return world.WorkerObs{WorkspaceID: ws, Label: "REV|" + ws, Cwd: "/home/u/repo", IdentityCwd: "/home/u/repo", PaneID: ws + ":p1",
-			AgentKind: "codex", Status: "idle", Tokens: tokens}
+			AgentKind: "codex", AgentSession: session, Status: "idle", Tokens: tokens}
 	}
 	pb.floorAt("s", true, []world.WorkerObs{
-		agent("w7", map[string]string{"h3d_codex_profile": "team", "h3d_role": "reviewer"}),
-		agent("w8", map[string]string{"h3d_role": "reviewer"}),
+		agent("w7", teamID, map[string]string{"h3d_codex_profile": "team", "h3d_role": "reviewer"}),
+		agent("w8", defID, map[string]string{"h3d_role": "reviewer"}),
 	})
 	ws := workersOf(pb.world(func(w proto.World) bool {
 		x := workersOf(w, "s")
@@ -276,8 +276,7 @@ func TestRunStartTeamSetupNotes(t *testing.T) {
 		return ackData[proto.RunStartResult](t, m).CodexTeamNote
 	}
 	want := "work does not share setup with codex: no herdr hooks. work has no hooks.json with herdr's hook: herdr is not told the " +
-		"Codex session of an agent the orchestrator starts on it, so the bridge finds its sessions by the agent's folder in work's " +
-		"sessions (its usage and transcript)."
+		"Codex session of an agent the orchestrator starts on it. Its conversation and usage stay pending until its session is reported."
 	if got := note(1); got != want {
 		t.Fatalf("not shared:\n%s\nwant\n%s", got, want)
 	}

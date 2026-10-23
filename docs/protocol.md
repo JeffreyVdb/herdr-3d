@@ -3644,16 +3644,13 @@ derived from the cwd) and its subagents' `<that directory>/<agent_session>/subag
   agent session: the worker's usage follows that session (above).
 
 **Codex** rollouts: `<--codex-sessions>/YYYY/MM/DD/rollout-*-<agent_session>.jsonl` whose first line's
-`session_meta.payload.id` is the session. A Codex without herdr's Codex integration (its SessionStart hook reports the
-session) does not report its session to herdr, so such a worker has no `agent_session` (until the sleep backfill tells
-herdr). For its usage the bridge then picks the rollout the
-backfill would: the newest whose `session_meta.payload.cwd` is the worker's `cwd` and whose session no other worker of
-its floor has (their own `agent_session`, or one picked this way first, in worker id order). It looks again every 30 s
-(a newer rollout there, e.g. after `/new`, takes over) and remembers each rollout's first line, so a lookup reads only
-new files. This is read-only and only for `usage`: herdr is not told, and the worker's `agent_session` stays empty.
-Two Codex agents started in the same folder can get each other's rollout (so the context meter of one can show the
-other's: a known limit, #101). A subagent's rollout (a spawned child, a guardian reviewer: any `source.subagent`) is
-never picked; #25 reads a worker's child rollouts for its children only, and their tokens are not added to its usage.
+`session_meta.payload.id` is the session. The bridge requires the session reported by herdr, or the thread
+identified by a shared worker's own app-server on an alternate Codex profile (#139). Without that identity,
+usage and all other transcript-derived state remain unavailable and `transcript.watch` stays pending (#192).
+Neither a matching working directory nor a newly created rollout proves ownership: multiple workers, including
+workers on different floors, may share a directory. Explicitly identified historical resumes remain supported;
+`/new` follows the newly reported identity. Profile workers read only their own home's sessions.
+#25 reads a worker's child rollouts for its children only, and their tokens are not added to its usage.
 
 - The last `event_msg` of `payload.type: "token_count"` with an `info` holds the totals: `info.total_token_usage` with
   `input_tokens` (cached input and cache writes included), `cached_input_tokens`, `cache_write_input_tokens`,
@@ -3771,12 +3768,12 @@ sent.
 
 **Which file.** The worker's transcript is the one its usage is read from ([Usage and cost](#usage-and-cost)), found
 by the bridge from the worker id alone (the client never names a file): Claude's
-`<--claude-projects>/*/<agent_session>.jsonl`, Codex's rollout of its `agent_session`, or for a live Codex without
-one the rollout picked by its `cwd` (with the same caveat for two Codex agents in one folder). The file is read by the
+`<--claude-projects>/*/<agent_session>.jsonl`, Codex's rollout of its explicitly identified session (above).
+An unidentified worker stays pending with no conversation items. The file is read by the
 worker's one tail, the usage one: a watch adds no second tail. When a watch starts, the bridge indexes the part of the
 file that tail read already, once, in the background (it never holds up other commands); after that every line the
 tail reads goes into the index as it is read. While a worker is watched its transcript is looked for every **2 s**
-(not 30 s) when it is not found yet, and a Codex worker's rollout is picked again every 2 s. While any transcript is watched the tail reads every **1 s** instead of every 2 s, so a pasted screenshot is in the view within 3 s of its line being written (1 s to read it, at most 250 ms to push it, then the thumbnail). A `worker.prompt` that succeeded, and a watched worker turning `working`, have the tail read at once instead of on its next tick (#58): the prompt's `user` item is pushed in well under a second, the 250 ms between two pushes of a watch at most (`TestPromptEchoLatency`).
+(not 30 s) when its identified rollout is not found yet. While any transcript is watched the tail reads every **1 s** instead of every 2 s, so a pasted screenshot is in the view within 3 s of its line being written (1 s to read it, at most 250 ms to push it, then the thumbnail). A `worker.prompt` that succeeded, and a watched worker turning `working`, have the tail read at once instead of on its next tick (#58): the prompt's `user` item is pushed in well under a second, the 250 ms between two pushes of a watch at most (`TestPromptEchoLatency`).
 
 **The index**, not the transcript, is what the bridge keeps: for each item the byte offsets of its lines (and the few
 ids that pair a call with its result). An item is read back from the file when it is sent. For a line of 256 kB or more
@@ -3793,12 +3790,16 @@ again.
 | field | |
 |---|---|
 | `harness` | `claude`, `codex`, or the worker's harness (`""` for a shell) while `pending` |
-| `session` | the agent session read (Claude's session id, the Codex rollout's), `""` while pending |
+| `session` | the agent session read (Claude's session id, the Codex rollout's), `""` until identified; it may be known while the rollout is still pending |
 | `version` | the agent's version the transcript records last (Claude's `version`, Codex's `session_meta.cli_version`); `""` when none |
 | `cursor` | `c:<seq>`: the oldest item sent; `transcript.page` with it as `before` returns the ones before |
 | `has_more` | items older than those sent exist |
 | `pending` | the worker has no transcript yet (a fresh hire, a plain shell, an agent that wrote nothing): `items` is `[]`. When one appears (a new `agent_session`, a first line), the first `transcript.items` push carries the newest page **and** these head fields (`harness` … `pending: false`), as the ack would have. |
 | `items` | oldest first |
+
+A `session_changed` close invalidates the displayed conversation immediately: clear its items and show loading
+while the replacement watch is pending, including retry delays. Responses to the previous watch or older-page
+requests must not restore its items. A `resync` of the same session may retain the view until its new ack arrives.
 
 Then **`transcript.items`** pushes what changed, **at most 4 a second** per watch: `items` are new items (in `seq`
 order), `updates` whole replacements of items sent before, by `id` (a tool's result came, an interrupted call, a
@@ -5526,8 +5527,8 @@ filing" can be offered now.
 
 1. The candidate must be the worker's current one, with that session and revision, read under the agent session herdr
    reports of the worker now (a session change withdraws `Worker.handoff` at once; else `handoff_unavailable`; a Codex
-   agent whose rollout was found by its cwd, none reported, is offered under none, and again under the session once
-   herdr reports it); `op`
+   agent with no identified session has no candidate; an alternate-profile thread identified by its own server
+   can be offered before herdr reports the session); `op`
    is 1–64 characters of `[A-Za-z0-9_-]`, one per dialog. A second `worker.handoff` with an `op` being filed is
    `busy`.
 2. Off the hub goroutine the lines that made the reply the candidate (from its message's, or its Codex turn's, first

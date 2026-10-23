@@ -447,11 +447,8 @@ func TestHandoffWorkerSessionChanged(t *testing.T) {
 	}
 }
 
-// A Codex agent herdr knows no session of: its rollout is found by its cwd,
-// and its reply is offered under the session herdr reports (none). When
-// herdr reports the same session later, the reply is offered again under it
-// and files.
-func TestHandoffCodexFoundByCwd(t *testing.T) {
+// #192: handoffs use only an identified session, including after delayed reporting.
+func TestHandoffCodexWaitsForIdentity(t *testing.T) {
 	t.Parallel()
 	db := filepath.Join(t.TempDir(), "world.db")
 	dir := filepath.Join(t.TempDir(), "handoff")
@@ -460,31 +457,27 @@ func TestHandoffCodexFoundByCwd(t *testing.T) {
 	fb := startFuBridgeWith(t, db, "", newFuRoles(), &off, "", func(o *server.Options) {
 		o.Handoffs = svc
 		o.DigestEnabled, o.PackupEnabled, o.ActivityModel = &off, &off, &off
-		o.Usage.FindCodex = func(string, func(string) bool) (string, error) { return wrapCodex, nil }
 	})
 	c := fb.connect(proto.Hello{})
 	c.snapshot()
 	id := fb.ids["w2"]
 	fb.fl.update("w2", func(w *world.WorkerObs) { w.AgentSession = "" })
 	upsertFor(c, id, func(w *proto.Worker) bool { return w.AgentSession == "" })
-	appendTo(t, fb.codex, codexTurn("t1", "msg_c1", "Found by cwd."))
-	w := handoffOf(c, id)
-	if w.AgentSession != "" || w.Handoff.Session != wrapCodex {
-		t.Fatalf("agent session %q, candidate %+v", w.AgentSession, w.Handoff)
+	appendTo(t, fb.codex, codexTurn("t1", "msg_c1", "Identified reply."))
+	// No handoff is offered until herdr identifies this session.
+	_, ack := c.mustAck(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: id})
+	if res := decode[proto.TranscriptWatchResult](t, ack); !res.Pending || len(res.Items) != 0 {
+		t.Fatalf("unidentified transcript: %+v", res)
 	}
+	fb.fl.update("w2", func(w *world.WorkerObs) { w.AgentSession = wrapCodex })
+	w := upsertFor(c, id, func(w *proto.Worker) bool { return w.AgentSession == wrapCodex && w.Handoff != nil })
 	cand := *w.Handoff
 	_, m := c.command(proto.CmdWorkerHandoffPreview, "p1", proto.WorkerHandoffPreviewArgs{Worker: id, Candidate: cand.ID})
-	if got := ackData[proto.WorkerHandoffPreviewResult](t, m); got.Text != "Found by cwd." {
+	if got := ackData[proto.WorkerHandoffPreviewResult](t, m); got.Text != "Identified reply." {
 		t.Fatalf("preview %+v", got)
 	}
-
-	fb.fl.update("w2", func(w *world.WorkerObs) { w.AgentSession = wrapCodex })
-	w = upsertFor(c, id, func(w *proto.Worker) bool { return w.AgentSession == wrapCodex && w.Handoff != nil })
-	if *w.Handoff != cand {
-		t.Fatalf("offered again as %+v, was %+v", w.Handoff, cand)
-	}
 	_, m = c.command(proto.CmdWorkerHandoff, "f1", proto.WorkerHandoffArgs{Worker: id, Mode: proto.HandoffModeLiteral,
-		Session: cand.Session, Candidate: cand.ID, Revision: cand.Revision, Op: "op-cwd"})
+		Session: cand.Session, Candidate: cand.ID, Revision: cand.Revision, Op: "op-identified"})
 	if got := ackData[proto.WorkerHandoffResult](t, m); got.Handoff.AgentSession != wrapCodex || got.Existing {
 		t.Fatalf("filed %+v", got)
 	}

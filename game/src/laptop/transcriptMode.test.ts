@@ -393,6 +393,26 @@ describe('TranscriptMode', () => {
     await expect(sub).rejects.toThrow();
   });
 
+  it('drops late item and subagent content, including images, after a session replacement', async () => {
+    const feed = new ImageFeed('a', { send: async () => ({ ok: true, data: {} }) });
+    const h = harness({ feed });
+    h.tx.sit('a', 'Ada');
+    h.tx.reset('a', ack([item('old')]));
+    await flush();
+    const host = (h.views[0] as FakeView).host;
+    const sub = host.loadSubagent('a7');
+    const full = host.loadItem?.('old');
+    h.tx.reset('a', watchAck({ pending: true }));
+    const image = { source: 'inline', origin: 'input', hash: 'e'.repeat(64) } as const;
+    const old = item('old', 1, { parts: [{ image }] });
+    h.sent[0]?.resolve({ ok: true, data: { items: [old] } });
+    h.sent[1]?.resolve({ ok: true, data: { item: old } });
+    expect(await sub).toEqual([]);
+    expect(await full).toBeNull();
+    expect(feed.canFetch(image)).toBe(false);
+    expect(h.tx.itemCount).toBe(0);
+  });
+
   it("a subagent's images are noted with its agent id: fetchable, read from its log", async () => {
     const asked: Array<Record<string, unknown>> = [];
     const feed = new ImageFeed('a', {

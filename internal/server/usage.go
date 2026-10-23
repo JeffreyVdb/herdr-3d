@@ -1,14 +1,11 @@
 package server
 
 import (
-	"cmp"
 	"context"
 	"io/fs"
 	"path/filepath"
-	"slices"
 	"time"
 
-	"github.com/JeffreyVdb/herdr-3d/internal/codex"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 	"github.com/JeffreyVdb/herdr-3d/internal/usage"
@@ -24,10 +21,6 @@ type UsageConfig struct {
 	// DefaultUsageInterval); Throttle the least time between two
 	// worker.usage events of one worker (default DefaultUsageThrottle).
 	Interval, Throttle time.Duration
-	// FindCodex finds the session of a Codex agent herdr knows none of:
-	// the newest rollout recorded in cwd whose id skip does not refuse
-	// ("": none). Default: a codex.Finder on Roots.CodexSessions.
-	FindCodex func(cwd string, skip func(id string) bool) (string, error)
 	// Images are the transcripts' images (M16): the cache they are filed
 	// in and the roots their paths may be under (nil: inline images are
 	// described but cannot be fetched, no path is read).
@@ -38,9 +31,8 @@ type UsageConfig struct {
 	ClaudeChildren func(session string) ChildReader
 	// CodexChildren, if set, gets each Codex worker's subagents from the
 	// reads of its root rollout and its child rollouts (#25, the Codex
-	// child-agent source), as ClaudeChildren. A session only FindCodex
-	// found is read too: its evidence counts once the hub binds it (herdr
-	// reports it), which replays it.
+	// child-agent source), as ClaudeChildren. Only an explicitly identified
+	// session is read.
 	CodexChildren func(session string) ChildReader
 	// #149: the transcript logs of workers (and children) nobody watches
 	// any more are kept for a return visit, still fed by their sessions'
@@ -84,20 +76,17 @@ const (
 // usageWorker is what the tracker needs of a worker.
 type usageWorker struct {
 	id, harness, session string
-	shown                bool // it has a usage now
-	// floor is its session; codexCwd the cwd of a Codex agent herdr knows
-	// no session of, to find its rollout by (else "").
-	floor, codexCwd string
-	watched         bool   // M16: a connection watches its transcript (its own: #26's children are kids)
-	cwd             string // M16: its directory, a root of its transcript's path images
-	asking          bool   // #57: it has an ask now
-	status          string // #98: herdr's status, and when its last idle or done began
-	idleAt          int64
-	wrap            *wrapWatch  // #83: its armed wrap-up
-	agentHo         *agentWatch // #224: its agent handoff request
-	typed           []typedSum  // #95: the prompts the bridge typed into it lately
+	shown                bool   // it has a usage now
+	watched              bool   // M16: a connection watches its transcript (its own: #26's children are kids)
+	cwd                  string // M16: its directory, a root of its transcript's path images
+	asking               bool   // #57: it has an ask now
+	status               string // #98: herdr's status, and when its last idle or done began
+	idleAt               int64
+	wrap                 *wrapWatch  // #83: its armed wrap-up
+	agentHo              *agentWatch // #224: its agent handoff request
+	typed                []typedSum  // #95: the prompts the bridge typed into it lately
 	// #223: the agent session herdr reports (the hub's AgentSession):
-	// session may be one findCodex found instead, or (#139) the thread a
+	// session may instead be (#139) the thread a
 	// bare home's own server named (Hub.childRoot).
 	agent string
 	// #26: its children whose transcripts a connection watches.
@@ -119,17 +108,17 @@ type usageUpdate struct {
 }
 
 // usageTag is the transcript session a usage was read from: session is the
-// one the tracker read (a Codex rollout it found by the worker's cwd, while
-// herdr named none, included), agent the one herdr reported for the worker
-// then. The model and effort a usage says are that session's; the worker's
+// one the tracker read (including a thread identified by the worker's own
+// app-server), agent the one herdr reported for the worker then. The model
+// and effort a usage says are that session's; the worker's
 // session is not necessarily it now (H3D-2).
 type usageTag struct{ agent, session string }
 
 // evidenceOf reports whether a usage read from this transcript is evidence of
 // a worker whose agent session herdr now reports as agent: it is when that is
 // the session read, or when herdr named none then and none now (the rollout
-// was found by the cwd; the tracker drops it when its lookup stops resolving
-// to it). Once herdr names a session, it is that session the usage must have
+// was identified by the worker's own app-server). Once herdr names a session,
+// it is that session the usage must have
 // been read from, whatever it was found as.
 func (t usageTag) evidenceOf(agent string) bool {
 	return agent == t.session || (agent == "" && t.agent == "")
@@ -142,7 +131,6 @@ type usageTracker struct {
 	keys     map[string]string         // worker id → harness/agent session
 	sessions map[string]*usage.Session // worker id → its session (nil: none to read)
 	throttle usageThrottle
-	found    map[string]foundCodex // worker id → the Codex session found for it by its cwd
 	// M16 transcript: the logs of the watched workers' transcripts (fed
 	// by their sessions' tails), and the last round's verdicts for them.
 	logs     map[string]*txLog
@@ -188,22 +176,13 @@ type usageTracker struct {
 	calls     map[string]*transcript.CallTracker
 	callShown map[string]string
 	callUps   []callsUpdate
-	// #139: a Finder per Codex profile's sessions folder, for the workers
-	// on another profile than the bridge's own.
-	finders map[string]*codex.Finder
-	now     func() time.Time
+	now       func() time.Time
 	// #149: how a watched transcript's log is made (transcript.Follow;
 	// tests count it), this round's events of the logs kept for return
 	// visits, and how many watches reused one or built one since the start.
 	follow        func(harness, path string, fi fs.FileInfo, next int64, opts ...transcript.Option) (*transcript.Log, error)
 	logEvents     []logEvent
 	reused, built int
-}
-
-// foundCodex is a Codex session found by a worker's cwd, and when.
-type foundCodex struct {
-	cwd, id string
-	at      time.Time
 }
 
 func newUsageTracker(cfg UsageConfig) *usageTracker {
@@ -225,22 +204,13 @@ func newUsageTracker(cfg UsageConfig) *usageTracker {
 	if cfg.IdleLogBudget <= 0 {
 		cfg.IdleLogBudget = DefaultIdleLogBudget
 	}
-	if cfg.FindCodex == nil {
-		f := &codex.Finder{Root: cfg.Roots.CodexSessions}
-		cfg.FindCodex = func(cwd string, skip func(string) bool) (string, error) {
-			if f.Root == "" {
-				return "", nil
-			}
-			return f.Find(cwd, skip)
-		}
-	}
 	return &usageTracker{cfg: cfg, keys: map[string]string{}, sessions: map[string]*usage.Session{},
 		throttle: usageThrottle{every: cfg.Throttle, shown: map[string]proto.Usage{}, at: map[string]time.Time{}},
-		found:    map[string]foundCodex{}, logs: map[string]*txLog{}, kidLogs: map[string]map[string]*txLog{},
+		logs:     map[string]*txLog{}, kidLogs: map[string]map[string]*txLog{},
 		asks: map[string]*transcript.AskTracker{}, askShown: map[string]askShown{}, lines: map[string]*txLines{},
 		fuOffered: map[string]followupOffered{}, actOffered: map[string]activityOffered{}, dgOffered: map[string]digestOffered{},
 		hoOffered: map[string]handoffOffered{}, kids: map[string]ChildReader{}, calls: map[string]*transcript.CallTracker{},
-		callShown: map[string]string{}, finders: map[string]*codex.Finder{}, now: time.Now,
+		callShown: map[string]string{}, now: time.Now,
 		follow: transcript.Follow}
 }
 
@@ -263,24 +233,6 @@ func usageKey(w usageWorker) string {
 		key += "@" + w.codexHome
 	}
 	return key
-}
-
-// findCodexIn is FindCodex in the worker's own Codex sessions (#139: its
-// profile's when it runs on another one).
-func (tr *usageTracker) findCodexIn(w usageWorker, skip func(string) bool) (string, error) {
-	if !w.codexOther {
-		return tr.cfg.FindCodex(w.codexCwd, skip)
-	}
-	root := profileSessions(w.codexHome)
-	if root == "" {
-		return "", nil
-	}
-	f := tr.finders[root]
-	if f == nil {
-		f = &codex.Finder{Root: root}
-		tr.finders[root] = f
-	}
-	return f.Find(w.codexCwd, skip)
 }
 
 // profileSessions is a Codex profile's sessions folder ("" for none).
@@ -415,7 +367,6 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 
 // poll reads the workers' sessions and returns the updates to publish.
 func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
-	ws = tr.findCodex(ws, now)
 	tr.askUps, tr.wrapUps, tr.pasted, tr.followUps, tr.actUps, tr.dgUps, tr.hoUps = nil, nil, nil, nil, nil, nil, nil
 	tr.agentUps, tr.callUps, tr.logEvents = nil, nil, nil
 	var ups []usageUpdate
@@ -562,75 +513,6 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 	return ups
 }
 
-// findCodex gives each Codex agent herdr knows no session of (it does not
-// report one: only the sleep backfill tells herdr) the session of the
-// newest rollout recorded in its cwd that no other worker of its floor
-// has, as the backfill picks it; looked for again every usage.MissRescan.
-// Only for its usage: herdr is never told, and the worker's agent_session
-// stays empty.
-func (tr *usageTracker) findCodex(ws []usageWorker, now time.Time) []usageWorker {
-	taken := map[string]map[string]bool{} // floor → the sessions its workers have
-	take := func(floor, id string) {
-		if taken[floor] == nil {
-			taken[floor] = map[string]bool{}
-		}
-		taken[floor][id] = true
-	}
-	var want []int
-	for i, w := range ws {
-		switch {
-		case w.session != "":
-			take(w.floor, w.session)
-		case w.codexCwd != "":
-			want = append(want, i)
-		}
-	}
-	for id := range tr.found {
-		if !slices.ContainsFunc(want, func(i int) bool { return ws[i].id == id }) {
-			delete(tr.found, id)
-		}
-	}
-	if len(want) == 0 {
-		return ws
-	}
-	due := func(w usageWorker) bool {
-		f, ok := tr.found[w.id]
-		rescan := usage.MissRescan
-		if w.watched { // M16: a watched Codex's /new shows soon
-			rescan = WatchedRescan
-		}
-		return !ok || f.cwd != w.codexCwd || now.Sub(f.at) >= rescan || now.Before(f.at)
-	}
-	// Those not due keep what they have (first, so a lookup skips it), then the lookups; each in id order.
-	slices.SortFunc(want, func(a, b int) int {
-		if da, db := due(ws[a]), due(ws[b]); da != db {
-			if da {
-				return 1
-			}
-			return -1
-		}
-		return cmp.Compare(ws[a].id, ws[b].id)
-	})
-	out := slices.Clone(ws)
-	for _, i := range want {
-		w := &out[i]
-		f := tr.found[w.id]
-		if due(*w) || taken[w.floor][f.id] {
-			id, err := tr.findCodexIn(*w, func(id string) bool { return taken[w.floor][id] })
-			if err != nil && f.cwd == w.codexCwd && !taken[w.floor][f.id] {
-				id = f.id // keep the last answer through a failed lookup
-			}
-			f = foundCodex{cwd: w.codexCwd, id: id, at: now}
-			tr.found[w.id] = f
-		}
-		if f.id != "" {
-			w.harness, w.session = usage.Codex, f.id
-			take(w.floor, f.id)
-		}
-	}
-	return out
-}
-
 // usageWorkers lists the workers for the tracker (on the hub goroutine)
 // and forgets the usage of workers that are gone.
 func (h *Hub) usageWorkers() []usageWorker {
@@ -640,16 +522,16 @@ func (h *Hub) usageWorkers() []usageWorker {
 		if harness == "" {
 			harness = w.AgentKind
 		}
-		uw := usageWorker{id: id, harness: harness, session: w.AgentSession, agent: w.AgentSession, shown: w.Usage != nil, floor: w.Session,
+		uw := usageWorker{id: id, harness: harness, session: w.AgentSession, agent: w.AgentSession, shown: w.Usage != nil,
 			watched: h.tx.watchedOwn(id), cwd: w.Cwd, asking: w.Ask != nil, wrap: h.wrapWatchOf(id), agentHo: h.agentWatchOf(id), typed: h.typedSums(id),
 			status: w.Status, idleAt: h.act.idleAt[id], kids: h.txKids(id)}
 		uw.codexHome, uw.codexOther = h.codexHomeOf(id) // #139
 		if uw.codexOther && uw.codexHome != "" && w.AgentKind == usage.Codex {
 			uw.session = h.childRoot(id, w.AgentSession) // N2: a bare home's thread, its children's root too
 		}
-		if uw.session == "" && w.AgentKind == usage.Codex && w.Cwd != "" && (!uw.codexOther || uw.codexHome != "") {
-			uw.codexCwd = w.Cwd
-		}
+		// #192: cwd and rollout recency cannot establish ownership. Until
+		// herdr or this worker's own server names its session, all readers
+		// stay pending (usage, conversation, activity and handoffs alike).
 		ws = append(ws, uw)
 	}
 	for id := range h.usage {

@@ -360,19 +360,22 @@ func TestRestartReadsTheCurrentSessionsTranscript(t *testing.T) {
 	})
 }
 
-// A Codex rollout found by its cwd before herdr named the session is that
-// rollout's evidence, not whatever session herdr names next: it shows while
-// herdr names none and when herdr names that rollout (nothing republishes the
-// unchanged usage, so nothing flickers), and the first upsert that carries
-// another session has none of it.
-func TestCwdFoundEvidenceDoesNotSurviveANamedSessionChange(t *testing.T) {
+// #192: observed model and effort require identity and disappear on session replacement.
+func TestIdentifiedEvidenceDoesNotSurviveANamedSessionChange(t *testing.T) {
 	e := newModelMetaEnv(t)
 	e.writeRollout(codexA, turnContext("gpt-6.1-sol", "medium"), codexTokens(1000))
 	b := e.start(true)
 	c := b.connect(proto.Hello{})
 	c.snapshot()
 	b.floor("s", true, codexWorker(""))
-	shown(b, is("gpt-6.1-sol", "medium"))
+	w := shown(b, func(w proto.Worker) bool { return w.AgentSession == "" })
+	_, ack := c.mustAck(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: w.ID})
+	if res := decode[proto.TranscriptWatchResult](t, ack); !res.Pending || len(res.Items) != 0 {
+		t.Fatalf("unidentified transcript: %+v", res)
+	}
+	if w.Model != "" || w.Effort != "" || w.Usage != nil {
+		t.Fatalf("unidentified evidence: %+v", w)
+	}
 
 	// The same rollout, now named; unchanged usage rounds pass without a
 	// republish (they would not have retagged it).
@@ -395,17 +398,22 @@ func TestCwdFoundEvidenceDoesNotSurviveANamedSessionChange(t *testing.T) {
 	}
 }
 
-// A cwd-found rollout is still the evidence while the lookup resolves to it,
-// round after round.
-func TestCwdFoundEvidenceStaysWhileNoSessionIsNamed(t *testing.T) {
+// #192: repeated observations of a worker with no identity cannot adopt a model from its directory.
+func TestUnidentifiedWorkerHasNoTranscriptEvidence(t *testing.T) {
+	t.Parallel()
 	e := newModelMetaEnv(t)
 	e.writeRollout(codexA, turnContext("gpt-6.1-sol", "medium"), codexTokens(1000))
 	b := e.start(true)
-	b.floor("s", true, codexWorker(""))
-	shown(b, is("gpt-6.1-sol", "medium"))
-	time.Sleep(100 * time.Millisecond)
-	b.floor("s", true, codexWorker(""))
-	if got := shown(b, func(w proto.Worker) bool { return w.AgentSession == "" }); got.Model != "gpt-6.1-sol" || got.Effort != "medium" {
-		t.Fatalf("lookup still resolving to the rollout: model %q effort %q", got.Model, got.Effort)
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	for range 2 {
+		b.floor("s", true, codexWorker(""))
+		w := shown(b, func(w proto.Worker) bool { return w.AgentSession == "" })
+		c.mustAck(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: w.ID})
+		got := shown(b, func(w proto.Worker) bool { return w.AgentSession == "" })
+		if got.Model != "" || got.Effort != "" || got.Usage != nil {
+			t.Fatalf("unidentified evidence: %+v", got)
+		}
+		e.discover()
 	}
 }
