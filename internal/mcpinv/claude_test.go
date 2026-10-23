@@ -176,7 +176,7 @@ func TestReadClaude(t *testing.T) {
 	}
 	assertSafe(t, p)
 
-	if got, ok := ClaudeUnapproved(f, cwd); !ok || !slices.Equal(got, []string{"ancestor", "pending", "rejected"}) {
+	if got, _, ok := ClaudeExclusions(f, cwd, cwd); !ok || !slices.Equal(got, []string{"ancestor", "pending", "rejected"}) {
 		t.Fatalf("unapproved = %v %v", got, ok)
 	}
 }
@@ -215,13 +215,23 @@ func TestReadClaudeUserScope(t *testing.T) {
 			t.Fatalf("user scope has %+v", s)
 		}
 	}
-	if got, ok := ClaudeUnapproved(f, ""); !ok || got != nil {
-		t.Fatalf("unapproved = %v", got)
+	// A user-scope probe keeps every .mcp.json server of the folders above
+	// it from starting, approved or not.
+	probe := filepath.Join(f.Home, "repos", "probe")
+	if err := os.MkdirAll(probe, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, ok := ClaudeExclusions(f, "", probe); !ok || !slices.Equal(got, []string{"ancestor", "approved"}) {
+		t.Fatalf("user scope excludes %v (%v)", got, ok)
 	}
 	// An unreadable .mcp.json above the checkout leaves them unknown too.
 	writeText(t, filepath.Join(f.Home, "repos", ".mcp.json"), "{")
-	if _, ok := ClaudeUnapproved(f, filepath.Join(f.Home, "repos", "x", "sub")); ok {
+	sub := filepath.Join(f.Home, "repos", "x", "sub")
+	if _, _, ok := ClaudeExclusions(f, sub, sub); ok {
 		t.Fatal("an unreadable ancestor .mcp.json leaves the unapproved servers unknown")
+	}
+	if _, _, ok := ClaudeExclusions(f, "", probe); ok {
+		t.Fatal("an unreadable ancestor .mcp.json leaves the user scope's exclusions unknown")
 	}
 }
 
@@ -239,7 +249,7 @@ func TestReadClaudePartial(t *testing.T) {
 	if len(p.Servers) == 0 {
 		t.Fatal("a partial read keeps what it read")
 	}
-	if _, ok := ClaudeUnapproved(f, cwd); ok {
+	if _, _, ok := ClaudeExclusions(f, cwd, cwd); ok {
 		t.Fatal("an unreadable .mcp.json leaves the unapproved servers unknown")
 	}
 

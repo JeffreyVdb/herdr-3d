@@ -1651,7 +1651,7 @@ fire escape and away along the sidewalk, and the desk gets its "+" back. Walk-ou
 are in (the interior only for the floor you are on), a drop-in only on the floor you are on; anywhere else they
 resolve at once. Esc closes either dialog, and
 the pointer lock is released while one is open. Dialogs never close by accident (#51): the ones that hold typed text or
-a consequential choice (hire, start-run, presets, the P prompt, open-PR, the panels, send home, the board item) have no
+a consequential choice (hire, start-run, presets, the P prompt, open-PR, the panels, send home, the board item, the MCP & skills overview) have no
 backdrop dismissal, only their close button and Esc; the read-only sheets (About, credits, the HUD sheet, the boards)
 close on the backdrop only when the press and the click both began there (`ui/dismiss.ts`; table in docs/decisions.md).
 

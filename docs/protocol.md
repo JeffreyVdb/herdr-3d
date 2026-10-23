@@ -6285,11 +6285,19 @@ worker said of it. Two commands; both answer a **Snapshot**.
 - `codex_profile`: a key of [Codex profiles](#codex-profiles); absent or `null`: the default profile. An unknown key, or one
   whose folder is gone, is `not_found`. The floor may be asleep: nothing on it changes.
 - Served from one bridge-wide cache keyed by (harness, cwd, config home: Claude Code's config dir; the profile's resolved
-  `CODEX_HOME`), shared by all connections, at most 64 keys (least recently used dropped). A read at most 15 s old is
-  answered at once; an older one at once while one read refreshes it in the background; a key's first read is waited for
-  up to 10 s (then that provider is `pending`, and a later request gets the read). Concurrent requests share one read per
-  key. A failed read keeps the last good one marked `stale: true` (its note says the latest read failed); retries wait
-  30 s, doubling up to 5 min. With no good read the provider is `failed`, never an empty success.
+  `CODEX_HOME`), shared by all connections. A read at most 15 s old is answered at once; an older one at once while one
+  read refreshes it in the background; a key's first read is waited for up to 10 s (then that provider is `pending`, and
+  a later request gets the read). Concurrent requests share one read per key.
+- A read fails half by half (`config` with its servers, `skills`): a half whose read failed (the process did not get
+  through, a refused `config/read` or `skills/list`, or a `partial` read where the last one was `ok`, as a Claude Code
+  file that stops parsing) keeps that half's last good state, rows and `read_at`, with `stale: true` and the note "Last
+  read failed: <why>; showing the read from <time>"; the other half is current. A failed read is retried after 30 s,
+  doubling up to 5 min. With no good read the half is `failed` (`read_at` null), never an empty success; a `partial`
+  read over a `partial` or `failed` one replaces it and is no failure.
+- Bounds: at most 64 keys, those with a read or check in flight included (the least recently used idle key is dropped
+  for a new one), and at most 4 reads and checks running at once. A request that cannot start a read starts nothing:
+  that provider is answered `pending` ("Other inventory reads are running; this one starts on a later refresh"), or its
+  last read as it is, and a later request starts it.
 - Not written to the audit log (also when refused): the game polls it, every ~20 s only while the wall screen is in view
   on the current floor or the overview is open, the tab visible and the bridge connected (as `host.watch`). A bridge from
   before it answers `unknown_command`; the game then shows a calm "No MCP inventory on this bridge" screen.
@@ -6302,20 +6310,28 @@ worker said of it. Two commands; both answer a **Snapshot**.
 `data` = Snapshot with that provider's `check` and its servers' probe statuses. Audited: it starts the configured servers.
 
 - Claude Code: `claude --print --input-format stream-json --output-format stream-json --verbose --no-session-persistence
-  --tools "" --settings '{"disableAllHooks":true,"disabledMcpjsonServers":[…]}'` in the checkout (user scope: an empty
-  private folder), with the user's real setting sources (no `--strict-mcp-config`), the clean herdr environment and the
-  bridge's `CLAUDE_CONFIG_DIR` if it has one. It sends `initialize`, then `mcp_status` every 500 ms until no server is
-  `pending` or 20 s passed (still pending: `connecting`, and `check.state: "timeout"`). Headless Claude Code starts the
+  --tools "" --settings '{"deniedMcpServers":[…],"disableAllHooks":true,"disabledMcpjsonServers":[…]}'` in the checkout
+  (user scope: an empty private folder), with the user's real setting sources (no `--strict-mcp-config`), the clean herdr
+  environment and the bridge's `CLAUDE_CONFIG_DIR` if it has one. It sends `initialize`, then `mcp_status` every 500 ms
+  until no server is `pending` or shortly before 20 s (still pending: `connecting`, and `check.state: "timeout"`); 20 s
+  bounds the whole exchange, the process included (one that does not answer: `timeout`). Headless Claude Code starts the
   `.mcp.json` servers of the folder and of every folder above it without asking, so the ones the user has not approved
-  are passed as `disabledMcpjsonServers` (measured on 2.1.309: such a server is then never started). When one of those
-  files cannot be read, which ones is not known and the check is `skipped`. Never `mcp_toggle`, `reload_skills`,
-  `reload_plugins`, `mcp_reconnect`, `mcp_call` or a user message.
+  are passed as `disabledMcpjsonServers`; for user scope that is every `.mcp.json` server of the private folder's folders
+  and of `~/.mcp.json`, approved or not (no project layer). The servers Claude Code's MCP policy blocks (`blocked`
+  below) are passed as `deniedMcpServers` `{"serverName": …}` entries (only when there are some). Both measured on
+  2.1.309: such a server is then never started. When one of those `.mcp.json` files cannot be read, which ones is not
+  known and the check is `skipped`. Never `mcp_toggle`, `reload_skills`, `reload_plugins`, `mcp_reconnect`, `mcp_call`
+  or a user message.
 - Codex: a fresh `codex app-server` (as for the read) asked `mcpServerStatus/list` without a thread (it starts every
   enabled server, on each page), `limit: 100`, `detail: "toolsAndAuthOnly"`, following `nextCursor` at most 4 more pages,
   15 s in all.
 - The process group is killed and reaped afterwards. Checks are coalesced per key and run at most once per key per 30 s:
-  a request inside that window answers the last check (its `check.at` tells its age). Never retried. The last check's
-  statuses stay on later `mcp.inventory` answers of the key. A missing CLI makes the check `skipped`.
+  a request inside that window answers the last check (its `check.at` tells its age), also when the key was dropped from
+  the cache meanwhile (the checks of the last 30 s are kept apart, at most 64 keys). Never retried. The last check's
+  statuses stay on later `mcp.inventory` answers of the key. A missing CLI makes the check `skipped`. A check that cannot
+  start (4 reads and checks running, 64 keys busy, or 64 keys checked in the last 30 s) starts nothing and is answered
+  `check.state: "skipped"` ("Other connection checks or reads are running; try again in a moment"); it does not count as
+  the key's last check.
 
 ```json
 {"t":"mcp.inventory","req_id":"40","args":{"floor":"herdr-3d","codex_profile":"work"}}
@@ -6356,19 +6372,25 @@ checkouts; the client adds user scope), `expected` (the floor's `expected_mcp`, 
 |---|---|
 | `available` | `false`: the CLI is not found on the bridge (`reason` says which); its `config` and `skills` are `unavailable` |
 | `version` | the CLI's version when a read or check reported it, else `""` (Claude Code's comes from a check) |
-| `config` | `state`: `ok`, `partial` (some file could not be read or parsed: `note` names it by display path), `failed` (`note` says why; `servers` then means nothing), `pending` (the first read is still running), `unavailable`; `read_at`; `stale` (a later read failed: this is the last good one); `note` |
+| `config` | `state`: `ok`, `partial` (some file could not be read or parsed: `note` names it by display path), `failed` (`note` says why; `servers` then means nothing), `pending` (the first read is still running, or waits for a free reader), `unavailable`; `read_at` (when what is shown was read); `stale` (a later read failed: this is the last good one, and `note` says so); `note` |
 | `check` | the key's last connection check: `state` `none`, `ok`, `failed`, `skipped`, `timeout`; `at`; `note` |
 | `servers` | one row per name within this provider (names are never merged across providers here). `[]` means the read worked and nothing is configured, only when `config.state` is `ok` or `partial` |
 | `skills` | as `config`, with `complete` (`true` only when the harness enumerates its skills itself: Codex `skills/list`), `items` and `errors` (`where`: a display path; `message`: the bridge's category) |
 
 A **server**: `name`; `source` (Claude Code: `user` = `~/.claude.json` top-level, `local` = its `projects[<cwd>]`,
 `project` = a `.mcp.json` of the checkout or a folder above it, `plugin` = an enabled plugin's (named
-`plugin:<plugin>:<server>`, `plugin` set), `managed` = `/etc/claude-code/managed-mcp.json`, `connector` = a claude.ai
+`plugin:<plugin>:<server>`, `plugin` set), `managed` = `/etc/claude-code/managed-mcp.json` or the `managedMcpServers` of
+`/etc/claude-code/managed-settings.json` (remote https entries with plain names only, as Claude Code loads them; the
+file's entry wins a name; both above every other scope), `connector` = a claude.ai
 connector a check saw; Codex: the config layer that defines it, `user`, `project`, `system`, `managed`; else `unknown`);
 `transport` (`stdio`, `http`, `sse`, `unknown`); `enabled` (`null`: not known); `approval` (Claude Code project servers:
-`approved` (`enabledMcpjsonServers` or `enableAllProjectMcpServers`, from `~/.claude.json`'s project entry or a settings
-file not checked in, or the project's own `.claude/settings.json` in a trusted folder), `rejected`
-(`disabledMcpjsonServers`), else `pending`; `n/a` otherwise); `status`, `status_scope` (`config`, `probe`, `worker`),
+`rejected` when any scope lists it in `disabledMcpjsonServers`, else `approved` when any scope lists it in
+`enabledMcpjsonServers` or the effective `enableAllProjectMcpServers` is `true`, else `pending`; `n/a` otherwise. The
+lists add up over the scopes; `enableAllProjectMcpServers` is the most specific scope's that sets it: managed settings,
+then `.claude/settings.local.json`, then `~/.claude.json`'s project entry (only when `true`), then the project's
+`.claude/settings.json`, then the user's `settings.json` (measured with `get_settings` on 2.1.309), so a local `false`
+revokes a user `true`. The project's two files approve only in a trusted folder (`hasTrustDialogAccepted`; the local one
+also in the home folder); elsewhere they can only take approvals away); `status`, `status_scope` (`config`, `probe`, `worker`),
 `status_at`, `worker` (`{"id", "name"}`, for `worker` only) and `reason` (the bridge's short phrase).
 
 | `status` | from |
@@ -6376,7 +6398,7 @@ file not checked in, or the project's own `.claude/settings.json` in a trusted f
 | `not_checked` | a configuration read only: configured, never seen running |
 | `disabled` | configured off (`disabledMcpServers` of the project, a rejected project server, Codex `enabled = false`), or a check or worker said so |
 | `approval_required` | a Claude Code project server not approved yet |
-| `blocked` | not allowed by managed configuration (`managed-mcp.json`, when present, decides alone) |
+| `blocked` | not allowed by managed configuration (`managed-mcp.json`, when present, decides alone), or by Claude Code's MCP policy: a `deniedMcpServers` entry from any settings scope matches it (by name, by command and arguments, or by URL pattern), or `allowedMcpServers` is set (merged over the scopes; with `allowManagedMcpServersOnly` the managed one alone) and it matches no entry of its kind (a stdio server a `serverCommand`, a remote one a `serverUrl`; a `serverName` counts only when the list has no entry of that kind; the organization's managed servers need none). A deny match wins over everything. Values with `${VAR}` expansion are not evaluated: such a server is never called blocked by them. `reason` names the deny rule or the allowlist |
 | `connecting` | Claude `pending`; Codex `starting` |
 | `connected` | Claude `connected`; Codex `serverInfo` present (no thread) or `connected` |
 | `auth_required` | Claude `needs-auth`; Codex `authStatus: "notLoggedIn"` or `authenticationRequired` |

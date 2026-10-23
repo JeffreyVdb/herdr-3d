@@ -51,11 +51,14 @@ const (
 	maxSmallJSON  = 4 << 20
 )
 
-// claudeEntry is one server definition: only what is shown is decoded.
+// claudeEntry is one server definition: only what is shown or matched by
+// the MCP policy is decoded (never shown).
 type claudeEntry struct {
 	Type    string          `json:"type"`
 	Command json.RawMessage `json:"command"`
+	Args    json.RawMessage `json:"args"`
 	URL     json.RawMessage `json:"url"`
+	Headers json.RawMessage `json:"headers"`
 }
 
 func (e claudeEntry) transport() string {
@@ -90,20 +93,33 @@ type claudeProject struct {
 type approvals struct {
 	Enabled   []string `json:"enabledMcpjsonServers"`
 	Disabled  []string `json:"disabledMcpjsonServers"`
-	EnableAll bool     `json:"enableAllProjectMcpServers"`
+	EnableAll *bool    `json:"enableAllProjectMcpServers"`
 }
 
-func (a *approvals) add(b approvals) {
-	a.Enabled = append(a.Enabled, b.Enabled...)
+// add layers b, a more specific source, over a (measured with get_settings
+// on 2.1.309): the lists add up and b's enableAllProjectMcpServers, when
+// set, replaces a's. A source that may not approve (a project settings
+// file of a folder not trusted) only takes approvals away.
+func (a *approvals) add(b approvals, approve bool) {
+	if approve {
+		a.Enabled = append(a.Enabled, b.Enabled...)
+	}
 	a.Disabled = append(a.Disabled, b.Disabled...)
-	a.EnableAll = a.EnableAll || b.EnableAll
+	if b.EnableAll != nil && (approve || !*b.EnableAll) {
+		a.EnableAll = b.EnableAll
+	}
 }
 
-// claudeSettings are the settings keys a read uses.
+// claudeSettings are the settings keys a read uses (the MCP policy's raw:
+// a shape Claude Code would reject spoils no other key).
 type claudeSettings struct {
 	EnabledPlugins map[string]json.RawMessage `json:"enabledPlugins"`
 	SkillOverrides map[string]json.RawMessage `json:"skillOverrides"`
 	approvals
+	Denied         json.RawMessage `json:"deniedMcpServers"`
+	Allowed        json.RawMessage `json:"allowedMcpServers"`
+	ManagedOnly    bool            `json:"allowManagedMcpServersOnly"`
+	ManagedServers json.RawMessage `json:"managedMcpServers"`
 }
 
 // claudeRead is what one read of the files found, before it is a provider.
@@ -115,6 +131,8 @@ type claudeRead struct {
 	plugins   map[string]bool
 	overrides map[string]string
 	approve   approvals
+	policy    mcpPolicy
+	provided  map[string]claudeEntry // managedMcpServers of managed settings
 	project   claudeProject
 }
 
@@ -166,9 +184,13 @@ func readFile(path string, limit int64) ([]byte, error) {
 	return b, err
 }
 
-// settingsFiles are the settings files of cwd from lowest to highest
-// precedence, and whether each may approve project servers (a checked-in
-// project settings file only in a trusted folder).
+// settings reads the settings files of cwd from lowest to highest
+// precedence: user, project, local, managed. The project entry of the
+// global config counts as local settings below settings.local.json, and
+// its enableAllProjectMcpServers only when true (both measured on 2.1.309).
+// Project and local settings approve project servers only in a trusted
+// folder (local ones also in the user's own config home); elsewhere they
+// may only take approvals away.
 func (r *claudeRead) settings() {
 	type file struct {
 		path    string
@@ -176,14 +198,25 @@ func (r *claudeRead) settings() {
 	}
 	files := []file{{filepath.Join(r.f.Dir, "settings.json"), true}}
 	if r.cwd != "" {
+		dir := filepath.Clean(r.f.Dir)
+		home := r.cwd == filepath.Clean(r.f.Home) || filepath.Base(dir) == ".claude" && r.cwd == filepath.Dir(dir)
 		files = append(files, file{filepath.Join(r.cwd, ".claude", "settings.json"), r.project.Trusted},
-			file{filepath.Join(r.cwd, ".claude", "settings.local.json"), true})
+			file{"", true}, file{filepath.Join(r.cwd, ".claude", "settings.local.json"), r.project.Trusted || home})
 	}
 	if r.f.Managed != "" {
 		files = append(files, file{filepath.Join(r.f.Managed, "managed-settings.json"), true})
 	}
 	r.plugins, r.overrides = map[string]bool{}, map[string]string{}
-	for _, f := range files {
+	for i, f := range files {
+		managed := r.f.Managed != "" && i == len(files)-1
+		if f.path == "" {
+			entry := r.project.approvals
+			if entry.EnableAll != nil && !*entry.EnableAll {
+				entry.EnableAll = nil
+			}
+			r.approve.add(entry, f.approve)
+			continue
+		}
 		var s claudeSettings
 		if !r.readJSON(f.path, maxSmallJSON, &s) {
 			continue
@@ -198,8 +231,10 @@ func (r *claudeRead) settings() {
 				r.overrides[k] = o
 			}
 		}
-		if f.approve {
-			r.approve.add(s.approvals)
+		r.approve.add(s.approvals, f.approve)
+		r.policy.add(s, managed)
+		if managed { // read from managed settings only, as Claude Code does
+			r.provided = managedServers(s.ManagedServers)
 		}
 	}
 }
@@ -316,7 +351,6 @@ func loadClaude(f ClaudeFiles, cwd string) claudeConfig {
 	c.global = global.MCPServers
 	if cwd != "" {
 		r.project = global.Projects[cwd]
-		r.approve.add(r.project.approvals)
 	}
 	r.settings()
 	var managed struct {
@@ -366,10 +400,74 @@ func (c claudeConfig) approval(name string) string {
 	switch {
 	case slices.Contains(c.approve.Disabled, name):
 		return proto.MCPApprovalRejected
-	case c.approve.EnableAll || slices.Contains(c.approve.Enabled, name):
+	case c.approve.EnableAll != nil && *c.approve.EnableAll || slices.Contains(c.approve.Enabled, name):
 		return proto.MCPApprovalApproved
 	}
 	return proto.MCPApprovalPending
+}
+
+// claudeServer is a server definition in effect, by its name as written.
+type claudeServer struct {
+	raw string
+	row proto.MCPServer // Name: the name to show, "" when it cannot be
+}
+
+// servers are the servers c defines, a name (as written) once, the first
+// definition winning: managed (managed-mcp.json, then managedMcpServers),
+// local, project, user, plugin.
+func (c claudeConfig) servers() []claudeServer {
+	var out []claudeServer
+	seen := map[string]bool{}
+	add := func(raw string, e claudeEntry, source, plug string, skipAllow bool) {
+		if seen[raw] {
+			return
+		}
+		seen[raw] = true
+		s := proto.MCPServer{Name: cleanName(raw), Source: source, Plugin: plug, Transport: e.transport(), Enabled: ptr(true),
+			Approval: proto.MCPApprovalNA, Status: proto.MCPStatusNotChecked, StatusScope: proto.MCPScopeConfig}
+		if source == proto.MCPSourceProject {
+			s.Approval = c.approval(raw)
+		}
+		switch policy := c.policy.blocked(raw, e, skipAllow); {
+		case policy == reasonDenied:
+			s.Status, s.Reason = proto.MCPStatusBlocked, policy
+		case c.exclusive && source != proto.MCPSourceManaged:
+			s.Status, s.Reason = proto.MCPStatusBlocked, "Not allowed by managed configuration"
+		case policy != "":
+			s.Status, s.Reason = proto.MCPStatusBlocked, policy
+		case slices.Contains(c.project.DisabledMCPServers, raw):
+			s.Status, s.Enabled, s.Reason = proto.MCPStatusDisabled, ptr(false), "Disabled for this project"
+		case s.Approval == proto.MCPApprovalRejected:
+			s.Status, s.Enabled, s.Reason = proto.MCPStatusDisabled, ptr(false), "Rejected for this project"
+		case s.Approval == proto.MCPApprovalPending:
+			s.Status, s.Reason = proto.MCPStatusApprovalRequired, "Waiting for approval in Claude Code"
+		}
+		out = append(out, claudeServer{raw: raw, row: s})
+	}
+	// The organization's servers need no allowlist entry, except a
+	// managed-mcp.json one that uses ${VAR} expansion.
+	for _, name := range sortedKeys(c.managed) {
+		add(name, c.managed[name], proto.MCPSourceManaged, "", !c.managed[name].expands())
+	}
+	for _, name := range sortedKeys(c.provided) {
+		add(name, c.provided[name], proto.MCPSourceManaged, "", true)
+	}
+	for _, name := range sortedKeys(c.project.MCPServers) {
+		add(name, c.project.MCPServers[name], proto.MCPSourceLocal, "", false)
+	}
+	for _, name := range sortedKeys(c.mcpjson) {
+		add(name, c.mcpjson[name], proto.MCPSourceProject, "", false)
+	}
+	for _, name := range sortedKeys(c.global) {
+		add(name, c.global[name], proto.MCPSourceUser, "", false)
+	}
+	for _, pl := range c.plugins {
+		servers := c.pluginServers(pl)
+		for _, name := range sortedKeys(servers) {
+			add("plugin:"+pl.name+":"+name, servers[name], proto.MCPSourcePlugin, pl.name, false)
+		}
+	}
+	return out
 }
 
 // ReadClaude reads Claude Code's configured MCP servers and skills for cwd
@@ -379,47 +477,11 @@ func (c claudeConfig) approval(name string) string {
 func ReadClaude(f ClaudeFiles, cwd string) proto.MCPProvider {
 	c := loadClaude(f, cwd)
 	p := emptyProvider()
-
-	// Precedence: local > project > user > plugin; a name is defined once.
-	seen := map[string]bool{}
-	add := func(name string, e claudeEntry, source, plug string) {
-		if name = cleanName(name); name == "" || seen[name] {
-			return
-		}
-		seen[name] = true
-		s := proto.MCPServer{Name: name, Source: source, Plugin: plug, Transport: e.transport(), Enabled: ptr(true),
-			Approval: proto.MCPApprovalNA, Status: proto.MCPStatusNotChecked, StatusScope: proto.MCPScopeConfig}
-		if source == proto.MCPSourceProject {
-			s.Approval = c.approval(name)
-		}
-		switch {
-		case c.exclusive && source != proto.MCPSourceManaged:
-			s.Status, s.Reason = proto.MCPStatusBlocked, "Not allowed by managed configuration"
-		case slices.Contains(c.project.DisabledMCPServers, name):
-			s.Status, s.Enabled, s.Reason = proto.MCPStatusDisabled, ptr(false), "Disabled for this project"
-		case s.Approval == proto.MCPApprovalRejected:
-			s.Status, s.Enabled, s.Reason = proto.MCPStatusDisabled, ptr(false), "Rejected for this project"
-		case s.Approval == proto.MCPApprovalPending:
-			s.Status, s.Reason = proto.MCPStatusApprovalRequired, "Waiting for approval in Claude Code"
-		}
-		p.Servers = append(p.Servers, s)
-	}
-	for _, name := range sortedKeys(c.managed) {
-		add(name, c.managed[name], proto.MCPSourceManaged, "")
-	}
-	for _, name := range sortedKeys(c.project.MCPServers) {
-		add(name, c.project.MCPServers[name], proto.MCPSourceLocal, "")
-	}
-	for _, name := range sortedKeys(c.mcpjson) {
-		add(name, c.mcpjson[name], proto.MCPSourceProject, "")
-	}
-	for _, name := range sortedKeys(c.global) {
-		add(name, c.global[name], proto.MCPSourceUser, "")
-	}
-	for _, pl := range c.plugins {
-		servers := c.pluginServers(pl)
-		for _, name := range sortedKeys(servers) {
-			add("plugin:"+pl.name+":"+name, servers[name], proto.MCPSourcePlugin, pl.name)
+	shown := map[string]bool{}
+	for _, s := range c.servers() {
+		if s.row.Name != "" && !shown[s.row.Name] {
+			shown[s.row.Name] = true
+			p.Servers = append(p.Servers, s.row)
 		}
 	}
 
@@ -438,26 +500,40 @@ func ReadClaude(f ClaudeFiles, cwd string) proto.MCPProvider {
 	return p
 }
 
-// ClaudeUnapproved are the names, exactly as written, of the .mcp.json
-// servers of cwd and its ancestors that Claude Code has not been told to
-// use: a headless probe in cwd would start them without asking. False when
-// one of those files exists but could not be read: then which ones is not
-// known.
-func ClaudeUnapproved(f ClaudeFiles, cwd string) ([]string, bool) {
-	if cwd == "" {
-		return nil, true
-	}
+// ClaudeExclusions are what a headless probe for cwd ("": user scope) that
+// runs in dir must be kept from starting, by name as written: unapproved,
+// the .mcp.json servers of dir and its ancestors that Claude Code has not
+// been told to use (it would start them without asking; for user scope all
+// of them and those of ~/.mcp.json: no project layer); blocked, the servers
+// its MCP policy keeps from running. ok is false when one of those .mcp.json
+// files exists but could not be read: then which ones is not known.
+func ClaudeExclusions(f ClaudeFiles, cwd, dir string) (unapproved, blocked []string, ok bool) {
 	c := loadClaude(f, cwd)
-	if !c.mcpjsonOK {
-		return nil, false
-	}
-	var out []string
-	for _, name := range sortedKeys(c.mcpjson) {
-		if c.approval(name) != proto.MCPApprovalApproved {
-			out = append(out, name)
+	for _, s := range c.servers() {
+		if s.row.Status == proto.MCPStatusBlocked {
+			blocked = append(blocked, s.raw)
 		}
 	}
-	return out, true
+	if cwd == "" {
+		probe, ok := c.mcpJSON(dir)
+		if f.Home != "" {
+			home, okHome := c.mcpJSON(f.Home)
+			for name, e := range home {
+				probe[name] = e
+			}
+			ok = ok && okHome
+		}
+		return sortedKeys(probe), blocked, ok
+	}
+	if !c.mcpjsonOK {
+		return nil, nil, false
+	}
+	for _, name := range sortedKeys(c.mcpjson) {
+		if c.approval(name) != proto.MCPApprovalApproved {
+			unapproved = append(unapproved, name)
+		}
+	}
+	return unapproved, blocked, true
 }
 
 func sortedKeys[V any](m map[string]V) []string {
