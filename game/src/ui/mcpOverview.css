@@ -1,0 +1,486 @@
+/* #196: the MCP & skills overview (ui/mcpOverview.ts), a Sheet (sheet.css) made wide enough for two providers side by
+   side. The provider tiles echo the wall screen over the rack (a dark glass, the count big); below them one row per
+   server name with a cell per provider, then the skills per provider. Green only for a connected server on fresh data;
+   stale and unknown are grey, what needs you amber, a failure red. Under 720 px the cells stack under the name. */
+
+.mcp.sheet {
+  width: min(980px, calc(100vw - 32px));
+}
+.mcp .sheet-body {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+}
+.mcp p,
+.mcp h3,
+.mcp h4,
+.mcp ul {
+  margin: 0;
+}
+.mcp ul {
+  padding: 0;
+  list-style: none;
+}
+
+/* ---- the context: checkout, Codex profile, Refresh ---- */
+.mcp-ctx {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px 14px;
+}
+.mcp-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 220px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+}
+.mcp-field[hidden] {
+  display: none;
+}
+.mcp-select,
+.mcp-input {
+  min-height: 34px;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--well);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  caret-color: var(--action);
+}
+.mcp-select:hover,
+.mcp-input:hover {
+  border-color: var(--border-hover);
+}
+.mcp-select:focus-visible,
+.mcp-input:focus-visible,
+.mcp button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.mcp-select:disabled,
+.mcp-input:disabled {
+  opacity: 0.55;
+}
+.mcp-input::placeholder {
+  color: var(--text-3);
+}
+.mcp-refresh {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+.mcp-read {
+  color: var(--text-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- calm states ---- */
+.mcp-calm {
+  display: grid;
+  gap: 6px;
+  padding: 28px 20px;
+  border-radius: var(--radius);
+  background: var(--well);
+  color: var(--text-2);
+  text-align: center;
+}
+.mcp-calm-title {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 800;
+}
+.mcp-error {
+  padding: 8px 12px;
+  border: 1px solid var(--error-border);
+  border-radius: 8px;
+  background: var(--error-bg);
+  color: var(--error-text);
+}
+.mcp-main {
+  display: grid;
+  gap: 22px;
+}
+
+/* ---- the providers ---- */
+.mcp-providers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.mcp-prov {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  padding: 14px 16px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--well);
+}
+.mcp-prov-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.mcp-prov-head h3 {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text-2);
+}
+.mcp-prov-count {
+  font-family: var(--display-font);
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.mcp-prov--stale .mcp-prov-count,
+.mcp-prov--failed .mcp-prov-count,
+.mcp-prov--unavailable .mcp-prov-count,
+.mcp-prov--pending .mcp-prov-count,
+.mcp-prov--unsupported .mcp-prov-count {
+  color: var(--text-3);
+}
+.mcp-attn {
+  color: var(--warn);
+  font-size: 15px;
+  font-family: var(--font);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.mcp-prov--stale .mcp-attn {
+  color: var(--text-2);
+}
+.mcp-state {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.mcp-state--ok {
+  border-color: var(--ok-border);
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+.mcp-state--partial {
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+.mcp-state--failed,
+.mcp-state--unavailable {
+  border-color: var(--error-border);
+  background: var(--error-bg);
+  color: var(--error-text);
+}
+.mcp-meta {
+  color: var(--text-3);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.mcp-note {
+  color: var(--text-2);
+  font-size: 13px;
+}
+.mcp-next {
+  color: var(--text);
+  font-size: 13px;
+}
+.mcp-hint {
+  color: var(--text-3);
+  font-size: 12px;
+}
+.mcp-check {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.mcp-check .mcp-hint {
+  flex-basis: 100%;
+}
+.mcp-check-age {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+/* ---- sections ---- */
+.mcp-section {
+  display: grid;
+  gap: 10px;
+}
+.mcp-section-head {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.8fr) repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.mcp-section-head h3 {
+  font-size: 15px;
+  font-weight: 800;
+}
+.mcp-cols {
+  display: contents;
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 700;
+}
+.mcp-empty {
+  color: var(--text-2);
+}
+
+/* ---- the server rows ---- */
+.mcp-rows {
+  display: grid;
+}
+.mcp-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.8fr) repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.mcp-row:last-child {
+  border-bottom: 0;
+}
+.mcp-row-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.mcp-name {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.mcp-row--missing .mcp-name {
+  color: var(--warn);
+}
+.mcp-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  vertical-align: 1px;
+}
+.mcp-row-name .mcp-tag {
+  margin-left: 0;
+}
+.mcp-tag--stale {
+  color: var(--text-3);
+}
+.mcp-cell {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.mcp-cell-prov {
+  display: none;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 700;
+}
+.mcp-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 7px;
+  font-weight: 700;
+}
+.mcp-pip {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.mcp-status--ok {
+  color: var(--ok-text);
+}
+.mcp-status--ok .mcp-pip {
+  background: var(--ok-text);
+}
+.mcp-status--warn {
+  color: var(--warn);
+}
+.mcp-status--warn .mcp-pip {
+  background: var(--warn);
+}
+.mcp-status--bad {
+  color: var(--error-text);
+}
+.mcp-status--bad .mcp-pip {
+  background: var(--error-text);
+}
+.mcp-status--muted {
+  color: var(--text-2);
+}
+.mcp-cell--not_configured .mcp-status,
+.mcp-cell--unknown .mcp-status {
+  font-weight: 500;
+  color: var(--text-3);
+}
+.mcp-cell--not_configured .mcp-pip,
+.mcp-cell--unknown .mcp-pip {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-3);
+}
+
+/* ---- the expected list ---- */
+.mcp-expected {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+.mcp-exp-head h4 {
+  font-size: 13px;
+  font-weight: 800;
+}
+.mcp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mcp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--raised);
+  font-weight: 700;
+}
+.mcp-chip .btn {
+  border-color: transparent;
+  background: transparent;
+  border-radius: 999px;
+}
+.mcp-exp-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.mcp-exp-add .mcp-input {
+  flex: 1 1 200px;
+}
+.mcp-exp-msg {
+  min-height: 1em;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.mcp-exp-msg--error {
+  color: var(--error-text);
+}
+
+/* ---- skills ---- */
+.mcp-skills {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 24px;
+}
+.mcp-skill-col {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+}
+.mcp-skill-col h4 {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text-2);
+}
+.mcp-count {
+  font-weight: 500;
+  color: var(--text-3);
+}
+.mcp-skill-list {
+  display: grid;
+}
+.mcp-skill {
+  display: grid;
+  gap: 2px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.mcp-skill-name {
+  font-weight: 800;
+}
+.mcp-skill-desc {
+  color: var(--text-2);
+}
+.mcp-skill--off .mcp-skill-name,
+.mcp-skill--off .mcp-skill-desc {
+  color: var(--text-3);
+}
+.mcp-skill-errors {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.mcp-path {
+  font-family: var(--font-code-path);
+  color: var(--text-3);
+}
+
+/* ---- narrow: the cells under the name, the providers stacked ---- */
+@media (max-width: 720px) {
+  .mcp-providers,
+  .mcp-skills {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mcp-section-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mcp-cols {
+    display: none;
+  }
+  .mcp-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mcp-row-name {
+    grid-column: 1 / -1;
+  }
+  .mcp-cell-prov {
+    display: block;
+  }
+}
+@media (max-width: 420px) {
+  .mcp-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mcp-refresh {
+    flex: 1 1 100%;
+  }
+}

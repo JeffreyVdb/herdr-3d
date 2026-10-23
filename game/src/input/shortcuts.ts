@@ -36,6 +36,7 @@ export type Scope =
   | 'aim:whiteboard'
   | 'aim:radio'
   | 'aim:overview'
+  | 'aim:mcp'
   | 'aim:cabinet'
   | 'aim:departures'
   | 'dialog'
@@ -60,6 +61,7 @@ export const SCOPE_PARENT: Readonly<Record<Scope, Scope | null>> = {
   'aim:whiteboard': 'floor',
   'aim:radio': 'floor',
   'aim:overview': 'floor',
+  'aim:mcp': 'floor',
   'aim:cabinet': 'floor',
   'aim:departures': 'floor',
   dialog: null,
@@ -141,6 +143,8 @@ export const PALETTE_ONLY = [
   { id: 'overview.all', name: 'All-floors overview', aliases: ['all floors', 'every floor', 'city overview', 'still running'] },
   // #64 schedules: the scheduled agents dialog (the floor you are on; elsewhere every floor's). No key: out of scope.
   { id: 'schedules', name: 'Scheduled agents', aliases: ['schedules', 'schedule', 'later', 'timer', 'cron', 'follow-up'] },
+  // #196: the MCP servers and skills of the floor's agents (E at the screen over the rack); off an office floor it asks which.
+  { id: 'mcp', name: 'MCP & skills', aliases: ['mcp', 'mcp servers', 'skills', 'connectors', 'tools'], where: 'floor', pick: 'See MCP & skills of which floor?' },
   // #57: the helper's other bridges, online first (only on a page the helper serves).
   { id: 'bridge.switch', name: 'Switch bridge', aliases: ['bridge', 'server', 'machine', 'host', 'connect'] },
 ] as const satisfies readonly (PaletteEntry & { id: string })[];
@@ -198,6 +202,7 @@ export const BINDINGS = [
   { id: 'reception.open', group: 'aimed', scope: 'aim:reception', keys: [code('KeyE')], label: 'Reception: the floor directory' },
   { id: 'whiteboard.open', group: 'aimed', scope: 'aim:whiteboard', keys: [code('KeyE')], label: 'Whiteboard: draw' },
   { id: 'overview.open', group: 'aimed', scope: 'aim:overview', keys: [code('KeyE')], label: 'Lounge screen: the floor overview, growing out of it' },
+  { id: 'mcp.open', group: 'aimed', scope: 'aim:mcp', keys: [code('KeyE')], label: 'MCP & skills screen: the MCP servers and skills of the floor’s agents' },
   { id: 'departures.open', group: 'aimed', scope: 'aim:departures', keys: [code('KeyE')], label: 'Departures board: its floor’s scheduled agents (in a lobby: a floor’s group, that floor’s; elsewhere on the board, every floor’s)' },
   { id: 'cabinet.open', group: 'aimed', scope: 'aim:cabinet', keys: [code('KeyE')], label: 'Filing cabinet: the floor’s handoffs (search, read, copy, hire from one)' },
   { id: 'radio.genre', group: 'aimed', scope: 'aim:radio', keys: [code('KeyE')], label: 'Radio: next genre' },

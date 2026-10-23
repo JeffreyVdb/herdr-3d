@@ -47,6 +47,7 @@ export const COMMAND_ORDER: readonly PaletteCommandId[] = [
   'overview',
   'overview.all',
   'schedules',
+  'mcp',
   'elevator',
   'buildings',
   'inbox',
@@ -74,7 +75,7 @@ export function paletteCommands(active: ReadonlySet<Scope>, mac = isMac()): Pale
     const caps = bindingCaps(b, mac)[0] ?? [];
     out.push({ id: b.id as PaletteCommandId, name: p.name, aliases: p.aliases ?? [], caps, floor: p.where === 'floor', pick: p.pick ?? `${p.name} on which floor?` });
   }
-  for (const o of PALETTE_ONLY) out.push({ id: o.id, name: o.name, aliases: o.aliases, caps: [], floor: false, pick: `${o.name} on which floor?` });
+  for (const o of PALETTE_ONLY) out.push({ id: o.id, name: o.name, aliases: o.aliases, caps: [], floor: 'where' in o && o.where === 'floor', pick: 'pick' in o ? o.pick : `${o.name} on which floor?` });
   const at = (c: PaletteCommand) => COMMAND_ORDER.indexOf(c.id);
   return out.sort((a, b) => at(a) - at(b));
 }
