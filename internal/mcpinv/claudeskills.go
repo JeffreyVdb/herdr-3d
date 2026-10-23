@@ -25,7 +25,9 @@ type skillRoot struct {
 
 // skills are the SKILL.md skills Claude Code would find for cwd: the
 // managed dir's, the user's, .claude/skills of cwd and each ancestor up to
-// the repository root (a dir holding .git), and the enabled plugins'. Only
+// the repository root (a dir holding .git; outside a repository, up to
+// below the home folder, whose .claude is the user's), and the enabled
+// plugins'. Only
 // <root>/<name>/SKILL.md counts: built-in commands, legacy commands and MCP
 // prompts are never skills here.
 func (r *claudeRead) skills(plugins []plugin) proto.MCPSkills {
@@ -36,7 +38,8 @@ func (r *claudeRead) skills(plugins []plugin) proto.MCPSkills {
 	}
 	roots = append(roots, skillRoot{dir: filepath.Join(r.f.Dir, "skills"), source: proto.MCPSourceUser})
 	if r.cwd != "" {
-		for d := filepath.Clean(r.cwd); ; {
+		home := filepath.Clean(r.f.Home)
+		for d := filepath.Clean(r.cwd); d != home; {
 			roots = append(roots, skillRoot{dir: filepath.Join(d, ".claude", "skills"), source: proto.MCPSourceProject})
 			if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
 				break
@@ -51,8 +54,15 @@ func (r *claudeRead) skills(plugins []plugin) proto.MCPSkills {
 	for _, p := range plugins {
 		roots = append(roots, skillRoot{dir: filepath.Join(p.root, "skills"), source: proto.MCPSourcePlugin, plugin: p.name})
 	}
-	seen := map[string]bool{}
+	seen, read := map[string]bool{}, map[string]bool{}
 	for _, root := range roots {
+		// A folder reached twice is read once, as what it was first: the
+		// user's ~/.claude/skills is no project's when the walk up from a
+		// checkout outside a repository reaches the home folder.
+		if read[filepath.Clean(root.dir)] {
+			continue
+		}
+		read[filepath.Clean(root.dir)] = true
 		entries, err := os.ReadDir(root.dir)
 		if err != nil {
 			if !os.IsNotExist(err) {

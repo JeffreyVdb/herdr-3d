@@ -6390,7 +6390,8 @@ config status, and so does a disabled, blocked or unapproved one it reports noth
 A **skill**: `name`, `description`, `source` (`user`, `project`, `plugin`, `repo`, `system`, `admin`, `unknown`),
 `plugin`, `enabled` (`null`: not known), `invocation` (`both`, `user_only`, `model_only`, `unknown`) and `where` (its
 folder, for display). Claude Code: only `<root>/<name>/SKILL.md` folders, of the managed dir (`admin`), the config dir's
-`skills/` (`user`), `.claude/skills` of the checkout and each folder up to the repository root (`project`) and the
+`skills/` (`user`), `.claude/skills` of the checkout and each folder up to the repository root (outside a repository:
+up to below the home folder) (`project`) and the
 enabled plugins' `skills/` (`plugin`, named `<plugin>:<name>`); front matter `name`, `description`, `user-invocable`,
 `disable-model-invocation`; `skillOverrides: "off"` is `enabled: false` (plugin skills are not overridden); built-in
 commands, legacy commands and MCP prompts are never skills; never `complete`. At most 1000 folders a root, 2000 skills, 64

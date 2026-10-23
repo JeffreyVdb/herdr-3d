@@ -289,3 +289,20 @@ func TestFrontMatter(t *testing.T) {
 		t.Fatal("no front matter")
 	}
 }
+
+// A checkout outside a repository: the walk up reaches the home folder, whose
+// .claude/skills are the user's, listed once as such.
+func TestReadClaudeSkillsOutsideARepo(t *testing.T) {
+	home := t.TempDir()
+	f := DefaultClaudeFiles("", home)
+	f.Managed = ""
+	writeText(t, filepath.Join(home, ".claude", "skills", "mine", "SKILL.md"), "---\nname: mine\n---\n")
+	cwd := filepath.Join(home, "scratch", "dir")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	items := ReadClaude(f, cwd).Skills.Items
+	if len(items) != 1 || items[0].Source != proto.MCPSourceUser || items[0].Where != "~/.claude/skills/mine" {
+		t.Fatalf("skills = %+v", items)
+	}
+}
