@@ -1,6 +1,6 @@
 import type * as THREE from 'three/webgpu';
 import type { CommandResult } from '../net/client';
-import type { McpHarness, McpProvider, McpRequest, McpSnapshot } from '../net/protocol';
+import type { McpHarness, McpProvider, McpRequest, McpServer, McpSnapshot } from '../net/protocol';
 import { HostWatchGate } from '../world/hostStats';
 import { HARNESSES, hudLine, MCP_POLL_MS, wallModel, type McpWallModel, type Received } from '../world/mcp';
 
@@ -106,8 +106,9 @@ export interface McpView {
  *
  * Replies for the shown context can land in any order (a check takes seconds; an inventory asked meanwhile answers at
  * once with what the bridge had before it), so the shown Snapshot is put together from them (`merge`): its context and
- * expected list come from the newest request by send order (both are taken when the bridge starts a command), and each
- * provider from the reply with its newest connection check (`check.at`); a check's own provider is always taken.
+ * expected list come from the newest request by send order (both are taken when the bridge starts a command), so does
+ * each provider's configuration (a newer read is always shown), and each provider's connection evidence from the reply
+ * with its newest connection check (`check.at`), a check's own always.
  */
 export class McpLink {
   private readonly gate = new HostWatchGate({ onMs: 300, offMs: 3000 });
@@ -120,8 +121,8 @@ export class McpLink {
   /** The context generation: moves on every change of the shown context. */
   private ctx = 0;
   private seq = 0;
-  /** The shown Snapshot: `seq` is the request its context and expected list came from, `from` each provider's. */
-  private got: { key: string; seq: number; from: Record<McpHarness, number>; r: Received } | null = null;
+  /** The shown Snapshot: `seq` is the request its context and expected list came from; each provider's halves (`merge`). */
+  private got: ({ key: string } & Shown) | null = null;
   private err: { key: string; text: string } | null = null;
   /** The inventory request out for the shown context (null: none, or it was abandoned). */
   private out: McpLogEntry | null = null;
@@ -366,39 +367,87 @@ export class McpLink {
   }
 }
 
-type Shown = { seq: number; from: Record<McpHarness, number>; r: Received };
+/** Where a provider's two halves come from: the reply each was taken from (its request number and provider). */
+type Half = { seq: number; p: McpProvider };
+type Shown = { seq: number; cfg: Record<McpHarness, Half>; ev: Record<McpHarness, Half>; r: Received };
 
-const checkAt = (p: McpProvider): number => {
-  const t = p.check.at ? Date.parse(p.check.at) : NaN;
+const time = (at: string | null | undefined): number => {
+  const t = at ? Date.parse(at) : NaN;
   return Number.isFinite(t) ? t : -Infinity;
 };
+
+/** Servers only a check sees (a claude.ai connector): no configuration read lists them, so a read never removes them. */
+const checkOnly = (s: McpServer) => s.source === 'connector' || s.source === 'unknown';
+
+/**
+ * Provider `cfg` (its configuration half: availability, version, config and skills reads, the configured servers) with
+ * the connection evidence of `ev` (its `check` and the servers' `probe` statuses) when they came from different replies,
+ * put on the rows the way the bridge puts a check on a read: a probe status replaces an older one (a newer worker
+ * observation stays), a server only the check saw is added, and one a later `ok` read no longer lists is gone.
+ */
+function compose(cfg: McpProvider, ev: McpProvider): McpProvider {
+  if (cfg === ev) return cfg;
+  const servers = [...cfg.servers];
+  const index = new Map(servers.map((s, i) => [s.name, i]));
+  for (const o of ev.servers) {
+    if (o.status_scope !== 'probe' || !o.status_at) continue;
+    const i = index.get(o.name);
+    if (i === undefined) {
+      if (cfg.config.state !== 'ok' || checkOnly(o)) {
+        index.set(o.name, servers.length);
+        servers.push(o);
+      }
+      continue;
+    }
+    const s = servers[i]!;
+    if (o.status === 'unknown' && s.status_scope === 'config' && s.status !== 'not_checked') continue;
+    if (time(s.status_at) > time(o.status_at)) continue;
+    const { worker: _, ...row } = s;
+    servers[i] = { ...row, status: o.status, status_scope: o.status_scope, status_at: o.status_at, reason: o.reason };
+  }
+  return { ...cfg, check: ev.check, servers };
+}
 
 /**
  * The shown Snapshot once `snap`, the ok reply to `entry`, is put to `shown` (null: nothing new in it). Its context,
  * checkouts and expected list are taken when it was asked after the shown ones (the bridge captures them when a command
- * starts). A provider is taken when `entry` is that provider's check (the result of the button), or when its last
- * connection check is newer than the shown one's (same bridge clock), or as new and asked later. What is taken keeps the
- * reply's `generated_at` and arrival as the Snapshot's clock pair, so `ageOf` stays exact for every section.
+ * starts). Each provider is put together from two halves, taken apart:
+ * - its configuration (the read, the servers configured, skills) by send order too: a newer read is always shown;
+ * - its connection evidence (`check` and the `probe` statuses) when `entry` is that provider's check (the result of the
+ *   button), or when its check is newer than the shown one's (same bridge clock), or as new and asked later. So a check
+ *   overtaken by a poll is shown, and an inventory asked before a check ended cannot erase it.
+ * Shown evidence is kept while the reply's own is older or absent. An absent one does not say the servers changed: the
+ * bridge forgets a check once its 30 s window passed and the key was dropped from its cache, and an inventory read before
+ * the check ended has none either; the two cannot be told apart. So the evidence stays, with its time: past 10 min the
+ * wall and page show it as out of date, and the next check (or a newer worker observation) replaces it.
+ * What is taken keeps the reply's `generated_at` and arrival as the Snapshot's clock pair, so `ageOf` stays exact.
  */
 function merge(shown: Shown | null, entry: McpLogEntry, snap: McpSnapshot, at: number): Shown | null {
-  if (!shown) return { seq: entry.seq, from: { claude: entry.seq, codex: entry.seq }, r: { snap, at } };
-  const was = shown.r.snap;
+  const half = (h: McpHarness): Half => ({ seq: entry.seq, p: snap.providers[h] });
+  if (!shown) {
+    const all = (): Record<McpHarness, Half> => ({ claude: half('claude'), codex: half('codex') });
+    return { seq: entry.seq, cfg: all(), ev: all(), r: { snap, at } };
+  }
   const later = entry.seq > shown.seq;
-  const from = { ...shown.from };
-  const providers = { ...was.providers };
+  const cfg = { ...shown.cfg };
+  const ev = { ...shown.ev };
   let took = later;
   for (const h of HARNESSES) {
+    if (entry.seq > cfg[h].seq) {
+      cfg[h] = half(h);
+      took = true;
+    }
     const own = entry.t === 'mcp.check' && entry.args.harness === h;
-    const d = checkAt(snap.providers[h]) - checkAt(was.providers[h]);
-    if (own || d > 0 || ((d === 0 || Number.isNaN(d)) && entry.seq > from[h])) {
-      providers[h] = snap.providers[h];
-      from[h] = entry.seq;
+    const d = time(snap.providers[h].check.at) - time(ev[h].p.check.at);
+    if (own || d > 0 || ((d === 0 || Number.isNaN(d)) && entry.seq > ev[h].seq)) {
+      ev[h] = half(h);
       took = true;
     }
   }
   if (!took) return null;
-  const base = later ? snap : was;
-  return { seq: later ? entry.seq : shown.seq, from, r: { snap: { ...base, generated_at: snap.generated_at, providers }, at } };
+  const base = later ? snap : shown.r.snap;
+  const providers = { claude: compose(cfg.claude.p, ev.claude.p), codex: compose(cfg.codex.p, ev.codex.p) };
+  return { seq: later ? entry.seq : shown.seq, cfg, ev, r: { snap: { ...base, generated_at: snap.generated_at, providers }, at } };
 }
 
 /** The bridge's refusal of a context in words: an unknown Codex profile, a checkout that is not a directory any more. */

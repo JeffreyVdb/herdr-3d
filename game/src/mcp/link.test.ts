@@ -421,8 +421,9 @@ describe('McpLink: contexts (AC6)', () => {
     await refresh?.answer({ ok: true, data: { ...snap({ floor: 'lab' }, 4), expected: ['later'] } });
     let p = r.link.view('lab').received?.snap.providers;
     expect(p?.claude.check.state).toBe('ok');
-    expect(p?.claude.servers.map((s) => s.status)).toEqual(['auth_required']);
-    expect(p?.codex.servers).toHaveLength(4); // the other provider and the expected list are the newer request's
+    // Its servers, the other provider and the expected list are the newer request's; the check's statuses are put on them.
+    expect(p?.claude.servers.map((s) => s.status)).toEqual(['auth_required', 'not_checked', 'not_checked', 'not_checked']);
+    expect(p?.codex.servers).toHaveLength(4);
     expect(r.link.view('lab').received?.snap.expected).toEqual(['later']);
     // The next poll carries the same last check: taken whole (it is asked later).
     r.advance(MCP_POLL_MS + 1, { page: 'lab' });
@@ -444,6 +445,69 @@ describe('McpLink: contexts (AC6)', () => {
     r.advance(MCP_POLL_MS + 1, { page: 'lab' });
     await r.held[2]?.answer({ ok: true, data: checked({ floor: 'lab' }, T0 - 60_000, { gen: T0 + 20_000 }) });
     expect(r.link.view('lab').received?.snap.providers.claude.check.state).toBe('ok');
+  });
+
+  it('a newer configuration read is applied after a dated check, also when the bridge no longer reports the check (F-R7)', async () => {
+    const r = rig();
+    r.step({ page: 'lab' });
+    await r.held[0]?.answer({ ok: true, data: snap({ floor: 'lab' }, 2) });
+    r.link.check('claude');
+    const done = checked({ floor: 'lab' }, T0 + 2000, { n: 2 });
+    const when = new Date(T0 + 2000).toISOString();
+    done.providers.claude.servers.push({ name: 'claude.ai Gmail', source: 'connector', plugin: '', transport: 'http', enabled: null, approval: 'n/a', status: 'connected', status_scope: 'probe', status_at: when, reason: '' });
+    await r.held[1]?.answer({ ok: true, data: done });
+    // The bridge forgot the check (its recent window passed and the key was evicted and read again): no check, and the
+    // configuration changed meanwhile: s1 removed, s2 added, another skill, a newer read.
+    const later = (names: string[], skill: string, readAt: number): McpSnapshot => {
+      const s = snap({ floor: 'lab' }, 0);
+      const p = s.providers.claude;
+      const base = provider(1).servers[0]!;
+      p.servers = names.map((name) => ({ ...base, name }));
+      p.config.read_at = p.skills.read_at = new Date(readAt).toISOString();
+      p.skills.items = [{ name: skill, description: '', source: 'user', plugin: '', enabled: true, invocation: 'both', where: `~/.claude/skills/${skill}` }];
+      return { ...s, generated_at: new Date(readAt).toISOString() };
+    };
+    const claude = () => r.link.view('lab').received?.snap.providers.claude;
+    r.advance(MCP_POLL_MS + 1, { page: 'lab' });
+    await r.held[2]?.answer({ ok: true, data: later(['s0', 's2'], 'deploy', T0 + 21_000) });
+    expect(claude()?.config.read_at).toBe(new Date(T0 + 21_000).toISOString());
+    expect(claude()?.skills.items.map((s) => s.name)).toEqual(['deploy']);
+    // The check's evidence stays with its time on the servers still configured, and on the one only the check sees.
+    expect(claude()?.servers.map((s) => [s.name, s.status, s.status_scope, s.status_at])).toEqual([
+      ['s0', 'auth_required', 'probe', when],
+      ['s2', 'not_checked', 'config', null],
+      ['claude.ai Gmail', 'connected', 'probe', when],
+    ]);
+    expect(claude()?.check).toMatchObject({ state: 'ok', at: when });
+    // And on Refresh.
+    r.link.refresh();
+    await r.held[3]?.answer({ ok: true, data: later(['s2', 's3'], 'review', T0 + 25_000) });
+    expect(claude()?.servers.map((s) => [s.name, s.status])).toEqual([
+      ['s2', 'not_checked'],
+      ['s3', 'not_checked'],
+      ['claude.ai Gmail', 'connected'],
+    ]);
+    expect(claude()?.skills.items.map((s) => s.name)).toEqual(['review']);
+    expect(r.link.log.map((e) => e.result)).toEqual(['ok', 'ok', 'ok', 'ok']);
+    expect(r.link.view('lab').seq).toBe(4);
+  });
+
+  it('a configuration read answered by a check asked before a later poll does not replace the poll’s (send order)', async () => {
+    const r = rig();
+    r.step({ page: 'lab' });
+    await r.held[0]?.answer({ ok: true, data: snap({ floor: 'lab' }, 1) });
+    r.link.check('claude');
+    r.link.refresh();
+    await r.held[2]?.answer({ ok: true, data: snap({ floor: 'lab' }, 3) });
+    // The check's own read is older than the Refresh's by send order: its evidence is shown on the Refresh's servers.
+    await r.held[1]?.answer({ ok: true, data: checked({ floor: 'lab' }, T0 + 3000, { n: 1 }) });
+    const p = r.link.view('lab').received?.snap.providers.claude;
+    expect(p?.servers.map((s) => [s.name, s.status])).toEqual([
+      ['s0', 'auth_required'],
+      ['s1', 'not_checked'],
+      ['s2', 'not_checked'],
+    ]);
+    expect(p?.check.state).toBe('ok');
   });
 
   it('ages a provider taken from an earlier-asked reply on the newest reply’s clock pair', async () => {
