@@ -91,6 +91,8 @@ export interface FloorSettings {
   tracker?: 'kaneo';
   /** #184: the floor's Kaneo link, kept while the floor uses GitHub too (switching back finds it). */
   kaneo?: KaneoLink;
+  /** #196: the MCP server names the floor's agents should have (absent: none set). */
+  expected_mcp?: string[];
 }
 
 /** #184: a floor's Kaneo workspace and project: ids, and the names they had when saved. */
@@ -827,6 +829,8 @@ export interface SettingsPatch {
   tracker?: Tracker | null;
   /** #184: checked with Kaneo before it is saved (a live project of that workspace). */
   kaneo?: { workspace_id: string; project_id: string } | null;
+  /** #196: 0-32 MCP server names, each 1-100 bytes, trimmed, no control characters, unique (null or []: clear). */
+  expected_mcp?: string[] | null;
 }
 
 /** M4: `hire.prepare` ack: what the hire dialog offers for a floor (and a cwd). */
@@ -1125,6 +1129,9 @@ export interface CommandArgs {
   // #74 server rack: the bridge host's CPU, memory, updates and disk activity, sampled only while watched (docs/protocol.md "Host stats").
   'host.watch': Record<string, never>;
   'host.unwatch': Record<string, never>;
+  // #196 MCP & skills wall (docs/protocol.md "MCP and skills"): cwd absent = the floor's default checkout, null = user scope only.
+  'mcp.inventory': McpRequest;
+  'mcp.check': McpRequest & { harness: McpHarness };
   /** M10 limits: read the plan limits now (at most every 20 s). */
   'limits.refresh': Record<string, never>;
   // #92 AI integration (docs/protocol.md "AI integration"). A key is sent here and nowhere else, and never comes back.
@@ -3090,6 +3097,96 @@ export function isScreenMessage(m: ServerMessage): m is ScreenMessage {
 }
 
 // ---- #74 host stats (docs/protocol.md "Host stats") ---------------------------------------------------------------
+
+// ---- #196: MCP & skills (docs/protocol.md "MCP and skills") ----------------------------------------------------------
+
+export type McpHarness = 'claude' | 'codex';
+
+/** `mcp.inventory` / `mcp.check` args: `cwd` absent is the floor's default checkout, `null` user scope only; `codex_profile` absent is the default profile. */
+export interface McpRequest {
+  floor: string;
+  cwd?: string | null;
+  codex_profile?: string | null;
+}
+
+/** The context a Snapshot was read for. */
+export interface McpContext {
+  floor: string;
+  cwd: string | null;
+  cwd_display: string;
+  codex_profile: string | null;
+  codex_profile_name: string;
+  claude_config: string;
+}
+
+export interface McpCheckout {
+  path: string;
+  display: string;
+  label: string;
+}
+
+export type McpReadState = 'ok' | 'partial' | 'failed' | 'pending' | 'unsupported' | 'unavailable';
+export type McpCheckState = 'none' | 'ok' | 'failed' | 'skipped' | 'timeout';
+export type McpServerStatus = 'not_checked' | 'disabled' | 'approval_required' | 'blocked' | 'connecting' | 'connected' | 'auth_required' | 'failed' | 'unknown';
+
+export interface McpServer {
+  name: string;
+  source: 'user' | 'local' | 'project' | 'plugin' | 'managed' | 'connector' | 'system' | 'unknown' | string;
+  plugin: string;
+  transport: 'stdio' | 'http' | 'sse' | 'unknown' | string;
+  enabled: boolean | null;
+  approval: 'approved' | 'pending' | 'rejected' | 'n/a' | string;
+  status: McpServerStatus | string;
+  status_scope: 'config' | 'probe' | 'worker' | string;
+  status_at: string | null;
+  /** Only for `status_scope: "worker"`. */
+  worker?: { id: string; name: string };
+  /** Bridge-authored short phrase; never raw error text. */
+  reason: string;
+}
+
+export interface McpSkill {
+  name: string;
+  description: string;
+  source: 'user' | 'project' | 'plugin' | 'repo' | 'system' | 'admin' | 'unknown' | string;
+  plugin: string;
+  enabled: boolean | null;
+  invocation: 'both' | 'user_only' | 'model_only' | 'unknown' | string;
+  where: string;
+}
+
+export interface McpSkills {
+  state: McpReadState | string;
+  read_at: string | null;
+  stale: boolean;
+  /** True only when the harness enumerates skills authoritatively (Codex `skills/list`). */
+  complete: boolean;
+  note: string;
+  items: McpSkill[];
+  errors: Array<{ where: string; message: string }>;
+}
+
+export interface McpProvider {
+  /** False: the CLI is not found or not runnable (`reason` says which). */
+  available: boolean;
+  version: string;
+  reason: string;
+  config: { state: McpReadState | string; read_at: string | null; stale: boolean; note: string };
+  check: { state: McpCheckState | string; at: string | null; note: string };
+  /** [] is a read that found nothing; meaningful only when `config.state` is ok or partial. */
+  servers: McpServer[];
+  skills: McpSkills;
+}
+
+/** `mcp.inventory`'s and `mcp.check`'s ack. */
+export interface McpSnapshot {
+  context: McpContext;
+  checkouts: McpCheckout[];
+  /** The floor's expected server names ([] none); absent on a bridge without `expected_mcp`. */
+  expected?: string[];
+  generated_at: string;
+  providers: Record<McpHarness, McpProvider>;
+}
 
 /** `host.stats`: one sample of the bridge host, every 5 s to a connection that sent `host.watch` (no `seq`, never replayed). */
 export interface HostStats {
