@@ -157,6 +157,33 @@ func (o openAI) complete(ctx context.Context, base, key, model string, extra jso
 		return "", false, err
 	}
 	report := func(d Diagnostics) {
+		// Report only bounded, recognized controls from the final request body.
+		budget := body["max_tokens"]
+		if hasMCT {
+			budget = body["max_completion_tokens"]
+		}
+		switch n := budget.(type) {
+		case int:
+			if n > 0 && n <= 10_000_000 {
+				d.MaxTokens = n
+			}
+		case float64:
+			if n > 0 && n <= 10_000_000 {
+				d.MaxTokens = int(n)
+			}
+		}
+		d.ReasoningEffort = "provider_default"
+		effort, _ := body["reasoning_effort"].(string)
+		if nested, ok := body["reasoning"].(map[string]any); ok {
+			d.ReasoningEffort = "endpoint_control"
+			if e, ok := nested["effort"].(string); ok {
+				effort = e
+			}
+		}
+		if ValidEffort(effort) {
+			d.ReasoningEffort = effort
+		}
+
 		if req.Report != nil {
 			req.Report(d)
 		}

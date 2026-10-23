@@ -255,14 +255,15 @@ type memStore struct {
 	enabled   bool
 	threshold float64
 	ok        bool
+	params    packup.Params
 }
 
-func (m *memStore) LoadPackupSettings(context.Context) (bool, float64, bool, error) {
-	return m.enabled, m.threshold, m.ok, nil
+func (m *memStore) LoadPackupSettings(context.Context) (packup.Settings, bool, error) {
+	return packup.Settings{Enabled: m.enabled, Threshold: m.threshold, Params: m.params}, m.ok, nil
 }
 
-func (m *memStore) SavePackupSettings(_ context.Context, en bool, th float64) error {
-	m.enabled, m.threshold, m.ok = en, th, true
+func (m *memStore) SavePackupSettings(_ context.Context, v packup.Settings) error {
+	m.enabled, m.threshold, m.params, m.ok = v.Enabled, v.Threshold, v.Params, true
 	return nil
 }
 
@@ -346,8 +347,8 @@ func TestEnablingNeedsAPassingTest(t *testing.T) {
 	if err != nil || !res.OK || len(res.Samples) != len(packup.Samples) || res.Right != res.Total || res.Total != len(packup.Samples) {
 		t.Fatalf("test = %+v, %v", res, err)
 	}
-	if c, l := r.calls(); c != len(packup.Samples) || l != 3 {
-		t.Fatalf("test calls = %d classifier, %d llm; want every sample, the 3 core matches", c, l)
+	if c, l := r.calls(); c != len(packup.Samples) || l != 6 {
+		t.Fatalf("test calls = %d classifier, %d llm; want every sample, the 6 extraction samples", c, l)
 	}
 	if s0 := res.Samples[0]; !s0.Core || !s0.Matched || s0.Task != "Please make a PR" || !s0.Right || s0.Expect != "match" {
 		t.Fatalf("first sample = %+v", s0)
@@ -360,6 +361,9 @@ func TestEnablingNeedsAPassingTest(t *testing.T) {
 		t.Fatalf("enable after a model change = %v", err)
 	}
 	r.fp[ai.RoleClassifier] = "c1"
+	if _, err := s.Test(ctx, ptr(0.9)); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Set(ctx, ptr(true), ptr(0.9)); err != nil {
 		t.Fatal(err)
 	}
@@ -391,8 +395,8 @@ func TestFailingTest(t *testing.T) {
 		"positive low": {func(r *roles) {
 			r.cls.Func = func(context.Context, map[string]any, string) (float64, error) { return 0.3, nil }
 		}, "under the threshold"},
-		"llm fails": {func(r *roles) { r.llm.Func = nil; r.llm.Text = "nope" }, "did not cut"},
-		"wrong cut": {func(r *roles) { r.llm.Func = nil; r.llm.Text = spans("Please") }, "not \"Please make a PR\""},
+		"llm fails": {func(r *roles) { r.llm.Func = nil; r.llm.Text = "nope" }, "valid remove"},
+		"wrong cut": {func(r *roles) { r.llm.Func = nil; r.llm.Text = spans("Please") }, "remaining task differs"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := passingRoles()
@@ -421,13 +425,15 @@ func TestFailingTest(t *testing.T) {
 	if err != nil || !res.OK || res.Right != res.Total-1 {
 		t.Fatalf("test = %+v, %v", res, err)
 	}
-	// A failed call is an error.
+	// Classifier failures stay attached to their sample without leaking provider text.
 	r = passingRoles()
 	r.cls.Func = nil
-	r.cls.Err = &ai.Error{Kind: ai.KindAuthFailed, Msg: "the key was rejected"}
-	if _, err := newService(t, r, &memStore{}, nil, &now).Test(ctx, nil); ai.KindOf(err) != ai.KindAuthFailed {
-		t.Fatalf("err = %v", err)
+	r.cls.Err = &ai.Error{Kind: ai.KindAuthFailed, Msg: "SECRET PROVIDER TEXT"}
+	res, err = newService(t, r, &memStore{}, nil, &now).Test(ctx, nil)
+	if err != nil || res.OK || res.Samples[0].Code != "classifier_auth_failed" || strings.Contains(res.Reason, "SECRET") {
+		t.Fatalf("result %+v, err %v", res, err)
 	}
+
 }
 
 func TestOffOrNotReadyMakesNoCall(t *testing.T) {
@@ -564,5 +570,122 @@ func TestEnvLocksTheToggle(t *testing.T) {
 	}
 	if off := newService(t, r, &memStore{enabled: true, threshold: 0.85, ok: true}, ptr(false), &now); off.View().State != packup.StateOff {
 		t.Fatal("the environment's false does not win over the stored toggle")
+	}
+}
+
+func TestSettingsTestUsesDetectDeadline(t *testing.T) {
+	r := passingRoles()
+	answer := r.llm.Func
+	r.llm.Func = func(ctx context.Context, req ai.Request) (string, error) {
+		select {
+		case <-ctx.Done():
+			return "", &ai.Error{Kind: ai.KindTimeout, Msg: "the LLM timed out"}
+		case <-time.After(30 * time.Millisecond):
+			return answer(ctx, req)
+		}
+	}
+	s, err := packup.New(context.Background(), packup.Options{Roles: r, Timeout: 5 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Test(context.Background(), nil)
+	if err != nil {
+		return
+	} // a failed timed check cannot approve enabling
+	if res.OK {
+		t.Fatalf("settings test approved %d/%d despite 5ms production deadline", res.Right, res.Total)
+	}
+}
+
+func TestSavedExtractionPolicyAndPassIdentity(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	r := passingRoles()
+	st := &memStore{}
+	s := newService(t, r, st, nil, &now)
+	if err := s.Apply(ctx, packup.Update{ReasoningEffort: ptr("high"), MaxTokens: ptr(2048)}); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := s.Test(ctx, nil); err != nil || !result.OK {
+		t.Fatalf("test: %+v %v", result, err)
+	}
+	for _, req := range r.llm.Calls() {
+		if req.ReasoningEffort != "high" || req.MaxTokens != 2048 || !req.NoPartial || !req.BudgetWins {
+			t.Fatalf("request %+v", req)
+		}
+	}
+	if err := s.Set(ctx, ptr(true), nil); err != nil {
+		t.Fatal(err)
+	}
+	restored := newService(t, r, st, nil, &now)
+	if v := restored.View(); v.ReasoningEffort != "high" || v.MaxTokens != 2048 || v.Tested {
+		t.Fatalf("restored %+v", v)
+	}
+	if _, err := restored.Detect(ctx, packup.Samples[0].Text); err != nil {
+		t.Fatal(err)
+	}
+	calls := r.llm.Calls()
+	req := calls[len(calls)-1]
+	if req.ReasoningEffort != "high" || req.MaxTokens != 2048 {
+		t.Fatalf("detect policy %+v", req)
+	}
+	if err := s.Set(ctx, ptr(false), nil); err != nil {
+		t.Fatal(err)
+	}
+	// Cannot combine an untested budget with enabling against an old pass.
+	if err := s.Apply(ctx, packup.Update{Enabled: ptr(true), MaxTokens: ptr(4096)}); err == nil {
+		t.Fatal("enabled an untested budget")
+	}
+	for _, update := range []packup.Update{{MaxTokens: ptr(4096)}, {ReasoningEffort: ptr("low")}, {Threshold: ptr(.9)}} {
+		if err := s.Apply(ctx, update); err != nil {
+			t.Fatal(err)
+		}
+		if s.View().Tested {
+			t.Fatal("changed policy retained passing test")
+		}
+		if result, err := s.Test(ctx, nil); err != nil || !result.OK {
+			t.Fatalf("test: %+v %v", result, err)
+		}
+	}
+	r.llm.Func = nil
+	r.llm.Text = "invalid"
+	if result, err := s.Test(ctx, nil); err != nil || result.OK || s.View().Tested {
+		t.Fatal("failed retest retained a pass")
+	}
+}
+
+type reasoningRoles struct {
+	*roles
+	capability ai.Reasoning
+}
+
+func (r *reasoningRoles) KnownReasoning() ai.Reasoning                { return r.capability }
+func (r *reasoningRoles) ModelReasoning(context.Context) ai.Reasoning { return r.capability }
+
+func TestStaleEffortPausesWithoutSilentlyDowngrading(t *testing.T) {
+	ctx := context.Background()
+	r := &reasoningRoles{roles: passingRoles(), capability: ai.Reasoning{Support: ai.SupportYes, Listed: true, Efforts: []string{"none", "high"}}}
+	s, err := packup.New(ctx, packup.Options{Roles: r, EnvEnabled: ptr(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Apply(ctx, packup.Update{ReasoningEffort: ptr("high")}); err != nil {
+		t.Fatal(err)
+	}
+	r.capability = ai.Reasoning{Support: ai.SupportYes, Listed: true, Efforts: []string{}}
+	if v := s.View(); !v.EffortStale || v.State != packup.StateIncomplete || v.ReasoningEffort != "high" {
+		t.Fatalf("stale view %+v", v)
+	}
+	if _, err := s.Detect(ctx, packup.Samples[0].Text); err == nil {
+		t.Fatal("unsupported saved effort ran")
+	}
+	if _, err := s.Test(ctx, nil); err == nil {
+		t.Fatal("unsupported saved effort tested")
+	}
+	if c, l := r.calls(); c+l != 0 {
+		t.Fatal("stale choice called models")
+	}
+	if err := s.Apply(ctx, packup.Update{ReasoningEffort: ptr("")}); err != nil || !s.Ready() {
+		t.Fatalf("explicit default: %v", err)
 	}
 }

@@ -50,10 +50,7 @@ const (
 )
 
 // PackupSetArgs are the args of packup.set (a field left out is kept).
-type PackupSetArgs struct {
-	Enabled   *bool    `json:"enabled,omitempty"`
-	Threshold *float64 `json:"threshold,omitempty"`
-}
+type PackupSetArgs = packup.Update
 
 // PackupTestArgs are the args of packup.test (threshold: the one to test
 // with, default the current one).

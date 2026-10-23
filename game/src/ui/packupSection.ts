@@ -1,7 +1,8 @@
-import type { AiRole, AiRoleState, CommandArgs, CommandName, PackupState, PackupTestAck } from '../net/protocol';
+import type { AiRole, AiRoleState, CommandArgs, CommandName, PackupTestAck } from '../net/protocol';
 import type { CommandResult } from '../net/client';
 import { AI_ROLE_NAME } from '../world/ai';
 import { packupFailureText, type PackupBook } from '../world/packup';
+import { DIGEST_TOKENS, effortChoices, effortNote, usageText } from '../world/digestSettings';
 import { el } from './settings';
 import type { SectionHandle } from './settings';
 
@@ -84,6 +85,34 @@ export function packupSection(host: PackupSectionHost): (body: HTMLElement) => S
     thLabel.htmlFor = threshold.id;
     thField.append(thLabel, threshold, thHint);
 
+    // #174: the reasoning effort (the model's own list) and the completion budget (reasoning included).
+    const effort = el('select');
+    effort.id = `${id}-effort`;
+    const effortHint = el('p', 'settings-field-hint');
+    effortHint.id = `${id}-effort-hint`;
+    effort.setAttribute('aria-describedby', effortHint.id);
+    const effortField = el('div', 'settings-field');
+    const effortLabel = el('label', 'settings-field-label', 'Reasoning effort');
+    effortLabel.htmlFor = effort.id;
+    effortField.append(effortLabel, effort, effortHint);
+
+    const tokens = el('input');
+    tokens.type = 'number';
+    tokens.id = `${id}-tokens`;
+    tokens.min = String(DIGEST_TOKENS.min);
+    tokens.max = String(DIGEST_TOKENS.max);
+    tokens.step = '64';
+    tokens.inputMode = 'numeric';
+    const tokensHint = el('p', 'settings-field-hint');
+    tokensHint.id = `${id}-tokens-hint`;
+    tokens.setAttribute('aria-describedby', tokensHint.id);
+    const tokensField = el('div', 'settings-field settings-field--short');
+    const tokensLabel = el('label', 'settings-field-label', 'Completion budget (tokens)');
+    tokensLabel.htmlFor = tokens.id;
+    tokensField.append(tokensLabel, tokens, tokensHint);
+
+    const timing = el('p', 'settings-field-hint', 'The classifier decides whether to check; the LLM identifies exact text to remove. Each check has 1.2 seconds including the shared call queue. Higher reasoning may miss this deadline: Test reports that without changing your choice. A failed or late check sends the original prompt.');
+    const scope = el('p', 'settings-field-hint', 'These controls apply only to pack up. The completion budget includes reasoning and overrides the endpoint’s token budget. Provider default keeps the endpoint’s reasoning configuration.');
     const test = button('Test');
     const actions = el('div', 'settings-fu-actions');
     actions.append(test);
@@ -94,16 +123,17 @@ export function packupSection(host: PackupSectionHost): (body: HTMLElement) => S
     result.hidden = true;
 
     const controls = el('div', 'settings-fu');
-    controls.append(needs, privacy, toggle, toggleHint, thField, actions, status, result);
+    controls.append(needs, privacy, toggle, toggleHint, thField, effortField, tokensField, scope, timing, actions, status, result);
     body.append(lede, missing, controls);
 
     let busy = false;
     let note: { text: string; error: boolean } | null = null;
     let thDirty = false;
+    let tokensDirty = false;
     /** The switch's position while its packup.set is on its way (null: the bridge's). */
     let wanted: boolean | null = null;
 
-    const st = (): PackupState | null => host.book.state;
+    const st = () => host.book.state;
     const locked = () => st()?.env.includes('enabled') ?? false;
 
     const say = (text: string, error = false) => {
@@ -125,13 +155,13 @@ export function packupSection(host: PackupSectionHost): (body: HTMLElement) => S
       needs.dataset.ready = String(allReady);
       box.checked = wanted ?? s.enabled;
       // Switching on needs a passing test; switching off never does. The environment's switch is not ours.
-      box.disabled = busy || locked() || (!s.enabled && (!s.tested || !allReady));
+      box.disabled = busy || locked() || (!s.enabled && (!s.tested || !allReady || s.effort_stale));
       toggleHint.textContent = locked()
         ? `Set by the bridge environment (HERDR_WORLD_PACKUP_ENABLED).${s.enabled && !allReady ? ' Paused until both models are ready.' : ''}`
         : s.enabled
           ? s.state === 'ready'
             ? 'On: each prompt is checked before it goes (at most 1.5 s).'
-            : 'On, but paused: a model is not ready. Nothing is sent until both are.'
+            : 'On, but paused: check the models and saved reasoning effort below.'
           : !allReady
             ? 'Set up both models first.'
             : s.tested
@@ -139,7 +169,30 @@ export function packupSection(host: PackupSectionHost): (body: HTMLElement) => S
               : 'Run the test below first: it has to pass with the models in use.';
       if (!thDirty && document.activeElement !== threshold) threshold.value = s.threshold.toFixed(2);
       threshold.disabled = busy;
-      test.disabled = busy || !allReady;
+      // The effort: exactly what the model's catalog lists; a saved one it does not take stays visible, marked.
+      const choices = effortChoices(s);
+      const sig = JSON.stringify(choices);
+      if (effort.dataset.sig !== sig) {
+        effort.dataset.sig = sig;
+        effort.replaceChildren(
+          ...choices.map((c) => {
+            const o = el('option', '', c.label);
+            o.value = c.value;
+            o.disabled = !!c.stale;
+            return o;
+          }),
+        );
+      }
+      effort.value = s.reasoning_effort;
+      effort.disabled = busy || (s.reasoning.efforts.length === 0 && !s.effort_stale);
+      effortHint.textContent = effortNote(s);
+      effortHint.classList.toggle('settings-field-error', s.effort_stale);
+      if (!tokensDirty && document.activeElement !== tokens) tokens.value = String(s.max_tokens);
+      tokens.disabled = busy;
+      tokensHint.textContent = `In use: ${s.max_tokens} tokens, including reasoning. Default 600; ${DIGEST_TOKENS.min}–${DIGEST_TOKENS.max}. Exhausting the budget rejects the extraction.`;
+      timing.textContent = `The classifier decides whether to check; the LLM identifies exact text to remove. Each check has ${s.timeout_ms / 1000} seconds including the shared call queue. Higher reasoning may miss this deadline: Test reports that without changing your choice. A failed or late check sends the original prompt.`;
+      if (s.effort_stale) effortHint.textContent = 'The saved effort is unsupported by this model. Checks are paused until you choose another effort or Provider default.';
+      test.disabled = busy || !allReady || s.effort_stale;
       status.textContent = note?.text ?? '';
       status.classList.toggle('settings-field-error', !!note?.error);
       status.hidden = !note;
@@ -189,6 +242,38 @@ export function packupSection(host: PackupSectionHost): (body: HTMLElement) => S
       }
     });
 
+    effort.addEventListener('change', () => {
+      const v = effort.value;
+      void run(() => host.send('packup.set', { reasoning_effort: v })).then((r) => {
+        if (!r.ok) return say(packupFailureText(r.code, r.message), true);
+        say(v ? 'Reasoning effort saved. Run the test again before switching on.' : 'Reasoning effort: the provider’s default. The endpoint’s reasoning configuration is preserved.');
+      });
+    });
+
+    const commitTokens = () => {
+      if (!tokensDirty) return;
+      const raw = tokens.value.trim();
+      const v = Number(raw);
+      if (raw === '' || !Number.isInteger(v) || v < DIGEST_TOKENS.min || v > DIGEST_TOKENS.max) {
+        tokens.setAttribute('aria-invalid', 'true');
+        return say(`The completion budget must be a whole number of tokens from ${String(DIGEST_TOKENS.min)} to ${String(DIGEST_TOKENS.max)}.`, true);
+      }
+      tokens.setAttribute('aria-invalid', 'false');
+      tokensDirty = false;
+      void run(() => host.send('packup.set', { max_tokens: v })).then((r) => {
+        if (!r.ok) return say(packupFailureText(r.code, r.message), true);
+        say(`Completion budget saved: ${String(v)} tokens.`);
+      });
+    };
+    tokens.addEventListener('input', () => (tokensDirty = true));
+    tokens.addEventListener('change', commitTokens);
+    tokens.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitTokens();
+      }
+    });
+
     test.addEventListener('click', () => {
       note = { text: 'Testing with the sample prompts…', error: false };
       result.hidden = true;
@@ -206,8 +291,10 @@ export function packupSection(host: PackupSectionHost): (body: HTMLElement) => S
       open() {
         note = null;
         thDirty = false;
+        tokensDirty = false;
         result.hidden = true;
         sync();
+        if (st()) void host.send('packup.get', {}).then((r) => r.ok && host.book.upsert(r.data));
       },
       dispose: off,
     };
@@ -221,7 +308,11 @@ function paintResult(root: HTMLElement, d: PackupTestAck): void {
   const samples = Array.isArray(d.samples) ? d.samples : [];
   const rows = el('dl', 'settings-fu-samples');
   const verdict = (s: PackupTestAck['samples'][number]) => {
-    const b = el('span', 'settings-badge', s.right ? (s.expect === 'match' ? 'Caught, as expected' : 'Left alone, as expected') : s.expect === 'match' ? 'Missed: wrong' : 'Caught: wrong');
+    const checked = s.extraction_tested ?? (s.core && s.expect === 'match');
+    const label = checked
+      ? (s.right ? 'Extraction verified' : `Failed: ${s.stage ?? 'extraction'}`)
+      : (s.right ? 'Gate correct · extraction not tested' : 'Gate missed · extraction not tested');
+    const b = el('span', 'settings-badge', label);
     b.dataset.state = s.right ? 'ready' : 'invalid';
     return b;
   };
@@ -236,17 +327,26 @@ function paintResult(root: HTMLElement, d: PackupTestAck): void {
       rows.append(cut);
     }
   }
+  const diagnostics = (s: PackupTestAck['samples'][number]) => {
+    const used = usageText(s.diag, s.diag?.max_tokens ?? d.max_tokens ?? 600);
+    const finish = s.diag?.finish_reason;
+    return el('dd', 'settings-field-hint', `Classifier ${s.classifier_ms ?? 0} ms · extraction ${s.extraction_ms ?? 0} ms${finish ? ` · finish: ${finish}` : ''}${used ? ` · ${used}` : ''}${s.diag?.reasoning_effort ? ` · effort: ${s.diag.reasoning_effort}` : ''}${s.code ? ` · ${s.code}` : ''}`);
+  };
   const all = el('details', 'settings-pk-all');
   const total = Number.isInteger(d.total) ? d.total : samples.length;
   const right = Number.isInteger(d.right) ? d.right : samples.filter((s) => s.right).length;
-  all.append(el('summary', '', `${right} of ${total} sample prompts as expected at ${Number(d.threshold).toFixed(2)}`));
+  all.append(el('summary', '', `${d.gate_right ?? right} of ${total} classifier scores as expected at ${Number(d.threshold).toFixed(2)}`));
   const list = el('dl', 'settings-fu-samples');
   for (const s of samples) {
     const dd = el('dd');
     dd.append(score(s.score), verdict(s));
-    list.append(el('dt', 'settings-pk-prompt', s.text), dd);
+    list.append(el('dt', 'settings-pk-prompt', s.text), dd, diagnostics(s));
+    if (s.want_task !== undefined) list.append(el('dd', 'settings-field-hint', `Expected task: “${s.want_task}”`));
+    if (s.error) list.append(el('dd', 'settings-field-hint', s.error));
   }
   all.append(list);
-  root.append(rows, all);
+  const info = el('p', 'settings-field-hint', `Model: ${d.model ?? 'configured LLM'} · effort: ${d.reasoning_effort || 'endpoint / provider default'} · budget: ${d.max_tokens ?? 600} tokens · deadline: ${(d.timeout_ms ?? 1200) / 1000} s`);
+  const counts = el('p', 'settings-field-hint', `${d.verified ?? samples.filter((s) => s.matched && s.right).length} of ${d.extractions ?? samples.filter((s) => s.extraction_tested ?? (s.core && s.expect === 'match')).length} attempted extractions verified. The four core samples must pass before enabling; other samples help calibration.`);
+  root.append(info, counts, rows, all);
   root.hidden = false;
 }

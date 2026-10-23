@@ -19,7 +19,7 @@ export const DIGEST_PRIVACY =
 
 /** Which AI features the reasoning effort and the completion budget reach (#174): these summaries only. */
 export const DIGEST_SCOPE =
-  'These two settings apply to floor overview summaries only. The other AI features (follow-up questions, pack up, command classification) keep their own limits and send no reasoning effort.';
+  'These two settings apply to floor overview summaries only. Other AI features keep their own settings and limits.';
 
 /** When the lines are written, and when a failed one is tried again (#174; #198: the now line follows the recent activity). */
 export const DIGEST_TIMING =

@@ -889,7 +889,7 @@ and remember the last `seq` applied.
 | `followups.update` | `enabled`, `threshold`, `state`, `missing`?, `roles`, `env`, `tested` | #90: the follow-up questions' state changed (a setting, a passing test, a model's state); the whole state, flat in the event (see [Follow-up questions](#follow-up-questions)) |
 | `schedule_suggestions.update` | `enabled`, `threshold`, `state`, `missing`?, `roles`, `env`, `zone`? | #66: the schedule suggestions' state changed (a setting, the zone, a model's state); the whole state, flat in the event: decode it by its `t` (see [Schedule suggestions](#schedule-suggestions)) |
 | `inbox.dismissed` | `id`, `status_since` | #106: a finished worker's inbox row was dismissed, by any client (see [Inbox](#inbox)); sent to every client, only when the dismissal is new |
-| `packup.update` | `enabled`, `threshold`, `state`, `missing`?, `roles`, `env`, `tested` | #110: pack up on request's state changed (a setting, a passing test, a model's state); the whole state, flat in the event, the follow-up questions' fields: decode it by its `t` (see [Pack up on request](#pack-up-on-request)) |
+| `packup.update` | `enabled`, `threshold`, `state`, `missing`?, `roles`, `env`, `tested`, `reasoning_effort`, `max_tokens`, `reasoning`, `effort_stale`, `timeout_ms` | #110: pack up on request's state changed (a setting, a passing test, a model's state); the whole state, flat in the event, the follow-up questions' fields: decode it by its `t` (see [Pack up on request](#pack-up-on-request)) |
 | `worker.activity` | `id`, `session`, `workspace_id`, `activity`? | #98: the worker's `activity` changed (absent: cleared); only on a change, at most twice a second per worker. A change that comes with a status change is in that `worker.upsert` instead (see [Activity](#activity)) |
 | `activity.update` | `model_enabled`, `threshold`, `margin`, `daily_cap`, `calls_today`, `cache_size`, `state`, `classifier`, `env` | #98: "Classify unknown commands"' state changed (a setting, a call counted, the classifier's state); the whole state, flat in the event. Its `classifier` is a role's state (a string), not `ai.update`'s object: decode it by its `t` (see [Activity](#activity)) |
 | `digest.update` | `enabled`, `state`, `missing`?, `roles`, `env`, `tested`, `daily_cap`, `calls_today`, `reasoning_effort`, `max_tokens`, `reasoning`, `effort_stale` | #118: the floor overview summaries' state changed (a setting, a call counted, a passing test, the LLM's state); the whole state, flat in the event. Its `roles` has `llm` only: decode it by its `t` (see [Floor overview summaries](#floor-overview-summaries)) |
@@ -1032,8 +1032,8 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `schedule_suggestions.set` | `{"enabled"?: bool, "threshold"?: 0.05–0.99}` | their state (`incomplete` to switch on without both models, `env_locked`) | `schedule_suggestions.update` (before the ack) |
 | `schedule_suggestions.zone` | `{"zone"}`: an IANA time zone | their state | `schedule_suggestions.update` when the zone changed (before the ack) |
 | `packup.get` | `{}` | pack up on request's state (see [Pack up on request](#pack-up-on-request)) | — |
-| `packup.set` | `{"enabled"?: bool, "threshold"?: 0.05–0.99}` | its state | `packup.update` (before the ack) |
-| `packup.test` | `{"threshold"?: 0.05–0.99}` | `{"ok", "reason"?, "threshold", "samples": [{"text", "expect", "core"?, "score", "matched", "task"?, "want_task"?, "right", "error"?}], "right", "total", "latency_ms"}` | `packup.update` when it changes `tested` |
+| `packup.set` | `{"enabled"?: bool, "threshold"?: 0.05–0.99, "reasoning_effort"?: string, "max_tokens"?: 64–16384}` | its state | `packup.update` (before the ack) |
+| `packup.test` | `{"threshold"?: 0.05–0.99}` | `{"ok", "reason"?, "threshold", "samples": [{"text", "expect", "core"?, "score", "matched", "task"?, "want_task"?, "right", "error"?}], "right", "total", "latency_ms", "gate_right", "extractions", "verified", "model"?, "reasoning_effort", "max_tokens", "timeout_ms"}` (sample diagnostics below) | `packup.update` when it changes `tested` |
 | `packup.detect` | `{"id", "text", "secrets"?: SecretsReview}` | `{"matched", "task"?, "removed"?: [{"start", "end"}], "score", "sent"?, "protected"?, "secrets_pending"?}`; `matched` false: send `text` as written (#108: `sent` when there is one, with `secrets_pending`) | — |
 | `hire.interpret` | `{"text", "pending"?, "secrets"?: SecretsReview, "secrets_pending"?, "hidden_models"?}` | `{"text", "intent"?, "reason"?, "hire"?, "error"?, "protected"?, "secrets_pending"?}` (#108: `text` is what the LLM read): a hire proposal for review, `unsupported` or `unclear`, or an operational `error` (see [Hire interpretation](#hire-interpretation)); never hires | — |
 | `worker.answer_followup` | `{"id", "turn_id", "answers": [{"id", "value", "note"?}…], "note"?, "secrets"?: {"note"?, "answers[N].value"?, "answers[N].note"?: SecretsReview}}` | `worker.prompt`'s | the worker's upsert without its `followup` |
@@ -4419,22 +4419,46 @@ says which parts to remove. Nothing is sent to a model until the toggle is on an
 {"t":"ack","req_id":"d1","data":{"matched":true,"task":"Please make a PR","removed":[{"start":16,"end":34}],"score":0.97}}
 ```
 
-**Settings** (bridge-wide, SQLite `packup_settings`): the follow-up questions' shape and rules. `packup.get` answers
-them, the snapshot's `packup` holds them, `packup.update` carries them flat (its own event type: the fields are
-`followups.update`'s).
+**Settings** (bridge-wide, SQLite `packup_settings`): `packup.get` answers them, the snapshot's `packup` holds them,
+and `packup.update` carries them flat. Existing databases retain their switch and threshold when the extraction controls
+are added (#189).
 
-- `enabled` is off by default; configuring the AI integration does not switch it on. `HERDR_WORLD_PACKUP_ENABLED` /
-  `--packup-enabled` (`true` / `false`) wins over the stored toggle and lists `enabled` in `env` (`env_locked`).
-- `threshold` (default **0.85**, 0.05–0.99): high on purpose. A false positive costs one dismiss of the confirm, a
-  false negative is the behaviour without the feature. The default is a conservative pick, not yet calibrated against
-  the real models: run `packup.test` with them and move it with its results.
-- `state`: `off`, `incomplete` (`missing`), `ready`; only `ready` runs, a model `invalid` at runtime pauses it.
-- **`packup.test`** runs the labelled sample prompts (`internal/packup` `Samples`: the ticket's four examples, then
-  paraphrases, another language, and prompts that stop, end, clean up or leave something inside the task) through the
-  classifier at the threshold, and the core matches through the LLM too. It passes when the four core samples come out
-  as expected (each match cut to its exact task); `right` of `total` says how many of all came out as expected, for
-  choosing the threshold. A pass covers the models in use for 30 minutes, as `followups.test`'s does, and
-  **`packup.set {enabled: true}` needs one** (`test_required`).
+- `enabled` defaults off. `HERDR_WORLD_PACKUP_ENABLED` / `--packup-enabled` overrides the stored switch (`env_locked`).
+- `threshold` defaults to **0.85**, range 0.05–0.99. This calibrates the classifier gate only; it cannot fix extraction.
+- `reasoning_effort` defaults to `""` (Provider default): preserve the endpoint's reasoning controls and the model's
+  own default. An explicit choice overrides endpoint reasoning controls for packup alone. `reasoning` carries the
+  same capability description as digest; validation reuses `ai.Reasoning.Allows`, including unknown catalogs and
+  models with reasoning but no effort selector. No faster effort is silently substituted. An incompatible saved
+  choice remains visible as `effort_stale: true` and pauses checks until explicitly changed.
+- `max_tokens` defaults to **600**, range **64–16384**, including reasoning. This packup-specific budget wins over
+  endpoint `extra_body` token values. When `max_completion_tokens` is present that field carries the budget and
+  `max_tokens` is omitted; otherwise `max_tokens` carries it. Unrelated AI features retain their own policy.
+- `state` is `off`, `incomplete` (missing roles or stale effort), or `ready`. Only `ready` detects.
+- `timeout_ms` reports the total production deadline, normally **1200**. There is no packup retry outside that
+  deadline, and higher effort does not extend it. If Test reports timing failures, choose a faster endpoint or
+  explicitly choose another effort. The browser still waits at most **1.5 seconds** before sending the original.
+- **`packup.test`** classifies all 31 public samples, four at a time, through the shared two-call limiter. Six
+  positive samples have an expected remaining task and exercise extraction when their gate passes: the three core
+  positives, a longer PR task, German, and a conditional merge task. Each sample uses the production deadline,
+  including model-slot waits. The four core samples gate enabling; the others inform calibration.
+- Samples carry `extraction_tested`, `stage` (`score`, `classifier`, `extraction`, or `timing` on failure), fixed
+  `code`, `classifier_ms`, `extraction_ms`, and optional safe `diag`, as well as the existing fields. Gate-only rows
+  explicitly say extraction was not tested. `want_task` is the expected remaining task; its comparison ignores case
+  and final `.`/`!`, as before. `gate_right` of `total` measures classifier calibration, independently of `verified`
+  extractions out of `extractions` attempted. `right` remains the number of rows meeting their own expectation.
+- The test reports `model`, selected `reasoning_effort`, `max_tokens`, and `timeout_ms`. Each HTTP `diag` includes
+  the final outbound budget and recognized effort (or `provider_default` / `endpoint_control`), sanitized finish
+  reasons, token counts, HTTP status, and content presence/length. Provider default with no endpoint override leaves
+  the provider's actual effort unknown. No diagnostic retains prompts, raw answers, reasoning text, keys, or provider
+  error messages. Truncation, empty answers, timeouts, invalid schema, and invalid spans remain distinct.
+- A passing test permits enabling for 30 minutes only with the same role fingerprints, effort, budget, and threshold.
+  Changes invalidate the pass; a failed retest revokes an earlier pass. A test may check a proposed threshold, but
+  enabling must save exactly that tested threshold. A restart retains settings, not the passing-test permission.
+
+Extraction uses JSON object mode with the AI adapter's existing compatibility fallback and `NoPartial: true`.
+A nonempty `finish_reason=length` answer is `llm_truncated`, never a JSON parse error or an accepted partial cut.
+Strict provider JSON-schema mode is deferred: the shared catalog does not yet expose a reliable schema capability.
+Local shape, exact-substring, order, image, and UTF-16 validation remain authoritative even with JSON mode.
 
 **Detection: `packup.detect {id, text}`.** The game sends it when you press Send in the laptop's prompt box or the P
 overlay, with the feature `ready` and the worker one it applies to; the prompt waits meanwhile, **1.5 s at most**: past

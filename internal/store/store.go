@@ -228,6 +228,7 @@ var migrations = []string{
 	// #139: a Codex worker's profile and what its server's sign-in was
 	// found to be; a hire preset's profile.
 	migrationCodexProfileHire,
+	migrationPackupReasoning,
 }
 
 // Fingerprint kinds.

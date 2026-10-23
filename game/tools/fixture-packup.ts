@@ -162,6 +162,8 @@ interface Run {
 export class PackupSim {
   private enabled = false;
   private threshold = 0.85;
+  private effort = '';
+  private maxTokens = 600;
   private passed: { fp: string; at: number } | null = null;
   private last = '';
   /** `sim.packup_lag`: ms each detect ack is held after its answer. */
@@ -178,7 +180,7 @@ export class PackupSim {
   }
 
   private fp(): string {
-    return this.h.ai.fingerprint('classifier') + '|' + this.h.ai.fingerprint('llm');
+    return this.h.ai.fingerprint('classifier') + '|' + this.h.ai.fingerprint('llm') + `|${this.effort}|${this.maxTokens}|${this.threshold}`;
   }
 
   private tested(): boolean {
@@ -192,6 +194,11 @@ export class PackupSim {
     return {
       enabled: this.enabled,
       threshold: this.threshold,
+      reasoning_effort: this.effort,
+      max_tokens: this.maxTokens,
+      reasoning: { support: 'unknown', listed: false, efforts: ['low', 'medium', 'high'] },
+      effort_stale: false,
+      timeout_ms: DETECT_MS,
       state,
       ...(missing.length ? { missing } : {}),
       roles: { classifier: view.classifier.state, llm: view.llm.state },
@@ -268,6 +275,8 @@ export class PackupSim {
           if (this.missing().length) throw this.h.error('incomplete', 'pack up on request needs the classification model and the LLM to be ready');
           if (!this.tested()) throw this.h.error('test_required', 'run the pack-up test first: it must pass with the models in use');
         }
+        if (typeof a.reasoning_effort === 'string') this.effort = a.reasoning_effort;
+        if (typeof a.max_tokens === 'number') this.maxTokens = a.max_tokens;
         if (typeof a.enabled === 'boolean') this.enabled = a.enabled;
         if (typeof th === 'number') this.threshold = th;
         this.changed(send);
@@ -277,6 +286,7 @@ export class PackupSim {
       case 'packup.test': {
         if (this.missing().length) throw this.h.error('incomplete', 'the pack-up test needs the classification model and the LLM to be ready');
         const th = typeof a.threshold === 'number' ? a.threshold : this.threshold;
+        this.passed = null;
         const fp = this.fp();
         const t0 = Date.now();
         void (async () => {
@@ -285,7 +295,7 @@ export class PackupSim {
           for (const s of SAMPLES) {
             const r = await this.pipeline(s.text, th, !!(s.core && s.match));
             const right = !s.match ? r.score < th : s.core ? r.matched && r.task?.toLowerCase() === s.task?.toLowerCase() : r.score >= th;
-            samples.push({ text: s.text, expect: s.match ? 'match' : 'skip', ...(s.core ? { core: true } : {}), score: r.score, matched: !!(s.core && r.matched),
+            samples.push({ extraction_tested: !!(s.core && s.match && r.score >= th), text: s.text, expect: s.match ? 'match' : 'skip', ...(s.core ? { core: true } : {}), score: r.score, matched: !!(s.core && r.matched),
               ...(s.core && r.task ? { task: r.task } : {}), ...(s.task ? { want_task: s.task } : {}), right, ...(s.core && r.error ? { error: r.error } : {}) });
             if (s.core && !right && !reason) {
               reason = !s.match
@@ -297,7 +307,7 @@ export class PackupSim {
           }
           if (!reason) this.passed = { fp, at: this.h.now() };
           this.changed(send);
-          return { ok: !reason, ...(reason ? { reason } : {}), threshold: th, samples, right: samples.filter((s) => s.right).length, total: samples.length, latency_ms: Date.now() - t0 };
+          return { reasoning_effort: this.effort, max_tokens: this.maxTokens, timeout_ms: DETECT_MS, extractions: samples.filter((s) => s.extraction_tested).length, verified: samples.filter((s) => s.extraction_tested && s.right).length, gate_right: samples.filter((s) => (Number(s.score) >= th) === (s.expect === 'match')).length, ok: !reason, ...(reason ? { reason } : {}), threshold: th, samples, right: samples.filter((s) => s.right).length, total: samples.length, latency_ms: Date.now() - t0 };
         })().then(ack, (e) => fail(this.conv(e)));
         return true;
       }
