@@ -24,6 +24,16 @@ const snap = (a: McpRequest, n = 1): McpSnapshot => ({
   providers: { claude: provider(n), codex: provider(n) },
 });
 
+/** A Snapshot after a Claude check at `at` (bridge time) that found its servers needing sign-in; `expected` as given. */
+const checked = (a: McpRequest, at: number, o: { n?: number; state?: string; expected?: string[]; gen?: number } = {}): McpSnapshot => {
+  const s = snap(a, o.n ?? 1);
+  const p = s.providers.claude;
+  const when = new Date(at).toISOString();
+  p.check = { state: o.state ?? 'ok', at: when, note: '' };
+  p.servers = p.servers.map((x) => ({ ...x, status: 'auth_required', status_scope: 'probe', status_at: when, reason: 'Authentication required' }));
+  return { ...s, expected: o.expected ?? [], generated_at: new Date(o.gen ?? at).toISOString() };
+};
+
 /** A request the rig holds until the test answers it. */
 interface Held {
   t: 'mcp.inventory' | 'mcp.check';
@@ -360,15 +370,93 @@ describe('McpLink: contexts (AC6)', () => {
     expect(r.link.view('lab').sent).toBe(2);
     await r.held[1]?.answer({ ok: true, data: snap({ floor: 'lab' }, 3) });
     expect(r.link.view('lab').seq).toBe(2);
-    // The inventory asked before the check answers after it: older than what is shown, dropped.
+    // The inventory asked before the check answers after it: nothing in it is newer than what is shown.
     await r.held[0]?.answer({ ok: true, data: snap({ floor: 'lab' }, 1) });
     expect(r.link.view('lab').seq).toBe(2);
     expect(r.link.view('lab').received?.snap.providers.claude.servers).toHaveLength(3);
     expect(r.link.log.map((e) => [e.t, e.result])).toEqual([
-      ['mcp.inventory', 'dropped'],
+      ['mcp.inventory', 'stale'],
       ['mcp.check', 'ok'],
     ]);
     expect(r.link.view('lab').asking).toBe(false);
+  });
+
+  it('a check that ends after a poll asked meanwhile has answered is shown, not lost (F-R6)', async () => {
+    const r = rig();
+    r.step({ page: 'lab' });
+    await r.held[0]?.answer({ ok: true, data: snap({ floor: 'lab' }) });
+    // t = 19 s: Check connections; t = 20.001 s: the automatic poll goes and answers at once with the unchecked data.
+    r.advance(19_000, { page: 'lab' });
+    r.link.check('claude');
+    r.advance(MCP_POLL_MS - 19_000 + 1, { page: 'lab' });
+    const [check, poll] = [r.held[1], r.held[2]];
+    expect([check?.t, poll?.t]).toEqual(['mcp.check', 'mcp.inventory']);
+    await poll?.answer({ ok: true, data: { ...snap({ floor: 'lab' }), expected: ['poll'] } });
+    expect(r.link.view('lab').checking.claude).toBe(true);
+    // t = 21 s: the check ends. Its provider is shown; the context and expected list stay the poll's (asked later).
+    await check?.answer({ ok: true, data: checked({ floor: 'lab' }, T0 + 21_000, { expected: ['check'] }) });
+    const v = r.link.view('lab');
+    expect(v.checking.claude).toBe(false);
+    expect(v.received?.snap.providers.claude.check).toMatchObject({ state: 'ok', at: new Date(T0 + 21_000).toISOString() });
+    expect(v.received?.snap.providers.claude.servers[0]).toMatchObject({ status: 'auth_required', status_scope: 'probe' });
+    expect(v.received?.snap.expected).toEqual(['poll']);
+    expect(v.seq).toBe(3);
+    expect(r.link.log.map((e) => [e.t, e.result])).toEqual([
+      ['mcp.inventory', 'ok'],
+      ['mcp.check', 'ok'],
+      ['mcp.inventory', 'ok'],
+    ]);
+  });
+
+  it('a Refresh during a check: whichever lands last, the check’s evidence stays, until newer evidence comes', async () => {
+    const r = rig();
+    r.step({ page: 'lab' });
+    await r.held[0]?.answer({ ok: true, data: snap({ floor: 'lab' }) });
+    r.link.check('claude');
+    r.link.refresh();
+    const [check, refresh] = [r.held[1], r.held[2]];
+    expect([check?.t, refresh?.t]).toEqual(['mcp.check', 'mcp.inventory']);
+    // The check lands first, then the Refresh asked before it ended (the bridge's data from before the check).
+    await check?.answer({ ok: true, data: checked({ floor: 'lab' }, T0 + 2000) });
+    await refresh?.answer({ ok: true, data: { ...snap({ floor: 'lab' }, 4), expected: ['later'] } });
+    let p = r.link.view('lab').received?.snap.providers;
+    expect(p?.claude.check.state).toBe('ok');
+    expect(p?.claude.servers.map((s) => s.status)).toEqual(['auth_required']);
+    expect(p?.codex.servers).toHaveLength(4); // the other provider and the expected list are the newer request's
+    expect(r.link.view('lab').received?.snap.expected).toEqual(['later']);
+    // The next poll carries the same last check: taken whole (it is asked later).
+    r.advance(MCP_POLL_MS + 1, { page: 'lab' });
+    await r.held[3]?.answer({ ok: true, data: checked({ floor: 'lab' }, T0 + 2000, { n: 2, gen: T0 + 22_000 }) });
+    p = r.link.view('lab').received?.snap.providers;
+    expect(p?.claude.servers).toHaveLength(2);
+    expect(r.link.view('lab').seq).toBe(4);
+  });
+
+  it('a check the busy bridge did not start (no time) is shown over an older check, and the next poll replaces it', async () => {
+    const r = rig();
+    r.step({ page: 'lab' });
+    await r.held[0]?.answer({ ok: true, data: checked({ floor: 'lab' }, T0 - 60_000) });
+    r.link.check('claude');
+    const busy = checked({ floor: 'lab' }, T0 - 60_000, { gen: T0 });
+    busy.providers.claude.check = { state: 'skipped', at: null, note: 'The bridge is busy with other checks.' };
+    await r.held[1]?.answer({ ok: true, data: busy });
+    expect(r.link.view('lab').received?.snap.providers.claude.check.state).toBe('skipped');
+    r.advance(MCP_POLL_MS + 1, { page: 'lab' });
+    await r.held[2]?.answer({ ok: true, data: checked({ floor: 'lab' }, T0 - 60_000, { gen: T0 + 20_000 }) });
+    expect(r.link.view('lab').received?.snap.providers.claude.check.state).toBe('ok');
+  });
+
+  it('ages a provider taken from an earlier-asked reply on the newest reply’s clock pair', async () => {
+    const r = rig();
+    r.step({ page: 'lab' });
+    r.link.check('claude');
+    r.link.refresh(); // queued: the first inventory is out
+    await r.held[0]?.answer({ ok: true, data: { ...snap({ floor: 'lab' }), generated_at: new Date(T0 + 1000).toISOString() } });
+    r.advance(5000, { page: 'lab' });
+    await r.held[1]?.answer({ ok: true, data: checked({ floor: 'lab' }, T0 + 6000, { gen: T0 + 6000 }) });
+    const got = r.link.view('lab').received;
+    expect(got?.snap.generated_at).toBe(new Date(T0 + 6000).toISOString());
+    expect(got?.at).toBe(T0 + 1000 + 5000);
   });
 
   it('shows the bridge’s refusal of a context in words, and a timeout is just asked again', async () => {

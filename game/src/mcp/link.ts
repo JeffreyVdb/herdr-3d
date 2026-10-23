@@ -1,8 +1,8 @@
 import type * as THREE from 'three/webgpu';
 import type { CommandResult } from '../net/client';
-import type { McpHarness, McpRequest, McpSnapshot } from '../net/protocol';
+import type { McpHarness, McpProvider, McpRequest, McpSnapshot } from '../net/protocol';
 import { HostWatchGate } from '../world/hostStats';
-import { hudLine, MCP_POLL_MS, wallModel, type McpWallModel, type Received } from '../world/mcp';
+import { HARNESSES, hudLine, MCP_POLL_MS, wallModel, type McpWallModel, type Received } from '../world/mcp';
 
 /** The bridge answers a first read within 10 s per provider (then `pending`); a check takes up to 20 s. Room on top of both. */
 export const INVENTORY_TIMEOUT_MS = 25_000;
@@ -64,8 +64,11 @@ export interface McpLogEntry {
   /** The context generation it was asked in: a reply from an older one is dropped, even when the context came back since. */
   ctx: number;
   args: McpRequest & { harness?: McpHarness };
-  /** ok, an error code, or `dropped` (the reply was for a context left since, or older than what is shown). */
-  result?: 'ok' | 'dropped' | string;
+  /**
+   * ok, an error code, `dropped` (the reply was for a context left since) or `stale` (for the shown context, but nothing
+   * in it is newer than what is shown).
+   */
+  result?: 'ok' | 'dropped' | 'stale' | string;
 }
 
 /** What the overview page reads of the link. */
@@ -74,7 +77,7 @@ export interface McpView {
   choice: McpChoice;
   /** The Snapshot of exactly this context, and when it came (null: none yet). */
   received: Received | null;
-  /** The number of the request `received` answered (0: none). */
+  /** The number of the request whose `expected` (and context) `received` shows (0: none). */
   seq: number;
   /** The number of the last request the link sent (0: none): a Snapshot with a higher `seq` was asked after now. */
   sent: number;
@@ -98,9 +101,13 @@ export interface McpView {
  * connection's generation; and the context generation it was sent in, which moves on every change of context (another
  * checkout or profile, another floor, a dropped connection). A reply is shown only when both are still the shown ones:
  * a reply for a context left since is dropped, never shown, also when you came back to that context meanwhile (A → B →
- * A: A's first reply is abandoned, AC6), and so is a reply older than the one shown. Checks (`mcp.check`) go only from
- * the page's buttons, one per provider and context at a time, treated the same way. A Refresh while a request is out is
- * queued and sent when it ends.
+ * A: A's first reply is abandoned, AC6). Checks (`mcp.check`) go only from the page's buttons, one per provider and
+ * context at a time, treated the same way. A Refresh while a request is out is queued and sent when it ends.
+ *
+ * Replies for the shown context can land in any order (a check takes seconds; an inventory asked meanwhile answers at
+ * once with what the bridge had before it), so the shown Snapshot is put together from them (`merge`): its context and
+ * expected list come from the newest request by send order (both are taken when the bridge starts a command), and each
+ * provider from the reply with its newest connection check (`check.at`); a check's own provider is always taken.
  */
 export class McpLink {
   private readonly gate = new HostWatchGate({ onMs: 300, offMs: 3000 });
@@ -113,7 +120,8 @@ export class McpLink {
   /** The context generation: moves on every change of the shown context. */
   private ctx = 0;
   private seq = 0;
-  private got: { key: string; seq: number; r: Received } | null = null;
+  /** The shown Snapshot: `seq` is the request its context and expected list came from, `from` each provider's. */
+  private got: { key: string; seq: number; from: Record<McpHarness, number>; r: Received } | null = null;
   private err: { key: string; text: string } | null = null;
   /** The inventory request out for the shown context (null: none, or it was abandoned). */
   private out: McpLogEntry | null = null;
@@ -275,15 +283,16 @@ export class McpLink {
       this.d.changed();
       return;
     }
-    // Another context, or this one left and come back to since it was asked, or older than what is shown: dropped.
-    if (key !== this.key || entry.ctx !== this.ctx || (r.ok && this.got?.key === key && this.got.seq > entry.seq)) {
+    // Another context, or this one left and come back to since it was asked: dropped.
+    if (key !== this.key || entry.ctx !== this.ctx) {
       entry.result = 'dropped';
       this.d.changed();
       return;
     }
     if (r.ok) {
-      entry.result = 'ok';
-      this.got = { key, seq: entry.seq, r: { snap: r.data as McpSnapshot, at: this.d.clock() } };
+      const got = merge(this.got?.key === key ? this.got : null, entry, r.data as McpSnapshot, this.d.clock());
+      entry.result = got ? 'ok' : 'stale';
+      if (got) this.got = { key, ...got };
       if (this.err?.key === key) this.err = null;
     } else {
       entry.result = r.code;
@@ -355,6 +364,41 @@ export class McpLink {
   info(): { floor: string | null; key: string | null; wanted: boolean; watching: boolean; asking: boolean; mode: McpWallModel['mode']; hud: string; context: McpSnapshot['context'] | null } {
     return { floor: this.floor, key: this.key, wanted: this.wanted, watching: this.gate.watching, asking: this.asking, mode: this.model().mode, hud: this.hud, context: this.shown()?.snap.context ?? null };
   }
+}
+
+type Shown = { seq: number; from: Record<McpHarness, number>; r: Received };
+
+const checkAt = (p: McpProvider): number => {
+  const t = p.check.at ? Date.parse(p.check.at) : NaN;
+  return Number.isFinite(t) ? t : -Infinity;
+};
+
+/**
+ * The shown Snapshot once `snap`, the ok reply to `entry`, is put to `shown` (null: nothing new in it). Its context,
+ * checkouts and expected list are taken when it was asked after the shown ones (the bridge captures them when a command
+ * starts). A provider is taken when `entry` is that provider's check (the result of the button), or when its last
+ * connection check is newer than the shown one's (same bridge clock), or as new and asked later. What is taken keeps the
+ * reply's `generated_at` and arrival as the Snapshot's clock pair, so `ageOf` stays exact for every section.
+ */
+function merge(shown: Shown | null, entry: McpLogEntry, snap: McpSnapshot, at: number): Shown | null {
+  if (!shown) return { seq: entry.seq, from: { claude: entry.seq, codex: entry.seq }, r: { snap, at } };
+  const was = shown.r.snap;
+  const later = entry.seq > shown.seq;
+  const from = { ...shown.from };
+  const providers = { ...was.providers };
+  let took = later;
+  for (const h of HARNESSES) {
+    const own = entry.t === 'mcp.check' && entry.args.harness === h;
+    const d = checkAt(snap.providers[h]) - checkAt(was.providers[h]);
+    if (own || d > 0 || ((d === 0 || Number.isNaN(d)) && entry.seq > from[h])) {
+      providers[h] = snap.providers[h];
+      from[h] = entry.seq;
+      took = true;
+    }
+  }
+  if (!took) return null;
+  const base = later ? snap : was;
+  return { seq: later ? entry.seq : shown.seq, from, r: { snap: { ...base, generated_at: snap.generated_at, providers }, at } };
 }
 
 /** The bridge's refusal of a context in words: an unknown Codex profile, a checkout that is not a directory any more. */

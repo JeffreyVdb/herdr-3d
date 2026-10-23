@@ -461,6 +461,68 @@ describe('the MCP & skills overview (#196)', () => {
     expect($('.mcp-chips').textContent).not.toContain('beta');
   });
 
+  it('a check asked before a save and answered after it shows its result but never its old expected list (F-R6)', async () => {
+    const held: Array<{ t: string; resolve(r: CommandResult): void }> = [];
+    let page: McpOverview | null = null;
+    const link = new McpLink({
+      request: (t) => new Promise<CommandResult>((resolve) => void held.push({ t, resolve })),
+      hudInfo: () => {},
+      unsupported: () => false,
+      markUnsupported: () => {},
+      now: () => 1000,
+      clock: () => T0,
+      changed: () => page?.refresh(),
+    });
+    const step = () => link.step({ office: { id: 'lab', tickMcp: () => false, setMcpScreen: () => {} }, here: true, live: true, connected: true, page: 'lab', camera: {} as never });
+    const settle = async () => {
+      for (let k = 0; k < 4; k++) await Promise.resolve();
+    };
+    /** A check's ack: its provider checked at T0 with a server needing sign-in, the expected list read when it started. */
+    const checkedSnap = (h: 'claude' | 'codex', expected: string[]) => {
+      const s = snapshot({ expected });
+      s.providers[h] = { ...s.providers[h], check: { state: 'failed', at: iso(T0), note: '' }, servers: [server('github', { status: 'auth_required', status_scope: 'probe', status_at: iso(T0), reason: 'Authentication required' })] };
+      return s;
+    };
+    page = new McpOverview({
+      view: (f) => link.view(f),
+      choose: (f, c) => link.choose(f, c),
+      refresh: () => link.refresh(),
+      check: (h) => link.check(h),
+      profiles: () => null,
+      saveExpected: async () => ({ ok: true, data: undefined }),
+      floorName: () => 'Lab',
+      now: () => T0,
+      closed: () => {},
+    });
+    step();
+    held[0]?.resolve({ ok: true, data: snapshot({ expected: [] }) });
+    await settle();
+    page.open('lab');
+    const $ = <T extends HTMLElement>(sel: string) => page?.el.querySelector(sel) as T;
+    link.check('claude');
+    link.check('codex');
+    $<HTMLInputElement>('#mcp-exp-input').value = 'alpha';
+    $<HTMLButtonElement>('[data-key="exp-add"]').click();
+    $<HTMLButtonElement>('[data-key="exp-save"]').click();
+    await vi.waitFor(() => expect($('.mcp-exp-msg').textContent).toContain('Saved'));
+    expect(held.map((x) => x.t)).toEqual(['mcp.inventory', 'mcp.check', 'mcp.check', 'mcp.inventory']);
+    // The Claude check (asked before the save) ends first: its result shows, the saved list stays.
+    held[1]?.resolve({ ok: true, data: checkedSnap('claude', []) });
+    await settle();
+    expect(page.summary().expected).toEqual(['alpha']);
+    expect(link.view('lab').received?.snap.providers.claude.check.state).toBe('failed');
+    // The inventory asked after the save, then the Codex check asked before it: the list is the bridge's post-save one.
+    held[3]?.resolve({ ok: true, data: snapshot({ expected: ['alpha'] }) });
+    await settle();
+    held[2]?.resolve({ ok: true, data: checkedSnap('codex', []) });
+    await settle();
+    expect(page.summary().expected).toEqual(['alpha']);
+    expect($('.mcp-chips').textContent).toContain('alpha');
+    const p = link.view('lab').received?.snap.providers;
+    expect([p?.claude.check.state, p?.codex.check.state]).toEqual(['failed', 'failed']);
+    expect(link.view('lab').checking).toEqual({ claude: false, codex: false });
+  });
+
   it('lists the skills per provider: incomplete label, disabled ones kept, load errors', () => {
     const r = rig();
     r.page.open('lab');

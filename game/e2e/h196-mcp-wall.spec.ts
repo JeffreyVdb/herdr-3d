@@ -119,6 +119,30 @@ test('a missing expected server and a server that needs a sign-in: the expected 
   clean();
 });
 
+test('a Refresh while Check connections runs answers first: the check’s result still shows when it ends (F-R6)', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await onLab(page, SIM.replace('simmcpcheckms=400', 'simmcpcheckms=3000'));
+  await openPage(page);
+  const dlg = page.locator('dialog.mcp[open]');
+  expect((await mcp(page)).page.providers[0]?.check).toBe('none');
+  await dlg.locator('[data-key="check-claude"]').click();
+  await expect(dlg.locator('[data-key="check-claude"]')).toBeDisabled();
+  await dlg.locator('[data-key="refresh"]').click();
+  // The Refresh went after the check and answered while the check was still out.
+  await expect
+    .poll(async () => (await sent(page)).map((x) => `${x.t} ${x.result}`).slice(-2), { timeout: 10_000 })
+    .toEqual(['mcp.check null', 'mcp.inventory ok']);
+  expect((await mcp(page)).page.providers[0]?.check).toBe('none');
+  await expect(dlg.locator('[data-key="check-claude"]')).toBeDisabled();
+  // The check ends: its result is shown, not dropped behind the Refresh.
+  await expect.poll(async () => (await mcp(page)).page.providers[0]?.check, { timeout: 10_000 }).toBe('ok');
+  expect((await sent(page)).filter((x) => x.t === 'mcp.check').map((x) => x.result)).toEqual(['ok']);
+  expect((await mcp(page)).page.rows.find((r) => r.name === 'sentry')).toMatchObject({ claude: 'Needs sign-in', codex: 'Configured' });
+  await expect(dlg.locator('[data-key="check-claude"]')).toBeEnabled();
+  clean();
+});
+
 test('a stale result stays labelled, on the page and the wall; a failed read never says "not configured"', async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
