@@ -229,6 +229,7 @@ var migrations = []string{
 	// found to be; a hire preset's profile.
 	migrationCodexProfileHire,
 	migrationPackupReasoning,
+	migrationExpectedMCP, // #196
 }
 
 // Fingerprint kinds.

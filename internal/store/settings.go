@@ -30,6 +30,8 @@ type FloorSettings struct {
 	KaneoWorkspaceName string
 	KaneoProjectID     string
 	KaneoProjectName   string
+	// #196: ExpectedMCP are the MCP server names the floor expects.
+	ExpectedMCP []string
 }
 
 // migrationKaneo adds #184's columns: a floor's issue tracker and Kaneo
@@ -44,11 +46,16 @@ const migrationKaneo = `ALTER TABLE floor_repo ADD COLUMN tracker TEXT;
 	ALTER TABLE run_launch ADD COLUMN item_id TEXT;
 	ALTER TABLE run_launch ADD COLUMN item_key TEXT;`
 
+// migrationExpectedMCP adds #196's expected MCP servers of a floor (a JSON
+// array of names, NULL: none).
+const migrationExpectedMCP = `ALTER TABLE floor_repo ADD COLUMN expected_mcp TEXT;`
+
 // IsZero reports whether nothing is set.
 func (f FloorSettings) IsZero() bool {
 	return f.Repo == "" && f.ProjectOwner == "" && f.ProjectNumber == 0 && f.StatusField == "" &&
 		len(f.StatusOptions) == 0 && f.DefaultCwd == "" && f.HireHarness == "" && f.HireModel == "" && f.HireEffort == "" &&
-		f.Tracker == "" && f.KaneoWorkspaceID == "" && f.KaneoWorkspaceName == "" && f.KaneoProjectID == "" && f.KaneoProjectName == ""
+		f.Tracker == "" && f.KaneoWorkspaceID == "" && f.KaneoWorkspaceName == "" && f.KaneoProjectID == "" && f.KaneoProjectName == "" &&
+		len(f.ExpectedMCP) == 0
 }
 
 // FloorSettings returns the stored settings of every floor, by session,
@@ -58,7 +65,7 @@ func (s *Store) FloorSettings(ctx context.Context) (map[string]FloorSettings, er
 			COALESCE(project_number, 0), COALESCE(status_field, ''), COALESCE(status_options, ''), COALESCE(default_cwd, ''),
 			COALESCE(hire_harness, ''), COALESCE(hire_model, ''), COALESCE(hire_effort, ''), COALESCE(tracker, ''),
 			COALESCE(kaneo_workspace_id, ''), COALESCE(kaneo_workspace_name, ''), COALESCE(kaneo_project_id, ''),
-			COALESCE(kaneo_project_name, '')
+			COALESCE(kaneo_project_name, ''), COALESCE(expected_mcp, '')
 		FROM floor_repo ORDER BY session_name`)
 	if err != nil {
 		return nil, err
@@ -66,16 +73,21 @@ func (s *Store) FloorSettings(ctx context.Context) (map[string]FloorSettings, er
 	defer rows.Close()
 	out := map[string]FloorSettings{}
 	for rows.Next() {
-		var session, options string
+		var session, options, expected string
 		var f FloorSettings
 		if err := rows.Scan(&session, &f.Repo, &f.ProjectOwner, &f.ProjectNumber, &f.StatusField, &options, &f.DefaultCwd,
 			&f.HireHarness, &f.HireModel, &f.HireEffort, &f.Tracker, &f.KaneoWorkspaceID, &f.KaneoWorkspaceName,
-			&f.KaneoProjectID, &f.KaneoProjectName); err != nil {
+			&f.KaneoProjectID, &f.KaneoProjectName, &expected); err != nil {
 			return nil, err
 		}
 		if options != "" {
 			if err := json.Unmarshal([]byte(options), &f.StatusOptions); err != nil {
 				return nil, fmt.Errorf("floor_repo %s: status_options: %w", session, err)
+			}
+		}
+		if expected != "" {
+			if err := json.Unmarshal([]byte(expected), &f.ExpectedMCP); err != nil {
+				return nil, fmt.Errorf("floor_repo %s: expected_mcp: %w", session, err)
 			}
 		}
 		out[session] = f
@@ -101,24 +113,33 @@ func (s *Store) SetFloorSettings(ctx context.Context, session string, f FloorSet
 		}
 		options = string(b)
 	}
+	var expected any
+	if len(f.ExpectedMCP) > 0 {
+		b, err := json.Marshal(f.ExpectedMCP)
+		if err != nil {
+			return err
+		}
+		expected = string(b)
+	}
 	var number any
 	if f.ProjectNumber != 0 {
 		number = f.ProjectNumber
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO floor_repo (session_name, repo, project_owner, project_number, status_field,
 			status_options, default_cwd, hire_harness, hire_model, hire_effort, tracker, kaneo_workspace_id,
-			kaneo_workspace_name, kaneo_project_id, kaneo_project_name, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			kaneo_workspace_name, kaneo_project_id, kaneo_project_name, expected_mcp, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(session_name) DO UPDATE SET repo = excluded.repo, project_owner = excluded.project_owner,
 			project_number = excluded.project_number, status_field = excluded.status_field,
 			status_options = excluded.status_options, default_cwd = excluded.default_cwd,
 			hire_harness = excluded.hire_harness, hire_model = excluded.hire_model, hire_effort = excluded.hire_effort,
 			tracker = excluded.tracker, kaneo_workspace_id = excluded.kaneo_workspace_id,
 			kaneo_workspace_name = excluded.kaneo_workspace_name, kaneo_project_id = excluded.kaneo_project_id,
-			kaneo_project_name = excluded.kaneo_project_name, updated_at = excluded.updated_at`,
+			kaneo_project_name = excluded.kaneo_project_name, expected_mcp = excluded.expected_mcp,
+			updated_at = excluded.updated_at`,
 		session, null(f.Repo), null(f.ProjectOwner), number, null(f.StatusField), options, null(f.DefaultCwd),
 		null(f.HireHarness), null(f.HireModel), null(f.HireEffort), null(f.Tracker), null(f.KaneoWorkspaceID),
-		null(f.KaneoWorkspaceName), null(f.KaneoProjectID), null(f.KaneoProjectName), s.ts())
+		null(f.KaneoWorkspaceName), null(f.KaneoProjectID), null(f.KaneoProjectName), expected, s.ts())
 	return err
 }
 

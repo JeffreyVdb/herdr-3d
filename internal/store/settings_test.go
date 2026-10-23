@@ -27,6 +27,11 @@ func TestFloorSettingsPersistAndClear(t *testing.T) {
 	if err := st.SetFloorSettings(ctx, "gone", store.FloorSettings{Repo: "o/r"}); err != nil {
 		t.Fatal(err)
 	}
+	// #196: expected MCP servers alone keep a row.
+	mcp := store.FloorSettings{ExpectedMCP: []string{"github", "linear"}}
+	if err := st.SetFloorSettings(ctx, "mcp", mcp); err != nil {
+		t.Fatal(err)
+	}
 	st.Close()
 
 	st = open(t, path)
@@ -34,7 +39,7 @@ func TestFloorSettingsPersistAndClear(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]store.FloorSettings{"herdr-3d": full, "gone": {Repo: "o/r"}}
+	want := map[string]store.FloorSettings{"herdr-3d": full, "gone": {Repo: "o/r"}, "mcp": mcp}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("settings = %+v, want %+v", got, want)
 	}
@@ -42,7 +47,7 @@ func TestFloorSettingsPersistAndClear(t *testing.T) {
 	if err := st.SetFloorSettings(ctx, "gone", store.FloorSettings{}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := st.FloorSettings(ctx); len(got) != 1 {
+	if got, _ := st.FloorSettings(ctx); len(got) != 2 {
 		t.Fatalf("after clear = %+v", got)
 	}
 	if err := st.SetFloorSettings(ctx, "", full); !errors.Is(err, store.ErrInvalid) {
