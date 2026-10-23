@@ -46,6 +46,10 @@ type fakeCodexHost struct {
 	steer func(turn, text, cid string) (string, error)
 	start func(text, cid string) (string, error)
 	sends []fakeSend
+	// #196: what a watch's MCPStatus answers (nil: no rows), and how often
+	// it was asked.
+	mcp      func() ([]codexapp.MCPServerStatus, error)
+	mcpCalls int
 	// #158: the thread a new join reads (nil: an empty one).
 	history *codexapp.Thread
 	// #27: what a join's observational reads answer (nil: they fail).
@@ -80,6 +84,23 @@ func (w *fakeCodexWatch) Close() {
 	w.mu.Lock()
 	w.closed = true
 	w.mu.Unlock()
+}
+
+func (w *fakeCodexWatch) MCPStatus(context.Context) ([]codexapp.MCPServerStatus, error) {
+	f := w.host
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.mcpCalls++
+	if f.mcp == nil {
+		return nil, nil
+	}
+	return f.mcp()
+}
+
+func (f *fakeCodexHost) mcpCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.mcpCalls
 }
 
 func (w *fakeCodexWatch) Steer(_ context.Context, turn, text, cid string) (string, error) {
