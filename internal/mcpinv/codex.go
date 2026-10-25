@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/execpath"
+	"github.com/JeffreyVdb/herdr-3d/internal/mcpdiag"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
 
@@ -393,20 +394,7 @@ func (r CodexStatus) observe() (Observed, bool) {
 
 // errorCategory is the bridge's phrase for a server's error text.
 func errorCategory(text string) string {
-	m := strings.ToLower(text)
-	switch {
-	case strings.Contains(m, "auth"), strings.Contains(m, "401"), strings.Contains(m, "403"), strings.Contains(m, "unauthorized"):
-		return "Authentication failed"
-	case strings.Contains(m, "connection closed"):
-		return "Connection closed"
-	case strings.Contains(m, "timed out"), strings.Contains(m, "timeout"):
-		return "Timed out"
-	case strings.Contains(m, "not found"), strings.Contains(m, "no such file"):
-		return "Command not found"
-	case strings.Contains(m, "refused"):
-		return "Connection refused"
-	}
-	return "Startup failed"
+	return mcpdiag.Reason(mcpdiag.Category(text))
 }
 
 // MapCodexStatuses maps status rows to observations, one per name.

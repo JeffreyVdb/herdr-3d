@@ -47,6 +47,16 @@ async function onFloor(page: Page, session = 'herdr-3d'): Promise<void> {
   await frames(page, 3);
 }
 
+async function failedMcpHire(page: Page): Promise<void> {
+  await onFloor(page);
+  await page.evaluate(() => window.__h3d.openHire(5));
+  await expect.poll(async () => ((await dialog(page)) as { state?: string } | null)?.state).toBe('ready');
+  await page.locator('[data-key="harness:codex"]').locator('..').click();
+  await page.locator('#hire-task').fill('Fix the connection and preserve this task.');
+  await page.locator('#hire-task').press('Enter');
+  await expect(page.locator('[data-hook="hire-recovery"]')).toContainText('code-intel timed out');
+}
+
 /** #93: desk 6's "Hire preset" tab with a floor preset and a global one, both pinned to the desk tabs. */
 async function pinnedPresets(page: Page): Promise<void> {
   await onFloor(page);
@@ -445,6 +455,16 @@ export const SURFACES: Surface[] = [
       await expect(page.locator('#hire-task .cmp-chip[data-status="ready"]')).toBeVisible({ timeout: 15_000 });
     },
     root: 'dialog.desk-dlg--hire',
+  },
+  {
+    name: 'hire-recovery', fixture: 'demo-m5', wsQuery: `${SIM}&simfail=mcp_startup`,
+    open: failedMcpHire,
+    root: 'dialog.desk-dlg--hire',
+  },
+  {
+    name: 'hire-recovery-tray', fixture: 'demo-m5', wsQuery: `${SIM}&simfail=mcp_startup`,
+    open: async (page) => { await failedMcpHire(page); await page.keyboard.press('Escape'); },
+    root: '.hire-recovery-stack',
   },
   {
     // Effort not given: its section is open with the interpreter's question and Hire is off; Harness and model opened by hand (a selected header).

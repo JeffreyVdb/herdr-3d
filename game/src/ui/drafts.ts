@@ -28,7 +28,7 @@ interface Stored extends Draft {
 }
 
 /** The slice of `Storage` used: tests pass a fake. */
-export type DraftStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+export type DraftStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> & Partial<Pick<Storage, 'length' | 'key'>>;
 
 const PREFIX = 'h3d.draft.';
 
@@ -73,6 +73,26 @@ export class Drafts {
     return `${bridgeKey(PREFIX)}${this.ns}.${key}`;
   }
 
+  /** Keys belonging to this bridge and composer, including drafts from a reload. */
+  keys(): string[] {
+    const keys = new Set(this.mem.keys());
+    const prefix = this.k('');
+    try {
+      for (let i = 0; i < (this.storage?.length ?? 0); i++) {
+        const key = this.storage?.key?.(i);
+        if (key?.startsWith(prefix)) keys.add(key.slice(prefix.length));
+      }
+    } catch { /* memory only */ }
+    return [...keys];
+  }
+
+  /** Whether the current copy really reached allowed storage (quota failures included). */
+  stored(key: string): boolean {
+    if (!this.persist()) return false;
+    try { return JSON.stringify(parse(this.storage?.getItem(this.k(key)) ?? null)) === JSON.stringify(this.get(key)); }
+    catch { return false; }
+  }
+
   /** The draft for `key`: this session's copy first, else what storage kept from an earlier one. */
   get(key: string): Draft | null {
     const m = this.mem.get(key);
@@ -113,6 +133,7 @@ export class Drafts {
    * written to it again (off).
    */
   persistChanged(): void {
+    for (const key of this.keys()) this.get(key);
     const keep = this.persist();
     for (const [key, d] of this.mem) {
       if (keep) this.set(key, d);

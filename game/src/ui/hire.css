@@ -1356,3 +1356,35 @@
 .rv-back {
   margin-right: auto;
 }
+
+/* A failed hire stays reachable after its toast, including behind another dialog. */
+.hire-recovery-stack {
+  position: fixed;
+  inset-inline-start: 16px;
+  bottom: 80px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(360px, calc(100vw - 32px));
+  max-height: 30vh;
+  overflow: auto;
+}
+.hire-recovery-tray {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 8px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-family: var(--font);
+}
+.hire-recovery-tray[hidden] { display: none; }
+.hire-recovery-tray button { white-space: normal; text-align: start; }
+[data-hook='hire-recovery'] { overflow-wrap: anywhere; max-height: 30vh; overflow: auto; }
+[data-hook='hire-recovery'] .dd-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+[data-hook='hire-recovery'] summary { min-height: 32px; padding-block: 6px; cursor: pointer; }
+[data-hook='hire-recovery'] summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 4px; }

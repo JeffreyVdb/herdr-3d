@@ -24,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
+	"github.com/JeffreyVdb/herdr-3d/internal/mcpdiag"
 	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
@@ -130,6 +131,14 @@ func (h *Hub) codexNotification(ctx context.Context, id string, cw *codexWatch, 
 	// unchanged: another thread's events are dropped here as before.
 	if h.opts.CodexChildren != nil && h.cx.launches[id].Thread == cw.thread {
 		h.opts.CodexChildren.Notify(cw.thread, method, params)
+	}
+	// MCP notifications use a string status; codexNote's thread status is
+	// an object. Decode them before the common thread-notification shape.
+	if method == "mcpServer/startupStatus/updated" {
+		if d, ok := codexapp.StartupNotification(cw.thread, method, params); ok && h.cx.launches[id].Thread == cw.thread {
+			h.cx.startup[id] = mcpdiag.Merge(h.cx.startup[id], d)
+		}
+		return
 	}
 	var n codexNote
 	if json.Unmarshal(params, &n) != nil || n.ThreadID != cw.thread || h.cx.launches[id].Thread != cw.thread {

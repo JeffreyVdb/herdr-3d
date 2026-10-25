@@ -121,7 +121,7 @@ export interface ClientOptions {
 const FATAL_CODES = new Set(['unsupported_proto']);
 
 /** The answer to a command: its ack, or an error (from the bridge, or `offline` / `timeout` / `disconnected`). */
-export type CommandResult = { ok: true; data: unknown } | { ok: false; code: string; message: string };
+export type CommandResult = { ok: true; data: unknown } | { ok: false; code: string; message: string; data?: unknown };
 
 export interface RequestOptions {
   timeoutMs?: number;
@@ -394,7 +394,7 @@ export class BridgeClient {
       return;
     }
     if (isError(m) && m.req_id) {
-      this.settle(m.req_id, { ok: false, code: m.code, message: m.message ?? '' });
+      this.settle(m.req_id, { ok: false, code: m.code, message: m.message ?? '', ...(m.data === undefined ? {} : { data: m.data }) });
       return;
     }
     if (isError(m) && !m.req_id && FATAL_CODES.has(m.code)) {

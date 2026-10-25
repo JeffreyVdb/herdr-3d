@@ -876,10 +876,12 @@ type WorkerHireArgs struct {
 
 // HireResult is the ack data of worker.hire.
 type HireResult struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspace_id"`
-	Branch      string `json:"branch,omitempty"`
-	BaseSHA     string `json:"base_sha,omitempty"`
+	Delivery    string          `json:"delivery,omitempty"`
+	Startup     []MCPDiagnostic `json:"startup,omitempty"`
+	ID          string          `json:"id"`
+	WorkspaceID string          `json:"workspace_id"`
+	Branch      string          `json:"branch,omitempty"`
+	BaseSHA     string          `json:"base_sha,omitempty"`
 	// FetchError is reserved: a worktree hire whose fetch fails is
 	// refused (ErrFetchFailed) instead.
 	FetchError string `json:"fetch_error,omitempty"`
@@ -992,6 +994,7 @@ type Ack struct {
 
 // Error answers a failed command or a bad message.
 type Error struct {
+	Data    any    `json:"data,omitempty"`
 	T       string `json:"t"`
 	ReqID   string `json:"req_id,omitempty"`
 	Code    string `json:"code"`

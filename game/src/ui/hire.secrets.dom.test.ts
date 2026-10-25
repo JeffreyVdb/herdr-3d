@@ -75,6 +75,21 @@ describe('HireDialog and prompt secrets (#108 round 4)', () => {
     vi.unstubAllGlobals();
   });
 
+  it('startup recovery retains the original secret task only in memory and warns before reload', async () => {
+    const t = setup({ background: true, hires: [{ ok: false, code: 'hire_failed', message: 'Codex startup failed', data: { operation: 'op1', delivery: 'not_sent', retryable: true, startup: [{ name: 'code-intel', stage: 'failed', category: 'timeout', source: 'terminal' }] } }] });
+    await typed(t, TASK);
+    t.press('hire'); await flush(); t.b.confirm(); await flush();
+    expect(t.hires()).toHaveLength(1);
+    expect(t.inner.editor.draft.doc.text).toBe(TASK);
+    expect(document.querySelector('[data-hook="hire-recovery"]')?.textContent).toContain('this task stays in this tab only');
+    expect(Object.values(localStorage).join(' ')).not.toContain(TASK);
+    const unload = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+    t.dlg.close(); t.dlg.open('floor', 0); await flush();
+    expect(t.inner.editor.draft.doc.text).toBe(TASK);
+  });
+
   it('a first task with a secret: the review first (nothing hired, no desk held), Confirm hires with the review the bridge takes', async () => {
     const t = setup();
     await typed(t, TASK);
