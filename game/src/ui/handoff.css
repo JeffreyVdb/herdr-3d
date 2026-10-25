@@ -568,3 +568,16 @@
 .ho-llm-sent li {
   margin: 2px 0;
 }
+
+/* #198: "Hire with handoff", step 1: the new agent's task, the field the step is for. It sits right under the modes,
+   apart from the instruction (what goes in the handoff), and asks for a few lines. */
+.ho-task textarea {
+  min-height: 5.5em;
+  resize: vertical;
+}
+.dd-required {
+  font-weight: 500;
+  font-style: italic;
+  font-variation-settings: var(--fvs-casual);
+  color: var(--text-2);
+}

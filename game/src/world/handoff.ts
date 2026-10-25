@@ -17,6 +17,24 @@ export function hireTask(path: string): string {
 }
 
 /**
+ * #198: the first task of "Hire with handoff" (the ticket's words): the filed handoff's final path as it is (spaces
+ * kept, nothing quoted), then the human's task as written. Only blank lines before and after the task are dropped; its
+ * lines, indentation and inner blank lines stay. Never the handoff's text, never `hireTask`'s generic continuation.
+ */
+export function hireWithHandoffTask(path: string, task: string): string {
+  const body = task.replace(/^(?:[ \t]*\r?\n)+/u, '').replace(/(?:\r?\n[ \t]*)+$/u, '');
+  return `First read the handoff here: ${path} and then follow these instructions:\n\n${body}`;
+}
+
+/**
+ * #198: the bytes a filed handoff's path is assumed to take before it is known (the size check before anything is
+ * generated). The file name is bounded by the bridge (a 13-byte stamp, a 32-byte worker part, a 48-byte slug, a
+ * collision suffix, `.md`: about 100 bytes); the cabinet's directory and the floor's id are not known here, so the rest
+ * is a generous allowance. The exact size is checked again with the real path before the hire is sent.
+ */
+export const HANDOFF_PATH_RESERVE = 1024;
+
+/**
  * The row of the timeline the inline button goes on: the last loaded assistant item of the candidate's message
  * (Claude: `<message>#<n>`, consecutive text blocks merge into one row, so the last one; Codex: the message's item
  * id). Only an item the view has: a page that does not hold the candidate's row shows no button, never the last row
