@@ -319,8 +319,12 @@ export class OfficeView {
         return g.translate(x, y, z);
       };
       if (w.kind === 'door') {
-        trim.push(place(new THREE.BoxGeometry(len + 0.16, 0.08, 0.05), 0, w.y1 + 0.04, 0.02));
-        for (const k of [-1, 1]) trim.push(place(new THREE.BoxGeometry(0.08, w.y1, 0.05), (k * (len + 0.08)) / 2, w.y1 / 2, 0.02));
+        // Mount the trim against the room face. Embedding it in the wall makes its inner edges
+        // coplanar with the doorway reveal, which z-fights as you approach or walk through.
+        const trimDepth = 0.05;
+        const trimInset = -trimDepth / 2;
+        trim.push(place(new THREE.BoxGeometry(len + 0.16, 0.08, trimDepth), 0, w.y1 + 0.04, trimInset));
+        for (const k of [-1, 1]) trim.push(place(new THREE.BoxGeometry(0.08, w.y1, trimDepth), (k * (len + 0.08)) / 2, w.y1 / 2, trimInset));
         continue;
       }
       const h = w.y1 - w.y0;
