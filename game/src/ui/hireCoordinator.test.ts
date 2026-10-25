@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
 import type { CommandArgs } from '../net/protocol';
+import { hireWithHandoffTask } from '../world/handoff';
 import { Draft } from './composer/draft';
 import { backgroundOutcomeText, HireCoordinator, SPAWNED_NOTICE_GAP_MS, SPAWNED_TEXT, type HireRequest } from './hireCoordinator';
 
@@ -379,5 +380,29 @@ describe('HireCoordinator: #95 the herdr hiring instructions', () => {
     expect(t.sends[1]).toMatchObject({ prompt: fits, herdr_instructions: true });
     t.answer(1, { ok: true, data: { id: 'w2', prompted: true } });
     await ok.done;
+  });
+});
+
+// #198: a hire with a handoff starts with the composed task and a key tied to the handoff's op.
+describe('HireCoordinator: #198 hire with handoff', () => {
+  const composed = hireWithHandoffTask('/home/u/my handoffs/f/a b.md', 'Fix the issue\n\n- and the docs');
+
+  it('created but not prompted: the composed task is held for that worker, and nobody else is hired', async () => {
+    const t = setup();
+    const op = t.hires.start(req({ key: 'handoff:ho-x:1', args: args(14, composed) }));
+    t.answer(0, { ok: true, data: { id: 'w1', prompted: false, prompt_error: 'the pane did not answer' } });
+    expect(await op.done).toMatchObject({ kind: 'not_prompted', prompt: composed });
+    expect(t.handed).toEqual([{ id: 'w1', text: composed, from: null }]);
+    expect(t.sends).toHaveLength(1);
+    expect(t.toasts.at(-1)?.text).toContain('the task is in their prompt');
+  });
+
+  it('the same op’s key started twice (a repeated completion, a second click) is one hire', async () => {
+    const t = setup();
+    const a = t.hires.start(req({ key: 'handoff:ho-x:1', args: args(14, composed) }));
+    const b = t.hires.start(req({ key: 'handoff:ho-x:1', args: args(14, composed) }));
+    expect(b).toBe(a);
+    await tick();
+    expect(t.sends).toHaveLength(1);
   });
 });

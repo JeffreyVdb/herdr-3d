@@ -1769,7 +1769,7 @@ class Transcript implements TranscriptView {
       this.host.onHandoff && this.host.onHireHandoff
         ? h(
             'button',
-            { class: 'tx-handoff-btn tx-hire-handoff-btn', 'data-key': 'hire-handoff', title: 'File a handoff from this conversation, then hire a new agent that reads it and does your task', onclick: () => this.host.onHireHandoff?.(c) },
+            { class: 'tx-hire-handoff-btn', 'data-key': 'hire-handoff', title: 'File a handoff from this conversation, then hire a new agent that reads it and does your task', onclick: () => this.host.onHireHandoff?.(c) },
             icon(HIRE_PERSON),
             'Hire with handoff',
           )

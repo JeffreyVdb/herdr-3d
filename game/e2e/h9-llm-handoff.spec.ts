@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, openMenu, settingsSection, shot, watchErrors } from './game';
+import { frames, openGame, openMenu, seatMode, settingsSection, shot, watchErrors } from './game';
 
 // #9: "Use configured LLM" against the fixture bridge (`sim=1`, tools/fixture-handoff.ts). The first journey runs the
 // bridge's gate on the simulated AI integration, which calls a fake OpenAI-compatible server started here on an
@@ -230,5 +230,44 @@ test('LLM handoffs off: the mode says why and leads to Settings', async ({ page 
   // #49: the link selects the section's tab and puts the keyboard on its heading.
   await expect(page.locator('[role="tab"][data-tab="handoff-llm"]')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('[data-section="handoff-llm"] h3')).toBeFocused();
+  clean();
+});
+
+// #198: "Hire with handoff" with the configured LLM: its job is followed until filed, then one agent is hired with the
+// final path.
+test('Hire with handoff, Use configured LLM: the job is filed, then one hire with the composed task', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m5', '', 'play=none&sim=1&simms=150&simusage=0&simhandoffllm=ready&simhandoffllmout=slow');
+  await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+  await frames(page, 3);
+  const w = demoWorker('Pebble');
+  expect((await sim(page, 'sim.final', { id: w.id, text: 'Two review comments left; `make test` passes.' })).ok).toBe(true);
+  expect(await page.evaluate((id) => window.__h3d.face(id), w.id)).toBe(true);
+  await frames(page, 3);
+  expect(await page.evaluate((id) => window.__h3d.sitAt(id), w.id)).toBe(true);
+  await frames(page, 20);
+  await seatMode(page, 'transcript');
+  await page.locator('.seat-transcript .tx').getByRole('button', { name: 'Hire with handoff', exact: true }).click();
+  const step1 = page.getByRole('dialog', { name: 'Hire with a handoff from Pebble' });
+  await step1.getByText('Use configured LLM', { exact: true }).click();
+  await expect.poll(async () => (await dialog(page))?.llmReady).toBe(true);
+  await step1.getByLabel(/What to focus on/).fill(FOCUS);
+  await step1.getByLabel(/Task for the new agent/).fill('Answer the comments');
+  await step1.getByRole('button', { name: 'Continue to hire' }).click();
+  const review = page.getByRole('dialog', { name: /^Hire with a handoff at Desk/ });
+  await review.locator('label:has(> input[data-key="effort:high"])').click();
+  await review.getByRole('button', { name: 'File handoff and hire' }).click();
+  await expect(review.locator('.dd-foot [role="status"]')).toContainText('is writing the handoff…');
+  const writes = await sent(page, 'worker.handoff');
+  expect(writes).toHaveLength(1);
+  expect(writes[0]?.args).toMatchObject({ worker: w.id, mode: 'llm', instruction: FOCUS });
+  expect(await sent(page, 'worker.hire')).toHaveLength(0);
+  await shot(page, 'h198-llm-filing');
+  expect((await sim(page, 'sim.llm_finish', { id: w.id })).ok).toBe(true);
+  await expect(review).toBeHidden();
+  const hires = await sent(page, 'worker.hire');
+  expect(hires).toHaveLength(1);
+  expect(String(hires[0]?.args.prompt)).toMatch(/^First read the handoff here: \/home\/u\/handoff\/herdr-3d\/[^\n]+\.md and then follow these instructions:\n\nAnswer the comments$/);
   clean();
 });

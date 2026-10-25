@@ -865,7 +865,7 @@ export class HireReviewDialog {
     const tape = filed ? h('span', { class: 'tape tape--idle' }, 'Filed') : this.state === 'filing' ? h('span', { class: 'tape tape--box' }, 'Filing') : h('span', { class: 'tape' }, 'Handoff');
     const how = p.mode === 'literal' ? `${p.name}’s last message, saved as written` : p.mode === 'agent' ? `written by ${p.name}’s agent` : `written by the configured LLM${p.llmModel ? ` (${p.llmModel})` : ''} from ${p.name}’s conversation`;
     this.handoffEl.replaceChildren(...[
-      h('p', {}, tape, ' ', h('b', {}, MODE_WORDS[p.mode]), ` · ${how}. It is filed in the ${p.floorName} cabinet first; the agent is hired once it is.`),
+      h('p', {}, tape, ' ', h('b', {}, MODE_WORDS[p.mode]), ` · ${how}. `, filed ? `Filed in the ${p.floorName} cabinet; the agent is hired with its path.` : `It is filed in the ${p.floorName} cabinet first; the agent is hired once it is.`),
       p.instruction && p.mode !== 'literal' ? h('p', { class: 'field-hint', 'data-hook': 'rv-handoff-instruction' }, `What to put in it: “${p.instruction}”`) : null,
       p.sendHome ? h('p', { class: 'field-hint', 'data-hook': 'rv-handoff-home' }, `${p.name} is sent home after filing, if it can go then. The new agent never takes ${p.name}’s desk.`) : null,
       filed ? h('p', { class: 'rv-handoff-path' }, 'Saved at ', h('code', { 'data-hook': 'rv-handoff-path' }, filed.path)) : null,

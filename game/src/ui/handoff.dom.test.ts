@@ -5,6 +5,7 @@ import { HandoffBook } from '../world/handoff';
 import { HandoffLLMBook } from '../world/handoffLlm';
 import { Cabinet } from './cabinet';
 import { HandoffDialog } from './handoffDialog';
+import type { HandoffPlan } from './handoffFiling';
 
 // #223: the filing dialog (exact text, provenance, the send-home choice, success and failure, a stale reply) and the
 // cabinet (list, safe search snippets, sanitised preview, copy, delete with a confirm, hire from a handoff).
@@ -496,5 +497,132 @@ describe('HandoffDialog: Use configured LLM', () => {
     expect(e.sent[0]).toEqual({ cmd: 'worker.handoff_cancel', args: { worker: 'A', op: 'x' } });
     expect(d.summary().state).toBe('failed');
     expect(e.hook('ho-reason')?.textContent).toBe('cancelled; nothing was filed');
+  });
+});
+
+// #198: "Hire with handoff", step 1: the filing dialog in its hire intent. The same modes and previews, the instruction
+// apart from the new agent's task, and nothing sent but the previews: Continue hands the choice to the host.
+describe('HandoffDialog: hire intent', () => {
+  const AGENT_PV: HandoffPreviewAck = { ...PREVIEW, agent: { call: '/handoff', can_ask: true, harness: 'claude', model: 'opus', instruction: 'summarize the conversation' } };
+  const choose = (m: string) => {
+    const r = document.querySelector<HTMLInputElement>(`[data-key="mode:${m}"]`)!;
+    r.checked = true;
+    r.dispatchEvent(new Event('change'));
+  };
+  const type = (el: HTMLTextAreaElement, v: string) => {
+    el.value = v;
+    el.dispatchEvent(new Event('input'));
+  };
+  const task = () => document.getElementById('ho-task') as HTMLTextAreaElement;
+  const hired = (e: ReturnType<typeof setup>) => {
+    const got: Array<{ plan: HandoffPlan; task: string; seated: boolean }> = [];
+    let answer = true;
+    const host = { ...e.host, continueHire: (plan: HandoffPlan, t: string, seated: boolean) => (got.push({ plan, task: t, seated }), answer) };
+    return { host, got, refuse: () => (answer = false) };
+  };
+
+  it('asks for the task, separate from the instruction; Continue is off until it is written and sends nothing', async () => {
+    const e = setup({}, { 'worker.handoff_preview': [{ ok: true, data: PREVIEW }] });
+    const h = hired(e);
+    const d = new HandoffDialog(document.body, h.host as never);
+    e.w.floor = 'herdr-3d';
+    d.open('A', { seated: true, intent: 'hire' });
+    await e.flush();
+    expect(document.getElementById('ho-title')?.textContent).toBe('Hire with a handoff from Pixel');
+    expect(document.querySelector('label[for="ho-task"]')?.textContent).toBe('Task for the new agent required');
+    expect(task().required).toBe(true);
+    expect(e.q('continue').textContent).toBe('Continue to hire');
+    expect(e.q('continue').getAttribute('aria-disabled')).toBe('true');
+    expect(e.q('continue').title).toBe('Write the task for the new agent');
+    expect(document.activeElement).toBe(task());
+    e.q('continue').click();
+    expect(h.got).toEqual([]);
+    expect(d.summary()).toMatchObject({ intent: 'hire', error: true, status: 'Write the task for the new agent.' });
+    type(task(), 'Fix the issue\n\n  - keep the tests');
+    expect(e.q('continue').getAttribute('aria-disabled')).toBeNull();
+    e.q('continue').click();
+    expect(h.got).toEqual([{ plan: { worker: 'A', name: 'Pixel', floorName: 'herdr-3d', mode: 'literal', candidate: CAND, instruction: '', sendHome: false }, task: 'Fix the issue\n\n  - keep the tests', seated: true }]);
+    expect(d.isOpen).toBe(false);
+    // Only the preview went: nothing is filed in step 1.
+    expect(e.sent.map((x) => x.cmd)).toEqual(['worker.handoff_preview']);
+    expect(document.querySelector('[data-key="file"]')).toBeNull();
+  });
+
+  it('Ask the agent: the instruction and send home are kept apart from the task; the agent’s availability gates Continue', async () => {
+    const e = setup({}, { 'worker.handoff_preview': [{ ok: true, data: PREVIEW }, { ok: true, data: { ...AGENT_PV, agent: { ...AGENT_PV.agent!, can_ask: false, cannot_ask: 'claude lists no "handoff" skill in /w' } } }, { ok: true, data: AGENT_PV }] });
+    const h = hired(e);
+    const d = new HandoffDialog(document.body, h.host as never);
+    e.w.floor = 'herdr-3d';
+    d.open('A', { intent: 'hire' });
+    await e.flush();
+    type(task(), 'Fix the issue');
+    choose('agent');
+    await e.flush();
+    expect(e.q('continue').title).toBe('claude lists no "handoff" skill in /w');
+    e.q('continue').click();
+    expect(h.got).toEqual([]);
+    // Another try: the skill is there now.
+    choose('literal');
+    await e.flush();
+    choose('agent');
+    await e.flush();
+    expect(task().value).toBe('Fix the issue');
+    type(document.getElementById('ho-instruction') as HTMLTextAreaElement, 'focus on the tests');
+    const box = document.getElementById('ho-send-home') as HTMLInputElement;
+    box.checked = true;
+    box.dispatchEvent(new Event('change'));
+    expect(document.getElementById('ho-send-hint')?.textContent).toContain('The new agent gets another desk either way.');
+    e.q('continue').click();
+    expect(h.got[0]?.plan).toEqual({ worker: 'A', name: 'Pixel', floorName: 'herdr-3d', mode: 'agent', candidate: null, instruction: 'focus on the tests', sendHome: true });
+    expect(h.got[0]?.task).toBe('Fix the issue');
+    expect(e.sent.filter((x) => x.cmd !== 'worker.handoff_preview')).toEqual([]);
+  });
+
+  it('Use configured LLM: off with its reason when not ready; when ready its candidate and model go with the plan', async () => {
+    const e = llmSetup({}, { 'worker.handoff_preview': [{ ok: true, data: PREVIEW }, { ok: true, data: LLM_PREVIEW }] });
+    const h = hired(e);
+    const d = new HandoffDialog(document.body, h.host as never);
+    d.open('A', { intent: 'hire' });
+    await e.flush();
+    choose('llm');
+    await e.flush();
+    type(task(), 'Fix the issue');
+    e.q('continue').click();
+    expect(h.got[0]?.plan).toMatchObject({ mode: 'llm', candidate: CAND, llmModel: 'gpt-handoff', instruction: '' });
+    const off = llmSetup({}, { 'worker.handoff_preview': [{ ok: true, data: PREVIEW }] }, { ...LLM_STATE, enabled: false, state: 'off', tested: false });
+    const d2 = new HandoffDialog(document.body, off.host as never);
+    d2.open('A', { intent: 'hire' });
+    await off.flush();
+    expect(document.querySelector<HTMLInputElement>('[data-key="mode:llm"]')!.disabled).toBe(true);
+  });
+
+  it('a stale reply turns Continue off until the latest is shown; a host that cannot open the review keeps the dialog', async () => {
+    const e = setup({}, { 'worker.handoff_preview': [{ ok: true, data: PREVIEW }] });
+    const h = hired(e);
+    const d = new HandoffDialog(document.body, h.host as never);
+    d.open('A', { intent: 'hire' });
+    await e.flush();
+    type(task(), 'Fix the issue');
+    e.w.handoff = { ...CAND, id: 'cand-2', revision: 'rev-2' };
+    d.refresh();
+    expect(e.q('continue').title).toBe('The reply changed: show the latest one first');
+    e.q('reload').click();
+    await e.flush();
+    h.refuse();
+    e.q('continue').click();
+    expect(h.got[0]?.plan.candidate?.id).toBe('cand-2');
+    expect(d.isOpen).toBe(true);
+  });
+
+  it('opens fresh for a hire even while a request of the worker runs; back from step 2 it keeps what was chosen', async () => {
+    const e = setup({ agent_handoff: { op: 'old', state: 'pending', started_at: 1 } }, { 'worker.handoff_preview': [{ ok: true, data: PREVIEW }, { ok: true, data: AGENT_PV }] });
+    const d = new HandoffDialog(document.body, e.host as never);
+    d.open('A', { intent: 'hire', prefill: { mode: 'agent', task: 'Fix it', instruction: 'be brief', sendHome: false } });
+    await e.flush();
+    expect(d.summary()).toMatchObject({ mode: 'agent', state: 'ready', request: null, task: 'Fix it', instruction: 'be brief' });
+    // The filing intent is as it was: the running request.
+    d.close();
+    d.open('A');
+    expect(d.summary()).toMatchObject({ intent: 'file', mode: 'agent', state: 'pending', task: '' });
   });
 });

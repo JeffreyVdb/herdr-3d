@@ -552,7 +552,6 @@ export class HandoffDialog {
       );
     }
     const out: Node[] = [set];
-    if (this.intent === 'hire') out.push(this.taskNode());
     if (llmOff && this.host.openSettings) {
       const where = this.host.store.handoffLlm.state?.state === 'incomplete' ? 'ai' : 'handoff-llm';
       out.push(
@@ -563,6 +562,8 @@ export class HandoffDialog {
         ),
       );
     }
+    // #198: the step's own field, right under the choice of how the handoff is made (and its way to Settings).
+    if (this.intent === 'hire') out.push(this.taskNode());
     return out;
   }
 

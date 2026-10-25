@@ -223,3 +223,62 @@ test('the filing cabinet: E opens it, search, safe preview, delete with a confir
   expect(review.choice.effort).toBe('');
   clean();
 });
+
+// #198: "Hire with handoff" beside Handoff: step 1 (the mode, the new agent's task), step 2 (the reviewed hire), one
+// Hire that files the reply and then hires with the composed task and the filed path. A hire refused after filing keeps
+// the handoff: Hire again hires only.
+test('Hire with handoff: the reply is filed, then one agent is hired with the composed task; a failed hire retries without filing again', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m5', '', `${SIM}&simfail=hire_failed`);
+  const w = demoWorker('Pebble');
+  await sitAtTranscript(page, w);
+  const tx = page.locator('.seat-transcript .tx');
+  expect((await final(page, w.id, '# Loader\n\nThe loader is half done.')).ok).toBe(true);
+  const hireBtn = tx.getByRole('button', { name: 'Hire with handoff', exact: true });
+  await expect(hireBtn).toHaveCount(1);
+  await expect(tx.getByRole('button', { name: 'Handoff', exact: true })).toHaveCount(1);
+  await hireBtn.click();
+  const step1 = page.getByRole('dialog', { name: 'Hire with a handoff from Pebble' });
+  await expect(step1).toBeVisible();
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.handoffDialog()))?.state).toBe('ready');
+  const go = step1.getByRole('button', { name: 'Continue to hire' });
+  await expect(go).toHaveAttribute('aria-disabled', 'true');
+  const task = 'Fix the issue\n\n  - keep the tests green';
+  await step1.getByLabel(/Task for the new agent/).fill(task);
+  await shot(page, 'h198-step1');
+  await go.click();
+  await expect(step1).toBeHidden();
+  const review = page.getByRole('dialog', { name: /^Hire with a handoff at Desk/ });
+  await expect(review).toBeVisible();
+  // Nothing filed yet; the effort is never guessed.
+  expect((await page.evaluate(() => window.__h3d.sent().map((c) => c.t as string))).filter((t) => t === 'worker.handoff' || t === 'worker.hire')).toEqual([]);
+  await expect(review.locator('[data-hook="composed"]')).toContainText('First read the handoff here: ‹the handoff’s path, once it is filed› and then follow these instructions:');
+  await review.locator('label:has(> input[data-key="effort:high"])').click();
+  await expect.poll(async () => {
+    const d = (await page.evaluate(() => window.__h3d.dialog())) as { blocker: string | null } | null;
+    return d ? d.blocker : 'no review';
+  }).toBeNull();
+  await shot(page, 'h198-review');
+  await review.getByRole('button', { name: 'File handoff and hire' }).click();
+  // The first hire fails (simulated): the handoff stays filed, and the status says where.
+  await expect(review.locator('[role="alert"]')).toContainText('The handoff is saved at /home/u/handoff/herdr-3d/');
+  await expect(review.locator('[role="alert"]')).toContainText('Hire again hires only');
+  await shot(page, 'h198-hire-failed');
+  const filed = (await page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.handoff'))) as Array<{ args: Record<string, unknown> }>;
+  expect(filed).toHaveLength(1);
+  expect(filed[0]?.args).toMatchObject({ worker: w.id, mode: 'literal' });
+  const path = ((await page.evaluate(() => window.__h3d.dialog())) as { handoff: { filed: string } }).handoff.filed;
+  expect(path).toMatch(/^\/home\/u\/handoff\/herdr-3d\/.+\.md$/);
+  expect(path).not.toContain('.pending');
+  await review.getByRole('button', { name: /^Hire / }).click();
+  await expect(review).toBeHidden();
+  const hires = (await page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.hire'))) as Array<{ args: Record<string, unknown> }>;
+  expect(hires).toHaveLength(2);
+  for (const h of hires) expect(h.args).toMatchObject({ floor: 'herdr-3d', harness: 'claude', model: 'claude-fable-5-1', effort: 'high', cwd: w.cwd, prompt: `First read the handoff here: ${path} and then follow these instructions:\n\n${task}` });
+  expect(hires[0]?.args.desk_index).not.toBe(w.desk_index);
+  expect((await page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.handoff'))).length).toBe(1);
+  await expect(page.locator('.toast')).toContainText('Hired');
+  await nothingToWorker(page);
+  clean();
+});

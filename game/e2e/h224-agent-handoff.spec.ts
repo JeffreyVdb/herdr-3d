@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
 import { frames, openGame, seatMode, shot, watchErrors } from './game';
 
@@ -136,5 +136,70 @@ test('the composer’s exact /handoff asks the agent once; the outcome is said w
   await expect.poll(async () => (await sim(page, 'sim.agent_turn', { id: w.id })).ok).toBe(true);
   await expect(page.locator('.toast')).toContainText('Filed Pebble’s handoff, written by its agent.');
   expect(await sent(page, 'worker.handoff')).toHaveLength(0);
+  clean();
+});
+
+// #198: "Hire with handoff" by the agent: the request is followed until filed, then one agent is hired with the final
+// path; closed while it is written, nobody is hired and the handoff still goes to the cabinet.
+async function hireWithAgentHandoff(page: Page, w: Worker, task: string): Promise<Locator> {
+  await openGame(page, 'demo-m5', '', SIM);
+  await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+  await frames(page, 3);
+  expect(await page.evaluate((id) => window.__h3d.face(id), w.id)).toBe(true);
+  await frames(page, 3);
+  expect(await page.evaluate((id) => window.__h3d.sitAt(id), w.id)).toBe(true);
+  await frames(page, 20);
+  await seatMode(page, 'transcript');
+  expect((await page.evaluate((a) => window.__h3d.simHandoff('sim.final', a), { id: w.id, text: 'Two review comments left.' })).ok).toBe(true);
+  await page.locator('.seat-transcript .tx').getByRole('button', { name: 'Hire with handoff', exact: true }).click();
+  const step1 = page.getByRole('dialog', { name: `Hire with a handoff from ${w.name}` });
+  await step1.getByText('Ask the agent', { exact: true }).click();
+  await expect.poll(async () => (await dialog(page))?.canAsk).toBe(true);
+  await step1.getByLabel(/Handoff instruction/).fill('focus on the open review comments');
+  await step1.getByLabel(/Task for the new agent/).fill(task);
+  await step1.getByRole('button', { name: 'Continue to hire' }).click();
+  const review = page.getByRole('dialog', { name: /^Hire with a handoff at Desk/ });
+  await expect(review).toBeVisible();
+  await review.locator('label:has(> input[data-key="effort:high"])').click();
+  await review.getByRole('button', { name: 'File handoff and hire' }).click();
+  await expect.poll(async () => ((await page.evaluate(() => window.__h3d.dialog())) as { state?: string } | null)?.state).toBe('filing');
+  return review;
+}
+
+test('Hire with handoff, Ask the agent: filed by the agent, then one hire with the final path; the task never reaches the source', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  const w = demoWorker('Pebble');
+  const review = await hireWithAgentHandoff(page, w, 'Fix the issue');
+  await expect(review.locator('.dd-foot [role="status"]')).toContainText('Asking Pebble’s agent…');
+  await shot(page, 'h198-agent-filing');
+  const asks = await sent(page, 'worker.handoff');
+  expect(asks).toHaveLength(1);
+  expect(asks[0]?.args).toMatchObject({ worker: w.id, mode: 'agent', instruction: 'focus on the open review comments' });
+  expect(JSON.stringify(asks[0]?.args)).not.toContain('Fix the issue');
+  expect(await sent(page, 'worker.hire')).toHaveLength(0);
+  expect((await sim(page, 'sim.agent_turn', { id: w.id, text: '# Review follow-ups\n\nTwo comments left.\n' })).ok).toBe(true);
+  await expect(review).toBeHidden();
+  const hires = await sent(page, 'worker.hire');
+  expect(hires).toHaveLength(1);
+  const prompt = String(hires[0]?.args.prompt);
+  expect(prompt).toMatch(/^First read the handoff here: \/home\/u\/handoff\/herdr-3d\/[^\n]+\.md and then follow these instructions:\n\nFix the issue$/);
+  expect(prompt).not.toContain('.pending');
+  expect(await sent(page, 'worker.prompt')).toHaveLength(0);
+  clean();
+});
+
+test('Hire with handoff: closed while the agent writes it, nobody is hired; the handoff is still filed', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  const w = demoWorker('Pebble');
+  const review = await hireWithAgentHandoff(page, w, 'Fix the issue');
+  await page.keyboard.press('Escape');
+  await expect(review).toBeHidden();
+  await expect(page.locator('.toast')).toContainText('No agent hired. Pebble’s handoff will still be filed to the cabinet; hire from it there.');
+  expect((await sim(page, 'sim.agent_turn', { id: w.id })).ok).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__h3d.filing().drawers)).toEqual([0, 0, 1]);
+  await frames(page, 10);
+  expect(await sent(page, 'worker.hire')).toHaveLength(0);
   clean();
 });
