@@ -36,7 +36,7 @@ import { HIRE_PROMPT_MAX_BYTES } from './composer/model';
 import { CommandCatalogs } from '../laptop/commandCatalog';
 import { CompletionScope, hireLookupKey, hireSources, type HireLookup } from './dialogCompletion';
 import { capacityBlock, chips, gitView, modelField, promptText, worktreeControl, type HireHost, type HireSummary } from './hire';
-import { HandoffFiling, type HandoffPlan } from './handoffFiling';
+import { HandoffFiling, type HandoffPlan, type HireCarry } from './handoffFiling';
 import { backgroundOutcomeText, HireCoordinator, notPromptedBackgroundText, notPromptedText, notSentText, type HireOutcome } from './hireCoordinator';
 import { hiredToast } from './hiredToast';
 import { failureText } from './messages';
@@ -87,6 +87,30 @@ const TITLE: Record<ReviewSection, string> = { agent: 'Harness and model', effor
 
 /** #198 `filing`: "Hire with handoff" files the handoff first; nothing is hired until it is filed. */
 export type ReviewState = 'preparing' | 'ready' | 'filing' | 'hiring' | 'failed';
+
+/** `open`'s starting point other than the proposal's (#223 "Hire from handoff", #198 "Hire with handoff"). */
+export interface ReviewSeed {
+  choice?: ReviewChoice;
+  cwd?: string;
+  /** #198: chosen already: kept over the bridge's defaults. */
+  label?: string;
+  worktree?: boolean;
+  handoff?: HandoffPlan;
+}
+
+/**
+ * #198 "Back to the handoff", then Continue: the review again with the hire's choices as they were, and step 1's task
+ * (the human may have edited it there). The catalog and the desk are checked again as for any review.
+ */
+export function carriedSeed(c: HireCarry, task: string, handoff: HandoffPlan): ReviewSeed {
+  return {
+    choice: { ...c.choice, task, origin: { ...c.choice.origin, task: 'chosen' } },
+    ...(c.cwd ? { cwd: c.cwd } : {}),
+    ...(c.label !== undefined ? { label: c.label } : {}),
+    ...(c.worktree !== undefined ? { worktree: c.worktree } : {}),
+    handoff,
+  };
+}
 
 /** What a request to the interpreter was made against: the answer is only for this review, as the human left it then. */
 export interface ReviewTicket {
@@ -329,7 +353,8 @@ export class HireReviewDialog {
   /** #223 `seed`: "Hire from handoff": the starting choice (`fromHandoff`) and the folder, instead of the proposal's. */
   /** #108 round 4 `handover`: the interpreter's `secrets_pending` for `interp`. */
   /** #198 `seed.handoff`: "Hire with handoff": Hire files that handoff first, then hires with the composed task. */
-  open(floor: string, interp: HireInterpretation, desk?: number, seed?: { choice?: ReviewChoice; cwd?: string; handoff?: HandoffPlan }, handover: string | null = null): boolean {
+  /** #198 `seed.label`, `seed.worktree`: chosen already (back from step 1, `carriedSeed`): kept over the bridge's defaults. */
+  open(floor: string, interp: HireInterpretation, desk?: number, seed?: ReviewSeed, handover: string | null = null): boolean {
     const seat = resolveHireDesk(floor, this.host.store.floorView(floor), this.host.held(floor), desk);
     if (!seat.ok) {
       this.host.toast(seat.msg, 'info');
@@ -352,8 +377,8 @@ export class HireReviewDialog {
     this.choice = seed?.choice ?? fromInterpretation(interp, this.host.store.hireOptions);
     this.keep = [{ harness: this.choice.harness, model: this.choice.model }];
     this.openSet = needsAttention(this.choice, this.host.store.hireOptions, this.taskIssue());
-    this.f = { label: '', cwd: seed?.cwd ?? '', worktree: false };
-    this.changed = { label: false, cwd: !!seed?.cwd, worktree: false };
+    this.f = { label: seed?.label ?? '', cwd: seed?.cwd ?? '', worktree: seed?.worktree ?? false };
+    this.changed = { label: seed?.label !== undefined, cwd: !!seed?.cwd, worktree: seed?.worktree !== undefined };
     this.modelQuery = '';
     this.refetching = false;
     this.hadWhereIssue = false;
@@ -1086,12 +1111,13 @@ export class HireReviewDialog {
       this.state === 'filing' && f && f.plan.mode !== 'literal'
         ? h('button', { class: 'btn btn--danger-quiet', 'data-key': 'cancel-request', title: 'Cancels the request: nothing is filed, nobody is hired', onclick: () => void this.cancelFiling() }, 'Cancel request')
         : null;
-    // #198: before anything is filed, step 1 can be chosen again (another mode, the latest reply), the task kept.
+    // #198: before anything is filed, step 1 can be chosen again (another mode, the latest reply), the task and the
+    // hire's choices kept (Continue restores them).
     const plan = this.plan;
     const backTo = this.host.handoffBack;
     const back =
       plan && backTo && !this.filed && !busy
-        ? h('button', { class: 'btn btn--quiet rv-back', 'data-key': 'back', title: 'Choose how the handoff is made again; your task is kept', onclick: () => (this.close(), backTo(plan, this.choice.task)) }, 'Back to the handoff')
+        ? h('button', { class: 'btn btn--quiet rv-back', 'data-key': 'back', title: 'Choose how the handoff is made again; your task and hire settings are kept', onclick: () => (this.close(), backTo(plan, this.choice.task, this.carry())) }, 'Back to the handoff')
         : null;
     this.actions.replaceChildren(...[back, cancel, stop, review, hire].filter((x): x is HTMLButtonElement => !!x));
     if (had && (!blocker || busy)) hire.focus();
@@ -1234,9 +1260,11 @@ export class HireReviewDialog {
     const background = this.host.hirePrefs?.hireInBackground === true;
     // #33: the coordinator gets no draft: what was reviewed is kept here, for a background hire that is refused or unanswered.
     const reviewed = this.reviewed();
+    // #198: this hire's filed handoff, as it is now: the review may be closed and opened for another hire before it ends.
+    const filed = this.filed;
     this.state = 'hiring';
     this.hiringText = null;
-    this.setStatus(this.filed ? `Filed ${this.filed.path}. Hiring…` : '');
+    this.setStatus(filed ? `Filed ${filed.path}. Hiring…` : '');
     // #198: one hire per filed handoff and press: a repeated update or click is the operation on its way.
     const key = plan ? `handoff:${this.planOp}:${++this.hireTries}` : `review:${this.id}:${epoch}`;
     const op = this.hires.start(
@@ -1262,14 +1290,14 @@ export class HireReviewDialog {
       if (o.kind === 'failed' || o.kind === 'unknown') this.giveBack(reviewed, o, backgroundOutcomeText(op.request, o));
       else if (o.kind === 'not_sent' && opening === this.opening && !document.querySelector('dialog[open]')) {
         this.dialog.showModal();
-        this.landed(o, { floor, desk, who, epoch: this.epoch });
+        this.landed(o, { floor, desk, who, epoch: this.epoch, filed });
         this.focusFirst();
       }
       this.drop(reviewed.draft);
       return;
     }
     this.render();
-    this.landed(await op.done, { floor, desk, who, epoch, filed: this.filed });
+    this.landed(await op.done, { floor, desk, who, epoch, filed });
   }
 
   /**
@@ -1319,17 +1347,28 @@ export class HireReviewDialog {
     return o.entry.path;
   }
 
-  /** #198: Cancel request: the agent's request or the LLM's job stops; nobody is hired from it. */
+  /**
+   * #198: Cancel request: nobody is hired from this submission from the click on, whatever the bridge answers later (the
+   * filing ends now: `fileHandoff` gives the review back). The bridge's answer then says how the request ended.
+   */
   private async cancelFiling(): Promise<void> {
     const f = this.filing;
     if (!f || this.state !== 'filing') return;
-    const r = await f.cancel();
-    if (r.ok || this.filing !== f || !this.dialog.open) return;
-    // It could not be cancelled (it is being filed): stop waiting all the same; nothing is hired from it.
+    const epoch0 = this.epoch;
     this.filing = null;
-    f.stop();
-    this.state = 'ready';
-    this.setStatus(`${r.message || 'It could not be cancelled.'} It may still be filed to the cabinet; nobody is hired from it.`, true);
+    const answer = f.cancel();
+    // Settled by the cancel: what the status says until the bridge answers.
+    const now = await f.run();
+    const r = await answer;
+    if (!r) return;
+    if (!this.dialog.open || epoch0 !== this.epoch) {
+      // Closed meanwhile: a handoff that is (or may be) in the cabinet is still worth a word.
+      if (r.kind !== 'cancelled') this.host.toast(r.message, 'info');
+      return;
+    }
+    // A newer press or message since: it stands.
+    if (this.busy() || now.kind !== 'failed' || this.statusText !== now.message) return;
+    this.setStatus(r.message, true);
     this.render();
   }
 
@@ -1344,7 +1383,7 @@ export class HireReviewDialog {
 
   /** #198: a message after the handoff was filed says where it is, and that Hire now hires only. */
   private afterFiling(msg: string, filed = this.filed): string {
-    if (!filed || !this.plan) return msg;
+    if (!filed) return msg;
     return `The handoff is saved at ${filed.path}. ${msg.trim()} Hire again hires only: the handoff is not made again.`;
   }
 
@@ -1371,7 +1410,7 @@ export class HireReviewDialog {
       return;
     }
     // Back to the review as it was: nothing was cleared, a new press is a new hire (never after an unknown outcome unasked).
-    this.setStatus(this.afterFiling(o.kind === 'unknown' ? `${msg} Look at the desk before you hire again.` : msg), true);
+    this.setStatus(this.afterFiling(o.kind === 'unknown' ? `${msg} Look at the desk before you hire again.` : msg, hh.filed ?? null), true);
     this.render();
     if (o.kind === 'failed' && o.code === 'fetch_failed') void this.recheck();
   }
@@ -1395,6 +1434,19 @@ export class HireReviewDialog {
   }
 
   // ---- a task given back (#33) -----------------------------------------------------------
+
+  /** #198: the hire's choices for "Back to the handoff" (the label, folder and worktree only when chosen). */
+  private carry(): HireCarry {
+    const c = this.changed;
+    return {
+      floor: this.floor,
+      desk: this.desk,
+      choice: { ...this.choice },
+      ...(c.label ? { label: this.f.label } : {}),
+      ...(c.cwd ? { cwd: this.f.cwd } : {}),
+      ...(c.worktree ? { worktree: this.f.worktree } : {}),
+    };
+  }
 
   private reviewed(): Reviewed {
     return {

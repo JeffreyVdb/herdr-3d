@@ -53,7 +53,7 @@ import { HIRE_PROMPT_MAX_BYTES, mentionOf } from './composer/model';
 import type { Source } from './composer/complete';
 import { CommandCatalogs } from '../laptop/commandCatalog';
 import { CompletionScope, hireLookupKey, hireSources, type HireLookup } from './dialogCompletion';
-import type { HandoffPlan } from './handoffFiling';
+import type { HandoffPlan, HireCarry } from './handoffFiling';
 import { classifierView, onReviewKey, reviewButton, type Go, type PromptSecretsFlow } from './secretsFlow';
 
 /**
@@ -102,8 +102,8 @@ export interface HireHost extends DialogHost {
   beep?(): void;
   /** #210: a background hire's undelivered first task into the new worker's Prompt (P) note (`HireCoordinatorHost.holdTask`). */
   holdTask?: HireCoordinatorHost['holdTask'];
-  /** #198: the hire's review back to its handoff step (step 1), with the plan and the task as they are. */
-  handoffBack?(plan: HandoffPlan, task: string): void;
+  /** #198: the hire's review back to its handoff step (step 1), with the plan, the task and the hire's choices as they are. */
+  handoffBack?(plan: HandoffPlan, task: string, carry: HireCarry): void;
   /** #39: the app's lists of commands and skills (shared with the transcript); absent: the dialog keeps its own. */
   catalogs?: CommandCatalogs;
   /** #93: the "Hire preset" tab: the floor's and the global hire presets for this desk (absent: no such tab). */

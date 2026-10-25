@@ -1,6 +1,7 @@
 import type { CommandResult } from '../net/client';
 import type { AgentHandoff, AgentHandoffAck, CommandArgs, HandoffAck, HandoffCandidate, HandoffEntry, HandoffGetAck, LLMHandoff, LLMHandoffAck, Worker } from '../net/protocol';
 import { jobText } from '../world/handoffLlm';
+import type { ReviewChoice } from '../world/hireReview';
 import type { HandoffMode } from './handoffDialog';
 import { failureText } from './messages';
 import type { Go, PromptSecretsFlow } from './secretsFlow';
@@ -30,6 +31,19 @@ export interface HandoffPlan {
   sendHome: boolean;
   /** The configured LLM's model, for the progress line. */
   llmModel?: string;
+}
+
+/**
+ * #198 "Back to the handoff": the hire as it was reviewed, through step 1 (which only hands it back) to the next review
+ * (`carriedSeed`). The label, folder and worktree only when the human chose them; else the bridge's defaults again.
+ */
+export interface HireCarry {
+  floor: string;
+  desk: number;
+  choice: ReviewChoice;
+  label?: string;
+  cwd?: string;
+  worktree?: boolean;
 }
 
 export type FilingOutcome =
@@ -119,13 +133,22 @@ export class HandoffFiling {
     this.end({ kind: 'gone' });
   }
 
-  /** Cancel the agent's request or the LLM's job (literal: nothing to cancel). Its outcome ends the filing as failed. */
-  async cancel(): Promise<{ ok: boolean; message: string }> {
-    if (this.plan.mode === 'literal' || this.phase === 'done') return { ok: false, message: '' };
+  /**
+   * Cancel the agent's request or the LLM's job (literal: nothing to cancel; null). The filing ends now, before the bridge
+   * answers: nothing is hired from it, whatever comes later (its filed update, its path read back). The answer then says
+   * how the request ended: cancelled, filed already (the cancel only dismissed it), or not cancelled (it may be filed).
+   */
+  async cancel(): Promise<{ kind: 'cancelled' | 'filed' | 'refused'; message: string } | null> {
+    if (this.plan.mode === 'literal' || this.phase === 'done') return null;
+    const name = this.plan.name;
+    const filed = `It was filed already: ${name}’s handoff is in the cabinet; hire from it there. Nobody was hired from this review.`;
+    const seenFiled = this.phase === 'reading';
+    this.end({ kind: 'failed', message: seenFiled ? filed : `Cancelling ${name}’s handoff request… Nobody is hired from it.`, retry: false });
     const r = await this.host.send('worker.handoff_cancel', { worker: this.plan.worker, op: this.op });
-    if (!r.ok) return { ok: false, message: failureText('worker.handoff_cancel', r.code, r.message, { worker: this.plan.name }) };
-    this.end({ kind: 'failed', message: 'Cancelled: nothing was filed and nobody was hired. Your task and settings are still here.', retry: false });
-    return { ok: true, message: '' };
+    if (!r.ok) return { kind: 'refused', message: `${failureText('worker.handoff_cancel', r.code, r.message, { worker: name })} It may still be filed to the cabinet; nobody is hired from it.` };
+    // The request or job as it ended (the agent's request and the LLM's job both say their state).
+    if (seenFiled || (r.data as AgentHandoff | LLMHandoff | undefined)?.state === 'filed') return { kind: 'filed', message: filed };
+    return { kind: 'cancelled', message: 'Cancelled: nothing was filed and nobody was hired. Your task and settings are still here.' };
   }
 
   private end(o: FilingOutcome): void {

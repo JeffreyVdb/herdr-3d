@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CommandResult } from '../net/client';
-import type { AgentHandoff, HandoffCandidate, HandoffEntry, HireInterpretation, HirePrepare, LLMHandoff, Worker } from '../net/protocol';
+import type { AgentHandoff, HandoffCandidate, HandoffEntry, HireGit, HireInterpretation, HirePrepare, LLMHandoff, Worker } from '../net/protocol';
 import { hireWithHandoffTask } from '../world/handoff';
 import { fromHandoff } from '../world/hireReview';
 import { CAT } from '../world/hireReviewFixtures';
 import { HIRE_PROMPT_MAX_BYTES } from './composer/model';
-import type { HandoffPlan } from './handoffFiling';
+import type { HandoffPlan, HireCarry } from './handoffFiling';
 import type { HireHost } from './hire';
-import { HireReviewDialog } from './hireReview';
+import { carriedSeed, HireReviewDialog } from './hireReview';
 import { HirePrefs } from './hirePrefs';
 import type { PromptSecretsFlow } from './secretsFlow';
 
@@ -42,7 +42,7 @@ interface Pending {
   answer: (r: CommandResult) => void;
 }
 
-function setup(o: { background?: boolean; secrets?: PromptSecretsFlow } = {}) {
+function setup(o: { background?: boolean; secrets?: PromptSecretsFlow; git?: HireGit; back?: HireHost['handoffBack'] } = {}) {
   const seats: Array<{ name: string } | null> = Array(6).fill(null);
   seats[0] = { name: 'Pixel' };
   const held = new Set<number>();
@@ -65,7 +65,8 @@ function setup(o: { background?: boolean; secrets?: PromptSecretsFlow } = {}) {
   const host = {
     store,
     send: (t: string, args: Record<string, unknown>) => {
-      if (t === 'hire.prepare') return Promise.resolve({ ok: true, data: prep() } as CommandResult);
+      // The folder as asked for (none: the source's), and its repository.
+      if (t === 'hire.prepare') return Promise.resolve({ ok: true, data: prep({ ...(args.cwd ? { cwd: String(args.cwd) } : {}), ...(o.git ? { git: o.git } : {}) }) } as CommandResult);
       return new Promise<CommandResult>((answer) => sent.push({ t, args, answer }));
     },
     unsupported: () => false,
@@ -81,6 +82,7 @@ function setup(o: { background?: boolean; secrets?: PromptSecretsFlow } = {}) {
     hirePrefs: prefs,
     now: () => Date.now(),
     ...(o.secrets ? { secrets: o.secrets } : {}),
+    ...(o.back ? { handoffBack: o.back } : {}),
   } as unknown as HireHost;
   const rv = new HireReviewDialog(document.body, host);
   const of = (t: string) => sent.filter((s) => s.t === t);
@@ -292,6 +294,49 @@ describe('HireReviewDialog: hire with handoff (#198)', () => {
     expect(e.of('worker.hire')).toHaveLength(0);
   });
 
+  it('Cancel request stops the hire at once: the filed update and its path answered before the cancel’s ack hire nobody', async () => {
+    const e = setup();
+    await e.open();
+    pickEffort('high');
+    hireBtn().click();
+    await flush();
+    const op = String(e.last('worker.handoff').args.op);
+    await e.answer('worker.handoff', ok({ request: req({ op }) }));
+    await e.update({ agent_handoff: req({ op, state: 'filed', handoff: 7 }) });
+    q<HTMLButtonElement>('[data-key="cancel-request"]')!.click();
+    await flush();
+    expect(e.of('worker.handoff_cancel')).toHaveLength(1);
+    // Cancelled on the click: the review is back, before the bridge answers anything.
+    expect(e.rv.summary()).toMatchObject({ state: 'ready', error: true });
+    await e.answer('handoff.get', ok({ handoff: ENTRY, body: '' }));
+    expect(e.of('worker.hire')).toHaveLength(0);
+    // The bridge only dismissed it: it was filed. The review says so; nobody is hired from it, Hire files a new one.
+    await e.answer('worker.handoff_cancel', ok(req({ op, state: 'filed', handoff: 7 })));
+    expect(e.of('worker.hire')).toHaveLength(0);
+    expect(e.rv.summary()?.status).toContain('in the cabinet');
+    expect(e.rv.summary()).toMatchObject({ state: 'ready', handoff: { filed: null } });
+    expect(e.rv.summary()?.handoff?.op).not.toBe(op);
+  });
+
+  it('Cancel request the bridge refuses: still nobody is hired; the review says it may still be filed', async () => {
+    const e = setup();
+    await e.open({ mode: 'llm', candidate: CAND });
+    pickEffort('high');
+    hireBtn().click();
+    await flush();
+    const op = String(e.last('worker.handoff').args.op);
+    await e.answer('worker.handoff', ok({ job: job({ op }) }));
+    q<HTMLButtonElement>('[data-key="cancel-request"]')!.click();
+    q<HTMLButtonElement>('[data-key="cancel-request"]')?.click();
+    await flush();
+    expect(e.of('worker.handoff_cancel')).toHaveLength(1);
+    await e.update({ llm_handoff: job({ op, state: 'filed', handoff: 7 }) });
+    await e.answer('worker.handoff_cancel', { ok: false, code: 'busy', message: 'the handoff is being filed' } as CommandResult);
+    expect(e.of('handoff.get')).toHaveLength(0);
+    expect(e.of('worker.hire')).toHaveLength(0);
+    expect(e.rv.summary()?.status).toContain('may still be filed');
+  });
+
   it('closed while the handoff is made: no agent is hired, ever; the toast says the handoff is still filed', async () => {
     const e = setup();
     await e.open();
@@ -388,6 +433,22 @@ describe('HireReviewDialog: hire with handoff (#198)', () => {
     expect(e.rv.isOpen).toBe(false);
   });
 
+  it('created but not prompted after the review closed and another opened: the composed task of that hire is held', async () => {
+    const e = setup();
+    await e.open({ mode: 'literal', candidate: CAND, instruction: '' });
+    pickEffort('high');
+    hireBtn().click();
+    await flush();
+    await e.answer('worker.handoff', ok({ handoff: ENTRY }));
+    expect(e.of('worker.hire')).toHaveLength(1);
+    e.rv.close();
+    expect(e.rv.open('floor', INTERP, 2, { choice: fromHandoff({ harness: 'claude', model: 'claude-opus-5-5' }, 'A different task', CAT) })).toBe(true);
+    await flush();
+    await e.answer('worker.hire', ok({ id: 'N', prompted: false, prompt_error: 'the pane did not answer' }));
+    expect(e.holds).toEqual([['N', hireWithHandoffTask(PATH, TASK)]]);
+    expect(e.of('worker.hire')).toHaveLength(1);
+  });
+
   it('“Hire in background” applies once the handoff is filed; a refusal gives back the review with the filed path', async () => {
     const e = setup({ background: true });
     await e.open();
@@ -410,6 +471,67 @@ describe('HireReviewDialog: hire with handoff (#198)', () => {
     await flush();
     expect(e.of('worker.handoff')).toHaveLength(1);
     expect(e.of('worker.hire')).toHaveLength(2);
+  });
+
+  it('Back to the handoff keeps the hire’s choices: Continue opens the review with them, and step 1’s task', async () => {
+    const backs: Array<[HandoffPlan, string, HireCarry]> = [];
+    const git: HireGit = { repo_root: '/w', default_branch: 'main', base_sha: 'abcdef1234', base_time: Date.now(), fetched: true };
+    const e = setup({ git, back: (p, t, c) => void backs.push([p, t, c]) });
+    await e.open({ mode: 'literal', candidate: CAND, instruction: '' });
+    const before = e.rv.summary()!;
+    // The human's choices: another model and an effort, a label, another folder, the worktree flipped.
+    q<HTMLButtonElement>('[data-key="sec:agent"]')!.click();
+    q<HTMLInputElement>('[data-key="model:claude-sonnet-5-5"]')!.click();
+    pickEffort('low');
+    q<HTMLButtonElement>('[data-key="sec:where"]')!.click();
+    const type = (sel: string, v: string) => {
+      const el = q<HTMLInputElement>(sel)!;
+      el.value = v;
+      el.dispatchEvent(new Event('input'));
+      el.dispatchEvent(new Event('change'));
+    };
+    type('#review-label', 'Pip');
+    type('#review-cwd', '/w/other');
+    await flush();
+    const worktree = !before.form.worktree;
+    q<HTMLInputElement>('#review-worktree')!.click();
+    const chosen = e.rv.summary()!;
+    expect(chosen.choice).toMatchObject({ harness: 'claude', model: 'claude-sonnet-5-5', effort: 'low' });
+    expect(chosen.form).toMatchObject({ label: 'Pip', cwd: '/w/other', worktree });
+    // Back (a stale reply, another mode): step 1 gets the plan, the task and the hire's choices; nothing was sent.
+    q<HTMLButtonElement>('[data-key="back"]')!.click();
+    expect(e.rv.isOpen).toBe(false);
+    expect(backs).toHaveLength(1);
+    const [plan, task, carry] = backs[0]!;
+    expect(task).toBe(TASK);
+    expect(carry).toMatchObject({ floor: 'floor', desk: 1, label: 'Pip', cwd: '/w/other', worktree });
+    expect(e.of('worker.handoff')).toHaveLength(0);
+    // Continue (the task edited in step 1): the review as it was reviewed, the task step 1's.
+    expect(e.rv.open('floor', INTERP, carry.desk, carriedSeed(carry, 'Fix it, then the docs', plan))).toBe(true);
+    await flush();
+    const after = e.rv.summary()!;
+    expect(after.desk).toBe(1);
+    expect(after.choice).toMatchObject({ harness: 'claude', model: 'claude-sonnet-5-5', effort: 'low', task: 'Fix it, then the docs' });
+    expect(after.choice.origin).toMatchObject({ model: 'chosen', effort: 'chosen', task: 'chosen' });
+    expect(after.form).toMatchObject({ label: 'Pip', cwd: '/w/other', worktree });
+    expect(after.blocker).toBeNull();
+    expect(after.handoff).toMatchObject({ mode: 'literal', filed: null });
+    // Its Hire files the handoff, then hires with those choices.
+    hireBtn().click();
+    await flush();
+    await e.answer('worker.handoff', ok({ handoff: ENTRY }));
+    expect(e.last('worker.hire').args).toMatchObject({ harness: 'claude', model: 'claude-sonnet-5-5', effort: 'low', label: 'Pip', cwd: '/w/other', worktree, prompt: hireWithHandoffTask(PATH, 'Fix it, then the docs') });
+  });
+
+  it('back from step 1 with nothing chosen in the review: the bridge’s defaults stay defaults', async () => {
+    const backs: HireCarry[] = [];
+    const e = setup({ back: (_p, _t, c) => void backs.push(c) });
+    await e.open({ mode: 'literal', candidate: CAND, instruction: '' });
+    q<HTMLButtonElement>('[data-key="back"]')!.click();
+    const carry = backs[0]!;
+    // The folder was the source's (seeded, so chosen); label and worktree were the bridge's: not carried.
+    expect(carry).toEqual({ floor: 'floor', desk: 1, choice: expect.objectContaining({ harness: 'claude', model: 'claude-opus-5-5', effort: '' }), cwd: '/w/pixel' });
+    expect(carriedSeed(carry, TASK, { worker: 'A', name: 'Pixel', floorName: 'floor', mode: 'literal', candidate: CAND, instruction: '', sendHome: false })).not.toHaveProperty('label');
   });
 
   it('the task’s size counts the line that points to the handoff, before anything is filed', async () => {

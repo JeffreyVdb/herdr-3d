@@ -143,12 +143,43 @@ describe('HandoffFiling', () => {
     await e.answer({ ok: true, data: { request: req() } });
     const c = e.f.cancel();
     expect(e.sent.at(-1)).toEqual({ t: 'worker.handoff_cancel', args: { worker: 'A', op: 'ho-op1' } });
+    // Ended on the call, before the bridge answers: nothing comes of it.
+    await flush();
+    expect(e.outcome()).toMatchObject({ kind: 'failed', retry: false });
     await e.answer({ ok: true, data: req({ state: 'failed', reason: 'cancelled' }) });
-    expect(await c).toEqual({ ok: true, message: '' });
-    expect(e.outcome()).toMatchObject({ kind: 'failed', message: expect.stringContaining('Cancelled') });
+    expect(await c).toMatchObject({ kind: 'cancelled', message: expect.stringContaining('Cancelled') });
     e.set({ agent_handoff: req({ state: 'filed', handoff: 7 }) });
     await flush();
     expect(e.sent.filter((s) => s.t === 'handoff.get')).toHaveLength(0);
+    expect(await e.f.cancel()).toBeNull();
+  });
+
+  it('cancel while the filed path is read: the read that answers first is not filed; the cancel says it is in the cabinet', async () => {
+    const e = setup();
+    await e.answer({ ok: true, data: { request: req() } });
+    e.set({ agent_handoff: req({ state: 'filed', handoff: 7 }) });
+    await flush();
+    expect(e.f.phase).toBe('reading');
+    const c = e.f.cancel();
+    await e.answer({ ok: true, data: { handoff: ENTRY, body: '' } });
+    expect(e.outcome()).toMatchObject({ kind: 'failed', retry: false, message: expect.stringContaining('in the cabinet') });
+    await e.answer({ ok: true, data: req({ state: 'filed', handoff: 7 }) });
+    expect(await c).toMatchObject({ kind: 'filed' });
+  });
+
+  it('cancel the bridge refuses or answers filed: not filed here all the same; the answer says how it ended', async () => {
+    const e = setup({ mode: 'llm' });
+    await e.answer({ ok: true, data: { job: job() } });
+    const c = e.f.cancel();
+    await e.answer({ ok: false, code: 'busy', message: 'the handoff is being filed' } as CommandResult);
+    expect(await c).toMatchObject({ kind: 'refused', message: expect.stringContaining('may still be filed') });
+    expect(e.outcome()).toMatchObject({ kind: 'failed', retry: false });
+    const e2 = setup({ mode: 'llm' });
+    await e2.answer({ ok: true, data: { job: job() } });
+    const c2 = e2.f.cancel();
+    await e2.answer({ ok: true, data: job({ state: 'filed', handoff: 7 }) });
+    expect(await c2).toMatchObject({ kind: 'filed' });
+    expect(e2.sent.filter((s) => s.t === 'handoff.get')).toHaveLength(0);
   });
 
   it('stopped (the review closed): gone; the completion that comes later reads nothing', async () => {

@@ -5,7 +5,7 @@ import { HandoffBook } from '../world/handoff';
 import { HandoffLLMBook } from '../world/handoffLlm';
 import { Cabinet } from './cabinet';
 import { HandoffDialog } from './handoffDialog';
-import type { HandoffPlan } from './handoffFiling';
+import type { HandoffPlan, HireCarry } from './handoffFiling';
 
 // #223: the filing dialog (exact text, provenance, the send-home choice, success and failure, a stale reply) and the
 // cabinet (list, safe search snippets, sanitised preview, copy, delete with a confirm, hire from a handoff).
@@ -515,9 +515,9 @@ describe('HandoffDialog: hire intent', () => {
   };
   const task = () => document.getElementById('ho-task') as HTMLTextAreaElement;
   const hired = (e: ReturnType<typeof setup>) => {
-    const got: Array<{ plan: HandoffPlan; task: string; seated: boolean }> = [];
+    const got: Array<{ plan: HandoffPlan; task: string; seated: boolean; carry?: HireCarry | undefined }> = [];
     let answer = true;
-    const host = { ...e.host, continueHire: (plan: HandoffPlan, t: string, seated: boolean) => (got.push({ plan, task: t, seated }), answer) };
+    const host = { ...e.host, continueHire: (plan: HandoffPlan, t: string, seated: boolean, carry?: HireCarry) => (got.push({ plan, task: t, seated, carry }), answer) };
     return { host, got, refuse: () => (answer = false) };
   };
 
@@ -615,14 +615,27 @@ describe('HandoffDialog: hire intent', () => {
   });
 
   it('opens fresh for a hire even while a request of the worker runs; back from step 2 it keeps what was chosen', async () => {
-    const e = setup({ agent_handoff: { op: 'old', state: 'pending', started_at: 1 } }, { 'worker.handoff_preview': [{ ok: true, data: PREVIEW }, { ok: true, data: AGENT_PV }] });
-    const d = new HandoffDialog(document.body, e.host as never);
-    d.open('A', { intent: 'hire', prefill: { mode: 'agent', task: 'Fix it', instruction: 'be brief', sendHome: false } });
+    const e = setup({ agent_handoff: { op: 'old', state: 'pending', started_at: 1 } }, { 'worker.handoff_preview': [{ ok: true, data: PREVIEW }, { ok: true, data: AGENT_PV }, { ok: true, data: PREVIEW }] });
+    const h = hired(e);
+    const d = new HandoffDialog(document.body, h.host as never);
+    // The hire's choices from its review go back with Continue, untouched (the review restores them).
+    const carry: HireCarry = { floor: 'herdr-3d', desk: 3, choice: { harness: 'claude', model: 'claude-sonnet-5-5', effort: 'low', task: 'Fix it', origin: { harness: 'chosen', model: 'chosen', effort: 'chosen', task: 'chosen' }, said: {}, rev: 4, edited: { harness: 1, model: 1, effort: 1, task: 1 } }, label: 'Pip', cwd: '/w/other', worktree: false };
+    d.open('A', { intent: 'hire', prefill: { mode: 'agent', task: 'Fix it', instruction: 'be brief', sendHome: false, carry } });
     await e.flush();
     expect(d.summary()).toMatchObject({ mode: 'agent', state: 'ready', request: null, task: 'Fix it', instruction: 'be brief' });
+    e.q('continue').click();
+    expect(h.got).toHaveLength(1);
+    expect(h.got[0]!.carry).toBe(carry);
     // The filing intent is as it was: the running request.
     d.close();
     d.open('A');
     expect(d.summary()).toMatchObject({ intent: 'file', mode: 'agent', state: 'pending', task: '' });
+    // A fresh step 1 (no prefill) carries nothing.
+    d.close();
+    d.open('A', { intent: 'hire' });
+    await e.flush();
+    (document.getElementById('ho-task') as HTMLTextAreaElement).value = 'Fix it';
+    e.q('continue').click();
+    expect(h.got.at(-1)?.carry).toBeUndefined();
   });
 });

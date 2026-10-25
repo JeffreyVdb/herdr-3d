@@ -8,7 +8,7 @@ import { h, icon, ICON } from './dom';
 import type { DialogHost } from './hire';
 import { failureText } from './messages';
 import type { CommandResult } from '../net/client';
-import type { HandoffPlan } from './handoffFiling';
+import type { HandoffPlan, HireCarry } from './handoffFiling';
 import { onReviewKey, reviewButton, type Go } from './secretsFlow';
 
 /**
@@ -49,9 +49,9 @@ export interface HandoffDialogHost extends DialogHost {
   openSettings?(section: string): void;
   /**
    * #198: "Continue to hire": the hire's review for this handoff and task (nothing is filed yet). False: it could not
-   * open (no free desk: the host said why), and this dialog stays.
+   * open (no free desk: the host said why), and this dialog stays. `carry`: the hire's choices, back from its review.
    */
-  continueHire?(plan: HandoffPlan, task: string, seated: boolean): boolean;
+  continueHire?(plan: HandoffPlan, task: string, seated: boolean, carry?: HireCarry): boolean;
 }
 
 /** #198: what the dialog is for: filing a handoff, or step 1 of "Hire with handoff". */
@@ -63,6 +63,8 @@ export interface HandoffHirePrefill {
   task: string;
   instruction: string;
   sendHome: boolean;
+  /** The hire's choices as reviewed: handed back on Continue, untouched. */
+  carry?: HireCarry;
 }
 
 type State = 'none' | 'loading' | 'ready' | 'filing' | 'pending' | 'filed' | 'failed';
@@ -152,6 +154,8 @@ export class HandoffDialog {
   private gen = 0;
   /** Opened over the laptop you sit at (the seat stays). */
   private seated = false;
+  /** #198: the hire's choices, back from its review (`prefill.carry`): Continue hands them back. */
+  private carry: HireCarry | null = null;
 
   constructor(
     parent: HTMLElement,
@@ -203,6 +207,7 @@ export class HandoffDialog {
     this.sendBox.checked = pre?.sendHome === true;
     this.instrEl.value = pre?.instruction ?? '';
     this.taskEl.value = pre?.task ?? '';
+    this.carry = pre?.carry ?? null;
     if (this.intent === 'hire') {
       // A new handoff for the hire: a request of this worker that runs or failed is the filing dialog's to show.
       this.req = null;
@@ -908,7 +913,7 @@ export class HandoffDialog {
       sendHome: this.sendBox.checked && !this.sendBox.disabled,
       ...(this.mode === 'llm' && this.llmPv?.llm?.model ? { llmModel: this.llmPv.llm.model } : {}),
     };
-    if (this.host.continueHire?.(plan, this.taskEl.value, this.seated)) this.close();
+    if (this.host.continueHire?.(plan, this.taskEl.value, this.seated, this.carry ?? undefined)) this.close();
   }
 
   /** #224: Ask (then send home); a running request can be cancelled, a failed one asked again (a new request). */
