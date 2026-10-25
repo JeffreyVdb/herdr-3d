@@ -134,6 +134,25 @@ export interface Surface {
   skipNarrow?: boolean;
 }
 
+/** At your own desk, use the actual sit / monitor keys; the walker starts just behind the chair. */
+export async function openDeskGames(page: Page): Promise<void> {
+  await onFloor(page);
+  await page.evaluate(() => {
+    const floor = 'herdr-3d';
+    const m = window.__h3d.layout(floor)!.mezzanine;
+    const b = window.__h3d.building()!;
+    const fy = (window.__h3d.where()!.floors.indexOf(floor) + 1) * b.storey;
+    const x = m.desk.seat.x, z = m.desk.seat.z - 0.6;
+    const dx = m.desk.desk.x - x, dz = m.desk.desk.z - z;
+    window.__h3d.setPose({ x, z, y: fy + m.y, yaw: Math.atan2(-dx, -dz), pitch: Math.atan2(0.7 - 1.55, Math.hypot(dx, dz)) });
+  });
+  await expect.poll(() => page.evaluate(() => window.__h3d.target()?.kind)).toBe('own-desk');
+  await page.keyboard.press('KeyE');
+  await expect.poll(() => page.evaluate(() => window.__h3d.pose()?.seated)).toBe(true);
+  await page.keyboard.press('KeyE');
+  await expect(page.locator('.desk-games')).toBeVisible();
+}
+
 /** Into herdr-3d, in front of the whiteboard on the north wall; E opens the real editor, which draws a rectangle and keeps it selected (its property panel). */
 export async function openWhiteboard(page: Page, draw = true): Promise<void> {
   await onFloor(page);
@@ -240,6 +259,11 @@ const said = (task: string) => ({ provenance: 'dictated', value: task, span: { s
 
 // Mutable fixture namespaces are created by each getter read at boot, never shared by later tests in a worker.
 export const SURFACES: Surface[] = [
+  { name: 'desk-patience', fixture: 'demo-m3b', open: openDeskGames, root: '.desk-games' },
+  { name: 'desk-minesweeper', fixture: 'demo-m3b', open: async (page) => {
+    await openDeskGames(page);
+    await page.getByRole('button', { name: 'Minesweeper', exact: true }).click();
+  }, root: '.desk-games' },
   {
     name: 'bars-city',
     fixture: 'demo-m5',

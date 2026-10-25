@@ -904,6 +904,13 @@ down with it when it is killed (`docs/architecture.md` §2, §7). Check the debu
 
 ## Game
 
+- The corner-office monitor: E at your desk sits down; E again opens Patience and Minesweeper. Esc returns to the
+  seated office view; Stand up exits the monitor and chair. `src/games/` owns the pure draw-one Klondike and beginner
+  Minesweeper rules; `ui/deskGames.ts` owns their controls and independent in-memory games, retained across game
+  switches and visits to the desk until the page reloads. Patience supports click-to-move stacks, stock recycling and
+  undo; Minesweeper has a safe first reveal, flood fill, flags and chording. `e2e/desk-games.spec.ts` covers entry,
+  keyboard ownership, progress, exit and both UI themes at desktop and narrow widths.
+
 `game/` is Vite + strict TypeScript + three.js r186 (`three/webgpu`, WebGL2 fallback). Layout:
 
 - `src/net` — protocol v1 client (hello → welcome → snapshot | replay → events, reconnect with backoff from

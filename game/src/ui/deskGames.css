@@ -1,0 +1,86 @@
+.desk-games {
+  width: min(1060px, calc(100vw - 32px));
+  height: min(780px, calc(100dvh - 32px));
+  max-width: none;
+  max-height: none;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  font-family: var(--font);
+  color-scheme: dark;
+}
+.desk-games[open] { display: flex; flex-direction: column; }
+.desk-games::backdrop { background: var(--scrim); }
+.desk-games [hidden] { display: none; }
+.desk-games-head, .desk-games-toolbar, .desk-games-tabs, .desk-games-actions { display: flex; align-items: center; gap: 8px; }
+.desk-games-head { padding: 16px 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.desk-games-head h2 { flex: 1; margin: 0; font-size: 20px; }
+.desk-games-toolbar { padding: 12px 20px 0; justify-content: space-between; flex-wrap: wrap; }
+.desk-games .btn { min-height: 40px; font: inherit; color: inherit; }
+.desk-games .btn[aria-pressed='true'] { background: var(--action); color: var(--on-action); border-color: var(--action-border); }
+.desk-games :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; z-index: 2; }
+.desk-games ::selection { background: var(--action); color: var(--on-action); }
+.desk-games-status { margin: 12px 20px; font-variant-numeric: tabular-nums; font-weight: 600; min-height: 1.5em; }
+.desk-games-body { flex: 1; min-height: 0; overflow: auto; padding: 16px 20px; background: var(--well); scrollbar-color: var(--text-3) var(--well); }
+.desk-games-help { margin: 0; padding: 12px 20px; color: var(--text-2); font-size: 13px; line-height: 1.5; }
+.dg-patience { max-width: 680px; margin: 0 auto; }
+.dg-patience-row { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: clamp(4px, 1.5vw, 18px); }
+.dg-tableau { margin-top: 24px; padding-bottom: 8px; }
+.dg-card {
+  display: flex;
+  position: relative;
+  flex-direction: column;
+  justify-content: space-between;
+  box-sizing: border-box;
+  width: 100%;
+  aspect-ratio: 5 / 7;
+  padding: 7px;
+  border: 1px solid #9299a5;
+  border-radius: 6px;
+  background: #fffdf6;
+  color: #18233a;
+  font: 700 clamp(13px, 2vw, 21px) / 1.1 var(--font);
+  text-align: left;
+}
+button.dg-card { cursor: pointer; }
+.dg-card[data-red='true'] { color: #ae2337; }
+.dg-card small { font: 600 12px / 1.2 var(--font); }
+.dg-card-pip { align-self: flex-end; font-size: clamp(24px, 4vw, 44px); }
+.dg-card-corner { white-space: nowrap; }
+.dg-card[aria-pressed='true'] { outline: 3px solid var(--focus); outline-offset: -3px; background: #fff0ba; }
+button.dg-card:hover { border-color: var(--focus); }
+.dg-back { background: var(--raised); color: var(--text); border-color: var(--border-hover); }
+.dg-back::after { content: ''; position: absolute; inset: 5px; border: 1px solid var(--border); border-radius: 3px; pointer-events: none; }
+.dg-slot { border: 1px dashed var(--text-3); background: transparent; color: var(--text-2); align-items: center; justify-content: center; font-size: 13px; gap: 4px; }
+.dg-foundation > span { font-size: clamp(20px, 3vw, 32px); }
+.dg-stock { justify-content: center; align-items: center; gap: 8px; }
+.dg-stock:disabled { opacity: 0.5; cursor: default; }
+.dg-column { display: flex; flex-direction: column; }
+.dg-column .dg-card { flex-shrink: 0; }
+.dg-column .dg-card:not(:last-child) { margin-bottom: calc(28px - 140%); }
+.dg-mines { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 3px; width: min(100%, 414px); margin: 0 auto; padding: 4px; box-sizing: border-box; }
+.dg-cell { display: grid; place-items: center; position: relative; min-width: 0; aspect-ratio: 1; padding: 3px; border: 1px solid var(--border); border-radius: 3px; background: var(--raised); color: var(--text); font: 750 20px / 1 var(--font); cursor: pointer; }
+.dg-cell:hover { background: var(--hover); }
+.dg-cell[data-revealed='true'] { background: var(--surface); border-color: var(--line); }
+.dg-cell[data-revealed='true'][data-number='1'] { color: var(--link); }
+.dg-cell[data-revealed='true'][data-number='2'] { color: var(--ok-text); }
+.dg-cell[data-revealed='true'][data-number='3'], .dg-cell[data-exploded='true'] { color: var(--error-text); }
+.dg-cell[data-exploded='true'] { outline: 2px solid var(--error-text); outline-offset: -2px; }
+.dg-cell svg { width: 22px; height: 22px; }
+.dg-cell[aria-disabled='true'] { cursor: default; }
+.dg-wrong { position: absolute; inset: 0; display: grid; place-items: center; color: var(--error-text); font-size: 32px; }
+@media (max-width: 600px) {
+  .desk-games { width: 100vw; height: 100dvh; border-radius: 0; }
+  .desk-games-head, .desk-games-toolbar { padding: 12px; }
+  .desk-games-head h2 { flex-basis: 100%; }
+  .desk-games-toolbar { gap: 12px; }
+  .desk-games-status { margin: 8px 12px; font-size: 13px; }
+  .desk-games-body { padding: 12px 8px; }
+  .desk-games-help { padding: 12px; font-size: 12px; }
+  .dg-card { padding: 4px 2px; border-radius: 4px; }
+  .dg-column .dg-card:not(:last-child) { margin-bottom: calc(24px - 140%); }
+}
