@@ -107,6 +107,8 @@ export interface TranscriptModeHost {
   prefs?: ViewPrefs;
   /** #223: the inline Handoff button of a worker's reply was pressed: the filing dialog (none: no button). */
   handoff?(id: string, c: HandoffCandidate): void;
+  /** #198: the inline "Hire with handoff" button was pressed: step 1 of the hire (none: no button). */
+  hireHandoff?(id: string, c: HandoffCandidate): void;
   /**
    * #64 schedules: "Schedule follow-up…" beside it: the schedule form, prefilled from the worker (none: no button). #66:
    * with `s`, the worker's suggestion chip was clicked: prefilled from it too.
@@ -901,10 +903,12 @@ export class TranscriptMode {
   private renderHost(s: Sitting): TranscriptRenderHost {
     const live = () => this.s === s;
     const handoff = this.host.handoff;
+    const hireHandoff = this.host.hireHandoff;
     const follow = this.host.scheduleFollowup;
     return {
       loading: !s.acked || s.items.length > 0, // #126: till the ack, or the items it brought are in
       ...(handoff ? { onHandoff: (c: HandoffCandidate) => live() && handoff(s.id, c) } : {}),
+      ...(hireHandoff ? { onHireHandoff: (c: HandoffCandidate) => live() && hireHandoff(s.id, c) } : {}),
       ...(follow ? { onScheduleFollowup: (c: HandoffCandidate, sug?: ScheduleSuggestion) => live() && follow(s.id, c, sug) } : {}),
       // #66: the chip's ×: the suggestion goes for good (the upsert takes the chip away).
       onDismissScheduleSuggestion: async (sug: ScheduleSuggestion) => {

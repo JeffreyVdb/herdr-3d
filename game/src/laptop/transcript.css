@@ -3205,7 +3205,7 @@
 
 /* #223: the inline Handoff button on the worker's latest completed reply: a folder tab under the text, quiet until
    you reach for it. It says what it does (files the message as written, no model call); the dialog shows the rest.
-   #64 schedules: "Schedule follow-up…" beside it is the same tab. */
+   #64 schedules: "Schedule follow-up…" beside it is the same tab; #198: so is "Hire with handoff". */
 .tx-handoff {
   display: flex;
   flex-wrap: wrap;
@@ -3213,7 +3213,7 @@
   gap: 4px 10px;
   margin: 8px 2px 2px;
 }
-:is(.tx-handoff-btn, .tx-sched-btn) {
+:is(.tx-handoff-btn, .tx-hire-handoff-btn, .tx-sched-btn) {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -3229,26 +3229,26 @@
     background 140ms ease-out,
     border-color 140ms ease-out;
 }
-:is(.tx-handoff-btn, .tx-sched-btn) svg {
+:is(.tx-handoff-btn, .tx-hire-handoff-btn, .tx-sched-btn) svg {
   width: 14px;
   height: 14px;
   color: var(--tx-sun-text);
 }
-:is(.tx-handoff-btn, .tx-sched-btn):hover {
+:is(.tx-handoff-btn, .tx-hire-handoff-btn, .tx-sched-btn):hover {
   background: color-mix(in srgb, var(--tx-sun) 22%, transparent);
   border-color: var(--tx-sun);
 }
-:is(.tx-handoff-btn, .tx-sched-btn):focus-visible {
+:is(.tx-handoff-btn, .tx-hire-handoff-btn, .tx-sched-btn):focus-visible {
   outline: 2px solid var(--tx-sun);
   outline-offset: 2px;
 }
 /* ubuntu:begin */
 /* #216 row 21: a labelled button is a standard control, 36px in Ubuntu (Quiet keeps its 26); a coarse pointer 44. */
-:root[data-ui-theme='ubuntu'] .tx :is(.tx-handoff-btn, .tx-sched-btn) {
+:root[data-ui-theme='ubuntu'] .tx :is(.tx-handoff-btn, .tx-hire-handoff-btn, .tx-sched-btn) {
   min-height: 36px;
 }
 @media (pointer: coarse) {
-  :root[data-ui-theme='ubuntu'] .tx :is(.tx-handoff-btn, .tx-sched-btn) {
+  :root[data-ui-theme='ubuntu'] .tx :is(.tx-handoff-btn, .tx-hire-handoff-btn, .tx-sched-btn) {
     min-height: 44px;
     min-width: 44px;
   }
@@ -3259,7 +3259,7 @@
   font: calc(11.5px * var(--tx-k, 1)) / 1.3 var(--tx-prose);
 }
 @media (prefers-reduced-motion: reduce) {
-  :is(.tx-handoff-btn, .tx-sched-btn) {
+  :is(.tx-handoff-btn, .tx-hire-handoff-btn, .tx-sched-btn) {
     transition: none;
   }
 }

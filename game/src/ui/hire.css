@@ -1305,6 +1305,58 @@
 }
 /* ubuntu:end */
 
+/* #198: the handoff a hire follows, above its sections (how it is made, its path once filed), and under the task the
+   text the new agent receives: the line that points to the handoff, then the task as written. The path not known yet is
+   a quiet placeholder; once filed it is the line's one strong run. */
+.rv-handoff {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 6px;
+}
+.rv-handoff[hidden] {
+  display: none;
+}
+.rv-handoff p {
+  margin: 0;
+}
+.rv-handoff code {
+  font: 12.5px/1.4 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.rv-composed {
+  margin: 8px 0 0;
+  max-height: 12rem;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--well);
+  color: var(--text-2);
+  font: 12.5px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+}
+.rv-composed:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.rv-composed[hidden] {
+  display: none;
+}
+.rv-path {
+  color: var(--text);
+  font-weight: 700;
+}
+.rv-path--pending {
+  color: var(--text-3);
+  font-weight: 500;
+  font-style: italic;
+}
+.rv-back {
+  margin-right: auto;
+}
+
 /* A failed hire stays reachable after its toast, including behind another dialog. */
 .hire-recovery-stack {
   position: fixed;

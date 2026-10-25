@@ -29,10 +29,11 @@ import { createGameAudio, createReception, receptionContext, type GameAudio, typ
 import { Hud, type PlanLabel, type ToastAction, type ToastKind } from './ui/hud';
 import { h, icon } from './ui/dom';
 import { HireDialog, presetPrefill, type HirePrefill } from './ui/hire';
-import { HireReviewDialog } from './ui/hireReview';
+import { carriedSeed, HireReviewDialog } from './ui/hireReview';
 import { Panels } from './ui/panels';
 import { SendHomeDialog } from './ui/sendHome';
-import { HandoffDialog } from './ui/handoffDialog';
+import { HandoffDialog, type HandoffHirePrefill } from './ui/handoffDialog';
+import type { HandoffPlan, HireCarry } from './ui/handoffFiling';
 import { Cabinet } from './ui/cabinet';
 import { SchedulesDialog, type SchedulesOpen } from './ui/schedules';
 import { ScheduleFormDialog } from './ui/scheduleForm';
@@ -827,7 +828,16 @@ export class App {
         this.hire.open(s, d, presetPrefill(p, replace)),
       unsent: (s, d) => this.hire.unsent(s, d),
     });
-    this.hireReview = new HireReviewDialog(o.host, { ...hireHost, hirePrefs: this.hirePrefs, hires: this.hires, goTo: (id) => this.goToNewHire(id) });
+    this.hireReview = new HireReviewDialog(o.host, {
+      ...hireHost,
+      hirePrefs: this.hirePrefs,
+      hires: this.hires,
+      goTo: (id) => this.goToNewHire(id),
+      // #198: a hire with a handoff whose task did not reach the new worker: the composed task goes to their Prompt (P) note.
+      holdTask: (id, text, from) => this.prompt.holdTask(id, text, from instanceof PromptDraft ? from : undefined),
+      // #198: back from the hire's review to its step 1, with what was chosen there, the task and the hire's choices.
+      handoffBack: (plan, task, carry) => this.openHireHandoff(plan.worker, false, undefined, { mode: plan.mode, task, instruction: plan.instruction, sendHome: plan.sendHome, carry }),
+    });
     // M6 start
     this.presetsPanel = new PresetsPanel(o.host, { ...dialogHost, modelPrefs: this.hireModelPrefs });
     // #58: a new session's floor waits in the lot: the Buildings panel opens on its Move menu. A virtual floor already
@@ -874,6 +884,7 @@ export class App {
         this.settings.open();
         this.settings.reveal(section);
       },
+      continueHire: (plan, task, seated, carry) => this.continueHireHandoff(plan, task, seated, carry), // #198
     });
     this.cabinet = new Cabinet(o.host, { ...dialogHost, copy, hireFrom: (e) => this.hireFromHandoff(e) });
     // #64 schedules: the list, and the one form for New, Edit and a transcript's follow-up (it opens over the list).
@@ -934,6 +945,7 @@ export class App {
         secrets: this.secrets, // #108
         overview: () => this.openOverview(false), // #118
         handoff: (id) => this.openHandoff(id, true), // #223
+        hireHandoff: (id, c) => this.openHireHandoff(id, true, c), // #198
         scheduleFollowup: (id, c, sug) => this.openFollowup(id, c, sug), // #64 schedules, #66 its suggestion
         catalogs, // #39
       },
@@ -1715,6 +1727,60 @@ export class App {
       this.panels.close();
     }
     this.handoffDialog.open(id, { seated });
+  }
+
+  /**
+   * #198: "Hire with handoff", step 1: the filing dialog in its hire intent (the modes, the instruction, the new agent's
+   * task). Without a cabinet there is nothing to file into: the cabinet's own words say so. `prefill`: back from step 2.
+   */
+  openHireHandoff(id: string, seated: boolean, c?: HandoffCandidate, prefill?: HandoffHirePrefill): void {
+    if (!this.store.workerView(id)) return;
+    if (!this.store.handoffs.known) {
+      this.hud.toast('This herdr-world has no filing cabinet: start it with --handoff-dir (default ~/handoff).', 5200, 'info');
+      return;
+    }
+    if (!seated) {
+      this.walker.release();
+      this.walker.stop();
+      this.panels.close();
+    }
+    this.handoffDialog.open(id, { seated, intent: 'hire', ...(c ? { candidate: c } : {}), ...(prefill ? { prefill } : {}) });
+  }
+
+  /**
+   * #198: step 2, the hire's review, as "Hire from handoff" seeds it: the source's floor and folder, its harness and model
+   * when the catalog has them (the effort never guessed), a desk of the floor's own (never the source's, even when it is
+   * sent home after filing) and the human's task. Nothing is filed yet: the review's Hire does that, then hires. `carry`
+   * (back from the review through "Back to the handoff"): the hire's choices as they were reviewed, and its desk while it
+   * is still free (else another, and a toast says so).
+   */
+  private continueHireHandoff(plan: HandoffPlan, task: string, seated: boolean, carry?: HireCarry): boolean {
+    const w = this.store.workers.get(plan.worker);
+    if (!w) {
+      this.hud.toast(`${plan.name} has left.`, 2400, 'info');
+      return false;
+    }
+    const floor = w.floor ?? w.session;
+    const was = carry && carry.floor === floor ? carry : undefined;
+    const kept = was ? resolveHireDesk(floor, this.store.floorView(floor), this.heldDesks(floor), was.desk) : null;
+    const d = kept?.ok ? kept.desk : this.hireSeat(undefined, floor);
+    if (d === null) return false;
+    this.handoffDialog.close();
+    if (!seated) {
+      this.walker.release();
+      this.walker.stop();
+      this.panels.close();
+    }
+    const interp = { sources: [], harness: { provenance: 'missing' as const }, model: { provenance: 'missing' as const }, effort: { provenance: 'missing' as const }, task: { provenance: 'missing' as const }, questions: [], ready_for_review: true };
+    if (carry) {
+      if (was && d !== was.desk) this.hud.toast(`Desk ${was.desk + 1} was taken meanwhile: the hire is for Desk ${d + 1} now.`, 4200, 'info');
+      return this.hireReview.open(floor, interp, d, carriedSeed(carry, task, plan));
+    }
+    const harness = w.harness || w.agent_kind;
+    const seed = fromHandoff({ ...(harness ? { harness } : {}), ...(w.model ? { model: w.model } : {}) }, task, this.store.hireOptions);
+    // The task is the human's, typed in step 1: not one the handoff wrote.
+    const choice = { ...seed, origin: { ...seed.origin, task: 'chosen' as const } };
+    return this.hireReview.open(floor, interp, d, { choice, ...(w.cwd ? { cwd: w.cwd } : {}), handoff: plan });
   }
 
   /** #224: the agent handoff requests last seen (worker → op/state), to say once when one is filed or fails. */

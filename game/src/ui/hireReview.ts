@@ -1,4 +1,5 @@
-import type { CommandArgs, HireGit, HireInterpretation, HirePrepare } from '../net/protocol';
+import type { CommandArgs, HandoffEntry, HireGit, HireInterpretation, HirePrepare } from '../net/protocol';
+import { HANDOFF_PATH_RESERVE, hireWithHandoffTask, newOp } from '../world/handoff';
 import { capacityView, capBlocker, firstFreeDesk, formFromPrepare, hireArgs, hireBlocker, HARNESS_LABEL, modelsFor, newerGit, offeredOptions, OriginFetches, optionsBlocker, promptBlocker, resolveHireDesk, worktreeUsable, type CapacityView, type HireForm } from '../world/hire';
 import {
   agentQuestion,
@@ -35,7 +36,8 @@ import { HIRE_PROMPT_MAX_BYTES } from './composer/model';
 import { CommandCatalogs } from '../laptop/commandCatalog';
 import { CompletionScope, hireLookupKey, hireSources, type HireLookup } from './dialogCompletion';
 import { capacityBlock, chips, gitView, modelField, mountHireRecovery, promptText, worktreeControl, type HireHost, type HireSummary } from './hire';
-import { backgroundOutcomeText, HireCoordinator, notPromptedText, notSentText, type HireOutcome } from './hireCoordinator';
+import { HandoffFiling, type HandoffPlan, type HireCarry } from './handoffFiling';
+import { backgroundOutcomeText, HireCoordinator, notPromptedBackgroundText, notPromptedText, notSentText, type HireOutcome } from './hireCoordinator';
 import { hiredToast } from './hiredToast';
 import { failureText } from './messages';
 import { onReviewKey, reviewButton, type Go, type PromptSecretsFlow } from './secretsFlow';
@@ -65,12 +67,50 @@ import { onReviewKey, reviewButton, type Go, type PromptSecretsFlow } from './se
  * (`Reviewed`). Refused or unanswered, it gives it back: the review opens again with it when nothing else is open (its
  * status line says what happened), else it is held in memory (lost on a reload) behind the toast's "Review again" and a
  * palette row, until it is opened. Giving it back never presses Hire; a new press is a new hire.
+ *
+ * #198 "Hire with handoff" (`open`'s `seed.handoff`): the review of the hire that follows a handoff the filing dialog's
+ * step 1 chose. Its Hire is the one submission: it checks the hire, files the handoff (`HandoffFiling`: the request, its
+ * op followed until it is filed, the final path read back), composes the task (`hireWithHandoffTask`), checks it again
+ * (its size, its secrets, the desk) and only then starts the hire, keyed by the handoff's op. Closed while the handoff is
+ * made, it stops waiting: nobody is hired from it, ever, and the handoff still goes to the cabinet. Filed but not hired
+ * (a refusal, a full floor, a cancelled review), it keeps the filed path: Hire then hires only.
  */
+
+/** #198: what the composed task shows for the handoff's path until it is filed. */
+const PATH_PLACEHOLDER = '‹the handoff’s path, once it is filed›';
+/** #198: the bytes of the composed task beyond the human's: the fixed words and a path as long as it may plausibly be. */
+const HANDOFF_OVERHEAD = new TextEncoder().encode(hireWithHandoffTask('x'.repeat(HANDOFF_PATH_RESERVE), '')).length;
+const MODE_WORDS = { literal: 'Save last message', agent: 'Ask the agent', llm: 'Use configured LLM' } as const;
 
 /** The sections' titles. */
 const TITLE: Record<ReviewSection, string> = { agent: 'Harness and model', effort: 'Effort', task: 'Task', where: 'Location and options' };
 
-export type ReviewState = 'preparing' | 'ready' | 'hiring' | 'failed';
+/** #198 `filing`: "Hire with handoff" files the handoff first; nothing is hired until it is filed. */
+export type ReviewState = 'preparing' | 'ready' | 'filing' | 'hiring' | 'failed';
+
+/** `open`'s starting point other than the proposal's (#223 "Hire from handoff", #198 "Hire with handoff"). */
+export interface ReviewSeed {
+  choice?: ReviewChoice;
+  cwd?: string;
+  /** #198: chosen already: kept over the bridge's defaults. */
+  label?: string;
+  worktree?: boolean;
+  handoff?: HandoffPlan;
+}
+
+/**
+ * #198 "Back to the handoff", then Continue: the review again with the hire's choices as they were, and step 1's task
+ * (the human may have edited it there). The catalog and the desk are checked again as for any review.
+ */
+export function carriedSeed(c: HireCarry, task: string, handoff: HandoffPlan): ReviewSeed {
+  return {
+    choice: { ...c.choice, task, origin: { ...c.choice.origin, task: 'chosen' } },
+    ...(c.cwd ? { cwd: c.cwd } : {}),
+    ...(c.label !== undefined ? { label: c.label } : {}),
+    ...(c.worktree !== undefined ? { worktree: c.worktree } : {}),
+    handoff,
+  };
+}
 
 /** What a request to the interpreter was made against: the answer is only for this review, as the human left it then. */
 export interface ReviewTicket {
@@ -93,6 +133,8 @@ export interface ReviewSummary {
   blocker: string | null;
   status: string;
   error: boolean;
+  /** #198: the handoff this hire follows (null: an ordinary review): how it is made, and its path once filed. */
+  handoff: { worker: string; mode: HandoffPlan['mode']; instruction: string; sendHome: boolean; op: string; filed: string | null; composed: string } | null;
 }
 
 /** #33: what was reviewed when a background Hire was pressed: what a refused or unanswered hire gives back. */
@@ -112,6 +154,10 @@ interface Reviewed {
   openSet: Set<ReviewSection>;
   defaultCwd: string;
   checked: string | null;
+  /** #198: the handoff it follows, its next op, and the filed entry (Hire then hires only). */
+  plan: HandoffPlan | null;
+  planOp: string;
+  filed: HandoffEntry | null;
 }
 
 type GivenBack = Extract<HireOutcome, { kind: 'failed' | 'unknown' }>;
@@ -205,6 +251,21 @@ export class HireReviewDialog {
   private readonly held = new Map<string, Held>();
   private heldSerial = 0;
   private readonly hires: HireCoordinator;
+  /** #198: the handoff step 1 chose (null: an ordinary review). */
+  private plan: HandoffPlan | null = null;
+  /** #198: the op of the plan's request: the same until a request definitely failed (a resend then files once). */
+  private planOp = '';
+  /** #198: the handoff, once filed: Hire then hires only, never files or writes it again (AC7). */
+  private filed: HandoffEntry | null = null;
+  /** #198: the handoff being made now (Cancel, the close, the source worker's updates). */
+  private filing: HandoffFiling | null = null;
+  /** #198: the hires tried for one filed handoff (each a new coordinator key). */
+  private hireTries = 0;
+  /** #198: what the composed task shows, and the task box's own label and hint (they say what the agent gets). */
+  private readonly composedEl = h('pre', { class: 'rv-composed', 'data-hook': 'composed', 'aria-label': 'What the new agent receives', tabindex: '0', hidden: true });
+  private readonly taskLabel = h('label', { id: 'review-task-label' }, 'The complete task');
+  private readonly taskHint = h('p', { class: 'field-hint', id: 'review-task-hint' });
+  private readonly handoffEl = h('div', { class: 'dd-callout dd-callout--box rv-handoff', 'data-hook': 'rv-handoff', hidden: true });
   private static serial = 0;
   private readonly id = ++HireReviewDialog.serial;
 
@@ -222,7 +283,7 @@ export class HireReviewDialog {
         workerView: (id) => host.store.workerView(id),
         holdTask: (id, text, from) => host.holdTask?.(id, text, from) ?? false,
       });
-    this.host.modelPrefs?.onChange(() => this.dialog.open && this.state !== 'hiring' && this.render());
+    this.host.modelPrefs?.onChange(() => this.dialog.open && !this.busy() && this.render());
     this.composer = mountComposer({
       draft: this.newDraft(''),
       // The popup stays inside the dialog's body (it scrolls, and would clip it).
@@ -237,12 +298,22 @@ export class HireReviewDialog {
     // The editor takes the textarea's hooks: the tests and the focus keys know `#review-task`.
     this.composer.editor.id = 'review-task';
     this.composer.editor.dataset.key = 'task';
+    this.taskLabel.addEventListener('click', () => this.composer.focus());
     this.alertEl.hidden = true;
     this.statusEl.hidden = true;
+    this.body.append(this.handoffEl);
     for (const id of REVIEW_SECTIONS) this.body.append(this.buildSection(id));
     this.buildTask();
     this.dialog.append(this.head, this.body, this.foot);
     this.dialog.addEventListener('close', () => {
+      // #198: closed while the handoff is made: no agent is hired from it, ever; the bridge still files it.
+      const f = this.filing;
+      if (f && this.state === 'filing') {
+        this.filing = null;
+        this.state = 'ready';
+        f.stop();
+        this.host.toast(`No agent hired. ${f.plan.name}’s handoff will still be filed to the cabinet; hire from it there.`, 'info');
+      }
       const outcome = this.outcomes.get(`${this.floor}:${this.desk}`);
       if (this.state === 'ready' && this.statusError && outcome && this.prep) this.holdReview(this.reviewed(), outcome, this.statusText);
       if (!this.dialog.open) this.epoch++;
@@ -254,7 +325,8 @@ export class HireReviewDialog {
       // reviewed: then nobody is hired.)
       if (this.state === 'hiring') {
         const why = this.uploading ? 'its images were uploaded' : 'its task was checked for secrets';
-        this.host.toast(this.reviewing === this.epoch ? `Not hired: it was closed before ${why}.` : 'The hire is still on its way; the worker shows up at the desk when it is done.', 'info');
+        const kept = this.filed ? ` The handoff is in the cabinet: ${this.filed.path}.` : '';
+        this.host.toast(this.reviewing === this.epoch ? `Not hired: it was closed before ${why}.${kept}` : 'The hire is still on its way; the worker shows up at the desk when it is done.', 'info');
       }
     });
     // Typed text and consequential choices in here: only the close button, Cancel and Esc close it, never the backdrop.
@@ -268,6 +340,11 @@ export class HireReviewDialog {
 
   get isOpen(): boolean {
     return this.dialog.open;
+  }
+
+  /** A handoff being filed or a hire on its way: the choices are locked. */
+  private busy(): boolean {
+    return this.state === 'filing' || this.state === 'hiring';
   }
 
   /** Cancel: the pending hire is dropped (nothing was sent; a hire already on its way is not undone). */
@@ -284,7 +361,9 @@ export class HireReviewDialog {
    */
   /** #223 `seed`: "Hire from handoff": the starting choice (`fromHandoff`) and the folder, instead of the proposal's. */
   /** #108 round 4 `handover`: the interpreter's `secrets_pending` for `interp`. */
-  open(floor: string, interp: HireInterpretation, desk?: number, seed?: { choice?: ReviewChoice; cwd?: string }, handover: string | null = null): boolean {
+  /** #198 `seed.handoff`: "Hire with handoff": Hire files that handoff first, then hires with the composed task. */
+  /** #198 `seed.label`, `seed.worktree`: chosen already (back from step 1, `carriedSeed`): kept over the bridge's defaults. */
+  open(floor: string, interp: HireInterpretation, desk?: number, seed?: ReviewSeed, handover: string | null = null): boolean {
     const seat = resolveHireDesk(floor, this.host.store.floorView(floor), this.host.held(floor), desk);
     if (!seat.ok) {
       this.host.toast(seat.msg, 'info');
@@ -297,11 +376,18 @@ export class HireReviewDialog {
     this.prep = null;
     this.pending = interp;
     this.handover = handover;
+    this.plan = seed?.handoff ?? null;
+    this.planOp = this.plan ? newOp() : '';
+    this.filed = null;
+    // An earlier submission's filing (already stopped by the close) ends here too: nothing is hired from it.
+    this.filing?.stop();
+    this.filing = null;
+    this.hireTries = 0;
     this.choice = seed?.choice ?? fromInterpretation(interp, this.host.store.hireOptions);
     this.keep = [{ harness: this.choice.harness, model: this.choice.model }];
     this.openSet = needsAttention(this.choice, this.host.store.hireOptions, this.taskIssue());
-    this.f = { label: '', cwd: seed?.cwd ?? '', worktree: false };
-    this.changed = { label: false, cwd: !!seed?.cwd, worktree: false };
+    this.f = { label: seed?.label ?? '', cwd: seed?.cwd ?? '', worktree: seed?.worktree ?? false };
+    this.changed = { label: seed?.label !== undefined, cwd: !!seed?.cwd, worktree: seed?.worktree !== undefined };
     this.modelQuery = '';
     this.refetching = false;
     this.hadWhereIssue = false;
@@ -344,7 +430,7 @@ export class HireReviewDialog {
    * the review it was for is gone.
    */
   apply(interp: HireInterpretation, ticket: ReviewTicket, handover: string | null = null): boolean {
-    if (!this.dialog.open || ticket.epoch !== this.epoch || this.state === 'hiring') return false;
+    if (!this.dialog.open || ticket.epoch !== this.epoch || this.busy()) return false;
     this.pending = interp;
     // #108: a follow-up keeps the hand-over (the bridge answers the same one); one first given now is taken.
     if (handover) this.handover = handover;
@@ -362,7 +448,7 @@ export class HireReviewDialog {
    * its source `dictated`. False (nothing changes, the section stays as it is) when it does not or no model is chosen.
    */
   answerEffort(effort: string): boolean {
-    if (!this.dialog.open || this.state === 'hiring') return false;
+    if (!this.dialog.open || this.busy()) return false;
     const next = pickEffort(this.choice, effort, this.host.store.hireOptions, 'dictated');
     if (!next) return false;
     this.choice = next;
@@ -395,7 +481,7 @@ export class HireReviewDialog {
     this.checking = !!cwd && !!this.prep;
     const r = await this.host.send('hire.prepare', args);
     // A newer prepare, a closed or reopened review, a hire sent meanwhile, a folder typed since: this answer is not for what is on screen.
-    if (gen !== this.prepGen || epoch !== this.epoch || !this.dialog.open || this.state === 'hiring' || folder !== this.folderRev) return;
+    if (gen !== this.prepGen || epoch !== this.epoch || !this.dialog.open || this.busy() || folder !== this.folderRev) return;
     this.checking = false;
     if (!r.ok) {
       this.state = this.prep && cwd ? 'ready' : 'failed';
@@ -491,6 +577,11 @@ export class HireReviewDialog {
       this.render();
       return;
     }
+    // #198: the handoff being made follows its op on the source worker; nothing else changes meanwhile.
+    if (this.state === 'filing') {
+      this.filing?.feed();
+      return;
+    }
     const fv = this.host.store.floorView(this.floor);
     if (!fv) {
       this.close();
@@ -514,7 +605,7 @@ export class HireReviewDialog {
   /** Someone sat down at the desk meanwhile, or another hire is on its way there: why, and the desk to offer instead. */
   private takenBy(): { why: string; next: number | null } | null {
     const fv = this.host.store.floorView(this.floor);
-    if (!fv || this.state === 'hiring') return null;
+    if (!fv || this.busy()) return null;
     const held = this.host.held(this.floor);
     const seat = fv.seats[this.desk];
     const why = seat ? `${seat.name} just sat down at Desk ${this.desk + 1}.` : held.has(this.desk) ? `Another hire is already on its way to Desk ${this.desk + 1}.` : null;
@@ -556,6 +647,7 @@ export class HireReviewDialog {
   private blocker(): string | null {
     const cat = this.host.store.hireOptions;
     const c = this.choice;
+    if (this.state === 'filing') return 'The handoff is being filed.';
     if (this.state === 'hiring') return 'The hire is on its way.';
     // #190: the interpreter's question offers models, each with its harness.
     if (!harnessOk(c, cat)) return agentQuestion(c, this.pending, cat)?.choices.length ? 'Choose a model.' : 'Choose a harness.';
@@ -596,8 +688,15 @@ export class HireReviewDialog {
 
   /** The task's own problem beyond being empty: herdr would read it as a flag, or it is too long. */
   private taskIssue(): string | null {
-    if (new TextEncoder().encode(this.choice.task).length > HIRE_PROMPT_MAX_BYTES) return 'The task is too long to send.';
+    // #198: with a handoff, the task is sent after the line that points to it: the path counts, as long as it may be.
+    const extra = this.plan ? (this.filed ? new TextEncoder().encode(this.composed(this.filed.path, '')).length : HANDOFF_OVERHEAD) : 0;
+    if (new TextEncoder().encode(this.choice.task).length + extra > HIRE_PROMPT_MAX_BYTES) return this.plan ? 'The task is too long to send with the line that points to the handoff.' : 'The task is too long to send.';
     return promptBlocker(this.choice.task);
+  }
+
+  /** #198: the task the new agent receives: the handoff's path, then the human's task as written. */
+  private composed(path: string, task = this.choice.task): string {
+    return hireWithHandoffTask(path, task);
   }
 
   // ---- rendering ---------------------------------------------------------------------
@@ -637,10 +736,11 @@ export class HireReviewDialog {
       h(
         'div',
         { class: 'dd-field rv-task' },
-        h('label', { id: 'review-task-label', onclick: () => this.composer.focus() }, 'The complete task'),
+        this.taskLabel,
         this.composer.element,
         this.refLine.el,
-        h('p', { class: 'field-hint', id: 'review-task-hint' }, 'Sent to the agent as its first task, exactly as written here. ', h('kbd', {}, 'Enter'), ' adds a line · paste a screenshot to add it.'),
+        this.taskHint,
+        this.composedEl,
       ),
       h('p', { class: 'rv-prov', 'data-hook': 'task-origin' }),
     );
@@ -772,8 +872,41 @@ export class HireReviewDialog {
     }
     // The task box keeps its references as written; the line under it names their files (cheap: redrawn on a change only).
     this.refLine.update(this.choice.task);
+    this.syncTaskText();
     const prov = this.sections.get('task')!.panel.querySelector<HTMLElement>('[data-hook="task-origin"]');
     if (prov) prov.replaceChildren(this.originTape(this.choice.origin.task), ' ', this.choice.origin.task === 'dictated' ? 'Cut from what you said, word for word.' : this.choice.origin.task === 'handoff' ? 'Reads the handoff file, then goes on with the work.' : '');
+  }
+
+  /** The task box's label and hint, and (#198, with a handoff) the composed task the agent receives. */
+  private syncTaskText(): void {
+    const plan = this.plan;
+    this.taskLabel.textContent = plan ? 'Task for the new agent' : 'The complete task';
+    const enter = [h('kbd', {}, 'Enter'), ' adds a line · paste a screenshot to add it.'];
+    if (plan) this.taskHint.replaceChildren('It gets this after the line that points to the handoff, as shown below. Your words stay as written. ', ...enter);
+    else this.taskHint.replaceChildren('Sent to the agent as its first task, exactly as written here. ', ...enter);
+    this.composedEl.hidden = !plan;
+    if (!plan) return;
+    const path = this.filed?.path ?? PATH_PLACEHOLDER;
+    const text = this.composed(path);
+    const at = text.indexOf(path);
+    this.composedEl.dataset.filed = this.filed ? 'true' : 'false';
+    this.composedEl.replaceChildren(text.slice(0, at), h('span', { class: this.filed ? 'rv-path' : 'rv-path rv-path--pending' }, path), text.slice(at + path.length));
+  }
+
+  /** #198: the handoff this hire follows, above the sections: how it is made, from whom, and its path once filed. */
+  private syncHandoff(): void {
+    const p = this.plan;
+    this.handoffEl.hidden = !p;
+    if (!p) return;
+    const filed = this.filed;
+    const tape = filed ? h('span', { class: 'tape tape--idle' }, 'Filed') : this.state === 'filing' ? h('span', { class: 'tape tape--box' }, 'Filing') : h('span', { class: 'tape' }, 'Handoff');
+    const how = p.mode === 'literal' ? `${p.name}’s last message, saved as written` : p.mode === 'agent' ? `written by ${p.name}’s agent` : `written by the configured LLM${p.llmModel ? ` (${p.llmModel})` : ''} from ${p.name}’s conversation`;
+    this.handoffEl.replaceChildren(...[
+      h('p', {}, tape, ' ', h('b', {}, MODE_WORDS[p.mode]), ` · ${how}. `, filed ? `Filed in the ${p.floorName} cabinet; the agent is hired with its path.` : `It is filed in the ${p.floorName} cabinet first; the agent is hired once it is.`),
+      p.instruction && p.mode !== 'literal' ? h('p', { class: 'field-hint', 'data-hook': 'rv-handoff-instruction' }, `What to put in it: “${p.instruction}”`) : null,
+      p.sendHome ? h('p', { class: 'field-hint', 'data-hook': 'rv-handoff-home' }, `${p.name} is sent home after filing, if it can go then. The new agent never takes ${p.name}’s desk.`) : null,
+      filed ? h('p', { class: 'rv-handoff-path' }, 'Saved at ', h('code', { 'data-hook': 'rv-handoff-path' }, filed.path)) : null,
+    ].filter((n): n is HTMLParagraphElement => !!n));
   }
 
   private originTape(o: Origin, text = ORIGIN_LABEL[o]): HTMLElement {
@@ -793,10 +926,10 @@ export class HireReviewDialog {
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     this.head.replaceChildren(
       h('div', { class: 'dd-plate dd-plate--desk', 'aria-hidden': 'true' }, icon('<path d="M12 5v14M5 12h14"/>'), h('b', {}, String(this.desk + 1))),
-      h('div', { class: 'dd-titles' }, h('h2', { id: 'review-title' }, `Review the hire at Desk ${this.desk + 1}`), h('p', { id: 'review-sub' }, `${this.floorName()} · ${where}`)),
+      h('div', { class: 'dd-titles' }, h('h2', { id: 'review-title' }, this.plan ? `Hire with a handoff at Desk ${this.desk + 1}` : `Review the hire at Desk ${this.desk + 1}`), h('p', { id: 'review-sub' }, `${this.floorName()} · ${where}`)),
       h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close)),
     );
-    const busy = this.state === 'hiring';
+    const busy = this.busy();
     const c = this.choice;
     const cat = this.host.store.hireOptions;
     const offered = this.offered();
@@ -810,6 +943,7 @@ export class HireReviewDialog {
     this.composer.setBusy(busy);
     this.lookups.check();
     this.syncSections();
+    this.syncHandoff();
 
     const notices: Node[] = [];
     if (taken && this.state === 'ready') {
@@ -841,7 +975,7 @@ export class HireReviewDialog {
   private agentPanel(offered: ReturnType<HireReviewDialog['offered']>): Node[] {
     const c = this.choice;
     const nodes: Node[] = [];
-    const busy = this.state === 'hiring';
+    const busy = this.busy();
     nodes.push(chips('harness', 'Harness', Object.keys(offered), c.harness, (v) => this.pick('harness', v)));
     const models = c.harness ? modelsFor(offered, c.harness) : [];
     // #190: the interpreter's question (a family that names several models, one it could not take): its words and
@@ -871,7 +1005,7 @@ export class HireReviewDialog {
   private effortPanel(): Node[] {
     const c = this.choice;
     const cat = this.host.store.hireOptions;
-    const busy = this.state === 'hiring';
+    const busy = this.busy();
     const levels = effortChoices(cat, c.harness, c.model);
     const nodes: Node[] = [];
     if (!levels.length) {
@@ -964,22 +1098,37 @@ export class HireReviewDialog {
         ),
       );
     }
-    if (this.state === 'hiring' || this.refetching) for (const el of nodes) if (el instanceof HTMLElement) for (const i of el.querySelectorAll<HTMLInputElement>('input')) i.disabled = true;
+    if (this.busy() || this.refetching) for (const el of nodes) if (el instanceof HTMLElement) for (const i of el.querySelectorAll<HTMLInputElement>('input')) i.disabled = true;
     return nodes;
   }
 
   private renderActions(): void {
     const blocker = this.blocker();
     const label = this.f.label.trim() || this.prep?.label || '';
-    const cancel = h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, this.state === 'hiring' ? 'Close' : 'Cancel');
-    const text = this.state === 'hiring' ? 'Hiring…' : label ? `Hire ${label}` : 'Hire';
+    const cancel = h('button', { class: 'btn', 'data-key': 'cancel', title: this.state === 'filing' ? 'Stop waiting: nobody is hired; the handoff is still filed' : null, onclick: () => this.close() }, this.busy() ? 'Close' : 'Cancel');
+    // #198: with a handoff not filed yet, Hire files it first; once filed, it hires only.
+    const text = this.state === 'filing' ? 'Filing the handoff…' : this.state === 'hiring' ? 'Hiring…' : this.plan && !this.filed ? 'File handoff and hire' : label ? `Hire ${label}` : 'Hire';
     // A hire in flight is busy, not disabled (#216 decisions row 14): it keeps its focus and colours, and `hire()` ignores a second press.
-    const busy = this.state === 'hiring';
+    const busy = this.busy();
     const hire = h('button', { class: 'btn btn--primary', 'data-key': 'hire', disabled: !!blocker && !busy, 'aria-disabled': blocker ? 'true' : null, 'aria-busy': busy ? 'true' : null, title: blocker, onclick: () => void this.hire() }, text);
     const had = document.activeElement === this.actions.querySelector('[data-key="hire"]');
     // #108: the task's review on purpose (with the switch on), then the hire.
-    const review = reviewButton(this.host.secrets, busy ? 'The hire is on its way.' : blocker, () => void this.hire(true), 'task');
+    const review = reviewButton(this.host.secrets, busy ? (blocker ?? 'The hire is on its way.') : blocker, () => void this.hire(true), 'task');
     const hadReview = document.activeElement === this.actions.querySelector('[data-key="review"]');
+    // #198: the agent's request or the LLM's job can be cancelled while it runs (a literal save is one quick request).
+    const f = this.filing;
+    const stop =
+      this.state === 'filing' && f && f.plan.mode !== 'literal'
+        ? h('button', { class: 'btn btn--danger-quiet', 'data-key': 'cancel-request', title: 'Cancels the request: nothing is filed, nobody is hired', onclick: () => void this.cancelFiling() }, 'Cancel request')
+        : null;
+    // #198: before anything is filed, step 1 can be chosen again (another mode, the latest reply), the task and the
+    // hire's choices kept (Continue restores them).
+    const plan = this.plan;
+    const backTo = this.host.handoffBack;
+    const back =
+      plan && backTo && !this.filed && !busy
+        ? h('button', { class: 'btn btn--quiet rv-back', 'data-key': 'back', title: 'Choose how the handoff is made again; your task and hire settings are kept', onclick: () => (this.close(), backTo(plan, this.choice.task, this.carry())) }, 'Back to the handoff')
+        : null;
     const copy = this.statusError ? h('button', { class: 'btn', type: 'button', onclick: () => {
       void this.composer.getDraft().resolve({ hint: false }).then((r) => {
         if (!r.ok) { this.host.toast('Finish uploading the images before copying this task.', 'error'); return; }
@@ -994,7 +1143,7 @@ export class HireReviewDialog {
     const mcp = this.statusError && data?.startup?.length && this.host.mcpDetails ? h('button', { class: 'btn', type: 'button', onclick: () => {
       this.close(); this.host.mcpDetails?.(this.floor, data.cwd ?? this.f.cwd, data.codex_profile ?? '');
     } }, 'MCP details') : null;
-    this.actions.replaceChildren(...[copy, mcp, checked, cancel, review, hire].filter((x): x is HTMLButtonElement => !!x));
+    this.actions.replaceChildren(...[back, copy, mcp, checked, cancel, stop, review, hire].filter((x): x is HTMLButtonElement => !!x));
     if (had && (!blocker || busy)) hire.focus();
     if (hadReview) review?.focus();
     // Why Hire is off, said where the button is (a title is not enough): the model's or effort's own section says the rest.
@@ -1063,6 +1212,9 @@ export class HireReviewDialog {
     }
     const epoch0 = this.epoch;
     const live = () => this.dialog.open && epoch0 === this.epoch;
+    const plan = this.plan;
+    // #198: the line that points to the handoff counts against the limit (its path as long as it may be, until filed).
+    const overhead = plan ? (this.filed ? new TextEncoder().encode(this.composed(this.filed.path, '')).length : HANDOFF_OVERHEAD) : 0;
     // The task as the agent gets it: its images uploaded, their paths (and the files' mentions) in the text. Nothing is
     // held or sent before; a failed upload keeps the review as it is, each failed image with its Retry.
     if (args.prompt) {
@@ -1074,27 +1226,40 @@ export class HireReviewDialog {
       this.render();
       this.reviewing = epoch0;
       this.uploading = true;
-      const res = await doc.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES });
+      const res = await doc.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES - overhead });
       this.uploading = false;
       if (this.reviewing === epoch0) this.reviewing = -1;
       if (!live()) return;
       this.state = 'ready';
       if (!res.ok) {
-        this.setStatus(notSentText(res, '') || 'Not hired: the task could not be made.', true);
+        this.setStatus(this.afterFiling(notSentText(res, '') || 'Not hired: the task could not be made.'), true);
         this.render();
         return;
       }
       args.prompt = res.text;
     }
+    // #198: the handoff is filed first (or was, by an earlier press): the agent is hired with its final path only.
+    if (plan) {
+      const path = await this.fileHandoff(plan, live);
+      if (path === null) return;
+      args.prompt = this.composed(path, args.prompt ?? '');
+      const why = this.launchBlocker(args.prompt);
+      if (why) {
+        this.state = 'ready';
+        this.setStatus(this.afterFiling(why), true);
+        this.render();
+        return;
+      }
+    }
     // #108 round 4: the task, reviewed before anything of it goes, unless it is the interpreter's as it answered it (the
     // hand-over covers that: what you left as typed is not proposed twice). The hand-over goes with any task (its files
-    // are the new worker's).
+    // are the new worker's). #198: with a handoff, the composed task is the one reviewed.
     const flow = this.host.secrets;
     const handover = args.prompt ? this.handover : null;
     const covered = handover !== null && args.prompt === this.pending?.task.value;
     let secrets: { flow: PromptSecretsFlow; req: { key: string; text: string; target: string; manual: boolean }; go: Go } | undefined;
     if (args.prompt && flow && (manual || (flow.on && !covered))) {
-      const req = { key: `review:${floor}:${desk}`, text: args.prompt, target: `${args.label ?? this.prep.label} at Desk ${desk + 1}`, manual };
+      const req = { key: plan ? `handoff:${this.planOp}` : `review:${floor}:${desk}`, text: args.prompt, target: `${args.label ?? this.prep.label} at Desk ${desk + 1}`, manual };
       this.state = 'hiring';
       this.setStatus(manual ? 'Opening the review of its secrets…' : 'Looking for secrets in the task…');
       this.render();
@@ -1105,7 +1270,7 @@ export class HireReviewDialog {
       if (!live()) return;
       this.state = 'ready';
       if (out.kind === 'kept') {
-        this.setStatus(out.why === 'cancel' ? 'Not hired: the review was cancelled. The task is still here.' : out.message, out.why === 'failed');
+        this.setStatus(this.afterFiling(out.why === 'cancel' ? 'Not hired: the review was cancelled. The task is still here.' : out.message), out.why === 'failed' || !!this.filed);
         this.render();
         return;
       }
@@ -1114,17 +1279,22 @@ export class HireReviewDialog {
     if (handover) args.secrets_pending = handover;
     const who = args.label ?? this.prep.label;
     const epoch = this.epoch;
-    // Read once, here: a change in Settings while the hire is on its way does not change how it ends.
+    // Read once, here: a change in Settings while the hire is on its way does not change how it ends. (#198: after the
+    // handoff was filed: the review stays open while it is made, whatever the setting.)
     const opening = this.opening;
     const background = this.host.hirePrefs?.hireInBackground === true;
     // #33: the coordinator gets no draft: what was reviewed is kept here, for a background hire that is refused or unanswered.
     const reviewed = this.reviewed();
+    // #198: this hire's filed handoff, as it is now: the review may be closed and opened for another hire before it ends.
+    const filed = this.filed;
     this.away.add(reviewed.draft);
     this.state = 'hiring';
     this.hiringText = null;
-    this.setStatus('');
+    this.setStatus(filed ? `Filed ${filed.path}. Hiring…` : '');
+    // #198: one hire per filed handoff and press: a repeated update or click is the operation on its way.
+    const key = plan ? `handoff:${this.planOp}:${++this.hireTries}` : `review:${this.id}:${epoch}`;
     const op = this.hires.start(
-      { key: `review:${this.id}:${epoch}`, floor, where: this.floorName(), desk, args, who, prompt: null, background, kept: true, ...(secrets ? { secrets } : {}) },
+      { key, floor, where: this.floorName(), desk, args, who, prompt: null, background, kept: true, ...(secrets ? { secrets } : {}) },
       {
         hiring: (sent) => {
           if (background || !this.dialog.open || epoch !== this.epoch) return;
@@ -1146,7 +1316,7 @@ export class HireReviewDialog {
       if (o.kind === 'failed' || o.kind === 'unknown') this.giveBack(reviewed, o, backgroundOutcomeText(op.request, o));
       else if (o.kind === 'not_sent' && opening === this.opening && !document.querySelector('dialog[open]')) {
         this.dialog.showModal();
-        this.landed(o, { floor, desk, who, epoch: this.epoch });
+        this.landed(o, { floor, desk, who, epoch: this.epoch, filed });
         this.focusFirst();
       }
       this.drop(reviewed.draft);
@@ -1157,19 +1327,108 @@ export class HireReviewDialog {
     this.recordOutcome(outcome, floor, desk);
     this.away.delete(reviewed.draft);
     if ((outcome.kind === 'failed' || outcome.kind === 'unknown') && (!this.dialog.open || epoch !== this.epoch)) this.giveBack(reviewed, outcome, backgroundOutcomeText(op.request, outcome));
-    else this.landed(outcome, { floor, desk, who, epoch });
+    else this.landed(outcome, { floor, desk, who, epoch, filed });
     this.drop(reviewed.draft);
   }
 
+  /**
+   * #198: files the plan's handoff (once: an earlier press that filed it is reused) and gives its final path; null when
+   * nothing is to be hired now (it failed, was cancelled, or the review closed: the status or a toast said so).
+   */
+  private async fileHandoff(plan: HandoffPlan, live: () => boolean): Promise<string | null> {
+    if (this.filed) return this.filed.path;
+    const f = new HandoffFiling(
+      {
+        send: (t, a) => this.host.send(t, a),
+        worker: (id) => this.host.store.workers.get(id),
+        secrets: this.host.secrets,
+        moved: () => {
+          if (this.filing === f && live()) {
+            this.setStatus(f.progress());
+            this.render();
+          }
+        },
+      },
+      plan,
+      this.planOp,
+      live,
+    );
+    this.filing = f;
+    this.state = 'filing';
+    this.setStatus(f.progress());
+    this.render();
+    const o = await f.run();
+    if (this.filing === f) this.filing = null;
+    // Closed or opened again meanwhile: the close said it (no agent is hired from it).
+    if (!live()) return null;
+    if (o.kind !== 'filed') {
+      this.state = 'ready';
+      // A request that may still be filed keeps its op (a resend is the same request); any other end needs a new one.
+      if (o.kind === 'gone' || !o.retry) this.planOp = newOp();
+      if (o.kind === 'failed') this.setStatus(o.message, true);
+      this.render();
+      this.focusFirst();
+      return null;
+    }
+    this.filed = o.entry;
+    this.hireTries = 0;
+    this.state = 'hiring';
+    this.setStatus(`Filed ${o.entry.path}. Hiring…`);
+    this.render();
+    return o.entry.path;
+  }
+
+  /**
+   * #198: Cancel request: nobody is hired from this submission from the click on, whatever the bridge answers later (the
+   * filing ends now: `fileHandoff` gives the review back). The bridge's answer then says how the request ended.
+   */
+  private async cancelFiling(): Promise<void> {
+    const f = this.filing;
+    if (!f || this.state !== 'filing') return;
+    const epoch0 = this.epoch;
+    this.filing = null;
+    const answer = f.cancel();
+    // Settled by the cancel: what the status says until the bridge answers.
+    const now = await f.run();
+    const r = await answer;
+    if (!r) return;
+    if (!this.dialog.open || epoch0 !== this.epoch) {
+      // Closed meanwhile: a handoff that is (or may be) in the cabinet is still worth a word.
+      if (r.kind !== 'cancelled') this.host.toast(r.message, 'info');
+      return;
+    }
+    // A newer press or message since: it stands.
+    if (this.busy() || now.kind !== 'failed' || this.statusText !== now.message) return;
+    this.setStatus(r.message, true);
+    this.render();
+  }
+
+  /** #198: right before the hire, with the handoff filed: the composed task's size, the desk and the floor's caps again. */
+  private launchBlocker(task: string): string | null {
+    const bytes = new TextEncoder().encode(task).length;
+    if (bytes > HIRE_PROMPT_MAX_BYTES) return `With the line that points to the handoff, the task is ${(bytes / 1024).toFixed(1)} KB; the limit is ${Math.round(HIRE_PROMPT_MAX_BYTES / 1024)} KB. Shorten the task, then hire again.`;
+    const seat = resolveHireDesk(this.floor, this.host.store.floorView(this.floor), this.host.held(this.floor), this.desk);
+    if (!seat.ok) return seat.msg;
+    return capBlocker(this.capacity());
+  }
+
+  /** #198: a message after the handoff was filed says where it is, and that Hire now hires only. */
+  private afterFiling(msg: string, filed = this.filed): string {
+    if (!filed) return msg;
+    return `The handoff is saved at ${filed.path}. ${msg.trim()} Hire again hires only: the handoff is not made again.`;
+  }
+
   /** A hire waited for here ended: this dialog, or (closed meanwhile) a toast, says how; the go-to on success. */
-  private landed(o: HireOutcome, hh: { floor: string; desk: number; who: string; epoch: number }): void {
+  private landed(o: HireOutcome, hh: { floor: string; desk: number; who: string; epoch: number; filed?: HandoffEntry | null }): void {
     const still = this.dialog.open && hh.epoch === this.epoch;
     if (still) this.state = 'ready';
     if (o.kind === 'hired' || o.kind === 'not_prompted') {
       const ack = o.ack;
       const w = ack?.id ? this.host.store.workerView(ack.id) : null;
       const branch = ack?.branch ? ` on ${ack.branch}` : '';
-      const notSent = o.kind === 'not_prompted' ? notPromptedText(o.ack) : '';
+      // #198: the review closes, so a composed task that did not reach the worker goes to their Prompt (P) note (AC8).
+      const held = o.kind === 'not_prompted' && !!hh.filed && !!o.prompt && !!o.ack.id && this.host.holdTask?.(o.ack.id, o.prompt, null) === true;
+      const notSent = o.kind === 'not_prompted' ? (hh.filed ? notPromptedBackgroundText(o.ack, held) : notPromptedText(o.ack)) : '';
       if (still) this.close();
       if (still && ack?.id) this.host.goTo?.(ack.id);
       const t = hiredToast(`Hired ${w?.name ?? hh.who} at Desk ${(w?.desk ?? hh.desk) + 1}${branch}. Here they come.`, ack, notSent);
@@ -1178,11 +1437,11 @@ export class HireReviewDialog {
     }
     const msg = o.kind === 'not_sent' ? o.message : o.kind === 'unknown' ? o.message : failureText('worker.hire', o.code, o.message, { floor: this.host.store.floorName(hh.floor), desk: hh.desk + 1 });
     if (!still) {
-      if (msg) this.host.toast(msg, 'error');
+      if (msg) this.host.toast(this.afterFiling(msg, hh.filed ?? null), 'error');
       return;
     }
     // Back to the review as it was: nothing was cleared, a new press is a new hire (never after an unknown outcome unasked).
-    this.setStatus(o.kind === 'unknown' ? `${msg} Look at the desk before you hire again.` : msg, true);
+    this.setStatus(this.afterFiling(o.kind === 'unknown' ? `${msg} Look at the desk before you hire again.` : msg, hh.filed ?? null), true);
     this.render();
     if (o.kind === 'failed' && o.code === 'fetch_failed') void this.recheck();
   }
@@ -1207,6 +1466,19 @@ export class HireReviewDialog {
 
   // ---- a task given back (#33) -----------------------------------------------------------
 
+  /** #198: the hire's choices for "Back to the handoff" (the label, folder and worktree only when chosen). */
+  private carry(): HireCarry {
+    const c = this.changed;
+    return {
+      floor: this.floor,
+      desk: this.desk,
+      choice: { ...this.choice },
+      ...(c.label ? { label: this.f.label } : {}),
+      ...(c.cwd ? { cwd: this.f.cwd } : {}),
+      ...(c.worktree ? { worktree: this.f.worktree } : {}),
+    };
+  }
+
   private reviewed(): Reviewed {
     return {
       floor: this.floor,
@@ -1222,6 +1494,9 @@ export class HireReviewDialog {
       openSet: new Set(this.openSet),
       defaultCwd: this.defaultCwd,
       checked: this.checked,
+      plan: this.plan,
+      planOp: this.planOp,
+      filed: this.filed,
     };
   }
 
@@ -1309,6 +1584,11 @@ export class HireReviewDialog {
     this.changed = { ...r.changed };
     this.defaultCwd = r.defaultCwd;
     this.checked = r.checked;
+    this.plan = r.plan;
+    this.planOp = r.planOp;
+    this.filed = r.filed;
+    this.filing?.stop();
+    this.filing = null;
     this.modelQuery = '';
     this.refetching = false;
     this.hadWhereIssue = false;
@@ -1318,7 +1598,7 @@ export class HireReviewDialog {
     this.panelKeys.clear();
     this.showDraft(r.draft);
     const memory = 'This review stays in this tab only; copy the task before refreshing.';
-    this.setStatus(status.endsWith(memory) ? status : `${status} ${memory}`, true);
+    this.setStatus(this.afterFiling(status.endsWith(memory) ? status : `${status} ${memory}`), true);
     this.render();
     if (!this.dialog.open) this.dialog.showModal();
     this.focusFirst();
@@ -1344,6 +1624,17 @@ export class HireReviewDialog {
       blocker: this.blocker(),
       status: this.statusText,
       error: this.statusError,
+      handoff: this.plan
+        ? {
+            worker: this.plan.worker,
+            mode: this.plan.mode,
+            instruction: this.plan.instruction,
+            sendHome: this.plan.sendHome,
+            op: this.planOp,
+            filed: this.filed?.path ?? null,
+            composed: this.composed(this.filed?.path ?? PATH_PLACEHOLDER),
+          }
+        : null,
     };
   }
 }

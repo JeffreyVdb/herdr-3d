@@ -113,6 +113,35 @@ describe('the inline Handoff button', () => {
     expect(container.querySelector('.tx-sched-btn')).toBeNull();
   });
 
+  // #198: "Hire with handoff" beside it: the same row, the same candidate, its own hook; never without Handoff's.
+  it('“Hire with handoff” is beside Handoff on the same reply, passes the candidate, and goes where Handoff goes', () => {
+    const hires: HandoffCandidate[] = [];
+    const hire = () => [...container.querySelectorAll<HTMLButtonElement>('.tx-hire-handoff-btn')];
+    view = mountTranscript(container, { ...host(), onHireHandoff: (c: HandoffCandidate) => hires.push(c) });
+    view.setItems([it2('u1', 1, 'user'), it2('msg_a#0', 2, 'assistant', 'Done.'), it2('msg_b#0', 3, 'assistant', 'Other')]);
+    view.setHandoff?.(cand('msg_a'));
+    expect(hire()).toHaveLength(1);
+    expect(hire()[0]?.textContent).toBe('Hire with handoff');
+    expect(hire()[0]?.dataset.key).toBe('hire-handoff');
+    expect(rowOf(hire()[0] as HTMLButtonElement)).toBe('msg_a#0');
+    expect(hire()[0]?.parentElement).toBe(buttons()[0]?.parentElement);
+    // The note describes Handoff only (it makes no AI call; this one may).
+    expect(hire()[0]?.getAttribute('aria-describedby')).toBeNull();
+    hire()[0]?.click();
+    expect(hires.map((c) => c.id)).toEqual(['c-msg_a']);
+    expect(pressed).toEqual([]);
+    view.setHandoff?.(cand('msg_b'));
+    expect(hire().map(rowOf)).toEqual(['msg_b#0']);
+    view.setHandoff?.(null);
+    expect(hire()).toHaveLength(0);
+    // No Handoff hook: no Hire with handoff either.
+    view.destroy();
+    view = mountTranscript(container, { ...host(false), onHireHandoff: () => undefined });
+    view.setItems([it2('msg_a#0', 1, 'assistant')]);
+    view.setHandoff?.(cand('msg_a'));
+    expect(hire()).toHaveLength(0);
+  });
+
   it('“Schedule follow-up…” alone without a Handoff hook, and absent without its own', () => {
     view = mountTranscript(container, { ...host(false), onScheduleFollowup: () => undefined });
     view.setItems([it2('msg_a#0', 1, 'assistant')]);

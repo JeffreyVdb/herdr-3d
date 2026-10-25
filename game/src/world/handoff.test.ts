@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentHandoff, HandoffCandidate, UsageCache, Worker } from '../net/protocol';
-import { agentHandoffNote, cacheCopy, cacheState, drawerFill, handoffCommand, handoffRow, HandoffBook, hireTask, newOp, noCandidateWhy, omittedNote, snippetRuns } from './handoff';
+import { agentHandoffNote, cacheCopy, cacheState, drawerFill, handoffCommand, handoffRow, HandoffBook, hireTask, hireWithHandoffTask, HANDOFF_PATH_RESERVE, newOp, noCandidateWhy, omittedNote, snippetRuns } from './handoff';
 
 const claude: HandoffCandidate = { id: 'c1', session: 's', revision: 'r', harness: 'claude', message: 'msg_1', source: 'message', bytes: 5 };
 const codex: HandoffCandidate = { id: 'c2', session: 's', revision: 'r', harness: 'codex', message: 'msg_c', source: 'message', bytes: 5 };
@@ -53,6 +53,16 @@ describe('the rest', () => {
     expect(omittedNote({ ...claude, images: 2 })).toMatch(/2 images/);
     expect(hireTask('/h/f/a.md')).toBe('Read /h/f/a.md and continue the work. Invoke the skills it suggests.');
     expect(newOp()).toMatch(/^ho-[a-z0-9]{20}$/);
+  });
+  it('#198: composes the hire-with-handoff task: the path as it is, the task as written (outer blank lines only trimmed)', () => {
+    expect(hireWithHandoffTask('/h/f/a.md', 'Fix the issue')).toBe('First read the handoff here: /h/f/a.md and then follow these instructions:\n\nFix the issue');
+    // A path with spaces is not quoted or escaped; the task's lines, indentation and inner blank lines stay.
+    const task = '  Fix the issue\n\n- keep   the spacing\n\t- and tabs\n\nThen open a PR.  ';
+    expect(hireWithHandoffTask('/home/u/my handoffs/f 1/a b.md', `\n \n${task}\n\n  \n`)).toBe(`First read the handoff here: /home/u/my handoffs/f 1/a b.md and then follow these instructions:\n\n${task}`);
+    expect(hireWithHandoffTask('/p.md', 'a\r\nb')).toBe('First read the handoff here: /p.md and then follow these instructions:\n\na\r\nb');
+    // Never the handoff's text, never the cabinet's generic task.
+    expect(hireWithHandoffTask('/p.md', 'x')).not.toContain('continue the work');
+    expect(HANDOFF_PATH_RESERVE).toBeGreaterThanOrEqual(512);
   });
   it('keeps the counts and the filed queue', () => {
     const b = new HandoffBook();

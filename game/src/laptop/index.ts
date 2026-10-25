@@ -96,6 +96,8 @@ export interface LaptopHost {
   overview?(): void;
   /** #223: the transcript's inline Handoff button: the filing dialog over the seat (none: no button). */
   handoff?(id: string): void;
+  /** #198: the transcript's inline "Hire with handoff" button: its step 1 over the seat (none: no button). */
+  hireHandoff?(id: string, c: HandoffCandidate): void;
   /** #64 schedules: "Schedule follow-up…" beside it: the schedule form over the seat (none: no button); #66: or its suggestion chip. */
   scheduleFollowup?(id: string, c: HandoffCandidate, s?: ScheduleSuggestion): void;
   /** #176: a link the seated terminal opens (Ctrl/⌘+click): the app's validated opener (https only). */
@@ -374,6 +376,7 @@ export class Laptops {
       ...(host.secrets ? { secrets: host.secrets } : {}), // #108
       secretsDir: () => host.store.promptSecrets.state?.dir ?? null, // #108 round 4: the chips
       ...(host.handoff ? { handoff: (id: string) => host.handoff?.(id) } : {}),
+      ...(host.hireHandoff ? { hireHandoff: (id: string, c: HandoffCandidate) => host.hireHandoff?.(id, c) } : {}),
       ...(host.scheduleFollowup ? { scheduleFollowup: (id: string, c: HandoffCandidate, sug?: ScheduleSuggestion) => host.scheduleFollowup?.(id, c, sug) } : {}),
       repoRefs: host.store.repoRefs, // #247
       repoDiscovery: host.store.repoDiscovery, // #54

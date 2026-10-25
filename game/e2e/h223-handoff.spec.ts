@@ -223,3 +223,121 @@ test('the filing cabinet: E opens it, search, safe preview, delete with a confir
   expect(review.choice.effort).toBe('');
   clean();
 });
+
+// #198: "Hire with handoff" beside Handoff: step 1 (the mode, the new agent's task), step 2 (the reviewed hire), one
+// Hire that files the reply and then hires with the composed task and the filed path. A hire refused after filing keeps
+// the handoff: Hire again hires only.
+test('Hire with handoff: the reply is filed, then one agent is hired with the composed task; a failed hire retries without filing again', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m5', '', `${SIM}&simfail=hire_failed`);
+  const w = demoWorker('Pebble');
+  await sitAtTranscript(page, w);
+  const tx = page.locator('.seat-transcript .tx');
+  expect((await final(page, w.id, '# Loader\n\nThe loader is half done.')).ok).toBe(true);
+  const hireBtn = tx.getByRole('button', { name: 'Hire with handoff', exact: true });
+  await expect(hireBtn).toHaveCount(1);
+  await expect(tx.getByRole('button', { name: 'Handoff', exact: true })).toHaveCount(1);
+  await hireBtn.click();
+  const step1 = page.getByRole('dialog', { name: 'Hire with a handoff from Pebble' });
+  await expect(step1).toBeVisible();
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.handoffDialog()))?.state).toBe('ready');
+  const go = step1.getByRole('button', { name: 'Continue to hire' });
+  await expect(go).toHaveAttribute('aria-disabled', 'true');
+  const task = 'Fix the issue\n\n  - keep the tests green';
+  await step1.getByLabel(/Task for the new agent/).fill(task);
+  await shot(page, 'h198-step1');
+  await go.click();
+  await expect(step1).toBeHidden();
+  const review = page.getByRole('dialog', { name: /^Hire with a handoff at Desk/ });
+  await expect(review).toBeVisible();
+  // Nothing filed yet; the effort is never guessed.
+  expect((await page.evaluate(() => window.__h3d.sent().map((c) => c.t as string))).filter((t) => t === 'worker.handoff' || t === 'worker.hire')).toEqual([]);
+  await expect(review.locator('[data-hook="composed"]')).toContainText('First read the handoff here: ‹the handoff’s path, once it is filed› and then follow these instructions:');
+  await review.locator('label:has(> input[data-key="effort:high"])').click();
+  await expect.poll(async () => {
+    const d = (await page.evaluate(() => window.__h3d.dialog())) as { blocker: string | null } | null;
+    return d ? d.blocker : 'no review';
+  }).toBeNull();
+  await shot(page, 'h198-review');
+  await review.getByRole('button', { name: 'File handoff and hire' }).click();
+  // The first hire fails (simulated): the handoff stays filed, and the status says where.
+  await expect(review.locator('[role="alert"]')).toContainText('The handoff is saved at /home/u/handoff/herdr-3d/');
+  await expect(review.locator('[role="alert"]')).toContainText('Hire again hires only');
+  await shot(page, 'h198-hire-failed');
+  const filed = (await page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.handoff'))) as Array<{ args: Record<string, unknown> }>;
+  expect(filed).toHaveLength(1);
+  expect(filed[0]?.args).toMatchObject({ worker: w.id, mode: 'literal' });
+  const path = ((await page.evaluate(() => window.__h3d.dialog())) as { handoff: { filed: string } }).handoff.filed;
+  expect(path).toMatch(/^\/home\/u\/handoff\/herdr-3d\/.+\.md$/);
+  expect(path).not.toContain('.pending');
+  await review.getByRole('button', { name: /^Hire / }).click();
+  await expect(review).toBeHidden();
+  const hires = (await page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.hire'))) as Array<{ args: Record<string, unknown> }>;
+  expect(hires).toHaveLength(2);
+  for (const h of hires) expect(h.args).toMatchObject({ floor: 'herdr-3d', harness: 'claude', model: 'claude-fable-5-1', effort: 'high', cwd: w.cwd, prompt: `First read the handoff here: ${path} and then follow these instructions:\n\n${task}` });
+  expect(hires[0]?.args.desk_index).not.toBe(w.desk_index);
+  expect((await page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.handoff'))).length).toBe(1);
+  await expect(page.locator('.toast')).toContainText('Hired');
+  await nothingToWorker(page);
+  clean();
+});
+
+// #198 (R3): a reply that went stale after step 1 is refused when Hire files it; "Back to the handoff" shows step 1 again
+// (the latest reply, the task kept), and Continue brings back the hire as it was reviewed: effort, label, folder, desk.
+test('Hire with handoff: a stale reply goes back to step 1, and Continue keeps the reviewed hire settings', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m5', '', SIM);
+  const w = demoWorker('Pebble');
+  await sitAtTranscript(page, w);
+  const tx = page.locator('.seat-transcript .tx');
+  expect((await final(page, w.id, '# Loader\n\nThe loader is half done.')).ok).toBe(true);
+  await tx.getByRole('button', { name: 'Hire with handoff', exact: true }).click();
+  const step1 = page.getByRole('dialog', { name: 'Hire with a handoff from Pebble' });
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.handoffDialog()))?.state).toBe('ready');
+  const task = 'Fix the issue\n\n  - keep the tests green';
+  await step1.getByLabel(/Task for the new agent/).fill(task);
+  await step1.getByRole('button', { name: 'Continue to hire' }).click();
+  const review = page.getByRole('dialog', { name: /^Hire with a handoff at Desk/ });
+  await expect(review).toBeVisible();
+  type Seen = { desk: number; blocker: string | null; choice: { effort: string; model: string; task: string }; form: { label: string; cwd: string } } | null;
+  const seen = async () => (await page.evaluate(() => window.__h3d.dialog())) as Seen;
+  // The human's choices: an effort, a label, another folder.
+  await review.locator('label:has(> input[data-key="effort:high"])').click();
+  await review.locator('[data-key="sec:where"]').click();
+  await review.locator('#review-label').fill('Pip');
+  const folder = `${w.cwd}/loader`;
+  await review.locator('#review-cwd').fill(folder);
+  await review.locator('#review-cwd').press('Tab');
+  await expect.poll(async () => (await seen())?.form).toMatchObject({ label: 'Pip', cwd: folder });
+  const before = (await seen())!;
+  expect(before.choice.effort).toBe('high');
+  // A newer reply: the one step 1 previewed is no longer the latest; filing it is refused and nobody is hired.
+  expect((await final(page, w.id, '# Loader\n\nNow the loader is done.')).ok).toBe(true);
+  await review.getByRole('button', { name: 'File handoff and hire' }).click();
+  await expect(review.locator('[role="alert"]')).toContainText('Nobody was hired');
+  await review.getByRole('button', { name: 'Back to the handoff' }).click();
+  await expect(step1).toBeVisible();
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.handoffDialog()))?.state).toBe('ready');
+  const again = (await page.evaluate(() => window.__h3d.handoffDialog()))!;
+  expect(again.task).toBe(task);
+  expect(again.text).toContain('Now the loader is done.');
+  await step1.getByRole('button', { name: 'Continue to hire' }).click();
+  await expect(review).toBeVisible();
+  // The review as it was reviewed: the effort is not asked again, the label and the folder are the human's.
+  await expect.poll(async () => (await seen())?.blocker).toBeNull();
+  const after = (await seen())!;
+  expect(after.desk).toBe(before.desk);
+  expect(after.choice).toMatchObject({ effort: 'high', model: before.choice.model, task });
+  expect(after.form).toMatchObject({ label: 'Pip', cwd: folder });
+  await review.getByRole('button', { name: 'File handoff and hire' }).click();
+  await expect(review).toBeHidden();
+  const hires = (await page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.hire'))) as Array<{ args: Record<string, unknown> }>;
+  expect(hires).toHaveLength(1);
+  expect(hires[0]?.args).toMatchObject({ effort: 'high', label: 'Pip', cwd: folder, desk_index: before.desk });
+  expect(String(hires[0]?.args.prompt)).toMatch(/^First read the handoff here: \/home\/u\/handoff\/herdr-3d\/.+\.md and then follow these instructions:\n\nFix the issue/);
+  expect((await page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.handoff'))).length).toBe(2);
+  await nothingToWorker(page);
+  clean();
+});

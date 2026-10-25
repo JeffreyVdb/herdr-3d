@@ -8,6 +8,7 @@ import { h, icon, ICON } from './dom';
 import type { DialogHost } from './hire';
 import { failureText } from './messages';
 import type { CommandResult } from '../net/client';
+import type { HandoffPlan, HireCarry } from './handoffFiling';
 import { onReviewKey, reviewButton, type Go } from './secretsFlow';
 
 /**
@@ -31,6 +32,12 @@ import { onReviewKey, reviewButton, type Go } from './secretsFlow';
  * took out; an optional instruction says what to focus on. The bridge writes it with the LLM, never the worker's agent;
  * the job is followed on `Worker.llm_handoff`. A failure keeps the dialog open with the reason; "Try again" is a new
  * request (a new op), and says so.
+ *
+ * #198: "Hire with handoff" opens it with `intent: 'hire'`: step 1 of a hire that follows the handoff. The same three
+ * modes, previews and availability, the same optional instruction (what to put in the handoff), and a required task for
+ * the new agent, kept apart from it: the task never goes to the source worker or the LLM. Nothing is sent here but the
+ * previews: "Continue to hire" hands what was chosen to the host, which opens the hire's review (`HireReviewDialog`),
+ * whose Hire files the handoff and then hires.
  */
 
 export interface HandoffDialogHost extends DialogHost {
@@ -40,6 +47,24 @@ export interface HandoffDialogHost extends DialogHost {
   openCabinet(floor: string, select?: number): void;
   /** #9: opens Settings at a section ("handoff-llm", "ai"). */
   openSettings?(section: string): void;
+  /**
+   * #198: "Continue to hire": the hire's review for this handoff and task (nothing is filed yet). False: it could not
+   * open (no free desk: the host said why), and this dialog stays. `carry`: the hire's choices, back from its review.
+   */
+  continueHire?(plan: HandoffPlan, task: string, seated: boolean, carry?: HireCarry): boolean;
+}
+
+/** #198: what the dialog is for: filing a handoff, or step 1 of "Hire with handoff". */
+export type HandoffIntent = 'file' | 'hire';
+
+/** #198: step 1 again (back from the hire's review): what was chosen, kept. */
+export interface HandoffHirePrefill {
+  mode: HandoffMode;
+  task: string;
+  instruction: string;
+  sendHome: boolean;
+  /** The hire's choices as reviewed: handed back on Continue, untouched. */
+  carry?: HireCarry;
 }
 
 type State = 'none' | 'loading' | 'ready' | 'filing' | 'pending' | 'filed' | 'failed';
@@ -79,6 +104,9 @@ export interface HandoffDialogSummary {
   coverage: string;
   redactions: string;
   job: LLMHandoff | null;
+  /** #198 */
+  intent: HandoffIntent;
+  task: string;
 }
 
 /** #9: how long after an LLM job failed the dialog reopens on it (later: a fresh dialog). */
@@ -98,6 +126,9 @@ export class HandoffDialog {
   private readonly sendBox = h('input', { type: 'checkbox', id: 'ho-send-home', 'data-key': 'send-home', 'aria-describedby': 'ho-send-hint' }) as HTMLInputElement;
   /** #224: the instruction the agent's handoff skill gets (blank: its default). */
   private readonly instrEl = h('textarea', { id: 'ho-instruction', 'data-key': 'instruction', rows: '2', maxlength: '4096', placeholder: 'summarize the conversation', 'aria-describedby': 'ho-instruction-hint' }) as HTMLTextAreaElement;
+  /** #198: the new agent's task (hire intent only): never the instruction, never sent from here. */
+  private readonly taskEl = h('textarea', { id: 'ho-task', 'data-key': 'task', rows: '4', required: 'true', 'aria-required': 'true', placeholder: 'e.g. Fix the issue', 'aria-describedby': 'ho-task-hint' }) as HTMLTextAreaElement;
+  private intent: HandoffIntent = 'file';
   private mode: HandoffMode = 'literal';
   /** #224: the agent preview, and the request this dialog follows. */
   private agentPv: HandoffPreviewAck | null = null;
@@ -123,6 +154,8 @@ export class HandoffDialog {
   private gen = 0;
   /** Opened over the laptop you sit at (the seat stays). */
   private seated = false;
+  /** #198: the hire's choices, back from its review (`prefill.carry`): Continue hands them back. */
+  private carry: HireCarry | null = null;
 
   constructor(
     parent: HTMLElement,
@@ -135,7 +168,9 @@ export class HandoffDialog {
     backdropPolicy(this.dialog, 'none');
     this.sendBox.addEventListener('change', () => this.renderActions());
     // #108: the instruction's review on purpose (Ctrl/⌘+Shift+X, with the switch on), then the request.
-    onReviewKey(this.instrEl, () => this.host.secrets, () => void (this.mode === 'llm' ? this.writeLlm(true) : this.mode === 'agent' ? this.ask(true) : null));
+    // #198: in the hire's step 1 nothing is sent from here: the instruction is reviewed when the hire's review files it.
+    onReviewKey(this.instrEl, () => (this.intent === 'hire' ? undefined : this.host.secrets), () => void (this.mode === 'llm' ? this.writeLlm(true) : this.mode === 'agent' ? this.ask(true) : null));
+    this.taskEl.addEventListener('input', () => this.renderActions());
     host.secrets?.onChange(() => {
       if (this.dialog.open) this.renderActions();
     });
@@ -155,8 +190,11 @@ export class HandoffDialog {
     if (this.dialog.open) this.dialog.close();
   }
 
-  /** Opens for a worker's latest completed reply (`c`: the one its button showed; else its current one). */
-  open(workerId: string, opts: { seated?: boolean; candidate?: HandoffCandidate } = {}): void {
+  /**
+   * Opens for a worker's latest completed reply (`c`: the one its button showed; else its current one). #198 `intent:
+   * 'hire'`: step 1 of "Hire with handoff" (`prefill`: back from its review, what was chosen then).
+   */
+  open(workerId: string, opts: { seated?: boolean; candidate?: HandoffCandidate; intent?: HandoffIntent; prefill?: HandoffHirePrefill } = {}): void {
     const v = this.host.store.workerView(workerId);
     if (!v) return;
     this.id = workerId;
@@ -164,8 +202,23 @@ export class HandoffDialog {
     this.floorName = this.host.store.floorName(v.worker.floor);
     this.seated = opts.seated === true;
     this.ack = null;
-    this.sendBox.checked = false;
-    this.instrEl.value = '';
+    this.intent = opts.intent ?? 'file';
+    const pre = this.intent === 'hire' ? opts.prefill : undefined;
+    this.sendBox.checked = pre?.sendHome === true;
+    this.instrEl.value = pre?.instruction ?? '';
+    this.taskEl.value = pre?.task ?? '';
+    this.carry = pre?.carry ?? null;
+    if (this.intent === 'hire') {
+      // A new handoff for the hire: a request of this worker that runs or failed is the filing dialog's to show.
+      this.req = null;
+      this.job = null;
+      this.mode = 'literal';
+      this.start(opts.candidate ?? candidateOf(v.worker));
+      if (pre && pre.mode !== 'literal') this.setMode(pre.mode);
+      if (!this.dialog.open) this.dialog.showModal();
+      this.focusFirst();
+      return;
+    }
     // A request of this worker that runs or failed: show it; else the literal save, the default.
     const a = v.worker.agent_handoff;
     const j = v.worker.llm_handoff;
@@ -433,6 +486,11 @@ export class HandoffDialog {
   }
 
   private focusFirst(): void {
+    // #198: the task is what step 1 needs from you; once written, the button.
+    if (this.intent === 'hire' && !this.taskEl.value.trim() && this.state !== 'none') {
+      this.taskEl.focus();
+      return;
+    }
     const k =
       this.state === 'ready' && !this.stale && (this.mode === 'literal' || (this.mode === 'agent' && this.agentPv?.agent?.can_ask) || (this.mode === 'llm' && this.llmPv?.llm?.ready))
         ? 'file'
@@ -458,7 +516,7 @@ export class HandoffDialog {
     const sub = [this.floorName, v ? `Desk ${v.desk + 1}` : null, v?.worker.branch ?? null].filter(Boolean).join(' · ');
     this.head.replaceChildren(
       h('div', { class: 'dd-plate dd-plate--folder', 'aria-hidden': 'true' }, icon(ICON.folder)),
-      h('div', { class: 'dd-titles' }, h('h2', { id: 'ho-title' }, `File a handoff from ${this.name}`), h('p', { id: 'ho-sub' }, sub)),
+      h('div', { class: 'dd-titles' }, h('h2', { id: 'ho-title' }, this.intent === 'hire' ? `Hire with a handoff from ${this.name}` : `File a handoff from ${this.name}`), h('p', { id: 'ho-sub' }, sub)),
       h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close)),
     );
     this.body.replaceChildren(...this.bodyNodes());
@@ -509,7 +567,20 @@ export class HandoffDialog {
         ),
       );
     }
+    // #198: the step's own field, right under the choice of how the handoff is made (and its way to Settings).
+    if (this.intent === 'hire') out.push(this.taskNode());
     return out;
+  }
+
+  /** #198: the new agent's task: required, and apart from the instruction (which says what goes in the handoff). */
+  private taskNode(): Node {
+    return h(
+      'div',
+      { class: 'dd-field ho-task' },
+      h('label', { for: 'ho-task' }, 'Task for the new agent ', h('span', { class: 'dd-required' }, 'required')),
+      this.taskEl,
+      h('p', { class: 'field-hint', id: 'ho-task-hint' }, 'The new agent first reads the filed handoff, then does this. It goes only to the new agent, never to ', this.name, ' or the LLM.'),
+    );
   }
 
   private bodyNodes(): Node[] {
@@ -573,7 +644,9 @@ export class HandoffDialog {
         h(
           'p',
           { class: 'dd-base', id: 'ho-send-hint' },
-          p.can_send_home ? 'Only once the handoff is filed; the worktree is kept. If it can’t go then, it stays and you are told why.' : `Not now: ${p.send_home_blocked ?? 'it can’t be sent home'}.`,
+          p.can_send_home
+            ? `Only once the handoff is filed; the worktree is kept. If it can’t go then, it stays and you are told why.${this.intent === 'hire' ? ' The new agent gets another desk either way.' : ''}`
+            : `Not now: ${p.send_home_blocked ?? 'it can’t be sent home'}.`,
         ),
       );
   }
@@ -767,6 +840,10 @@ export class HandoffDialog {
       );
       return;
     }
+    if (this.intent === 'hire') {
+      this.hireActions();
+      return;
+    }
     const settled = (this.mode === 'agent' && this.state === 'failed' && this.req) || (this.mode === 'llm' && this.state === 'failed' && this.job);
     const cancel = h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, this.state === 'none' || this.state === 'pending' || settled ? 'Close' : 'Cancel');
     if (this.mode === 'agent') {
@@ -785,6 +862,58 @@ export class HandoffDialog {
     const label = filing ? 'Filing…' : this.sendBox.checked ? 'File, then send home' : 'File handoff';
     const file = h('button', { class: 'btn btn--primary', 'data-key': 'file', 'aria-disabled': why || filing ? 'true' : null, title: why || null, onclick: () => void this.file() }, icon(ICON.folder), label);
     this.actions.replaceChildren(cancel, file);
+  }
+
+  /** #198: why "Continue to hire" is off ("" when it is not): the chosen mode's own reason, else the missing task. */
+  private hireWhy(): string {
+    const m = this.mode;
+    if (this.state === 'none') return this.why || 'There is nothing to hand off in this mode';
+    if (this.state === 'loading') return m === 'literal' ? 'Reading the reply…' : m === 'agent' ? 'Looking up its handoff skill…' : 'Reading the conversation…';
+    if (this.stale) return m === 'llm' ? 'Another turn finished: read it again first' : 'The reply changed: show the latest one first';
+    if (m === 'literal' && (!this.preview || !this.cand)) return 'The reply could not be read';
+    if (m === 'agent') {
+      const a = this.agentPv?.agent;
+      if (!a) return 'The agent can’t be asked';
+      if (!a.can_ask) return a.cannot_ask ?? 'It can’t be asked now';
+    }
+    if (m === 'llm') {
+      const l = this.llmPv?.llm;
+      if (!l || !this.cand) return 'The preview could not be read';
+      if (!l.ready) return l.unavailable ?? 'It can’t be written now';
+    }
+    if (!this.taskEl.value.trim()) return 'Write the task for the new agent';
+    return '';
+  }
+
+  /** #198: step 1's actions: nothing here sends a handoff; Continue opens the hire's review. */
+  private hireActions(): void {
+    const cancel = h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, 'Cancel');
+    const why = this.hireWhy();
+    const go = h('button', { class: 'btn btn--primary', 'data-key': 'continue', 'aria-disabled': why ? 'true' : null, title: why || null, onclick: () => this.continueHire() }, 'Continue to hire');
+    const had = document.activeElement instanceof HTMLElement && this.actions.contains(document.activeElement) ? document.activeElement.dataset.key : null;
+    this.actions.replaceChildren(cancel, go);
+    if (had) this.actions.querySelector<HTMLElement>(`[data-key="${had}"]`)?.focus();
+  }
+
+  /** #198: hands what step 1 chose to the hire's review; nothing is filed yet. */
+  private continueHire(): void {
+    const why = this.hireWhy();
+    if (why) {
+      this.setStatus(`${why}.`.replace(/\.\.$/u, '.'), true);
+      if (!this.taskEl.value.trim() && this.state === 'ready') this.taskEl.focus();
+      return;
+    }
+    const plan: HandoffPlan = {
+      worker: this.id,
+      name: this.name,
+      floorName: this.floorName,
+      mode: this.mode,
+      candidate: this.mode === 'agent' ? null : this.cand,
+      instruction: this.mode === 'literal' ? '' : this.instrEl.value.trim(),
+      sendHome: this.sendBox.checked && !this.sendBox.disabled,
+      ...(this.mode === 'llm' && this.llmPv?.llm?.model ? { llmModel: this.llmPv.llm.model } : {}),
+    };
+    if (this.host.continueHire?.(plan, this.taskEl.value, this.seated, this.carry ?? undefined)) this.close();
   }
 
   /** #224: Ask (then send home); a running request can be cancelled, a failed one asked again (a new request). */
@@ -1075,6 +1204,8 @@ export class HandoffDialog {
       coverage: this.body.querySelector('[data-hook="ho-coverage"]')?.textContent ?? '',
       redactions: this.body.querySelector('[data-hook="ho-redactions"]')?.textContent ?? '',
       job: this.job,
+      intent: this.intent,
+      task: this.taskEl.value,
     };
   }
 }

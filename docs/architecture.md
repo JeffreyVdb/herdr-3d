@@ -509,6 +509,10 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   overlay (E at the floor's filing cabinet, `ui/cabinet.ts`; sanitised Markdown, Copy path, Delete, Hire from handoff
   through the reviewed hire), the drawers filling with the floor's count and the worker's walk to the cabinet with a
   folder (the M6c delivery walk, `world/route.deskToCabinetRoute`).
+  #198: "Hire with handoff" beside the inline button: the filing dialog in its hire intent (the mode, the instruction,
+  the new agent's task), then the reviewed hire, whose one Hire files the handoff (`ui/handoffFiling.ts`: one op,
+  followed on the source worker until filed, its path read back with `handoff.get`) and hires with
+  `world/handoff.hireWithHandoffTask(path, task)`; game only, the bridge is unchanged (decisions.md, 2026-10-25).
 - **Ask the agent** (#224, part 2 of #11; `protocol.md` "Ask the agent"): `worker.handoff` mode `agent` and the composer's
   exact `/handoff [instruction]` (read in `startPrompt` before translation) ask an idle or done worker's own agent to
   write a handoff with its `handoff` skill. `internal/server/agenthandoff.go` owns the flow: the catalog lists the skill

@@ -85,6 +85,8 @@ export interface TranscriptRenderHost {
   followupDrafts?: { get(turn: string): FollowupDraft | null; set(turn: string, d: FollowupDraft): void; clear(turn: string): void };
   /** #223: the inline Handoff button on the worker's latest completed reply was pressed (none: no button). */
   onHandoff?(c: HandoffCandidate): void;
+  /** #198: "Hire with handoff" beside it: a handoff, then a new agent with it (none: no button). */
+  onHireHandoff?(c: HandoffCandidate): void;
   /**
    * #64 schedules: "Schedule follow-up…" beside it, on the same reply (none: no button). #66: with `s`, the suggestion
    * chip that stands in its place was clicked.
@@ -297,6 +299,8 @@ const HL_CONFIG: Config = {
 
 /** #223: ids for the Handoff button's note. */
 let handoffIds = 0;
+/** #198: the "Hire with handoff" button's person and plus. */
+const HIRE_PERSON = '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 19.5c.8-3.4 3.4-5.2 6.5-5.2s5.7 1.8 6.5 5.2M18.5 7.5v6M15.5 10.5h6"/>';
 /** #64 schedules: the follow-up button's clock. */
 const CLOCK = '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>';
 
@@ -1759,6 +1763,15 @@ class Transcript implements TranscriptView {
             { class: 'tx-handoff-btn', 'data-key': 'handoff', 'aria-describedby': note, title: 'File this reply in the cabinet, exactly as written', onclick: () => this.host.onHandoff?.(c) },
             icon(ICON.folder),
             'Handoff',
+          )
+        : null,
+      // #198: the same candidate, the same row: a handoff, then a new agent that reads it and does your task.
+      this.host.onHandoff && this.host.onHireHandoff
+        ? h(
+            'button',
+            { class: 'tx-hire-handoff-btn', 'data-key': 'hire-handoff', title: 'File a handoff from this conversation, then hire a new agent that reads it and does your task', onclick: () => this.host.onHireHandoff?.(c) },
+            icon(HIRE_PERSON),
+            'Hire with handoff',
           )
         : null,
       // #64 schedules: a fresh worker later, with this reply attached as a literal handoff (the form files it on Save).
