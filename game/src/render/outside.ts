@@ -56,6 +56,9 @@ export const STREET = {
 /** Window colours as the city view draws them: lit when running, dark when asleep. */
 export const WINDOW = { lit: 0xcfeaff, litStrip: 0xfff2c4, dark: 0x1d2447, darkStrip: 0x2b2f45 };
 
+/** How far the slab band projects beyond the facade skin; the landing meets its outer edge. */
+const SLAB_OVERHANG = 0.06;
+
 export interface BuildingLook {
   name: string;
   tint: number;
@@ -185,7 +188,7 @@ export class OutsideView {
       const y0 = floorY(s);
       const y1 = y0 + ROOM_HEIGHT;
       // Slab band under the floor: a ring standing a little proud of the skin.
-      this.ring(b, y0 - SLAB, y0, 0.06, band);
+      this.ring(b, y0 - SLAB, y0, SLAB_OVERHANG, band);
       // Skin on the four sides, cut around the windows and the door.
       const skins: Array<[Opening['wall'], Box3, 0 | 2, string]> = [
         ['north', { min: [-FACE, y0, -FACE], max: [W + FACE, y1, -T] }, 0, 'pz'],
@@ -211,7 +214,7 @@ export class OutsideView {
     b.box(W + T, 0, -T, W + FACE, y1, D + T, base, 'nx');
     // Roof: the top slab band, a parapet, the roof deck, a rooftop box.
     const top = floorY(n - 1) + ROOM_HEIGHT;
-    this.ring(b, top, top + SLAB, 0.06, band);
+    this.ring(b, top, top + SLAB, SLAB_OVERHANG, band);
     const ry = top + SLAB;
     const par = 0.55;
     b.box(-FACE - 0.06, ry, -FACE - 0.06, W + FACE + 0.06, ry + par, -FACE + 0.2, reveal);
@@ -296,13 +299,17 @@ export class OutsideView {
       const y = floorY(s);
       const yh = y - RISERS * RISE;
       // Landing and half landing decks, with slats (a grating) and brackets to the wall.
-      b.box(x0, y - 0.08, e.landing.z0, x1, y, e.landing.z1, deck);
+      // The slab band already supplies the last strip of floor. Sharing its top face would flicker.
+      const landingX1 = -FACE - SLAB_OVERHANG;
+      b.box(x0, y - 0.08, e.landing.z0, landingX1, y, e.landing.z1, deck);
+      // The slab band stops at the outside of the office wall; bridge its doorway to the room's floor.
+      b.box(-WALL_T, y - 0.08, e.door.z0, 0, y, e.door.z1, deck);
       b.box(x0, yh - 0.08, e.half.z0, x1, yh, e.half.z1, deck);
-      for (const [yy, z0, z1] of [
-        [y, e.landing.z0, e.landing.z1],
-        [yh, e.half.z0, e.half.z1],
+      for (const [yy, z0, z1, deckX1] of [
+        [y, e.landing.z0, e.landing.z1, landingX1],
+        [yh, e.half.z0, e.half.z1, x1],
       ] as const) {
-        for (let z = z0 + 0.25; z < z1 - 0.1; z += 0.3) b.box(x0 + 0.05, yy, z - 0.02, x1 - 0.05, yy + 0.012, z + 0.02, 0x3a4257, 'ny');
+        for (let z = z0 + 0.25; z < z1 - 0.1; z += 0.3) b.box(x0 + 0.05, yy, z - 0.02, deckX1 - 0.05, yy + 0.012, z + 0.02, 0x3a4257, 'ny');
         this.beam(b, v(x1, yy - 0.9, (z0 + z1) / 2), v(x0 + 0.3, yy - 0.08, (z0 + z1) / 2), 0.08, 0.08, deck);
       }
       // Landing rails: west and south edges.

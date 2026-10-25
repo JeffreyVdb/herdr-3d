@@ -15,5 +15,11 @@ test('fire-escape frame close-ups from the room and threshold', { tag: '@visual'
   await page.evaluate((z) => window.__h3d.setPose({ x: 0.12, z, yaw: 0.45, pitch: 0.25 }), d.z0 + 0.25);
   await frames(page, 8);
   await shot(page, 'door-frame-jamb');
+  // Look down from the landing at the sill and facade band: the reported gap and flickering strip.
+  for (const [name, x, yaw] of [['outside', -0.65, -Math.PI / 2 + 0.35], ['inside', 0.35, Math.PI / 2 - 0.35]] as const) {
+    await page.evaluate(({ x, yaw, z }) => window.__h3d.setPose({ x, z, yaw, pitch: -1.1 }), { x, yaw, z: (d.z0 + d.z1) / 2 });
+    await frames(page, 45);
+    await shot(page, `door-threshold-${name}`);
+  }
   clean();
 });

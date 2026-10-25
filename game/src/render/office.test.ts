@@ -3,6 +3,7 @@ import * as THREE from 'three/webgpu';
 import { describe, expect, it, vi } from 'vitest';
 import type { Floor, Worker } from '../net/protocol';
 import { DROP_S, FALL_S, PACK_S, TAKE_LAPTOP_AT } from '../world/arrival';
+import { buildingPlan, floorY } from '../world/building';
 import type { V3 } from '../world/collide';
 import { deskKit } from '../world/deskKit';
 import { floorLayout } from '../world/layout';
@@ -12,6 +13,7 @@ import { DeskSet } from './desks';
 import { lookOf, NOON } from './daylook';
 import { STICKER_MARK, type StickerLogo } from './deskArt';
 import { memberOf, OfficeView } from './office';
+import { OutsideView } from './outside';
 
 const floor: Floor = { session: 'top', state: 'running', building: 'b1', index: 0, desks: 8 };
 const worker = (id: string, over: Partial<Worker>): Worker => ({ id, session: 'top', workspace_id: `ws-${id}`, label: `label-${id}`, status: 'idle', ...over });
@@ -32,6 +34,45 @@ function world(): WorldStore {
 }
 
 describe('fire-escape doorway surfaces', () => {
+  it.each(['continuous floor', 'no overlapping floor faces'] as const)('%s across the landing and threshold', (check) => {
+    const office = new OfficeView(world().floorView('top')!, { shadows: false });
+    const plan = buildingPlan(office.layout, 3, office.layout.fireDoor);
+    const outside = new OutsideView(plan, office.layout.openings, {
+      name: 'Work', tint: 0x6699bb,
+      floors: [0, 1, 2].map((s) => ({ id: `floor-${s}`, name: `Floor ${s}`, asleep: false })),
+    });
+    try {
+      office.setDoor(1);
+      const d = office.layout.fireDoor;
+      const failures: string[] = [];
+      for (const storey of [0, 2]) {
+        outside.setLoaded(storey);
+        outside.group.position.y = -floorY(storey);
+        office.root.updateMatrixWorld(true);
+        outside.group.updateMatrixWorld(true);
+        // Downward looks across the whole opening, including where the facade meets the landing.
+        // Off-grid samples avoid triangle seams, which can legitimately return two identical hits.
+        for (const x of [-0.4, -0.31, -0.28, -0.24, -0.19, -0.1, -0.01, 0.01, 0.2]) {
+          for (const z of [d.z0 + 0.153, (d.z0 + d.z1) / 2, d.z1 - 0.173]) {
+            const hits = new THREE.Raycaster(new THREE.Vector3(x, 0.5, z), new THREE.Vector3(0, -1, 0), 0, 1)
+              .intersectObjects([office.root, outside.group], true);
+            const at = `storey=${storey}, x=${x.toFixed(3)}, z=${z.toFixed(3)}`;
+            if (check === 'continuous floor') {
+              if (!hits.length || Math.abs(hits[0]!.point.y) > 0.03) failures.push(at);
+            } else if (hits.length) {
+              const nearest = hits.filter((hit) => Math.abs(hit.distance - hits[0]!.distance) < 1e-5);
+              if (nearest.length > 1) failures.push(`${at}: ${nearest.map((hit) => hit.object.name).join(', ')}`);
+            }
+          }
+        }
+      }
+      expect(failures.length, failures.slice(0, 5).join('\n')).toBe(0);
+    } finally {
+      office.dispose();
+      outside.dispose();
+    }
+  });
+
   it.each(['north jamb', 'south jamb', 'lintel'] as const)('%s has no competing wall and trim faces', (edge) => {
     const office = new OfficeView(world().floorView('top')!, { shadows: false });
     try {
