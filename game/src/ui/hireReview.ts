@@ -345,6 +345,8 @@ export class HireReviewDialog {
     this.plan = seed?.handoff ?? null;
     this.planOp = this.plan ? newOp() : '';
     this.filed = null;
+    // An earlier submission's filing (already stopped by the close) ends here too: nothing is hired from it.
+    this.filing?.stop();
     this.filing = null;
     this.hireTries = 0;
     this.choice = seed?.choice ?? fromInterpretation(interp, this.host.store.hireOptions);
@@ -1343,7 +1345,7 @@ export class HireReviewDialog {
   /** #198: a message after the handoff was filed says where it is, and that Hire now hires only. */
   private afterFiling(msg: string, filed = this.filed): string {
     if (!filed || !this.plan) return msg;
-    return `The handoff is saved at ${filed.path}. ${msg} Hire again hires only: the handoff is not made again.`.replace(/\s+/gu, ' ');
+    return `The handoff is saved at ${filed.path}. ${msg.trim()} Hire again hires only: the handoff is not made again.`;
   }
 
   /** A hire waited for here ended: this dialog, or (closed meanwhile) a toast, says how; the go-to on success. */
@@ -1481,6 +1483,7 @@ export class HireReviewDialog {
     this.plan = r.plan;
     this.planOp = r.planOp;
     this.filed = r.filed;
+    this.filing?.stop();
     this.filing = null;
     this.modelQuery = '';
     this.refetching = false;
