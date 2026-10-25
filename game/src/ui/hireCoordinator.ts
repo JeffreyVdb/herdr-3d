@@ -1,3 +1,5 @@
+import { hireFailure, recoveryText } from '../world/startup';
+import type { HireFailure } from '../net/protocol';
 import type { CommandResult } from '../net/client';
 import type { CommandArgs, HireAck } from '../net/protocol';
 import type { FailedImage, ResolveResult } from './composer/draft';
@@ -95,7 +97,7 @@ export type HireOutcome =
   /** The first task could not be made (an image did not upload, too long, a held refusal): `worker.hire` was not sent. */
   | { kind: 'not_sent'; result: NotResolved; message: string }
   /** `worker.hire` was refused (or never sent: offline). Nobody was hired. */
-  | { kind: 'failed'; code: string; message: string }
+  | { kind: 'failed'; code: string; message: string; data?: HireFailure }
   /** No answer (timeout, dropped connection): it may have happened. */
   | { kind: 'unknown'; code: 'timeout' | 'disconnected'; message: string };
 
@@ -133,7 +135,8 @@ export function unknownText(desk: string, floor: string, code: 'timeout' | 'disc
 }
 
 /** The first task that never reached a worker that is there (`prompted: false`). */
-export function notPromptedText(ack: Pick<HireAck, 'prompt_error'>): string {
+export function notPromptedText(ack: Pick<HireAck, 'prompt_error' | 'delivery'>): string {
+  if (ack.delivery === 'unknown') return 'Prompt delivery is uncertain. Check the worker’s conversation before sending again. Your task is kept.';
   return `The first task was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself (P); the text stays in this desk’s hire dialog.`;
 }
 
@@ -141,7 +144,8 @@ export function notPromptedText(ack: Pick<HireAck, 'prompt_error'>): string {
  * The same for a background hire: the dialog is gone and the desk taken, so the task is in the worker's Prompt (P) note
  * (`held`), or (that note already had something in it) nowhere to point to.
  */
-export function notPromptedBackgroundText(ack: Pick<HireAck, 'prompt_error'>, held: boolean): string {
+export function notPromptedBackgroundText(ack: Pick<HireAck, 'prompt_error' | 'delivery'>, held: boolean): string {
+  if (ack.delivery === 'unknown') return 'Prompt delivery is uncertain. Check the worker’s conversation before sending again. Your task is kept.';
   return `The first task was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself (P)${held ? '; the task is in their prompt.' : '.'}`;
 }
 
@@ -177,7 +181,7 @@ export class HireCoordinator {
     if (snap.background) op.release = this.host.reserve(snap.floor, snap.desk);
     op.done = this.run(op, on).then(
       (o) => this.finish(op, o),
-      (e: unknown) => this.finish(op, { kind: 'failed', code: 'internal', message: String(e) }),
+      (e: unknown) => this.finish(op, op.phase === 'hiring' ? { kind: 'unknown', code: 'disconnected', message: 'No answer about prompt delivery.' } : { kind: 'failed', code: 'internal', message: String(e) }),
     );
     return op;
   }
@@ -215,7 +219,8 @@ export class HireCoordinator {
       return ack?.prompted === false ? { kind: 'not_prompted', ack, revision, ...(args.prompt ? { prompt: args.prompt } : {}) } : { kind: 'hired', ack, revision };
     }
     if (r.code === 'timeout' || r.code === 'disconnected') return { kind: 'unknown', code: r.code, message: r.message };
-    return { kind: 'failed', code: r.code, message: r.message };
+    const data = hireFailure(r.data);
+    return { kind: 'failed', code: r.code, message: data ? recoveryText(r.message, data) : r.message, ...(data ? { data } : {}) };
   }
 
   private finish(op: Operation, o: HireOutcome): HireOutcome {

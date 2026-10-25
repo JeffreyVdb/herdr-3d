@@ -686,6 +686,17 @@ func (s *Store) AuditBegin(ctx context.Context, client, cmd string, args json.Ra
 	return res.LastInsertId()
 }
 
+// AuditProgress retains a safe intermediate report without settling the operation.
+// Startup evidence is durable before rollback removes the launch artifacts.
+func (s *Store) AuditProgress(ctx context.Context, id int64, result any) error {
+	b, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE audit_log SET result = ? WHERE id = ? AND done_at IS NULL`, string(b), id)
+	return err
+}
+
 // AuditEnd completes a row from AuditBegin with the command's outcome and
 // result (stored as JSON; nil for none).
 func (s *Store) AuditEnd(ctx context.Context, id int64, cmdErr error, result any) error {

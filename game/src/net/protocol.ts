@@ -262,7 +262,22 @@ export interface Worker {
  * `blocked`, if it says so, is only an async question's (attached, the running turn asked a question Codex still holds,
  * no approval or blocking question open): the worker goes on working and takes prompts.
  */
+export interface MCPDiagnostic {
+  name: string;
+  stage: 'starting' | 'ready' | 'failed' | 'cancelled';
+  category?: string;
+  source: string;
+}
+export interface HireFailure {
+  cwd?: string;
+  codex_profile?: string;
+  operation: string;
+  delivery: 'not_sent' | 'accepted' | 'unknown';
+  retryable: boolean;
+  startup?: MCPDiagnostic[];
+}
 export interface WorkerCodex {
+  startup?: MCPDiagnostic[];
   mode: 'shared' | 'legacy';
   server?: 'starting' | 'running' | 'down' | 'stopped';
   note?: string;
@@ -806,6 +821,7 @@ export type WorldEvent =
   | WhiteboardUpdated;
 
 export interface ErrorMessage {
+  data?: unknown;
   t: 'error';
   req_id?: string;
   code: string;
@@ -875,6 +891,8 @@ export interface HireCapacity {
 
 /** M4: `worker.hire` ack. */
 export interface HireAck {
+  delivery?: 'not_sent' | 'accepted' | 'unknown';
+  startup?: MCPDiagnostic[];
   id: string;
   workspace_id: string;
   branch?: string;

@@ -32,6 +32,10 @@ function mount(s: Record<string, unknown> | null, answer?: (args: Record<string,
 }
 
 describe('the shared Codex server switch (#155)', () => {
+  it('keeps an optional MCP failure visible while the worker remains usable', () => {
+    expect(codexNotice({ codex: { mode: 'shared', server: 'running', startup: [{ name: 'code-intel', stage: 'failed', category: 'timeout', source: 'thread_status' }] } })?.text).toContain('code-intel timed out');
+    expect(codexNotice({ codex: { mode: 'shared', server: 'running', startup: [{ name: 'code-intel', stage: 'ready', source: 'notification' }] } })).toBeNull();
+  });
   it('is not there for a bridge without it, and is off by default once it is', () => {
     const m = mount(null);
     expect(m.root.hidden).toBe(true);

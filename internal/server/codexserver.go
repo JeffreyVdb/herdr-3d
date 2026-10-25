@@ -25,6 +25,7 @@ import (
 
 	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/mcpdiag"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/version"
@@ -150,6 +151,7 @@ const codexProfileTimeout = 15 * time.Second
 
 // codexState is the hub's part of the feature (hub goroutine).
 type codexState struct {
+	startup  map[string][]proto.MCPDiagnostic
 	enabled  bool
 	policy   codexapp.VersionPolicy
 	last     string                          // the switch as last published
@@ -193,7 +195,7 @@ type codexWatch struct {
 
 // initCodex loads the switch and the launches (NewHub).
 func (h *Hub) initCodex(ctx context.Context) error {
-	h.cx = codexState{launches: map[string]store.CodexLaunch{}, server: map[string]string{},
+	h.cx = codexState{startup: map[string][]proto.MCPDiagnostic{}, launches: map[string]store.CodexLaunch{}, server: map[string]string{},
 		watches: map[string]*codexWatch{}, busy: map[string]bool{}, asking: map[string]bool{}, questions: map[string]*codexapp.Questions{},
 		sends: map[string]map[sendKey]store.CodexAsyncSend{}}
 	en, _, err := h.st.LoadCodexServerSettings(ctx)
@@ -301,7 +303,7 @@ func (h *Hub) codexWorkerView(id string) *proto.WorkerCodex {
 	if !ok {
 		return nil
 	}
-	v := &proto.WorkerCodex{Mode: l.Mode, Note: l.Note}
+	v := &proto.WorkerCodex{Mode: l.Mode, Note: l.Note, Startup: h.cx.startup[id]}
 	profileView(v, l) // #139
 	if l.Mode == store.CodexShared {
 		v.Server = h.cx.server[id]
@@ -377,6 +379,7 @@ func (h *Hub) noteCodexThread(ctx context.Context, id, thread string) {
 			return
 		}
 	}
+	delete(h.cx.startup, id)
 	delete(h.cx.questions, id) // #156: the old thread's questions go with it
 	h.forgetSends(ctx, id)
 	h.updateLaunch(ctx, id, func(l *store.CodexLaunch) { l.Thread = thread })
@@ -516,6 +519,7 @@ func (h *Hub) codexEvent(ctx context.Context, id string, cw *codexWatch, e codex
 		cw.attached = true
 		h.codexJoined(ctx, id, cw, e.Thread)
 		h.codexChildrenJoined(id, cw)
+		h.reconcileStartup(ctx, id, cw)
 	case codexapp.EvNotification:
 		h.codexNotification(ctx, id, cw, e.Method, e.Params)
 	case codexapp.EvServerRequest:
@@ -540,6 +544,32 @@ func (h *Hub) codexEvent(ctx context.Context, id string, cw *codexWatch, e codex
 		fn(e)
 	}
 	h.refreshCodex(id)
+}
+
+// Rejoining after startup (or a bridge restart) recovers the worker's
+// existing MCP warnings without starting any connections of its own.
+func (h *Hub) reconcileStartup(ctx context.Context, id string, cw *codexWatch) {
+	r, ok := cw.w.(interface {
+		StartupDiagnostics(context.Context) ([]mcpdiag.Diagnostic, error)
+	})
+	if !ok {
+		return
+	}
+	h.wg.Go(func() {
+		cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		rows, err := r.StartupDiagnostics(cctx)
+		if err != nil {
+			return
+		}
+		_ = h.do(ctx, func(context.Context) {
+			if h.cx.watches[id] != cw || !cw.attached {
+				return
+			}
+			h.cx.startup[id] = mcpdiag.Merge(h.cx.startup[id], rows...)
+			h.refreshCodex(id)
+		})
+	})
 }
 
 // codexChildrenJoined tells #27's observer the join is subscribed (on
@@ -689,6 +719,7 @@ func (h *Hub) forgetCodex(ctx context.Context, id string) {
 	if err := h.st.ForgetCodexLaunch(ctx, id); err != nil {
 		h.log.Error("forgetting the codex launch failed", "worker", id, "err", err)
 	}
+	delete(h.cx.startup, id)
 	delete(h.cx.questions, id)
 	h.forgetSends(ctx, id)
 	delete(h.cx.launches, id)
@@ -768,7 +799,33 @@ func (h *Hub) hireShared(ctx context.Context, op *hireOp, pane, dir string, a he
 	profileReport(rep, sl.rec)
 	rep.step("started the codex server (pid %d) from %s", sl.rec.ServerPID, pane)
 	l := launchOf(sl.rec)
+	// Attach before the TUI creates its thread. Optional for fixture hosts.
+	if observer, ok := h.opts.CodexHost.(interface {
+		ObserveStartup(context.Context, string, string, func([]mcpdiag.Diagnostic)) (*codexapp.Startup, error)
+	}); ok {
+		op.startup, _ = observer.ObserveStartup(ctx, l.Socket(), dir, func(rows []mcpdiag.Diagnostic) {
+			_ = h.do(ctx, func(context.Context) {
+				if h.cx.launches[op.id].Token == l.Token {
+					h.cx.startup[op.id] = rows
+					h.refreshCodex(op.id)
+				}
+			})
+		})
+	}
 	err := hh.StartCodexRemote(ctx, op.session, pane, op.agent, a, herdr.Remote{Socket: l.Socket(), Cwd: dir})
+	if op.startup != nil {
+		rep.Startup = op.startup.Snapshot()
+	}
+	var diagnostic *mcpdiag.Failure
+	if errors.As(err, &diagnostic) {
+		rep.Startup = mcpdiag.Merge(rep.Startup, diagnostic.Diagnostics...)
+		return &mcpdiag.Failure{Cause: err, Diagnostics: rep.Startup}
+	}
+	var startupAPI *herdr.APIError
+	if errors.As(err, &startupAPI) && (startupAPI.Code == "timeout" || startupAPI.Code == "agent_name_not_found") {
+		return &mcpdiag.Failure{Cause: err, Diagnostics: rep.Startup}
+	}
+
 	var api *herdr.APIError
 	if err != nil && !(errors.As(err, &api) && api.Code == "agent_not_ready") {
 		h.stopSharedServer(ctx, op.id)
@@ -794,4 +851,8 @@ func (h *Hub) hooksReviewShows(ctx context.Context, op *hireOp, pane string, rep
 	}
 	rep.step("Codex asks to review its hooks: left for the player")
 	return true
+}
+
+func (codexHost) ObserveStartup(ctx context.Context, socket, cwd string, changed func([]mcpdiag.Diagnostic)) (*codexapp.Startup, error) {
+	return codexapp.ObserveStartup(ctx, socket, cwd, changed)
 }

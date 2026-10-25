@@ -1,3 +1,5 @@
+import { hireFailure, mcpSummary } from '../world/startup';
+import type { HireFailure } from '../net/protocol';
 import type { CommandResult } from '../net/client';
 import type { CodexProfile, CommandArgs, CommandName, HireAck, HireGit, HireOptions, HirePrepare, HirePreset } from '../net/protocol';
 import {
@@ -28,7 +30,7 @@ import { isComplete, levelChipText, levelProblem, preselectLevel, type TaskLevel
 import { exactProblem, instructionsBlocker, nudgeWanted, pickExact, presetChoiceText, type ExactProblem } from '../world/hirePresets';
 import type { WorldStore } from '../world/store';
 import { AUTO_PROFILE, autoOffered, hireProfiles, loneProfileGone, pickProfile, profileBlocked, profileGoneText } from '../world/codexProfiles';
-import { h, icon, ICON } from './dom';
+import { h, icon, ICON, replaceKeepingFocus } from './dom';
 import { failureText } from './messages';
 import { hiredToast } from './hiredToast';
 import { askCallout, delegates, instructionsPanel, INSTRUCTIONS_HINT_OFF, INSTRUCTIONS_HINT_ON } from './hireInstructions';
@@ -48,7 +50,7 @@ import { backdropPolicy } from './dismiss';
 // #51 composer
 import { mountComposer, type Composer } from './composer/composer';
 import { Draft as PromptDraft, type DraftSnapshot, type ResolveResult, type Uploader } from './composer/draft';
-import { HIRE_PROMPT_MAX_BYTES, mentionOf } from './composer/model';
+import { HIRE_PROMPT_MAX_BYTES, mentionOf, pathProblem, serializePrompt } from './composer/model';
 // #39 completion
 import type { Source } from './composer/complete';
 import { CommandCatalogs } from '../laptop/commandCatalog';
@@ -75,6 +77,7 @@ export interface DialogHost {
 }
 
 export interface HireHost extends DialogHost {
+  mcpDetails?(floor: string, cwd: string, profile: string): void;
   /** A hire is on its way to `desk` (its "+" goes); the returned function ends this hire's hold only. */
   reserve(floor: string, desk: number): () => void;
   /** Desks of a floor a hire (or a walk) is already on its way to: not free for this one. */
@@ -415,9 +418,21 @@ function presetText(s: DraftSnapshot): string {
 }
 
 /** The prompt as the form sees it: the text, each image a bare `[Image #n]` (the paths only exist once uploaded, at send time). */
-export function promptText(s: DraftSnapshot): string {
+export function promptText(s: DraftSnapshot, paths?: ReadonlyMap<string, string>): string {
   let n = 0;
-  return s.segments.map((g) => (g.kind === 'text' ? g.text : g.kind === 'image' ? `[Image #${++n}]` : mentionOf(g.path))).join('');
+  return s.segments.map((g) => {
+    if (g.kind === 'text') return g.text;
+    if (g.kind === 'file') return mentionOf(g.path);
+    const path = paths?.get(g.res);
+    return `[Image #${++n}${path && !pathProblem(path) ? `: ${path}` : ''}]`;
+  }).join('');
+}
+
+/** Ordinary and dictated hires share one tray position, so concurrent failures never cover each other. */
+export function mountHireRecovery(parent: HTMLElement, tray: HTMLElement): void {
+  let stack = parent.querySelector<HTMLElement>(':scope > .hire-recovery-stack');
+  if (!stack) { stack = h('div', { class: 'hire-recovery-stack' }); parent.append(stack); }
+  stack.append(tray);
 }
 
 /**
@@ -493,6 +508,14 @@ class TaskEditor {
   }
 }
 
+interface HireRecovery {
+  floor: string;
+  desk: number;
+  message: string;
+  unknown: boolean;
+  data?: HireFailure | undefined;
+}
+
 export class HireDialog {
   private readonly dialog = h('dialog', { class: 'desk-dlg desk-dlg--hire', 'aria-labelledby': 'hire-title', 'aria-describedby': 'hire-sub' });
   private readonly head = h('header', { class: 'dd-head' });
@@ -519,6 +542,11 @@ export class HireDialog {
   });
   private readonly editorPane = h('div', { class: 'hire-editor-pane' }, this.editor.el);
   private readonly optionsPane = h('div', { class: 'hire-options-pane' });
+  private readonly recoveryEl = h('div', { class: 'dd-callout dd-callout--error', 'data-hook': 'hire-recovery', role: 'status', hidden: true });
+  private readonly recoveryTray = h('aside', { class: 'hire-recovery-tray', 'aria-label': 'Hires needing attention', hidden: true });
+  private readonly recoveries = new Map<string, HireRecovery>();
+  private missingImages = false;
+  private restoredFields: Record<string, string> | undefined;
   private readonly statusEl = h('p', { class: 'dd-status', role: 'status' });
   private readonly alertEl = h('p', { class: 'dd-status dd-status--error', role: 'alert' });
   private readonly actions = h('div', { class: 'dd-actions' });
@@ -526,7 +554,7 @@ export class HireDialog {
   private readonly notices = h('div', { class: 'dd-notices' });
   /** #117: the question a plain hire asks before it hires (below the notices, by the buttons). */
   private readonly askEl = h('div', { class: 'dd-asking' });
-  private readonly foot = h('footer', { class: 'dd-foot' }, this.notices, this.askEl, this.statusEl, this.alertEl, this.actions);
+  private readonly foot = h('footer', { class: 'dd-foot' }, this.notices, this.askEl, this.recoveryEl, this.statusEl, this.alertEl, this.actions);
   private floor = '';
   private desk = 0;
   private prefill: HirePrefill = {};
@@ -667,6 +695,23 @@ export class HireDialog {
     // #108: the first task's review on purpose (Ctrl/⌘+Shift+X, with the switch on), as its "Review secrets".
     onReviewKey(this.form, () => this.host.secrets, () => void this.hire(true));
     parent.append(this.dialog);
+    mountHireRecovery(parent, this.recoveryTray);
+    for (const key of this.drafts.keys()) {
+      try {
+        const r = JSON.parse(this.drafts.get(key)?.fields?.recovery ?? 'null') as HireRecovery | null;
+        if (r && typeof r.floor === 'string' && Number.isInteger(r.desk) && typeof r.message === 'string')
+          this.recoveries.set(key, { floor: r.floor, desk: r.desk, message: r.message, unknown: !!r.unknown, data: hireFailure(r.data) });
+      } catch { /* corrupt recovery metadata leaves the task usable */ }
+    }
+    this.renderRecoveryTray();
+    window.addEventListener('beforeunload', (e) => {
+      if (!this.recoveryTray.isConnected) return;
+      const atRisk = this.drafts.keys().some((key) => !!this.drafts.get(key)?.text && !this.drafts.stored(key)) || [...this.docs].some(([key, doc]) => {
+        const snap = doc.snapshot();
+        return !!snap.doc.text && (this.host.secrets?.on || snap.images.some((im) => !im.path) || !this.drafts.stored(key));
+      });
+      if (atRisk) { e.preventDefault(); e.returnValue = ''; }
+    });
   }
 
   get isOpen(): boolean {
@@ -674,6 +719,7 @@ export class HireDialog {
   }
 
   close(): void {
+    if (this.dialog.open && this.docs.get(this.draftKey()) === this.editor.draft && this.state === 'ready') this.saveDraft();
     if (this.dialog.open) this.dialog.close();
   }
 
@@ -697,15 +743,17 @@ export class HireDialog {
     this.prefill = prefill;
     // #51: the desk's draft comes back; a first task handed in ("Ask a worker…") starts this one instead and leaves the draft alone until it is edited.
     const draft = this.drafts.get(this.draftKey());
+    this.restoredFields = prefill.prompt === undefined && !prefill.choice && !prefill.preset ? draft?.fields : undefined;
+    this.missingImages = !!this.restoredFields?.missing_images && !this.docs.has(this.draftKey());
     this.typedLabel = draft?.fields?.label ?? null;
     this.modelQuery = '';
     this.levelMode = null;
     this.level = null;
     this.exact = prefill.preset && prefill.choice ? { ...prefill.preset, saved: { ...prefill.choice } } : null;
-    this.addLines = this.exact?.instructions === true;
+    this.addLines = this.exact?.instructions === true || this.restoredFields?.instructions === 'true';
     this.profile = null;
     // #140: a preset with no profile keeps meaning the default (''); only a new form (no preset) is undefined, which starts on Auto.
-    this.profileWant = prefill.preset ? (prefill.preset.profile ?? '') : undefined;
+    this.profileWant = prefill.preset ? (prefill.preset.profile ?? '') : this.restoredFields?.profile;
     this.asking = null;
     this.askEl.replaceChildren();
     this.linesOpen = false;
@@ -726,7 +774,7 @@ export class HireDialog {
     this.render();
     if (!this.dialog.open) this.dialog.showModal();
     this.editor.focus();
-    void this.prepare();
+    void this.prepare(this.restoredFields?.cwd || undefined);
   }
 
   private title(): string {
@@ -821,6 +869,13 @@ export class HireDialog {
           this.prepared = null;
         }
       }
+      if (this.restoredFields) {
+        const f = this.restoredFields;
+        if (f.harness && f.model) Object.assign(this.f, { harness: f.harness, model: f.model, effort: f.effort ?? '' });
+        if (f.cwd) this.f.cwd = f.cwd;
+        if (f.worktree !== undefined) this.f.worktree = f.worktree === 'true' && worktreeUsable(p.git);
+        this.restoredFields = undefined;
+      }
       // #248: a hire that must not touch the shared checkout takes a worktree whenever one can be made.
       if (this.prefill.worktree) this.f.worktree = worktreeUsable(p.git);
     }
@@ -890,6 +945,9 @@ export class HireDialog {
 
   /** The status line while `worker.hire` is on its way: "Waking floor…" first while the floor's session wakes. */
   private hiringStatus(): void {
+    const worker = this.host.store.floorView(this.floor)?.seats[this.desk];
+    const startup = mcpSummary(worker?.worker.codex?.startup);
+    if (startup) { this.setStatus(`Starting Codex: ${startup}…`); return; }
     this.setStatus(this.wakes() ? `Waking floor ${this.floorName()}… then ${this.hiringText ?? 'hiring'}` : `${this.hiringText ?? ''}`);
   }
 
@@ -906,7 +964,8 @@ export class HireDialog {
   private setStatus(msg: string, error = false): void {
     this.statusText = msg;
     this.statusError = error;
-    this.alertEl.hidden = !error || !msg;
+    const recovery = this.recoveries.get(this.draftKey())?.message;
+    this.alertEl.hidden = !error || !msg || (!!recovery && msg.includes(recovery));
     this.statusEl.hidden = error || !msg;
     (error ? this.alertEl : this.statusEl).textContent = msg;
     (error ? this.statusEl : this.alertEl).textContent = '';
@@ -1012,8 +1071,11 @@ export class HireDialog {
     if (this.state === 'failed') return this.statusText || 'herdr-world could not prepare the hire.';
     if (this.state === 'hiring') return 'The hire is on its way.';
     if (this.asking) return 'Answer the question above first.';
+    if (this.missingImages) return 'Some images did not finish uploading before reload. Reattach them or remove their placeholders, then confirm below.';
     const taken = this.takenBy();
     if (taken) return taken.why;
+    const recovery = this.recoveries.get(this.draftKey());
+    if (recovery?.unknown || recovery?.data?.retryable === false) return 'Check the existing worker and its conversation before hiring again.';
     if (this.host.unsupported('worker.hire')) return failureText('worker.hire', 'unknown_command', '');
     const bad = this.exactProblem();
     if (bad) return `${bad.why} Choose ${bad.field === 'effort' ? 'an effort' : `a ${bad.field}`} to hire with.`;
@@ -1142,6 +1204,7 @@ export class HireDialog {
       cwd.value = this.f.cwd;
       cwd.addEventListener('input', () => {
         this.f.cwd = cwd.value;
+        this.saveDraft();
         // #39: another folder is another completion context at once (its check may take a while, or never come: cleared).
         this.lookups.check();
         this.renderActions();
@@ -1175,6 +1238,7 @@ export class HireDialog {
         const on = this.f.worktree && g.usable;
         const wt = worktreeControl(g, on, (v) => {
           this.f.worktree = v;
+          this.saveDraft();
           this.render();
         });
         nodes.push(wt);
@@ -1199,7 +1263,7 @@ export class HireDialog {
           'div',
           { class: 'dd-callout dd-callout--error', role: 'alert' },
           h('p', {}, taken.why),
-          alt !== null ? h('button', { class: 'btn btn--sm', 'data-key': 'other-desk', onclick: () => this.moveTo(alt) }, `Hire at Desk ${alt + 1} instead`) : h('p', {}, 'No other desk is free on this floor.'),
+          alt !== null && !this.recoveries.get(this.draftKey()) ? h('button', { class: 'btn btn--sm', 'data-key': 'other-desk', onclick: () => this.moveTo(alt) }, `Hire at Desk ${alt + 1} instead`) : null,
         ),
       );
     }
@@ -1241,6 +1305,7 @@ export class HireDialog {
     const note = c.gone ? profileGoneText(this.host.store.codexProfiles?.state ?? null, c.gone, def) : null;
     return profileChips('codex-profile', c.list, c.key, (key) => {
       this.profile = key;
+      this.saveDraft();
       this.render();
     }, note, c.auto);
   }
@@ -1301,6 +1366,7 @@ export class HireDialog {
       open: this.linesOpen,
       onChange: (on) => {
         this.addLines = on;
+        this.saveDraft();
         this.render();
       },
       onToggle: (open) => (this.linesOpen = open),
@@ -1345,10 +1411,22 @@ export class HireDialog {
     return `${floor}:${desk}`;
   }
 
-  /** What the form holds that is worth keeping across a reload: the task's text (not its images), and a label the user typed. */
+  /** Recovery stores the task, uploaded image paths and the launch choices, subject to the secrets policy. */
   private draftNow(): { text: string; fields?: Record<string, string> } {
-    const text = this.editor.draft.snapshot().text;
-    return this.typedLabel ? { text, fields: { label: this.typedLabel } } : { text };
+    const snap = this.editor.draft.snapshot();
+    const paths = new Map(snap.images.flatMap((im) => im.path ? [[im.res, im.path] as const] : []));
+    const serialized = serializePrompt(snap.doc, paths, { maxBytes: Number.MAX_SAFE_INTEGER, hint: false });
+    // Uploads already accepted by Drop Zone survive reload as prompt paths.
+    // Unuploaded bytes stay in memory; the unload guard and notice say so.
+    const text = serialized.ok ? serialized.text : promptText(snap, paths);
+    const recovery = this.recoveries.get(this.draftKey());
+    return { text, fields: {
+      ...(this.typedLabel ? { label: this.typedLabel } : {}),
+      harness: this.f.harness, model: this.f.model, effort: this.f.effort, cwd: this.f.cwd,
+      worktree: String(this.f.worktree), instructions: String(this.addLines), profile: this.profileChoice()?.key ?? this.profileWant ?? '',
+      ...((this.missingImages || snap.images.some((im) => !im.path)) ? { missing_images: 'true' } : {}),
+      ...(recovery ? { recovery: JSON.stringify(recovery) } : {}),
+    } };
   }
 
   /** Saves what is on screen as the desk's draft, and makes that draft the desk's owner: a first task handed in only takes the desk here. */
@@ -1372,6 +1450,19 @@ export class HireDialog {
       upload: (file, hint, signal) => this.host.upload(file, hint, signal),
       label: () => this.f.label.trim() || this.prep?.label || 'hire',
       maxPromptBytes: HIRE_PROMPT_MAX_BYTES,
+    });
+    d.subscribe(() => {
+      const key = [...this.docs].find(([, doc]) => doc === d)?.[0];
+      if (key === undefined || this.editor.draft === d) return;
+      const saved = this.drafts.get(key);
+      if (!saved) return;
+      const snap = d.snapshot();
+      const paths = new Map(snap.images.flatMap((im) => im.path ? [[im.res, im.path] as const] : []));
+      const serialized = serializePrompt(snap.doc, paths, { maxBytes: Number.MAX_SAFE_INTEGER, hint: false });
+      const fields = { ...saved.fields };
+      if (snap.images.some((im) => !im.path)) fields.missing_images = 'true';
+      else delete fields.missing_images;
+      this.drafts.set(key, { text: serialized.ok ? serialized.text : promptText(snap, paths), fields });
     });
     if (text) d.replace(0, 0, text);
     return d;
@@ -1397,13 +1488,17 @@ export class HireDialog {
     const key = [...this.docs].find(([, d]) => d === doc)?.[0];
     if (key === undefined || !doc.clearIf(revision)) return;
     this.docs.delete(key);
+    this.recoveries.delete(key);
+    this.renderRecoveryTray();
     const now = this.drafts.get(key);
     if (!now) return;
+    if (now.fields) delete now.fields.recovery;
     // The label typed since stays.
-    this.drafts.set(key, JSON.stringify(now.fields ?? {}) === JSON.stringify(sent.fields ?? {}) ? { text: '' } : { text: '', ...(now.fields ? { fields: now.fields } : {}) });
+    this.drafts.set(key, JSON.stringify(now.fields ?? {}) === JSON.stringify(Object.fromEntries(Object.entries(sent.fields ?? {}).filter(([k]) => k !== 'recovery'))) ? { text: '' } : { text: '', ...(now.fields ? { fields: now.fields } : {}) });
   }
 
   private renderActions(): void {
+    this.renderRecovery();
     this.renderAsk();
     const blocker = this.blocker();
     // #95: the byte count with the lines follows the typing (a re-render of the options never runs for it).
@@ -1411,7 +1506,7 @@ export class HireDialog {
     if (this.bytesEl && lines) this.bytesEl.textContent = this.bytesText(lines);
     const label = this.f.label.trim() || this.prep?.label || '';
     const cancel = h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, this.state === 'hiring' ? 'Close' : 'Cancel');
-    const text = this.state === 'hiring' ? 'Hiring…' : label ? `Hire ${label}` : 'Hire';
+    const text = this.state === 'hiring' ? 'Hiring…' : this.recoveries.get(this.draftKey())?.unknown || this.recoveries.get(this.draftKey())?.data?.retryable === false ? 'Check delivery first' : this.recoveries.has(this.draftKey()) ? 'Retry hire' : label ? `Hire ${label}` : 'Hire';
     const hire = h('button', { class: 'btn btn--primary', type: 'submit', form: 'hire-form', 'data-key': 'hire', 'aria-disabled': blocker ? 'true' : null, 'aria-busy': this.state === 'hiring' ? 'true' : null, title: blocker }, text);
     const had = document.activeElement === this.hireBtn;
     this.hireBtn = hire;
@@ -1480,11 +1575,14 @@ export class HireDialog {
       : resolveVisibleChoice(this.options(), { harness: p.harness ?? this.f.harness, model: p.model ?? this.f.model, effort: p.effort ?? this.f.effort });
     if (next.harness !== this.f.harness) this.modelQuery = '';
     this.f = { ...this.f, ...next };
+    this.saveDraft();
     this.render();
   }
 
   /** Another desk: what is typed goes with it (an empty form takes that desk's own draft instead). */
   private moveTo(desk: number): void {
+    const recovery = this.recoveries.get(this.draftKey());
+    if (recovery?.unknown || recovery?.data?.retryable === false) return;
     const mine = this.draftNow();
     const doc = this.editor.draft;
     const from = this.draftKey();
@@ -1708,6 +1806,7 @@ export class HireDialog {
         : { key: `hire:${this.id}:${gen}`, floor, where: this.floorName(), desk, args, who, prompt: args.prompt ? doc : null, background, ...(added ? { added } : {}) },
       {
         hiring: (sentArgs) => {
+          this.keepRecovery({ kind: 'unknown', code: 'disconnected', message: 'Hire is on its way.' }, floor, desk);
           // (The dialog may have been closed, even reopened for another desk, while the images went up: then it is not ours to touch.)
           if (background || !this.dialog.open || gen !== this.gen) return;
           const steps = [sentArgs.worktree ? 'creating the worktree' : null, `starting ${sentArgs.harness}`, sentArgs.prompt ? 'handing over the first task' : null].filter(Boolean);
@@ -1723,6 +1822,7 @@ export class HireDialog {
       if (this.wakes()) this.host.toast(`Waking floor ${this.floorName()}… ${who} is hired once it is up.`, 'info');
       this.close();
       const o = await op.done;
+      this.keepRecovery(o, floor, desk);
       if (o.kind === 'hired') this.clearSent(doc, o.revision ?? revision, sent);
       // A refusal must leave a usable form, including images and choices.
       // Never replace a newer form or open over another modal; uncertain
@@ -1738,7 +1838,9 @@ export class HireDialog {
       this.setStatus(waiting ? `Uploading ${waiting === 1 ? 'the image' : `${waiting} images`} for ${who}…` : `Preparing ${who}’s first task…`);
       this.render();
     }
-    this.landed(await op.done, { floor, desk, who, gen, doc, revision, sent });
+    const outcome = await op.done;
+    this.keepRecovery(outcome, floor, desk);
+    this.landed(outcome, { floor, desk, who, gen, doc, revision, sent });
   }
 
   /** A hire waited for in the dialog ended: the dialog, or (closed meanwhile) a toast, says how; the go-to on success. */
@@ -1787,6 +1889,73 @@ export class HireDialog {
     this.setStatus(msg, true);
     this.render();
     if (o.code === 'capacity' || o.code === 'fetch_failed') void this.recheck();
+  }
+
+
+  private keepRecovery(o: HireOutcome, floor: string, desk: number): void {
+    const key = this.draftKey(floor, desk);
+    if (o.kind === 'hired') {
+      this.recoveries.delete(key);
+      const current = this.drafts.get(key);
+      if (current?.fields?.recovery) {
+        const fields = { ...current.fields }; delete fields.recovery;
+        this.drafts.set(key, { ...current, fields });
+      }
+      this.renderRecoveryTray(); return;
+    }
+    const message = o.kind === 'failed' ? o.message : o.kind === 'unknown'
+      ? 'The hire may have gone through. Check the desk and conversation before sending again. Your task is kept here.'
+      : o.kind === 'not_prompted' ? notPromptedText(o.ack) : o.message;
+    const r: HireRecovery = { floor, desk, message, unknown: o.kind === 'unknown' || (o.kind === 'not_prompted' && o.ack.delivery === 'unknown'), ...(o.kind === 'failed' && o.data ? { data: o.data } : o.kind === 'not_prompted' ? { data: { operation: o.ack.id, delivery: o.ack.delivery ?? 'not_sent', retryable: false } as HireFailure } : {}) };
+    this.recoveries.set(key, r);
+    // Attach only metadata to the current draft: a late failure never replaces newer writing.
+    const current = this.drafts.get(key);
+    if (current) this.drafts.set(key, { ...current, fields: { ...current.fields, recovery: JSON.stringify(r) } });
+    this.renderRecoveryTray();
+  }
+
+  private renderRecoveryTray(): void {
+    this.recoveryTray.hidden = this.recoveries.size === 0;
+    this.recoveryTray.replaceChildren(...[...this.recoveries.values()].map((r) => h('button', {
+      class: 'btn', type: 'button', onclick: () => {
+        if (document.querySelector('dialog[open]')) { this.host.toast('Close the open dialog first. The task is still kept.', 'info'); return; }
+        this.open(r.floor, r.desk);
+      },
+    }, `Review hire · ${this.host.store.floorName(r.floor)} · Desk ${r.desk + 1}`)));
+  }
+
+  private renderRecovery(): void {
+    const r = this.recoveries.get(this.draftKey());
+    this.recoveryEl.hidden = !r && !this.missingImages;
+    if (this.missingImages) {
+      this.recoveryEl.replaceChildren(h('p', {}, 'Some images did not upload before this page reloaded. Reattach the images or remove their placeholders before retrying.'), h('button', { class: 'btn', type: 'button', onclick: () => { this.missingImages = false; this.saveDraft(); this.renderActions(); } }, 'I have repaired the attachments'));
+      return;
+    }
+    if (!r) { this.recoveryEl.replaceChildren(); return; }
+    const key = this.draftKey();
+    const snap = this.editor.draft.snapshot();
+    const transient = this.host.secrets?.on
+      ? 'Secret review is on: this task stays in this tab only. Copy it before closing or refreshing. Protected file references keep their existing expiry.'
+      : snap.images.some((im) => !im.path) ? 'Images that have not uploaded stay in this tab only. Finish uploading before refreshing.'
+      : !this.drafts.stored(key) ? 'Browser storage is unavailable. Copy the task before closing or refreshing.' : 'Task and hire options are saved in this browser. Uploaded images are kept as paths.';
+    const copy = h('button', { class: 'btn', type: 'button', 'data-key': 'recovery-copy', onclick: () => {
+      void (navigator.clipboard ? navigator.clipboard.writeText(this.draftNow().text) : Promise.reject(new Error('clipboard unavailable'))).then(() => this.host.toast('Prompt copied.', 'info'), () => this.host.toast('Could not copy. Select the task text and copy it.', 'error'));
+    } }, 'Copy prompt');
+    const details = this.host.mcpDetails ? h('button', { class: 'btn', type: 'button', 'data-key': 'recovery-mcp', onclick: () => {
+      const floor = this.floor, cwd = r.data?.cwd ?? this.f.cwd, profile = r.data?.codex_profile ?? this.profileChoice()?.key ?? this.profileWant ?? '';
+      this.saveDraft(); this.close(); this.host.mcpDetails?.(floor, cwd, profile);
+    } }, 'MCP details') : null;
+    const evidence = h('details', { open: this.recoveryEl.querySelector('details')?.open ?? false }, h('summary', { 'data-key': 'recovery-details', tabindex: '0' }, 'Startup details'),
+      h('p', {}, r.data?.operation ? `Hire operation: ${r.data.operation}` : 'No settled answer from the bridge.'),
+      ...(r.data?.startup ?? []).map((d) => h('p', {}, `${d.name}: ${d.stage} (${d.category ?? 'connecting'}; ${d.source})`)));
+    const seat = this.host.store.floorView(this.floor)?.seats[this.desk];
+    const inspect = seat && this.host.goTo ? h('button', { class: 'btn', type: 'button', 'data-key': 'recovery-inspect', onclick: () => { this.close(); this.host.goTo?.(seat.worker.id); } }, 'Inspect worker') : null;
+    const checked = !seat && !this.host.held(this.floor).has(this.desk) && (r.unknown || r.data?.retryable === false) ? h('button', { class: 'btn', type: 'button', 'data-key': 'recovery-checked', onclick: () => {
+      this.recoveries.delete(key); this.saveDraft(); this.renderRecoveryTray(); this.renderActions();
+      this.setStatus('You confirmed nothing was hired. Review the task before retrying.');
+    } }, 'I checked: nothing was hired') : null;
+    replaceKeepingFocus(this.recoveryEl, [h('p', {}, r.message), h('p', { class: 'field-hint' }, transient), evidence,
+      h('div', { class: 'dd-actions' }, ...[copy, details, inspect, checked].filter((b): b is HTMLButtonElement => !!b))], undefined, { keepScroll: true });
   }
 
   /** After a capacity or fetch refusal: the caps and origin as they are now (the refusal stays in the status). */

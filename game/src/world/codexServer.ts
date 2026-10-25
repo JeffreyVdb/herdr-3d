@@ -1,3 +1,4 @@
+import { mcpSummary } from './startup';
 /**
  * #155: the shared Codex server. The bridge-wide switch (new Codex workers run their terminal against a Codex
  * app-server of their own) as the snapshot's `codex_server` and the `codex_server.update` events carry it
@@ -85,6 +86,8 @@ export function codexNotice(w: { codex?: Worker['codex'] | undefined }): CodexNo
     }
     return { tone: 'note', text: `No own Codex server: ${plainWhy(why)}. It runs on Codex’s built-in server, so its async questions can’t be answered from the transcript.` };
   }
+  const startup = mcpSummary(c.startup);
+  if (startup) return { tone: 'note', text: `MCP: ${startup}. Check MCP & skills for this worker’s checkout and profile.` };
   return null;
 }
 

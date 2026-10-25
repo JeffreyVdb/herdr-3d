@@ -226,12 +226,15 @@ func TestClientIDs(t *testing.T) {
 }
 
 // #196: MCPStatus asks mcpServerStatus/list with the joined thread's id,
-// toolsAndAuthOnly, 100 a page, and follows nextCursor at most 4 more pages.
+// and each configured server name: a bare list starts fresh connections.
 func TestWatcherMCPStatus(t *testing.T) {
 	f := newFakeServer(t)
 	var asked []map[string]any
 	var mu sync.Mutex
 	f.respond = func(method string, p map[string]any) (any, any, bool) {
+		if method == "config/read" {
+			return map[string]any{"config": map[string]any{"mcp_servers": map[string]any{"s1": map[string]any{}, "s2": map[string]any{}}}}, nil, false
+		}
 		if method != "mcpServerStatus/list" {
 			return nil, map[string]any{"code": -32601, "message": "unexpected"}, false
 		}
@@ -250,13 +253,13 @@ func TestWatcherMCPStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 5 || rows[0].Name != "s1" || rows[0].RuntimeStatus == nil || *rows[0].RuntimeStatus != "connected" {
+	if len(rows) != 2 || rows[0].Name != "s1" || rows[0].RuntimeStatus == nil || *rows[0].RuntimeStatus != "connected" {
 		t.Fatalf("rows %+v", rows)
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	for i, p := range asked {
-		if p["threadId"] != "th1" || p["detail"] != "toolsAndAuthOnly" || p["limit"] != float64(100) || (i > 0) != (p["cursor"] != nil) {
+		if p["threadId"] != "th1" || p["detail"] != "toolsAndAuthOnly" || p["limit"] != float64(1) || p["serverName"] != fmt.Sprint("s", i+1) || p["cursor"] != nil {
 			t.Fatalf("page %d params %v", i, p)
 		}
 	}

@@ -34,7 +34,7 @@ import { Draft as PromptDraft, type DraftSnapshot } from './composer/draft';
 import { HIRE_PROMPT_MAX_BYTES } from './composer/model';
 import { CommandCatalogs } from '../laptop/commandCatalog';
 import { CompletionScope, hireLookupKey, hireSources, type HireLookup } from './dialogCompletion';
-import { capacityBlock, chips, gitView, modelField, promptText, worktreeControl, type HireHost, type HireSummary } from './hire';
+import { capacityBlock, chips, gitView, modelField, mountHireRecovery, promptText, worktreeControl, type HireHost, type HireSummary } from './hire';
 import { backgroundOutcomeText, HireCoordinator, notPromptedText, notSentText, type HireOutcome } from './hireCoordinator';
 import { hiredToast } from './hiredToast';
 import { failureText } from './messages';
@@ -199,6 +199,9 @@ export class HireReviewDialog {
   private defaultCwd = '';
   private hadWhereIssue = false;
   /** #33: reviews given back while something else was open, by id, in the order they were held. */
+  private readonly recoveryTray = h('aside', { class: 'hire-recovery-tray', 'aria-label': 'Hire reviews needing attention', hidden: true });
+  private readonly unsafe = new Set<string>();
+  private readonly outcomes = new Map<string, GivenBack>();
   private readonly held = new Map<string, Held>();
   private heldSerial = 0;
   private readonly hires: HireCoordinator;
@@ -240,6 +243,8 @@ export class HireReviewDialog {
     this.buildTask();
     this.dialog.append(this.head, this.body, this.foot);
     this.dialog.addEventListener('close', () => {
+      const outcome = this.outcomes.get(`${this.floor}:${this.desk}`);
+      if (this.state === 'ready' && this.statusError && outcome && this.prep) this.holdReview(this.reviewed(), outcome, this.statusText);
       if (!this.dialog.open) this.epoch++;
       // An enlarged image is nested in this dialog: it goes with it (it holds a window key listener).
       this.composer.closePreview();
@@ -255,6 +260,10 @@ export class HireReviewDialog {
     // Typed text and consequential choices in here: only the close button, Cancel and Esc close it, never the backdrop.
     backdropPolicy(this.dialog, 'none');
     parent.append(this.dialog);
+    mountHireRecovery(parent, this.recoveryTray);
+    window.addEventListener('beforeunload', (e) => {
+      if (this.recoveryTray.isConnected && (this.held.size > 0 || this.away.size > 0 || (this.statusError && this.choice.task))) { e.preventDefault(); e.returnValue = ''; }
+    });
   }
 
   get isOpen(): boolean {
@@ -559,6 +568,7 @@ export class HireReviewDialog {
     if (this.state === 'failed') return this.statusText || 'herdr-world could not prepare the hire.';
     const taken = this.takenBy();
     if (taken) return taken.why;
+    if (this.unsafe.has(`${this.floor}:${this.desk}`)) return 'Check the existing worker and its conversation before hiring again.';
     const folder = this.folderBlocker();
     if (folder) return folder;
     if (this.host.unsupported('worker.hire')) return failureText('worker.hire', 'unknown_command', '');
@@ -809,7 +819,7 @@ export class HireReviewDialog {
           'div',
           { class: 'dd-callout dd-callout--error', role: 'alert' },
           h('p', {}, taken.why),
-          alt !== null ? h('button', { class: 'btn btn--sm', 'data-key': 'other-desk', onclick: () => this.moveTo(alt) }, `Hire at Desk ${alt + 1} instead`) : h('p', {}, 'No other desk is free on this floor.'),
+          this.unsafe.has(`${this.floor}:${this.desk}`) ? null : alt !== null ? h('button', { class: 'btn btn--sm', 'data-key': 'other-desk', onclick: () => this.moveTo(alt) }, `Hire at Desk ${alt + 1} instead`) : h('p', {}, 'No other desk is free on this floor.'),
         ),
       );
     }
@@ -970,7 +980,21 @@ export class HireReviewDialog {
     // #108: the task's review on purpose (with the switch on), then the hire.
     const review = reviewButton(this.host.secrets, busy ? 'The hire is on its way.' : blocker, () => void this.hire(true), 'task');
     const hadReview = document.activeElement === this.actions.querySelector('[data-key="review"]');
-    this.actions.replaceChildren(...[cancel, review, hire].filter((x): x is HTMLButtonElement => !!x));
+    const copy = this.statusError ? h('button', { class: 'btn', type: 'button', onclick: () => {
+      void this.composer.getDraft().resolve({ hint: false }).then((r) => {
+        if (!r.ok) { this.host.toast('Finish uploading the images before copying this task.', 'error'); return; }
+        void (navigator.clipboard ? navigator.clipboard.writeText(r.text) : Promise.reject(new Error('clipboard unavailable'))).then(() => this.host.toast('Prompt copied.', 'info'), () => this.host.toast('Select the task and copy it.', 'error'));
+      });
+    } }, 'Copy prompt') : null;
+    const checked = !busy && !this.takenBy() && this.unsafe.has(`${this.floor}:${this.desk}`) ? h('button', { class: 'btn', type: 'button', onclick: () => {
+      this.unsafe.delete(`${this.floor}:${this.desk}`); this.render();
+    } }, 'I checked: nothing was hired') : null;
+    const outcome = this.outcomes.get(`${this.floor}:${this.desk}`);
+    const data = outcome?.kind === 'failed' ? outcome.data : undefined;
+    const mcp = this.statusError && data?.startup?.length && this.host.mcpDetails ? h('button', { class: 'btn', type: 'button', onclick: () => {
+      this.close(); this.host.mcpDetails?.(this.floor, data.cwd ?? this.f.cwd, data.codex_profile ?? '');
+    } }, 'MCP details') : null;
+    this.actions.replaceChildren(...[copy, mcp, checked, cancel, review, hire].filter((x): x is HTMLButtonElement => !!x));
     if (had && (!blocker || busy)) hire.focus();
     if (hadReview) review?.focus();
     // Why Hire is off, said where the button is (a title is not enough): the model's or effort's own section says the rest.
@@ -1004,6 +1028,7 @@ export class HireReviewDialog {
 
   /** Another desk: what was reviewed goes with it. */
   private moveTo(desk: number): void {
+    if (this.unsafe.has(`${this.floor}:${this.desk}`)) return;
     this.desk = desk;
     this.setStatus('');
     this.render();
@@ -1094,6 +1119,7 @@ export class HireReviewDialog {
     const background = this.host.hirePrefs?.hireInBackground === true;
     // #33: the coordinator gets no draft: what was reviewed is kept here, for a background hire that is refused or unanswered.
     const reviewed = this.reviewed();
+    this.away.add(reviewed.draft);
     this.state = 'hiring';
     this.hiringText = null;
     this.setStatus('');
@@ -1113,9 +1139,9 @@ export class HireReviewDialog {
       // The review goes now and the player plays on; the coordinator says how it ended (one toast, a beep on success).
       // #58 decision 3: a hire on an asleep virtual floor wakes it first, which takes a while: say so now.
       if (this.wakes()) this.host.toast(`Waking floor ${this.floorName()}… ${who} is hired once it is up.`, 'info');
-      this.away.add(reviewed.draft);
       this.close();
       const o = await op.done;
+      this.recordOutcome(o, floor, desk);
       this.away.delete(reviewed.draft);
       if (o.kind === 'failed' || o.kind === 'unknown') this.giveBack(reviewed, o, backgroundOutcomeText(op.request, o));
       else if (o.kind === 'not_sent' && opening === this.opening && !document.querySelector('dialog[open]')) {
@@ -1127,7 +1153,12 @@ export class HireReviewDialog {
       return;
     }
     this.render();
-    this.landed(await op.done, { floor, desk, who, epoch });
+    const outcome = await op.done;
+    this.recordOutcome(outcome, floor, desk);
+    this.away.delete(reviewed.draft);
+    if ((outcome.kind === 'failed' || outcome.kind === 'unknown') && (!this.dialog.open || epoch !== this.epoch)) this.giveBack(reviewed, outcome, backgroundOutcomeText(op.request, outcome));
+    else this.landed(outcome, { floor, desk, who, epoch });
+    this.drop(reviewed.draft);
   }
 
   /** A hire waited for here ended: this dialog, or (closed meanwhile) a toast, says how; the go-to on success. */
@@ -1204,9 +1235,29 @@ export class HireReviewDialog {
       this.restore(r, o.kind === 'failed' ? failureText('worker.hire', o.code, o.message, { floor: this.host.store.floorName(r.floor), desk: r.desk + 1 }) : text);
       return;
     }
-    const id = String(++this.heldSerial);
-    this.held.set(id, { reviewed: r, outcome: o, text });
+    const id = this.holdReview(r, o, text);
     this.host.toast(`${text} The task is kept: review it again here or from the command palette.`, o.kind === 'failed' ? 'error' : 'warn', { label: 'Review again', run: () => void this.reopenHeld(id) });
+  }
+
+  private recordOutcome(o: HireOutcome, floor: string, desk: number): void {
+    const key = `${floor}:${desk}`;
+    if (o.kind === 'failed' || o.kind === 'unknown') this.outcomes.set(key, o);
+    else this.outcomes.delete(key);
+    if (o.kind === 'unknown' || o.kind === 'not_prompted' || (o.kind === 'failed' && o.data?.retryable === false)) this.unsafe.add(key);
+    else this.unsafe.delete(key);
+  }
+
+  private holdReview(reviewed: Reviewed, outcome: GivenBack, text: string): string {
+    const existing = [...this.held].find(([, hld]) => hld.reviewed.draft === reviewed.draft)?.[0];
+    const id = existing ?? String(++this.heldSerial);
+    this.held.set(id, { reviewed, outcome, text });
+    this.renderRecoveryTray();
+    return id;
+  }
+
+  private renderRecoveryTray(): void {
+    this.recoveryTray.hidden = this.held.size === 0;
+    this.recoveryTray.replaceChildren(...[...this.held].map(([id, hld]) => h('button', { class: 'btn', type: 'button', onclick: () => this.reopenHeld(id) }, `Review hire · ${this.host.store.floorName(hld.reviewed.floor)} · Desk ${hld.reviewed.desk + 1}`)));
   }
 
   /** The reviews held now (the palette's rows). */
@@ -1229,6 +1280,7 @@ export class HireReviewDialog {
       return false;
     }
     this.held.delete(id);
+    this.renderRecoveryTray();
     this.restore(r, h.outcome.kind === 'failed' ? failureText('worker.hire', h.outcome.code, h.outcome.message, { floor: this.host.store.floorName(r.floor), desk: r.desk + 1 }) : h.text);
     return true;
   }
@@ -1265,7 +1317,8 @@ export class HireReviewDialog {
     this.state = 'ready';
     this.panelKeys.clear();
     this.showDraft(r.draft);
-    this.setStatus(status, true);
+    const memory = 'This review stays in this tab only; copy the task before refreshing.';
+    this.setStatus(status.endsWith(memory) ? status : `${status} ${memory}`, true);
     this.render();
     if (!this.dialog.open) this.dialog.showModal();
     this.focusFirst();

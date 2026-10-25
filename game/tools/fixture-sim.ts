@@ -188,9 +188,11 @@ const SIM_DIRTY = [' M game/src/app.ts', ' M game/src/ui/hud.ts', '?? notes/todo
 
 class CmdError extends Error {
   code: string;
-  constructor(code: string, message: string) {
+  readonly data?: unknown;
+  constructor(code: string, message: string, data?: unknown) {
     super(message);
     this.code = code;
+    this.data = data;
   }
 }
 
@@ -801,7 +803,7 @@ export class SimWorld {
     let ack = (data?: unknown) => send(data === undefined ? { t: 'ack', req_id: reqId } : { t: 'ack', req_id: reqId, data });
     let fail = (e: unknown) => {
       const err = e instanceof CmdError ? e : new CmdError('internal', String(e));
-      send({ t: 'error', req_id: reqId, code: err.code, message: err.message });
+      send({ t: 'error', req_id: reqId, code: err.code, message: err.message, ...(err.data !== undefined ? { data: err.data } : {}) });
     };
     try {
       const a = m.args === undefined || m.args === null ? {} : m.args;
@@ -1921,6 +1923,14 @@ export class SimWorld {
     // Like the bridge, after the accept: nothing is made.
     if (a.worktree === true && git && !git.fetched) {
       this.later([() => fail(new CmdError('fetch_failed', `fetch_failed: git fetch origin in ${String(git.repo_root)}: ${String(git.fetch_error)}`))]);
+      return;
+    }
+    if (this.fail === 'mcp_startup') {
+      this.fail = undefined;
+      this.later([() => fail(new CmdError('hire_failed', 'Codex did not become ready within 30 seconds.', {
+        operation: 'mcp-startup-fixture', cwd, codex_profile: 'default', delivery: 'not_sent', retryable: true,
+        startup: [{ name: 'code-intel', stage: 'failed', category: 'timeout', source: 'terminal' }],
+      }))]);
       return;
     }
     if (this.fail === 'hire_failed') {

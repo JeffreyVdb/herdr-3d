@@ -764,6 +764,11 @@ export class App {
       catalogs,
       reserve: (s: string, d: number) => this.reserve(s, d),
       held: (s: string) => this.heldDesks(s),
+      mcpDetails: (floor: string, cwd: string, profile: string) => {
+        this.mcp.choose(floor, { ...(cwd ? { cwd } : {}), ...(profile && profile !== 'auto' ? { codex_profile: profile } : {}) });
+        this.mcpPageFloor = floor;
+        this.mcpPage.open(floor);
+      },
       modelPrefs: this.hireModelPrefs,
       showModelSettings: () => {
         this.settings.open();

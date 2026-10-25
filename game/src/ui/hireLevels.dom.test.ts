@@ -75,6 +75,7 @@ const RESOLVE: HirePrefill = { prompt: 'resolve it', level: 'default', worktree:
 
 describe('HireDialog: task levels (#248, #40)', () => {
   beforeEach(() => {
+    localStorage.clear();
     HTMLDialogElement.prototype.showModal = function () {
       this.setAttribute('open', '');
     };
