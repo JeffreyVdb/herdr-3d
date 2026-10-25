@@ -18,6 +18,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/mcpdiag"
 	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/secretfiles"
@@ -114,6 +115,9 @@ func (e *fetchFailedError) Unwrap() error { return e.err }
 // goroutine) once herdr made the workspace, and seen once the hub saw it.
 // repo is a worktree hire's repository, set with the workspace.
 type hireOp struct {
+	startup                    *codexapp.Startup
+	delivery                   string
+	retryable                  bool
 	id, session                string // session: the herdr session the workspace is made in
 	floor                      string // #58: the floor the worker belongs to (the session's, or a virtual floor on it)
 	desk                       int
@@ -745,31 +749,33 @@ func (h *Hub) checkCaps(session string, need int) error {
 
 // hireReport is the audit-log result of a worker.hire.
 type hireReport struct {
-	Worker      string   `json:"worker"`
-	Desk        int      `json:"desk"`
-	Name        string   `json:"name"`
-	Cwd         string   `json:"cwd"`
-	Harness     string   `json:"harness"`
-	Model       string   `json:"model"`
-	Effort      string   `json:"effort"`
-	RepoRoot    string   `json:"repo_root,omitempty"`
-	Branch      string   `json:"branch,omitempty"`
-	Base        string   `json:"base,omitempty"`
-	BaseSHA     string   `json:"base_sha,omitempty"`
-	Fetched     *bool    `json:"fetched,omitempty"`
-	FetchError  string   `json:"fetch_error,omitempty"`
-	WorkspaceID string   `json:"workspace_id,omitempty"`
-	Pane        string   `json:"pane,omitempty"`
-	Marker      string   `json:"marker,omitempty"`
-	Start       string   `json:"start,omitempty"`
-	Trust       string   `json:"trust,omitempty"`
-	Prompt      string   `json:"prompt,omitempty"`
-	Launch      string   `json:"launch,omitempty"`               // run.start's launch id
-	Codex       string   `json:"codex,omitempty"`                // #155: shared, or legacy and why
-	Profile     string   `json:"codex_profile,omitempty"`        // #139: the Codex profile's name
-	Reason      string   `json:"codex_profile_reason,omitempty"` // #140: an Auto hire's pick and why
-	Rollback    []string `json:"rollback,omitempty"`
-	Steps       []string `json:"steps"`
+	Startup     []proto.MCPDiagnostic `json:"startup,omitempty"`
+	Delivery    string                `json:"delivery"`
+	Worker      string                `json:"worker"`
+	Desk        int                   `json:"desk"`
+	Name        string                `json:"name"`
+	Cwd         string                `json:"cwd"`
+	Harness     string                `json:"harness"`
+	Model       string                `json:"model"`
+	Effort      string                `json:"effort"`
+	RepoRoot    string                `json:"repo_root,omitempty"`
+	Branch      string                `json:"branch,omitempty"`
+	Base        string                `json:"base,omitempty"`
+	BaseSHA     string                `json:"base_sha,omitempty"`
+	Fetched     *bool                 `json:"fetched,omitempty"`
+	FetchError  string                `json:"fetch_error,omitempty"`
+	WorkspaceID string                `json:"workspace_id,omitempty"`
+	Pane        string                `json:"pane,omitempty"`
+	Marker      string                `json:"marker,omitempty"`
+	Start       string                `json:"start,omitempty"`
+	Trust       string                `json:"trust,omitempty"`
+	Prompt      string                `json:"prompt,omitempty"`
+	Launch      string                `json:"launch,omitempty"`               // run.start's launch id
+	Codex       string                `json:"codex,omitempty"`                // #155: shared, or legacy and why
+	Profile     string                `json:"codex_profile,omitempty"`        // #139: the Codex profile's name
+	Reason      string                `json:"codex_profile_reason,omitempty"` // #140: an Auto hire's pick and why
+	Rollback    []string              `json:"rollback,omitempty"`
+	Steps       []string              `json:"steps"`
 }
 
 func (r *hireReport) step(format string, args ...any) {
@@ -782,6 +788,8 @@ func (r *hireReport) step(format string, args ...any) {
 // workspace exists rolls it back.
 func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 	defer h.wg.Done()
+	op.delivery, op.retryable = "not_sent", true
+
 	hh, git := h.opts.Hire, h.opts.Git
 	rep := &hireReport{Worker: op.id, Desk: op.desk, Name: op.name, Cwd: op.cwd, Harness: op.harness, Model: op.model,
 		Effort: op.effort, Marker: op.marker, Steps: []string{}}
@@ -789,14 +797,34 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 	var created herdr.Created
 	var repo string
 	fail := func(err error) {
+		if op.startup != nil {
+			op.startup.Close()
+		}
+		if op.startup != nil {
+			rep.Startup = mcpdiag.Merge(rep.Startup, op.startup.Snapshot()...)
+		}
+		var diagnostic *mcpdiag.Failure
+		if errors.As(err, &diagnostic) {
+			rep.Startup = mcpdiag.Merge(rep.Startup, diagnostic.Diagnostics...)
+		}
+		rep.Delivery = op.delivery
+		if len(rep.Startup) > 0 {
+			if auditErr := h.st.AuditProgress(ctx, op.auditID, rep); auditErr != nil {
+				h.log.Error("saving startup diagnostics failed", "err", auditErr)
+			}
+		}
 		if op.shared || op.profile != "" { // #155: its server (if one started) goes with it; #139: its launch too
 			if note := h.stopSharedServer(ctx, op.id); note != "" {
 				rep.Rollback = append(rep.Rollback, note)
+				if strings.Contains(note, "survived") {
+					op.retryable = false
+				}
 			}
 			_ = h.doWait(ctx, func() { h.forgetCodex(ctx, op.id) })
 		}
 		if created.WorkspaceID != "" {
 			if kept := h.rollbackHire(ctx, op, created, repo, rep); kept != "" {
+				op.retryable = false
 				err = fmt.Errorf("%w; rolling back, %s", err, kept)
 			}
 			if op.worktree {
@@ -940,7 +968,7 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 	case errors.As(startErr, &api) && api.Code == "agent_not_ready":
 		rep.Start = "blocked during startup"
 	default:
-		fail(fmt.Errorf("%w: herdr agent start: %v", errHireFailed, startErr))
+		fail(fmt.Errorf("%w: herdr agent start: %w", errHireFailed, startErr))
 		return
 	}
 	rep.step("herdr agent start %s: %s", op.agent, rep.Start)
@@ -984,6 +1012,9 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 		op.sent = h.hirePromptFor(op, catalogDir, dir)
 		sent, how, perr := h.sendPrompt(ctx, op, created.PaneID)
 		res.Prompted = &sent
+		if sent {
+			op.delivery = "accepted"
+		}
 		switch {
 		case errors.Is(perr, errSecretsReviewStale):
 			// #108 review B2: the switch changed while the prompt waited for
@@ -1208,11 +1239,16 @@ func (h *Hub) sendPrompt(ctx context.Context, op *hireOp, pane string) (sent boo
 		if err := h.hireReviewHolds(op); err != nil {
 			return false, "", err
 		}
+		op.delivery = "unknown"
 		err := h.opts.Hire.Prompt(ctx, op.session, pane, op.delivered())
 		if err == nil {
+			op.delivery = "accepted"
 			return true, fmt.Sprintf("sent (try %d)", tries), nil
 		}
 		var api *herdr.APIError
+		if errors.As(err, &api) && slices.Contains([]string{"agent_not_ready", "agent_not_found", "agent_blocked"}, api.Code) {
+			op.delivery = "not_sent"
+		}
 		if errors.As(err, &api) && api.Code == "agent_prompt_stalled" {
 			n, err := h.pressUntilWorking(ctx, op, pane, err)
 			return err == nil, fmt.Sprintf("sent, stalled, then %d× Enter", n), err
@@ -1263,6 +1299,7 @@ func (h *Hub) typeHirePrompt(ctx context.Context, op *hireOp, pane string) (sent
 		if typedErr = stale; stale != nil {
 			return
 		}
+		op.delivery = "unknown"
 		if typedErr = h.opts.Hire.TypePrompt(ctx, op.session, pane, op.delivered()); typedErr != nil {
 			h.erasePartlyTyped(ctx, op.id, op.session, pane, typedErr, h.opts.Hire.EraseTyped)
 			return
@@ -1324,6 +1361,7 @@ func (h *Hub) rollbackHire(ctx context.Context, op *hireOp, created herdr.Create
 	note := func(s string) { rep.Rollback = append(rep.Rollback, s) }
 	closeWorkspace := func() {
 		if err := hh.CloseWorkspace(ctx, op.session, created.WorkspaceID); err != nil {
+			op.retryable = false
 			note("herdr workspace close failed: " + err.Error())
 		} else {
 			note("herdr workspace close")
@@ -1401,8 +1439,16 @@ func (h *Hub) finishHire(ctx context.Context, op *hireOp, res *proto.HireResult,
 				delete(h.names[op.floor], op.name)
 			}
 		}
+		rep.Delivery = op.delivery
+		if op.startup != nil {
+			rep.Startup = mcpdiag.Merge(rep.Startup, op.startup.Snapshot()...)
+		}
 		var data any
+		if opErr != nil {
+			data = proto.HireFailure{Operation: op.id, Cwd: op.cwd, Profile: op.profile, Delivery: op.delivery, Retryable: op.retryable && op.delivery == "not_sent", Startup: rep.Startup}
+		}
 		if res != nil {
+			res.Delivery, res.Startup = op.delivery, rep.Startup
 			data = *res
 			if op.launched != nil {
 				data = op.launched(ctx, *res, rep, op.delivered())

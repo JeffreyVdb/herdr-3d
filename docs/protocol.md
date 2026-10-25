@@ -1779,6 +1779,38 @@ the branch is deleted (`git branch -D`) only when it still points at the base co
 --verify --quiet refs/heads/<branch>`), else it is kept. Whatever is kept is named in the error message (`…; rolling
 back, the branch h3d/… is kept (it has commits since …)`) and in the audit row's `rollback`.
 
+**Startup recovery.** A settled hire failure can include error `data`:
+`{operation, cwd, codex_profile?, delivery, retryable, startup?}`. `operation` is the allocated worker id;
+`cwd` and `codex_profile` identify its repository (the original checkout for a worktree hire) and resolved Auto profile.
+`delivery` is `not_sent`, `accepted`, or `unknown`: a lost prompt reply or stalled input is unknown, even when
+`prompted` is false. Hire acks and audit results carry the same `delivery` and optional `startup` facts.
+`retryable` is true only for confirmed-unsent delivery after completed rollback. A disconnected client has no
+settled result: it must retain the task and inspect the desk/conversation before another hire, not resend automatically.
+
+`startup` is at most 32 `{name, stage, category?, source}` facts. Stages are `starting`, `ready`, `failed`,
+`cancelled`; categories are `auth`, `closed`, `timeout`, `not_found`, `refused`, `startup`; sources are `notification`,
+`thread_status`, `terminal`. No raw provider errors, terminal screens, configuration, URLs or environment values are
+included. The bridge saves these facts in the audit before rollback removes the workspace/server. Live shared Codex
+workers also expose them as `worker.codex.startup`; a failed optional MCP leaves a persistent warning and the worker
+usable. Required MCP failures still fail startup. Neither case disables an MCP or raises the 30 s readiness timeout.
+
+The early observer connects before the remote TUI starts. On Codex 0.163.0 an initialized second client receives
+`thread/started`, but no MCP startup notifications without a subscription, and `thread/resume` fails before the first
+turn has a rollout. The observer therefore reads enabled server names with `config/read`, then polls named,
+thread-scoped status (500 ms cadence, 10 s per round, 35 s overall). A joined watcher reconciles the same status and
+follows subsequent startup notifications. Observation never sends a turn or creates a thread. A terminal fallback
+recognizes known MCP failure phrases in at most the last 32 KiB; unavailable evidence stays a generic readiness error.
+`TestCodexShareMCPStartup` exercises optional and required delayed MCPs against real remote-TUI/Herdr startup, with
+mock inference, and verifies exactly one MCP process despite observation and late watcher attachment.
+
+The hire dialog keeps the original task, launch choices, uploaded image paths and failure beside a persistent
+recovery action, including when another dialog is open. Newer edits are never replaced by a late outcome. With
+secret review off and browser storage available, these survive reload; secret review keeps them only in memory.
+Unuploaded image bytes remain in the tab: reload warns, and any recovered incomplete attachments block retry until
+repaired. Recovery offers Copy prompt and MCP details for the failed launch's folder/profile. Uncertain delivery or
+incomplete cleanup blocks retry until the user checks the existing worker, or explicitly confirms nothing was hired.
+Dictated reviews remain memory-only, with a visible recovery action and an unload warning.
+
 **`worker.fire.prepare`** fills the send-home dialog. It only reads (`git status --porcelain`, `git rev-list --count HEAD
 --not --remotes`, `git symbolic-ref --quiet --short HEAD` in the worker's checkout: `worktree.checkout_path`, else its
 `cwd`; `git rev-list --count refs/heads/<branch> --not --remotes` for the branch the bridge made):
@@ -6273,7 +6305,7 @@ worker said of it. Two commands; both answer a **Snapshot**.
 - **Connection check** (`mcp.check`, on request only, never on a timer or on view): a fresh probe process that starts the
   configured servers to observe them; its statuses are labelled `status_scope: "probe"` and describe that probe, never a
   worker.
-- **Worker observation** (passive): an attached shared-server Codex worker's own `mcpServerStatus/list` with its thread id
+- **Worker observation** (passive): an attached shared-server Codex worker's own `mcpServerStatus/list` with its thread id and server name
   (it reuses that thread's connections), labelled `status_scope: "worker"` with the worker. Claude Code has no equivalent:
   the live status of a running Claude worker is not known.
 
@@ -6302,8 +6334,10 @@ worker said of it. Two commands; both answer a **Snapshot**.
   on the current floor or the overview is open, the tab visible and the bridge connected (as `host.watch`). A bridge from
   before it answers `unknown_command`; the game then shows a calm "No MCP inventory on this bridge" screen.
 - While it is asked with a checkout, each attached shared-server Codex worker of the floor whose checkout is that one and
-  whose profile is the asked one is read (`mcpServerStatus/list` with its `threadId`, `detail: "toolsAndAuthOnly"`, at most
-  5 pages of 100, 10 s in all), at most once per 30 s per worker; a request inside that window gets the last read. With
+  whose profile is the asked one is read (`config/read` for up to 32 enabled names, then `mcpServerStatus/list` with both
+  `threadId` and `serverName`, `detail: "toolsAndAuthOnly"`, `limit: 1`, 10 s in all), at most once per 30 s per worker;
+  a request inside that window gets the last read. On Codex 0.163.0 a thread id alone starts a new connection check;
+  both fields are required to observe the existing connection. With
   nobody asking, no worker is read.
 
 **`mcp.check`** `{"floor"|"session", "cwd"?, "codex_profile"?, "harness": "claude"|"codex"}` → ack after the check,

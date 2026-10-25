@@ -693,6 +693,13 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   (an unsupported Codex, a blocked `.envrc`, a server that did not answer) starts the usual way and says why in its
   toast and on the laptop's seat bar, which also says when such a worker's server stopped. Disabled, with why, on a
   bridge without its `--codex-run` directory. Protocol: [Shared Codex server](protocol.md#shared-codex-server).
+- **MCP startup recovery**: `codexapp.Startup` observes before the remote TUI starts, through enabled server names and
+  named thread status, with a 35 s lifetime. The normal watcher reconciles after joining. `mcpdiag` reduces evidence to
+  bounded names/stages/categories; `herdr` also recognizes known terminal failure phrases before cleanup. The hire
+  audit saves those facts before rollback, and the error carries delivery certainty and retry eligibility. The game
+  retains the task and failure together, with persistent recovery, MCP details and Copy prompt. Uploaded image paths
+  survive reload when draft storage is allowed; secret review remains memory-only. No MCP is disabled automatically.
+  Protocol: [Hire and send home](protocol.md#hire-and-send-home).
 - **Day and night** (M17): the game follows the viewer's local time, in the browser, with no bridge or protocol part.
   `game/src/world/daylight.ts` (pure) turns an instant, an IANA zone and an optional latitude into a daylight value
   0…1, the sun's altitude and bearing, a dawn/dusk warmth and the zone's clock; with a latitude the sun comes from the

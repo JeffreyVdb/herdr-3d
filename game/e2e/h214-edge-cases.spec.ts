@@ -259,7 +259,9 @@ test('a dropped connection while a confirmed dictated hire is on its way: its re
     // #33: nothing else is open: the review again, as it was reviewed, and its status line says it (not a toast as well).
     await expect.poll(async () => (await review(page))?.state, { timeout: 20_000 }).toBe('ready');
     const back = await now(page);
-    expect(back).toMatchObject({ floor: 'pastry', desk: 14, error: true, status: 'No answer about the hire at Desk 15 of pastry: the connection dropped. It may still have gone through: look at the desk before you hire again.' });
+    expect(back).toMatchObject({ floor: 'pastry', desk: 14, error: true, status: expect.stringContaining('No answer about the hire at Desk 15 of pastry: the connection dropped.') });
+    expect(back.status).toContain('This review stays in this tab only');
+    await expect(hireButton(page)).toBeDisabled();
     expect(back.choice).toMatchObject({ harness: 'claude', model: 'claude-sonnet-5-5', effort: 'high', task: 'maybe bake the rye.' });
     await expect(reviewEl(page).locator('.dd-status--error')).toHaveText(back.status);
     await expect(hireButton(page)).not.toBeFocused();
@@ -286,23 +288,23 @@ test('a confirmed dictated hire herdr-world does not answer in time: its review 
     await dictateReview(page, 'Hire an agent on Sonnet 5.5 with high effort. Task: maybe bake the rye.');
     await confirm(page);
     expect(await hires(page)).toHaveLength(1);
-    // #33: the review again, its status line the notice; the desk is free, so Hire can be pressed (it is not).
+    // The desk looks free, but an unknown outcome cannot be retried without checking delivery.
     await expect.poll(async () => (await review(page))?.state, { timeout: 20_000 }).toBe('ready');
     expect(await now(page)).toMatchObject({
       desk: 14,
       error: true,
-      blocker: null,
-      status: 'No answer about the hire at Desk 15 of pastry: herdr-world did not answer in time. It may still have gone through: look at the desk before you hire again.',
+      blocker: 'Check the existing worker and its conversation before hiring again.',
+      status: expect.stringContaining('No answer about the hire at Desk 15 of pastry: herdr-world did not answer in time.'),
     });
-    await expect(hireButton(page)).toBeEnabled();
+    await expect(hireButton(page)).toBeDisabled();
     expect((await toasts(page)).filter((t) => NO_ANSWER.test(t))).toEqual([]);
     // The hire did go through after all (the bridge acks late): the worker comes, the client says nothing more, and the
-    // open review offers no Hire onto the desk they took (only, explicitly, another desk).
+    // open review offers no hire onto their desk or another desk with the same uncertain task.
     await advance(page, 200);
     await expect.poll(() => deskWorker(page, 14), { timeout: 20_000 }).not.toBeNull();
     await expect.poll(async () => (await review(page))?.blocker).toMatch(/just sat down at Desk 15\.$/);
     await expect(hireButton(page)).toBeDisabled();
-    await expect(reviewEl(page).locator('[data-key="other-desk"]')).toHaveText('Hire at Desk 16 instead');
+    await expect(reviewEl(page).locator('[data-key="other-desk"]')).toHaveCount(0);
     expect((await now(page)).desk).toBe(14);
     await page.waitForTimeout(1000);
     expect(await beeps(page)).toBe(0);
@@ -397,12 +399,12 @@ test('refused while the next dictation’s review is open: that review is untouc
     expect(back.status).toMatch(/claude exited during startup/);
     await expect(hireButton(page)).not.toBeFocused();
 
-    // From now on an ordinary review: Esc closes it, and it is held no more.
+    // The failed review remains reachable after closing, until deliberately retried.
     await page.keyboard.press('Escape');
     await expect.poll(() => review(page)).toBeNull();
     await page.keyboard.press('ControlOrMeta+KeyP');
     await expect(palette(page)).toBeVisible();
-    await expect(heldRow(page)).toHaveCount(0);
+    await expect(heldRow(page)).toHaveCount(1);
     await page.keyboard.press('Escape');
     expect(await hires(page)).toHaveLength(1);
     expect(await beeps(page)).toBe(0);

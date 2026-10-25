@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/JeffreyVdb/herdr-3d/internal/mcpdiag"
 	"strings"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/shell"
@@ -109,6 +110,11 @@ func (c *Control) codexStartupResult(ctx context.Context, session, pane, name st
 		return err
 	}
 	screen, readErr := c.ReadPane(ctx, session, pane)
+	if readErr == nil {
+		if diagnostics := mcpdiag.Terminal(screen); len(diagnostics) > 0 {
+			return &mcpdiag.Failure{Diagnostics: diagnostics, Cause: err}
+		}
+	}
 	if readErr != nil || !strings.Contains(screen, "Hooks need review") || !strings.Contains(screen, "Trust all and continue") || !strings.Contains(screen, "Continue without trusting") {
 		return err
 	}

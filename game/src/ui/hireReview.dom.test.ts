@@ -757,7 +757,7 @@ describe('HireReviewDialog', () => {
         await tick();
         expect(t.rv.summary()).toMatchObject({ state: 'ready', error: true });
         expect(t.rv.summary()!.status).toBe(
-          `No answer about the hire at Desk 1 of floor: ${code === 'timeout' ? 'herdr-world did not answer in time' : 'the connection dropped'}. It may still have gone through: look at the desk before you hire again.`,
+          `No answer about the hire at Desk 1 of floor: ${code === 'timeout' ? 'herdr-world did not answer in time' : 'the connection dropped'}. It may still have gone through: look at the desk before you hire again. This review stays in this tab only; copy the task before refreshing.`,
         );
         expect(t.toasts).toEqual([]);
         expect(t.hires).toHaveLength(1);
@@ -769,7 +769,7 @@ describe('HireReviewDialog', () => {
       await hired(t);
       t.hires[0]!.answer({ ok: false, code: 'timeout', message: '' });
       await tick();
-      expect(hireBtn().disabled).toBe(false);
+      expect(hireBtn().disabled).toBe(true);
       t.env.seats[0] = { name: 'Gumdrop' };
       t.rv.refresh();
       expect(t.rv.summary()!.blocker).toBe('Gumdrop just sat down at Desk 1.');
@@ -802,9 +802,9 @@ describe('HireReviewDialog', () => {
       expect(s).toMatchObject({ state: 'ready', error: true, form: before.form, choice: before.choice });
       expect(s.status).toMatch(/claude exited during startup/);
       expect(t.rv.heldReviews()).toEqual([]);
-      // An ordinary review now: closed, it is gone (not held again), and a second "Review again" does nothing.
+      // Closing an unresolved failure keeps a visible recovery action; the old toast cannot reopen it twice.
       t.rv.close();
-      expect(t.rv.heldReviews()).toEqual([]);
+      expect(t.rv.heldReviews()).toEqual([expect.objectContaining({ task: 'fix the login bug.', outcome: 'failed' })]);
       expect(t.rv.reopenHeld('1')).toBe(false);
       expect(t.rv.isOpen).toBe(false);
       expect(t.hires).toHaveLength(1);
@@ -881,6 +881,17 @@ describe('HireReviewDialog', () => {
       expect(t.rv.summary()).toMatchObject({ state: 'ready', error: true, status: 'the connection dropped Look at the desk before you hire again.' });
       expect(t.rv.heldReviews()).toEqual([]);
       expect(t.toasts).toEqual([]);
+    });
+
+    it('a foreground hire closed before startup fails gives back the original task without sending again', async () => {
+      const t = setup(); t.rv.open('floor', FULL); await tick();
+      const task = t.rv.summary()!.choice.task;
+      hireBtn().click(); await tick(); t.rv.close();
+      t.hires[0]!.answer({ ok: false, code: 'hire_failed', message: 'code-intel timed out', data: { operation: 'op1', delivery: 'not_sent', retryable: true } });
+      await tick();
+      expect(t.rv.summary()).toMatchObject({ state: 'ready', error: true, choice: { task } });
+      expect(t.hires).toHaveLength(1);
+      t.rv.close(); expect(t.rv.heldReviews()).toHaveLength(1);
     });
   });
 

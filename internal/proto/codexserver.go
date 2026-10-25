@@ -1,5 +1,20 @@
 package proto
 
+import "github.com/JeffreyVdb/herdr-3d/internal/mcpdiag"
+
+// MCPDiagnostic is display-safe startup evidence, never a raw provider error.
+type MCPDiagnostic = mcpdiag.Diagnostic
+
+// HireFailure survives rollback and distinguishes a safe retry from uncertain delivery.
+type HireFailure struct {
+	Cwd       string          `json:"cwd,omitempty"`
+	Profile   string          `json:"codex_profile,omitempty"`
+	Operation string          `json:"operation"`
+	Delivery  string          `json:"delivery"`
+	Retryable bool            `json:"retryable"`
+	Startup   []MCPDiagnostic `json:"startup,omitempty"`
+}
+
 // #155 shared Codex server (docs/protocol.md "Shared Codex server"): when
 // switched on, a new or restarted Codex worker runs Codex's terminal against
 // an app-server of its own that the bridge can join as a second client. The
@@ -69,6 +84,7 @@ const (
 
 // WorkerCodex is how a Codex worker the bridge hired was launched.
 type WorkerCodex struct {
+	Startup []MCPDiagnostic `json:"startup,omitempty"`
 	// Mode is shared (its own app-server) or legacy (Codex's embedded
 	// server, as before the switch; also a shared hire that fell back).
 	Mode string `json:"mode"`

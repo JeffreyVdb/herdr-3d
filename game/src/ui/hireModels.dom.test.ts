@@ -68,6 +68,7 @@ const chipOf = (name: string, value: string) => document.querySelector<HTMLInput
 
 describe('HireDialog: the models Settings leaves shown (#194)', () => {
   beforeEach(() => {
+    localStorage.clear();
     HTMLDialogElement.prototype.showModal = function () {
       this.setAttribute('open', '');
     };
@@ -270,6 +271,7 @@ const MANY: HireOptions = {
 
 describe('HireDialog: readable model names (#200)', () => {
   beforeEach(() => {
+    localStorage.clear();
     HTMLDialogElement.prototype.showModal = function () {
       this.setAttribute('open', '');
     };

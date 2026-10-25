@@ -1251,7 +1251,7 @@ func (h *Hub) reply(c *Client, cmd proto.Command, data any, err error) {
 	if err != nil {
 		code := errorCode(err)
 		h.log.Info("command rejected", "client", c.name, "cmd", cmd.T, "req_id", cmd.ReqID, "code", code, "err", err)
-		h.deliver(c, mustJSON(proto.Error{T: proto.TError, ReqID: cmd.ReqID, Code: code, Message: err.Error()}))
+		h.deliver(c, mustJSON(proto.Error{T: proto.TError, ReqID: cmd.ReqID, Code: code, Message: err.Error(), Data: data}))
 		return
 	}
 	h.replyAck(c, cmd, mustJSON(proto.Ack{T: proto.TAck, ReqID: cmd.ReqID, Data: data}))

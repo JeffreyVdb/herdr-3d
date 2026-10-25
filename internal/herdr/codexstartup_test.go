@@ -79,3 +79,23 @@ func TestCodexStartupKeepsUnrelatedFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexStartupMCPDiagnostic(t *testing.T) {
+	c := &Control{Run: func(_ context.Context, argv []string) ([]byte, []byte, error) {
+		if slices.Contains(argv, "start") {
+			return nil, []byte(`{"error":{"code":"timeout","message":"timed out waiting for agent startup"}}`), errors.New("exit 1")
+		}
+		if slices.Contains(argv, "read") {
+			return []byte("MCP client for `code-intel` timed out after 10 seconds\nsecret: https://user:password@example.test/?token=private"), nil, nil
+		}
+		t.Fatalf("unexpected command: %v", argv)
+		return nil, nil, nil
+	}}
+	err := c.StartAgent(context.Background(), "s", "w1:p1", "worker", Agent{Harness: "codex", Model: "mock", Effort: "low"})
+	if err == nil || !strings.Contains(err.Error(), "code-intel") || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("MCP startup cause missing: %v", err)
+	}
+	if strings.Contains(err.Error(), "private") || strings.Contains(err.Error(), "password") {
+		t.Fatalf("raw screen reached the diagnostic: %v", err)
+	}
+}

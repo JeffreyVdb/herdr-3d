@@ -239,6 +239,40 @@ test('a launch failure and a task not delivered: each its own error, the desk le
   clean();
 });
 
+test('MCP startup failure stays with the task after reload, including image paths; retry sends it once', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await probe(page);
+  await onPastry(page, `&simfail=mcp_startup&upload_key=${unique()}`);
+  await openHire(page, 14);
+  await page.locator('[data-key="harness:codex"]').locator('..').click();
+  await page.locator('#hire-task').focus();
+  await page.keyboard.type('Inspect the connection ');
+  await pasteImage(page, 'connection.png');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => hires(page)).toHaveLength(1);
+  await advance(page, 150);
+  const recovery = page.locator('[data-hook="hire-recovery"]');
+  await expect(recovery).toContainText('code-intel timed out');
+  await expect(recovery).toContainText('Your prompt has not been sent');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: 'Review hire · pastry · Desk 15', exact: true })).toBeVisible();
+  await page.reload();
+  await page.waitForFunction(() => window.__h3d?.ready && window.__h3d.frames >= 3);
+  await page.getByRole('button', { name: 'Review hire · pastry · Desk 15', exact: true }).click();
+  await expect(recovery).toContainText('code-intel timed out');
+  await expect(recovery.getByRole('button', { name: 'MCP details', exact: true })).toBeVisible();
+  expect(await task(page)).toMatch(/Inspect the connection .*\/home\/fixture\/drops\/.*\.png/);
+  await page.screenshot({ path: `${RESULTS}/mcp-startup-recovery.png` });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(recovery.getByRole('button', { name: 'Copy prompt', exact: true })).toBeVisible();
+  await page.screenshot({ path: `${RESULTS}/mcp-startup-recovery-narrow.png` });
+  await page.getByRole('button', { name: 'Retry hire', exact: true }).click();
+  await expect.poll(() => hires(page)).toHaveLength(1); // a fresh simulator after reload
+  expect((await hires(page))[0]!.args).toMatchObject({ desk_index: 14, prompt: expect.stringContaining('/home/fixture/drops/') });
+  clean();
+});
+
 test('a dialog edited while an earlier hire ends keeps its edits; two hires on their way end on their own', async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);

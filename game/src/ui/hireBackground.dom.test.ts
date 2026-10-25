@@ -31,6 +31,7 @@ function setup() {
   const goTos: string[] = [];
   const toasts: Array<{ text: string; kind: string }> = [];
   const handed: Array<{ id: string; text: string; from: unknown }> = [];
+  const mcp: Array<{ floor: string; cwd: string; profile: string }> = [];
   let beeps = 0;
   const prefs = new HirePrefs(null);
   prefs.hireInBackground = true;
@@ -45,6 +46,7 @@ function setup() {
     held: () => holds,
     toast: (text: string, kind: string) => void toasts.push({ text, kind }),
     goTo: (id: string) => void goTos.push(id),
+    mcpDetails: (floor: string, cwd: string, profile: string) => void mcp.push({ floor, cwd, profile }),
     beep: () => void beeps++,
     hirePrefs: prefs,
     now: () => Date.now(),
@@ -57,7 +59,7 @@ function setup() {
   let upload: (...a: unknown[]) => Promise<CommandResult> = () => new Promise(() => {});
   const dlg = new HireDialog(document.body, host);
   const uploads = (fn: typeof upload) => void (upload = fn);
-  return { dlg, inner: dlg as unknown as Inner, prefs, hires, holds, goTos, toasts, handed, uploads, beeps: () => beeps };
+  return { dlg, inner: dlg as unknown as Inner, prefs, hires, holds, goTos, toasts, handed, mcp, uploads, beeps: () => beeps };
 }
 
 async function typed(t: ReturnType<typeof setup>, desk: number, text: string) {
@@ -314,4 +316,114 @@ describe('HireDialog: Hire in background (#210)', () => {
     expect(t.handed).toEqual([]);
     expect(t.toasts).toEqual([{ kind: 'error', text: expect.stringMatching(/the text stays in this desk’s hire dialog\.$/) }]);
   });
+  it('keeps named startup failure beside the task after close and permits exactly one settled retry', async () => {
+    const t = setup();
+    await typed(t, 0, 'Keep the entire task.');
+    const pending = t.inner.hire();
+    await tick();
+    t.hires[0]!.answer({ ok: false, code: 'hire_failed', message: 'Codex did not become ready within 30 seconds.', data: { operation: 'op1', delivery: 'not_sent', retryable: true, startup: [{ name: 'code-intel', stage: 'failed', category: 'timeout', source: 'terminal' }] } });
+    await pending;
+    expect(document.querySelector('[data-hook="hire-recovery"]')?.textContent).toContain('code-intel timed out');
+    expect(document.querySelector('[data-hook="hire-recovery"]')?.textContent).toContain('Your prompt has not been sent');
+    const details = document.querySelector<HTMLDetailsElement>('[data-hook="hire-recovery"] details')!;
+    details.open = true;
+    document.querySelector<HTMLButtonElement>('[data-key="recovery-copy"]')!.focus();
+    t.dlg.refresh();
+    expect(document.activeElement?.getAttribute('data-key')).toBe('recovery-copy');
+    expect(document.querySelector<HTMLDetailsElement>('[data-hook="hire-recovery"] details')!.open).toBe(true);
+    t.dlg.close();
+    expect(document.querySelector('.hire-recovery-tray')?.hasAttribute('hidden')).toBe(false);
+    (document.querySelector('.hire-recovery-tray button') as HTMLButtonElement).click();
+    await tick();
+    expect(t.inner.editor.draft.doc.text).toBe('Keep the entire task.');
+    expect(document.querySelector('[data-hook="hire-recovery"]')?.textContent).toContain('code-intel');
+    const retry = t.inner.hire();
+    const duplicate = t.inner.hire();
+    await tick();
+    expect(t.hires).toHaveLength(2);
+    t.hires[1]!.answer({ ok: true, data: { id: 'w1', prompted: true, delivery: 'accepted' } });
+    await Promise.all([retry, duplicate]);
+    expect(localStorage.getItem(key(0))).toBeNull();
+    expect(document.querySelector('.hire-recovery-tray')?.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('persists the failed operation, hire options and uploaded image paths across reload', async () => {
+    const t = setup();
+    t.uploads(async () => ({ ok: true, data: { path: '/drops/kept.png' } }));
+    await typed(t, 0, 'Examine this ');
+    t.inner.editor.draft.addImages([new File([new Uint8Array([1])], 'kept.png', { type: 'image/png' })]);
+    const label = document.querySelector<HTMLInputElement>('#hire-label')!;
+    label.value = 'Remember'; label.dispatchEvent(new Event('input'));
+    const pending = t.inner.hire(); await tick();
+    t.hires[0]!.answer({ ok: false, code: 'hire_failed', message: 'Startup failed', data: { operation: 'op2', delivery: 'not_sent', retryable: true } });
+    await pending;
+    t.dlg.close(); document.body.replaceChildren();
+    const reloaded = setup();
+    (document.querySelector('.hire-recovery-tray button') as HTMLButtonElement).click();
+    await tick();
+    expect(reloaded.dlg.summary()?.form).toMatchObject({ label: 'Remember', harness: 'codex', model: 'gpt', effort: 'high', cwd: '/home/test' });
+    expect(reloaded.inner.editor.draft.doc.text).toContain('/drops/kept.png');
+    expect(document.querySelector('[data-hook="hire-recovery"]')?.textContent).toContain('Startup failed');
+    const retry = reloaded.inner.hire(); await tick();
+    expect(reloaded.hires[0]!.args.prompt).toContain('/drops/kept.png');
+    reloaded.hires[0]!.answer({ ok: true, data: { id: 'w1', prompted: true } });
+    await retry;
+  });
+
+  it('keeps recovery behind another modal and preserves newer edits when the old hire fails', async () => {
+    const t = setup();
+    await typed(t, 0, 'Original task');
+    const pending = t.inner.hire(); await tick();
+    await typed(t, 0, 'Newer edit: ');
+    t.dlg.close();
+    const other = document.createElement('dialog'); document.body.append(other); other.showModal();
+    t.hires[0]!.answer({ ok: false, code: 'hire_failed', message: 'MCP failed', data: { operation: 'op3', delivery: 'not_sent', retryable: true } });
+    await pending;
+    expect(other.open).toBe(true);
+    const recovery = document.querySelector('.hire-recovery-tray button') as HTMLButtonElement;
+    recovery.click(); expect(t.dlg.isOpen).toBe(false);
+    other.close(); recovery.click(); await tick();
+    expect(t.inner.editor.draft.doc.text).toContain('Newer edit: ');
+    expect(t.inner.editor.draft.doc.text).toContain('Original task');
+  });
+
+  it('keeps unknown delivery blocked after reload, without offering a duplicate hire', async () => {
+    const t = setup(); await typed(t, 0, 'Maybe delivered');
+    const pending = t.inner.hire(); await tick();
+    t.hires[0]!.answer({ ok: false, code: 'disconnected', message: 'dropped' }); await pending;
+    document.body.replaceChildren();
+    const reloaded = setup(); reloaded.dlg.open('floor', 0); await tick();
+    expect(reloaded.dlg.summary()?.blocker).toContain('Check the existing worker');
+    await reloaded.inner.hire();
+    expect(reloaded.hires).toHaveLength(0);
+    expect(reloaded.inner.editor.draft.doc.text).toBe('Maybe delivered');
+  });
+
+  it('opens MCP details for the failed launch’s resolved profile and cwd, retaining the task', async () => {
+    const t = setup(); await typed(t, 0, 'Keep this task');
+    const pending = t.inner.hire(); await tick();
+    t.hires[0]!.answer({ ok: false, code: 'hire_failed', message: 'Startup failed', data: { operation: 'op4', delivery: 'not_sent', retryable: true, cwd: '/failed/checkout', codex_profile: 'work' } });
+    await pending;
+    [...document.querySelectorAll<HTMLButtonElement>('[data-hook="hire-recovery"] button')].find((b) => b.textContent === 'MCP details')!.click();
+    expect(t.mcp).toEqual([{ floor: 'floor', cwd: '/failed/checkout', profile: 'work' }]);
+    expect(t.dlg.isOpen).toBe(false);
+    t.dlg.open('floor', 0); await tick();
+    expect(t.inner.editor.draft.doc.text).toBe('Keep this task');
+  });
+
+  it('blocks a recovered task with unuploaded images until the attachments are repaired', async () => {
+    const t = setup(); await typed(t, 0, 'Check this image ');
+    t.uploads(async (file) => (file as File).name === 'already.png' ? { ok: true, data: { path: '/drops/already.png' } } : await new Promise(() => {}));
+    t.inner.editor.draft.addImages(['already.png', 'pending.png'].map((name) => new File([new Uint8Array([1])], name, { type: 'image/png' })));
+    await tick(); await tick();
+    const unload = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(unload); expect(unload.defaultPrevented).toBe(true);
+    document.body.replaceChildren();
+    const reloaded = setup(); reloaded.dlg.open('floor', 0); await tick();
+    expect(reloaded.inner.editor.draft.doc.text).toContain('/drops/already.png');
+    expect(reloaded.dlg.summary()?.blocker).toContain('images');
+    await reloaded.inner.hire(); expect(reloaded.hires).toHaveLength(0);
+    expect(document.querySelector('[data-hook="hire-recovery"]')?.textContent).toContain('Reattach the images');
+  });
+
 });
