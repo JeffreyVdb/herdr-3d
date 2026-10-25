@@ -181,6 +181,7 @@ export const BINDINGS = [
   { id: 'leave', group: 'floor', scope: 'floor', keys: [code('Backspace')], label: 'Back to the city', palette: { name: 'Back to the city', aliases: ['leave', 'exit', 'city', 'outside'] } },
   { id: 'select.clear', group: 'aimed', scope: 'selected', keys: [code('Escape')], label: 'Let go of what you picked (moving or turning does too)', quiet: true },
   { id: 'stand', group: 'floor', scope: 'sitting', keys: [code('Escape')], label: 'Get up from your desk', quiet: true },
+  { id: 'own-desk.play', group: 'floor', scope: 'sitting', keys: [code('KeyE')], label: 'Play Patience or Minesweeper on your monitor' },
   { id: 'plan.close', group: 'floor', scope: 'plan', keys: [code('Escape')], label: 'Close the floor plan', quiet: true },
   // ---- in the city ---------------------------------------------------------------------------------
   { id: 'buildings', group: 'city', scope: 'city', keys: [code('KeyM')], label: 'Buildings', palette: { name: 'Buildings', aliases: ['city', 'building list'], where: 'anywhere' } },

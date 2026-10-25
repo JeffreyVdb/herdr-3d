@@ -33,6 +33,7 @@ Walking around an office, its lobby or the street.
 | `Shift` + `Tab` | Into the top bar (then Tab and Enter) |
 | `Backspace` | Back to the city |
 | `Esc` | Get up from your desk |
+| `E` | Play Patience or Minesweeper on your monitor |
 | `Esc` | Close the floor plan |
 
 ## In the city

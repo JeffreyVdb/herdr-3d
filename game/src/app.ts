@@ -52,6 +52,7 @@ import { followupLost, HANDOVER_EXPIRED, interpretOutcome, outcomeText, PENDING_
 import { paletteCommands, type PaletteCommand } from './world/palette';
 import { Laptops, type WatchCommand } from './laptop';
 import { SeatBar } from './ui/seat';
+import { DeskGames } from './ui/deskGames';
 import { blocked, blocked3, groundAt, nudgeClear, type WalkWorld } from './world/collide';
 import { buildingPlan, floorY, loadedFloor, placeAt, walkWorld, type Area, type BuildingPlan, type Place } from './world/building';
 import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, overlookReach, seatRect, type Opening, type Outline } from './world/layout';
@@ -370,6 +371,7 @@ export class App {
   readonly mcpPage: McpOverview;
   /** M13: the whiteboard overlay, each floor's board as last heard of, and the `whiteboard.get`s the game sent by itself (test hook; not in `sent`). */
   readonly whiteboard: WhiteboardOverlay;
+  readonly deskGames: DeskGames;
   /** #118: the floor overview page, and when the wall screen and the page last had the world as it is. */
   readonly overview: OverviewOverlay;
   private overviewDirty = true;
@@ -475,6 +477,7 @@ export class App {
     if (o.buildInfo) this.hud.mountAbout(o.buildInfo);
     this.settings = this.hud.mountSettings();
     this.shortcuts = new ShortcutsDialog(o.host);
+    this.deskGames = new DeskGames(o.host, () => this.standUp());
     this.palette = new Palette(o.host, {
       // #57: Switch bridge only where a helper serves the page.
       commands: () => paletteCommands(this.activeScopes()).filter((c) => c.id !== 'bridge.switch' || this.bridges.available),
@@ -1890,6 +1893,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
+    if (this.deskGames.isOpen) return true;
     return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.secretsReview.isOpen || this.revokeSecrets.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.hirePresets.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen || this.mcpPage.isOpen;
   }
 
@@ -3414,7 +3418,7 @@ export class App {
     }
     const fv = this.office ? this.store.floorView(this.office.id) : null;
     const asleep = fv?.asleep && !fv.transition ? 'This floor is asleep: the elevator (<strong>L</strong>) wakes it · ' : '';
-    if (this.walker.sitting && !this.planOpen) this.hud.setHint(this.walker.locked ? `At your desk · <strong>WASD</strong> gets up${more}` : `At your desk · ${look}<strong>WASD</strong> or <strong>Esc</strong> gets up${more}`);
+    if (this.walker.sitting && !this.planOpen) this.hud.setHint(`At your desk · <strong>${keyName('own-desk.play')}</strong> play Patience or Minesweeper · <strong>WASD</strong> or <strong>Esc</strong> gets up${more}`);
     else if (this.planOpen) this.hud.setHint(`<strong>Click</strong> the floor to walk there · WASD walks · <strong>L</strong> elevator · <strong>Tab</strong> back to first person${more}`);
     else if (this.walker.locked) this.hud.setHint(null);
     // #118: the floor overview is in the hint too (the top bar's button goes where the bar is short).
@@ -3506,7 +3510,7 @@ export class App {
     const t = this.target;
     if (this.keyTarget) s.add('selected');
     if (this.planOpen) s.add('plan');
-    if (this.walker.sitting) s.add('sitting');
+    if (this.walker.sitting && !this.planOpen) s.add('sitting');
     // C on a worker works under the plan too (it always did); the other aimed keys do not.
     if (this.changes.isOpen || (this.planOpen && t?.kind === 'worker')) s.add('changes');
     if (t && (!this.planOpen || (t.kind === 'prop' && t.id === 'reception'))) {
@@ -3567,6 +3571,7 @@ export class App {
     'worker.answer': (m) => this.aimed('worker', (t) => this.answerKey(t.id, Number(m.code.slice(-1)))),
     'desk.hire': () => this.aimed('desk', (t) => this.openHire(t.desk)),
     'own-desk.sit': () => this.sit(),
+    'own-desk.play': () => this.playDeskGames(),
     'board.open': () => this.aimed('board', (t) => this.openBoard(t.id === 'board.issues' ? 'issues' : 'prs')),
     'elevator.open': () => this.openElevator(),
     'reception.open': () => {
@@ -3596,7 +3601,7 @@ export class App {
    * from inside a text field only the modifier chord does, and `?` types. A modal over a modal is fine: Esc closes the top one.
    */
   private onHelpKey(e: KeyboardEvent): void {
-    if (e.isComposing || this.whiteboard.isOpen || this.laptops.seated || this.shortcuts.isOpen) return;
+    if (e.isComposing || this.whiteboard.isOpen || this.deskGames.isOpen || this.laptops.seated || this.shortcuts.isOpen) return;
     const typing = typingIn(e.target);
     if (!(pressesBinding(e, 'help.field') || (!typing && pressesBinding(e, 'help')))) return;
     // The image previews and a card being dragged have their own capture-phase Esc: not over them.
@@ -4089,6 +4094,7 @@ export class App {
   /** One update at `dt` seconds of game time `t`. Also used by the benchmark. */
   step(dt: number, t: number): void {
     this.lastT = t;
+    if (this.deskGames.isOpen && (!this.walker.sitting || !this.inOffice() || this.mode !== 'floor' || this.transitioning)) this.deskGames.close();
     this.stepDaylight(dt);
     this.stepOverview(performance.now()); // #118
     this.stepRack(); // #74
@@ -4747,7 +4753,16 @@ export class App {
     return true;
   }
 
+  private playDeskGames(): void {
+    if (!this.walker.sitting || !this.inOffice() || this.transitioning || this.planOpen) return;
+    this.walker.stop();
+    this.walker.release();
+    this.deskGames.open();
+    this.activity(true);
+  }
+
   standUp(): void {
+    this.deskGames.close();
     if (!this.walker.sitting) return;
     this.walker.stand();
     this.updateHint();

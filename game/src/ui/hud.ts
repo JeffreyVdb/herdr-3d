@@ -662,7 +662,7 @@ export class Hud {
       this.prompt.setAttribute('aria-label', `Radio: ${this.radioName} · E next genre · R next track`);
     } else if (t.kind === 'own-desk') {
       // #20: your desk in the corner office.
-      line.append(text('prompt-name', t.label), text('prompt-task', `${t.name === 'You' ? 'Yours' : t.name} · look out over the whole floor`));
+      line.append(text('prompt-name', t.label), text('prompt-task', `${t.name === 'You' ? 'Yours' : t.name} · Patience & Minesweeper on your monitor`));
       const k = el('span', 'key');
       k.append(el('kbd', '', 'E'), document.createTextNode('Sit'));
       keys.append(k);

@@ -109,6 +109,7 @@ export class MezzanineView {
   private readonly lower: THREE.Mesh;
   private readonly upper: THREE.Mesh;
   private readonly plate: THREE.Mesh;
+  private readonly gamesScreen: THREE.Mesh;
   private readonly plan: THREE.Mesh;
   private readonly door: THREE.Group;
   private readonly doorClosedX: number;
@@ -192,7 +193,7 @@ export class MezzanineView {
     const th = GLASS_H - d.height - 0.15;
     this.glass.push(...pane(d.x1 - d.x0, th, new THREE.Matrix4().makeTranslation((d.x0 + d.x1) / 2, y + d.height + 0.08 + th / 2, dz)));
 
-    // Your desk: the worker desk art with the office's monitor and keyboard (M6b, as on every desk; nothing live), and a mug.
+    // Your desk: the worker desk art, a personal games monitor, keyboard and mug.
     const desk = new THREE.Matrix4().compose(v3(m.desk.seat.x, y, m.desk.seat.z), new THREE.Quaternion().setFromAxisAngle(v3(0, 1, 0), m.desk.yaw), v3(1, 1, 1));
     const art = deskGeometries();
     const colors: Partial<Record<keyof typeof art, number>> = { top: P.deskTop, legs: P.deskLeg, chair: P.chair, chairBase: P.chairBase };
@@ -207,7 +208,21 @@ export class MezzanineView {
       desk.clone().multiply(new THREE.Matrix4().makeTranslation(x, 0, z)).multiply(new THREE.Matrix4().makeRotationY(turn)).multiply(new THREE.Matrix4().makeTranslation(-ox, 0, -oz));
     const mon = about(-0.3, MONITOR.z - 0.06, 0.35, 0, MONITOR.z);
     for (const p of monitorPieces()) up.add(p.geo, p.color, mon);
-    up.add(screenGeometry(), C.screen, mon);
+    const gamesTexture = canvasTexture(640, 360, (g) => {
+      g.fillStyle = css(P.frame);
+      g.fillRect(0, 0, 640, 360);
+      g.fillStyle = css(P.accent);
+      g.font = `800 56px ${FONT}`;
+      g.fillText('Games', 40, 80);
+      g.fillStyle = '#ffffff';
+      g.font = `600 36px ${FONT}`;
+      g.fillText('Patience', 40, 157);
+      g.fillText('Minesweeper', 40, 215);
+      g.font = `500 26px ${FONT}`;
+      g.fillText('Sit down, then press E to play', 40, 308);
+    });
+    this.gamesScreen = new THREE.Mesh(screenGeometry().applyMatrix4(mon), new THREE.MeshBasicMaterial({ map: gamesTexture, toneMapped: false }));
+    this.gamesScreen.name = 'mezzanine.games';
     const kb = about(-0.22, SEAT_OFFSET - 0.19, 0.18, KEYBOARD.x, KEYBOARD.z);
     for (const p of keyboardPieces()) up.add(p.geo, p.color, kb);
     inDesk(new THREE.CylinderGeometry(0.038, 0.034, 0.1, 12).translate(0.5, DESK_H + 0.05, SEAT_OFFSET - 0.14), C.rail);
@@ -281,7 +296,7 @@ export class MezzanineView {
     this.plan.name = 'mezzanine.plan';
     this.plan.visible = false;
 
-    this.group.add(this.lower, this.upper, this.plate, this.door, this.plan);
+    this.group.add(this.lower, this.upper, this.plate, this.door, this.plan, this.gamesScreen);
   }
 
   /** The glass door: 0 shut, 1 open. */
@@ -297,16 +312,18 @@ export class MezzanineView {
   }
 
   setPlan(on: boolean): void {
-    this.upper.visible = this.plate.visible = this.door.visible = !on;
+    this.upper.visible = this.plate.visible = this.door.visible = this.gamesScreen.visible = !on;
     this.plan.visible = on;
   }
 
   dispose(): void {
-    for (const o of [this.lower, this.upper, this.plate, this.plan, ...this.door.children]) {
+    for (const o of [this.lower, this.upper, this.plate, this.plan, this.gamesScreen, ...this.door.children]) {
       if (o instanceof THREE.Mesh) o.geometry.dispose();
     }
     (this.plate.material as THREE.MeshBasicMaterial).map?.dispose();
     (this.plate.material as THREE.Material).dispose();
+    (this.gamesScreen.material as THREE.MeshBasicMaterial).map?.dispose();
+    (this.gamesScreen.material as THREE.Material).dispose();
     this.material.dispose();
     for (const g of this.glass) g.dispose();
   }
