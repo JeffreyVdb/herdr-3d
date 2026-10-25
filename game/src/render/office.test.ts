@@ -31,6 +31,31 @@ function world(): WorldStore {
   return s;
 }
 
+describe('fire-escape doorway surfaces', () => {
+  it.each(['north jamb', 'south jamb', 'lintel'] as const)('%s has no competing wall and trim faces', (edge) => {
+    const office = new OfficeView(world().floorView('top')!, { shadows: false });
+    try {
+      office.setDoor(1);
+      office.root.updateMatrixWorld(true);
+      const d = office.layout.fireDoor;
+      // Look along the reveal from inside the opening, where walking through exposes the frame's edges.
+      for (const x of [-0.04, -0.02, -0.001, 0.001, 0.02, 0.04]) {
+        const origin = edge === 'lintel'
+          ? new THREE.Vector3(x, d.height - 0.1, (d.z0 + d.z1) / 2)
+          : new THREE.Vector3(x, 1, edge === 'north jamb' ? d.z0 + 0.1 : d.z1 - 0.1);
+        const direction = edge === 'lintel' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, edge === 'north jamb' ? -1 : 1);
+        const hits = new THREE.Raycaster(origin, direction, 0, 0.2).intersectObject(office.root, true);
+        expect(hits.length).toBeGreaterThan(0);
+        // A triangle seam can yield two hits on one mesh; separate meshes at the same depth fight for pixels.
+        const nearest = hits.filter((hit) => Math.abs(hit.distance - hits[0]!.distance) < 1e-5);
+        expect(new Set(nearest.map((hit) => hit.object)).size, `${edge}, x=${x}`).toBe(1);
+      }
+    } finally {
+      office.dispose();
+    }
+  });
+});
+
 /** A look-at ray from `back` metres behind a desk's chair, at eye height, towards the seated worker. */
 function lookAtSeat(o: OfficeView, desk: number, back = 1.5): { origin: V3; dir: V3 } {
   const s = o.layout.slots[desk]!;
