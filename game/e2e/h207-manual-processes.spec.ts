@@ -65,6 +65,7 @@ test('other host cannot run; manual processes retain distinct states and gone-wo
   await page.keyboard.press('Escape'); await frames(page, 3);
   await openMenu(page); await page.locator('[data-action="manual-processes.all"]').click();
   await expect(dlg).toContainText('Gone worker'); await expect(dlg).toContainText('Cleanup: needed');
+  await dlg.locator('.mp-row').filter({ hasText: 'Gone worker' }).scrollIntoViewIfNeeded();
   await snap(page, 'desktop-all-cleanup'); clean();
 });
 
