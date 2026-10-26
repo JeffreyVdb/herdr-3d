@@ -16,6 +16,12 @@ import (
 type commandRequestShown struct {
 	request *proto.CommandRequest
 	turn    string
+	source  commandRequestSource
+}
+type commandRequestSource struct{ Agent, Session string }
+type storedCommandRequest struct {
+	Request *proto.CommandRequest `json:"request"`
+	Source  commandRequestSource  `json:"source"`
 }
 type commandRequestState struct {
 	shown   map[string]commandRequestShown
@@ -42,6 +48,9 @@ func (h *Hub) commandRequestWants(id, hash string) bool {
 }
 func (h *Hub) commandRequestSeen(ctx context.Context, u followupUpdate) {
 	s := h.cr.shown[u.id]
+	if s.request != nil && s.source != u.source {
+		h.closeCommandRequest(u.id, s.request.Key, "moved")
+	}
 	if u.turn == nil {
 		delete(h.cr.latest, u.id)
 		if u.moved && s.request != nil {
@@ -71,19 +80,21 @@ func (h *Hub) commandRequestUnseen(ctx context.Context, id string, c *followupCa
 			_ = h.st.CloseCommandRequestSeen(ctx, id, c.turn.Hash, "moved")
 			return false
 		}
-		var req proto.CommandRequest
-		if json.Unmarshal([]byte(v.Request), &req) == nil {
-			h.setCommandRequest(id, &req, v.Turn)
+		var saved storedCommandRequest
+		if json.Unmarshal([]byte(v.Request), &saved) == nil && saved.Request != nil && saved.Source == c.source && h.commandRequestSourceCurrent(id, c.source) {
+			h.setCommandRequest(id, saved.Request, v.Turn, c.source)
+		} else {
+			_ = h.st.CloseCommandRequestSeen(ctx, id, c.turn.Hash, "moved")
 		}
 	}
 	return false
 }
-func (h *Hub) setCommandRequest(id string, req *proto.CommandRequest, turn string) {
+func (h *Hub) setCommandRequest(id string, req *proto.CommandRequest, turn string, source commandRequestSource) {
 	w := h.workers[id]
 	if w == nil {
 		return
 	}
-	h.cr.shown[id] = commandRequestShown{req, turn}
+	h.cr.shown[id] = commandRequestShown{req, turn, source}
 	next := *w
 	next.CommandRequest = req
 	h.workers[id] = &next
@@ -120,8 +131,9 @@ func (h *Hub) closeCommandRequest(worker, key, outcome string) {
 	}
 }
 func (h *Hub) commandRequestEntry(worker, key string, index int) (cmd string, variants []string, host string, ok bool) {
-	s := h.cr.shown[worker].request
-	if s == nil || s.Key != key || index < 0 || index >= len(s.Commands) {
+	shown := h.cr.shown[worker]
+	s := shown.request
+	if s == nil || s.Key != key || shown.turn != h.cr.latest[worker] || !h.commandRequestSourceCurrent(worker, shown.source) || index < 0 || index >= len(s.Commands) {
 		return "", nil, "", false
 	}
 	c := s.Commands[index]
@@ -138,7 +150,7 @@ func (h *Hub) commandRequestDone(ctx context.Context, id string, c *followupCand
 		return
 	}
 	w := h.workers[id]
-	stale := h.cr.latest[id] != c.turn.ID || w == nil || w.Status == statusWorking || h.commandRequestSkip(w) != ""
+	stale := h.cr.latest[id] != c.turn.ID || !h.commandRequestSourceCurrent(id, c.source) || w == nil || w.Status == statusWorking || h.commandRequestSkip(w) != ""
 	var raw, outcome string
 	var req *proto.CommandRequest
 	if len(commands) > 0 {
@@ -158,7 +170,7 @@ func (h *Hub) commandRequestDone(ctx context.Context, id string, c *followupCand
 			}
 		}
 		req = &proto.CommandRequest{Key: c.turn.Hash, At: h.opts.Now().UnixMilli(), Commands: commands}
-		b, _ := json.Marshal(req)
+		b, _ := json.Marshal(storedCommandRequest{Request: req, Source: c.source})
 		raw = string(b)
 		if stale {
 			outcome = "stale"
@@ -169,8 +181,21 @@ func (h *Hub) commandRequestDone(ctx context.Context, id string, c *followupCand
 		return
 	}
 	if req != nil && !stale {
-		h.setCommandRequest(id, req, c.turn.ID)
+		h.setCommandRequest(id, req, c.turn.ID, c.source)
 	}
+}
+
+func (h *Hub) commandRequestSourceCurrent(id string, source commandRequestSource) bool {
+	w := h.workers[id]
+	if w == nil || w.AgentSession != source.Agent {
+		return false
+	}
+	session := w.AgentSession
+	home, other := h.codexHomeOf(id)
+	if other && home != "" && w.AgentKind == "codex" {
+		session = h.childRoot(id, w.AgentSession)
+	}
+	return session == source.Session
 }
 func (h *Hub) startDismissCommandRequest(ctx context.Context, c *Client, cmd proto.Command) error {
 	var a proto.WorkerDismissCommandRequestArgs

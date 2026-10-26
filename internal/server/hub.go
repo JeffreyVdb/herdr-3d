@@ -1887,6 +1887,10 @@ func (h *Hub) syncFloorWorkers(ctx context.Context, f *floorState, obs []world.W
 			h.dropFollowup(ctx, id, false)
 		}
 		next.Followup = h.followupView(id)
+		if s := h.cr.shown[id]; s.request != nil && s.source.Agent != next.AgentSession {
+			h.dropCommandRequest(ctx, id, "moved")
+			delete(h.cr.latest, id)
+		}
 		next.CommandRequest = h.commandRequestView(id)
 		next.ScheduleSuggestion = h.suggestionView(id)      // #66
 		next.Handoff = h.handoffView(id, next.AgentSession) // #223

@@ -46,15 +46,17 @@ const DefaultFollowupDebounce = 2 * time.Second
 // runs, or a prompt came), from the usage tracker. moved: the same
 // transcript went on (not another tracker: another agent session, or none).
 type followupUpdate struct {
-	id    string
-	turn  *transcript.Turn
-	moved bool
+	id     string
+	turn   *transcript.Turn
+	moved  bool
+	source commandRequestSource
 }
 
 // followupOffered is what the tracker last offered of a worker.
 type followupOffered struct {
-	t   *transcript.FollowupTracker
-	seq int
+	t      *transcript.FollowupTracker
+	seq    int
+	source commandRequestSource
 }
 
 // offerFollowup queues worker w's latest ended turn when it changed (usage
@@ -64,7 +66,7 @@ func (tr *usageTracker) offerFollowup(w usageWorker) {
 	if l := tr.lines[w.id]; l != nil {
 		ft = l.followup
 	}
-	o := followupOffered{t: ft}
+	o := followupOffered{t: ft, source: commandRequestSource{Agent: w.agent, Session: w.session}}
 	var turn *transcript.Turn
 	if ft != nil {
 		o.seq, turn = ft.Seq(), ft.Turn()
@@ -81,12 +83,13 @@ func (tr *usageTracker) offerFollowup(w usageWorker) {
 		c := *turn
 		turn = &c
 	}
-	tr.followUps = append(tr.followUps, followupUpdate{id: w.id, turn: turn, moved: ok && prev.t == ft && ft != nil})
+	tr.followUps = append(tr.followUps, followupUpdate{id: w.id, turn: turn, moved: ok && prev.t == ft && ft != nil, source: o.source})
 }
 
 // followupCand is a worker's ended turn waiting to be looked at.
 type followupCand struct {
 	turn     transcript.Turn
+	source   commandRequestSource
 	at       time.Time // when the hub got it
 	inflight bool      // the pipeline runs on it
 	// left counts the pipeline's results still to come (#66: the follow-up
@@ -174,6 +177,9 @@ func (h *Hub) followupView(id string) *proto.Followup {
 // have seen it working) makes the open follow-up moot: it is cleared, so its
 // turn_id is stale and a newer message is looked at in its place.
 func (h *Hub) followupSeen(ctx context.Context, u followupUpdate) {
+	if !h.commandRequestSourceCurrent(u.id, u.source) {
+		return
+	}
 	h.suggestionSeen(ctx, u) // #66: the same turn end
 	h.commandRequestSeen(ctx, u)
 	s := h.fu.shown[u.id]
@@ -190,7 +196,7 @@ func (h *Hub) followupSeen(ctx context.Context, u followupUpdate) {
 	if s != nil && s.hash != u.turn.Hash {
 		h.clearFollowup(ctx, u.id) // a newer turn's message
 	}
-	h.fu.pending[u.id] = &followupCand{turn: *u.turn, at: h.opts.Now()}
+	h.fu.pending[u.id] = &followupCand{turn: *u.turn, source: u.source, at: h.opts.Now()}
 }
 
 // sweepFollowups looks at the ended turns that settled (hub goroutine, every
