@@ -5,10 +5,45 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-
-	"github.com/JeffreyVdb/herdr-3d/internal/manual"
-	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
+
+type ManualSource struct {
+	Kind  string `json:"kind"`
+	Key   string `json:"key,omitempty"`
+	Index int    `json:"index"`
+}
+type ManualEffect struct {
+	Kind           string `json:"kind"`
+	Endpoint       string `json:"endpoint"`
+	CleanupCommand string `json:"cleanup_command"`
+	State          string `json:"state"`
+}
+type ManualProcess struct {
+	ID          string         `json:"id"`
+	Op          string         `json:"op"`
+	Worker      string         `json:"worker"`
+	WorkerName  string         `json:"worker_name"`
+	Floor       string         `json:"floor"`
+	Session     string         `json:"session"`
+	WorkspaceID string         `json:"workspace_id"`
+	TabID       string         `json:"tab_id"`
+	PaneID      string         `json:"pane_id"`
+	Host        string         `json:"host"`
+	Cwd         string         `json:"cwd"`
+	Command     string         `json:"command"`
+	Launched    string         `json:"launched,omitempty"`
+	Title       string         `json:"title"`
+	Source      ManualSource   `json:"source"`
+	State       string         `json:"state"`
+	ExitCode    *int           `json:"exit_code,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	Cleanup     string         `json:"cleanup"`
+	CleanupNote string         `json:"cleanup_note,omitempty"`
+	Effects     []ManualEffect `json:"effects,omitempty"`
+	CreatedAt   int64          `json:"created_at"`
+	StartedAt   int64          `json:"started_at"`
+	EndedAt     int64          `json:"ended_at"`
+}
 
 const migrationManualProcess = `CREATE TABLE manual_process (
  id TEXT PRIMARY KEY, op TEXT NOT NULL UNIQUE, worker TEXT NOT NULL,
@@ -16,8 +51,7 @@ const migrationManualProcess = `CREATE TABLE manual_process (
 );`
 
 // CreateManualProcess atomically reserves op, returning the existing record on retry.
-func (s *Store) CreateManualProcess(ctx context.Context, p proto.ManualProcess) (proto.ManualProcess, bool, error) {
-	p.Credential = nil
+func (s *Store) CreateManualProcess(ctx context.Context, p ManualProcess) (ManualProcess, bool, error) {
 	b, err := json.Marshal(p)
 	if err != nil {
 		return p, false, err
@@ -41,8 +75,7 @@ func (s *Store) CreateManualProcess(ctx context.Context, p proto.ManualProcess) 
 	return p, false, err
 }
 
-func (s *Store) SaveManualProcess(ctx context.Context, p proto.ManualProcess) error {
-	p.Credential = nil
+func (s *Store) SaveManualProcess(ctx context.Context, p ManualProcess) error {
 	b, err := json.Marshal(p)
 	if err != nil {
 		return err
@@ -51,8 +84,8 @@ func (s *Store) SaveManualProcess(ctx context.Context, p proto.ManualProcess) er
 	return err
 }
 
-func (s *Store) ManualProcess(ctx context.Context, id string) (proto.ManualProcess, bool, error) {
-	var p proto.ManualProcess
+func (s *Store) ManualProcess(ctx context.Context, id string) (ManualProcess, bool, error) {
+	var p ManualProcess
 	var data string
 	err := s.db.QueryRowContext(ctx, `SELECT record FROM manual_process WHERE id = ?`, id).Scan(&data)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -72,25 +105,25 @@ func (s *Store) DeleteManualProcess(ctx context.Context, id string) error {
 
 // KeptManualProcesses returns all actionable records and recent terminal history.
 // openWorkers identifies the owners that still exist.
-func (s *Store) KeptManualProcesses(ctx context.Context, openWorkers map[string]bool) ([]proto.ManualProcess, error) {
+func (s *Store) KeptManualProcesses(ctx context.Context, openWorkers map[string]bool) ([]ManualProcess, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT record FROM manual_process WHERE dismissed = 0 ORDER BY created_at DESC, rowid DESC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []proto.ManualProcess{}
+	out := []ManualProcess{}
 	counts := map[string]int{}
 	gone := 0
 	for rows.Next() {
 		var data string
-		var p proto.ManualProcess
+		var p ManualProcess
 		if err := rows.Scan(&data); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(data), &p); err != nil {
 			return nil, err
 		}
-		if !manual.Terminal(p.State) || p.Cleanup == "needed" || p.Cleanup == "failed" {
+		if !terminalManualProcess(p.State) || p.Cleanup == "needed" || p.Cleanup == "failed" {
 			out = append(out, p)
 			continue
 		}
@@ -110,8 +143,8 @@ func (s *Store) KeptManualProcesses(ctx context.Context, openWorkers map[string]
 }
 
 // ManualProcessByOp also finds dismissed records, preserving idempotency.
-func (s *Store) ManualProcessByOp(ctx context.Context, op string) (proto.ManualProcess, bool, error) {
-	var p proto.ManualProcess
+func (s *Store) ManualProcessByOp(ctx context.Context, op string) (ManualProcess, bool, error) {
+	var p ManualProcess
 	var data string
 	err := s.db.QueryRowContext(ctx, `SELECT record FROM manual_process WHERE op = ?`, op).Scan(&data)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -125,16 +158,16 @@ func (s *Store) ManualProcessByOp(ctx context.Context, op string) (proto.ManualP
 }
 
 // AllManualProcesses loads every visible record for in-memory reconciliation.
-func (s *Store) AllManualProcesses(ctx context.Context) ([]proto.ManualProcess, error) {
+func (s *Store) AllManualProcesses(ctx context.Context) ([]ManualProcess, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT record FROM manual_process WHERE dismissed = 0 ORDER BY created_at DESC, rowid DESC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []proto.ManualProcess
+	var out []ManualProcess
 	for rows.Next() {
 		var data string
-		var p proto.ManualProcess
+		var p ManualProcess
 		if err := rows.Scan(&data); err != nil {
 			return nil, err
 		}
@@ -144,4 +177,8 @@ func (s *Store) AllManualProcesses(ctx context.Context) ([]proto.ManualProcess, 
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+func terminalManualProcess(state string) bool {
+	return state == "exited" || state == "stopped" || state == "failed"
 }

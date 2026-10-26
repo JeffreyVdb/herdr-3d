@@ -22,6 +22,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/manual"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/store"
 )
 
 type ManualHerdr interface {
@@ -32,12 +33,27 @@ type ManualHerdr interface {
 
 var manualOpRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
+// The store is a leaf package. Its persisted model is converted at the hub
+// boundary, and credential requests are deliberately excluded from storage.
+func manualToStore(p proto.ManualProcess) store.ManualProcess {
+	p.Credential = nil
+	var record store.ManualProcess
+	_ = json.Unmarshal(mustJSON(p), &record)
+	return record
+}
+func manualFromStore(record store.ManualProcess) proto.ManualProcess {
+	var p proto.ManualProcess
+	_ = json.Unmarshal(mustJSON(record), &p)
+	return p
+}
+
 func (h *Hub) initManualProcesses(ctx context.Context) error {
 	records, err := h.st.AllManualProcesses(ctx)
 	if err != nil {
 		return err
 	}
-	for _, p := range records {
+	for _, record := range records {
+		p := manualFromStore(record)
 		h.manualProcesses[p.ID] = p
 		h.manualLocks[p.ID] = &sync.Mutex{}
 		b, err := os.ReadFile(filepath.Join(h.opts.ManualDir, p.ID, "cleanup-parent.json"))
@@ -89,7 +105,7 @@ func (h *Hub) saveManual(ctx context.Context, p proto.ManualProcess) error {
 	if current, ok := h.manualProcesses[p.ID]; ok && current.State != p.State && !manual.CanTransition(current.State, p.State) {
 		return fmt.Errorf("invalid manual process transition %s to %s", current.State, p.State)
 	}
-	if err := h.st.SaveManualProcess(ctx, p); err != nil {
+	if err := h.st.SaveManualProcess(ctx, manualToStore(p)); err != nil {
 		return err
 	}
 	h.manualProcesses[p.ID] = p
@@ -190,7 +206,7 @@ func (h *Hub) startManualProcess(ctx context.Context, c *Client, cmd proto.Comma
 	}
 	if exists {
 		h.audit(ctx, c, cmd, nil)
-		h.reply(c, cmd, proto.ManualProcessResult{Process: old}, nil)
+		h.reply(c, cmd, proto.ManualProcessResult{Process: manualFromStore(old)}, nil)
 		return nil
 	}
 	w := h.workers[a.Worker]
@@ -276,7 +292,7 @@ func (h *Hub) startManualProcess(ctx context.Context, c *Client, cmd proto.Comma
 			if existing, ok, err := h.st.ManualProcessByOp(ctx, a.Op); err != nil {
 				return reservation{err: err}
 			} else if ok {
-				return reservation{p: existing}
+				return reservation{p: manualFromStore(existing)}
 			}
 			current := h.workers[a.Worker]
 			if current == nil || current.Session != p.Session || current.WorkspaceID != p.WorkspaceID {
@@ -315,12 +331,12 @@ func (h *Hub) startManualProcess(ctx context.Context, c *Client, cmd proto.Comma
 					p.Effects = []proto.ManualEffect{effect}
 				}
 			}
-			saved, created, err := h.st.CreateManualProcess(ctx, p)
+			saved, created, err := h.st.CreateManualProcess(ctx, manualToStore(p))
 			if err != nil {
 				return reservation{err: err}
 			}
 			if !created {
-				return reservation{p: saved}
+				return reservation{p: manualFromStore(saved)}
 			}
 			h.manualProcesses[p.ID] = p
 			lock := newLock
@@ -1141,7 +1157,7 @@ func (h *Hub) startEffectCleanup(ctx context.Context, parent proto.ManualProcess
 	childLock.Lock()
 	defer childLock.Unlock()
 	storeErr, err := query(ctx, h, func() error {
-		if _, _, err := h.st.CreateManualProcess(ctx, child); err != nil {
+		if _, _, err := h.st.CreateManualProcess(ctx, manualToStore(child)); err != nil {
 			return err
 		}
 		h.manualProcesses[child.ID] = child

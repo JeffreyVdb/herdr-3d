@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/store"
 )
 
 func TestManualProcessIdempotentOp(t *testing.T) {
 	ctx := context.Background()
 	st := open(t, filepath.Join(t.TempDir(), "world.db"))
-	first := proto.ManualProcess{ID: "mp_12345678", Op: "op-1", Worker: "w", State: "starting", Cleanup: "none"}
+	first := store.ManualProcess{ID: "mp_12345678", Op: "op-1", Worker: "w", State: "starting", Cleanup: "none"}
 	got, created, err := st.CreateManualProcess(ctx, first)
 	if err != nil || !created || got.ID != first.ID {
 		t.Fatalf("first: %+v %v %v", got, created, err)
@@ -29,12 +29,12 @@ func TestManualProcessRetention(t *testing.T) {
 	ctx := context.Background()
 	st := open(t, filepath.Join(t.TempDir(), "world.db"))
 	for i := 0; i < 25; i++ {
-		p := proto.ManualProcess{ID: fmt.Sprintf("mp_%08x", i), Op: fmt.Sprintf("op-%d", i), Worker: "w", State: "exited", Cleanup: "none", CreatedAt: int64(i)}
+		p := store.ManualProcess{ID: fmt.Sprintf("mp_%08x", i), Op: fmt.Sprintf("op-%d", i), Worker: "w", State: "exited", Cleanup: "none", CreatedAt: int64(i)}
 		if _, _, err := st.CreateManualProcess(ctx, p); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, p := range []proto.ManualProcess{
+	for _, p := range []store.ManualProcess{
 		{ID: "mp_deadbeef", Op: "active", Worker: "w", State: "running", Cleanup: "none"},
 		{ID: "mp_abcdefab", Op: "needed", Worker: "gone", State: "exited", Cleanup: "needed"},
 	} {
@@ -51,7 +51,7 @@ func TestManualProcessRetention(t *testing.T) {
 func TestDismissKeepsOperationReservation(t *testing.T) {
 	ctx := context.Background()
 	st := open(t, filepath.Join(t.TempDir(), "world.db"))
-	p := proto.ManualProcess{ID: "mp_12345678", Op: "same", Worker: "w", State: "exited", Cleanup: "none"}
+	p := store.ManualProcess{ID: "mp_12345678", Op: "same", Worker: "w", State: "exited", Cleanup: "none"}
 	if _, _, err := st.CreateManualProcess(ctx, p); err != nil {
 		t.Fatal(err)
 	}
