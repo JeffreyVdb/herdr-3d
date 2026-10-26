@@ -209,6 +209,27 @@ func backgroundServe(command string) bool {
 	return false
 }
 
+// startManualAsync records acceptance before work starts. The completion row
+// contains no result payload: a process record includes the reviewed command.
+func (h *Hub) startManualAsync(ctx context.Context, c *Client, cmd proto.Command, work func(context.Context) (any, error)) error {
+	auditID, err := h.st.AuditBegin(ctx, c.name, cmd.T, auditArgs(cmd))
+	if err != nil {
+		return err
+	}
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		data, workErr := work(ctx)
+		auditCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := h.st.AuditEnd(auditCtx, auditID, workErr, nil); err != nil {
+			h.log.Error("manual command audit completion failed", "cmd", cmd.T, "err", err)
+		}
+		cancel()
+		_ = h.do(ctx, func(context.Context) { h.reply(c, cmd, data, workErr) })
+	}()
+	return nil
+}
+
 func (h *Hub) startManualCommand(ctx context.Context, c *Client, cmd proto.Command) error {
 	switch cmd.T {
 	case proto.CmdManualProcessStart:
@@ -315,7 +336,7 @@ func (h *Hub) startManualProcess(ctx context.Context, c *Client, cmd proto.Comma
 	}
 	host, _ := os.Hostname()
 	p := proto.ManualProcess{ID: "mp_" + hex.EncodeToString(random[:]), Op: a.Op, Worker: w.ID, WorkerName: w.Name, Floor: w.Floor, Session: w.Session, WorkspaceID: w.WorkspaceID, Host: host, Cwd: cwd, Command: a.Command, Launched: launched, Title: manualTitle(a.Command, 60), Source: source, State: "starting", Cleanup: "none", CreatedAt: h.opts.Now().UnixMilli()}
-	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
+	return h.startManualAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
 		info, err := os.Stat(cwd)
 		if err != nil || !info.IsDir() {
 			return nil, bad("cwd is not an existing directory")
@@ -402,7 +423,6 @@ func (h *Hub) startManualProcess(ctx context.Context, c *Client, cmd proto.Comma
 		result := h.launchManualProcess(ctx, reserved.p, reserved.socket, a.Askpass, false)
 		return proto.ManualProcessResult{Process: result}, nil
 	})
-	return nil
 }
 
 func (h *Hub) launchManualProcess(ctx context.Context, p proto.ManualProcess, socket string, askpass, isCleanup bool) proto.ManualProcess {
@@ -508,12 +528,12 @@ func (h *Hub) stopManualCommand(ctx context.Context, c *Client, cmd proto.Comman
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	p, ok := h.manualProcess(a.ID)
+	_, ok := h.manualProcess(a.ID)
 	if !ok {
 		return fmt.Errorf("%w: manual process not found", errStale)
 	}
 	lock := h.manualLocks[a.ID]
-	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
+	return h.startManualAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
 		lock.Lock()
 		defer lock.Unlock()
 		result, verified, err := h.cleanupManual(ctx, a.ID, "stopped by user", false)
@@ -525,8 +545,6 @@ func (h *Hub) stopManualCommand(ctx context.Context, c *Client, cmd proto.Comman
 		}
 		return proto.ManualProcessResult{Process: result}, nil
 	})
-	_ = p
-	return nil
 }
 
 func (h *Hub) dismissManualCommand(ctx context.Context, c *Client, cmd proto.Command) error {
@@ -542,7 +560,7 @@ func (h *Hub) dismissManualCommand(ctx context.Context, c *Client, cmd proto.Com
 		return fmt.Errorf("%w: process still needs cleanup", errInvalidState)
 	}
 	lock := h.manualLocks[a.ID]
-	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
+	return h.startManualAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
 		lock.Lock()
 		defer lock.Unlock()
 		current, err := query(ctx, h, func() proto.ManualProcess { return h.manualProcesses[a.ID] })
@@ -576,7 +594,6 @@ func (h *Hub) dismissManualCommand(ctx context.Context, c *Client, cmd proto.Com
 		}
 		return struct{}{}, nil
 	})
-	return nil
 }
 
 // cleanupManual is called while the process lock is held, off the hub loop.
@@ -806,7 +823,7 @@ func (h *Hub) pollManualProcesses(ctx context.Context) {
 				continue
 			}
 			if manual.Terminal(p.State) {
-				h.finishEffectCleanup(ctx, p)
+				h.finishEffectCleanup(ctx, p, false)
 				e.lock.Unlock()
 				continue
 			}
@@ -951,7 +968,7 @@ func (h *Hub) pollManualProcesses(ctx context.Context) {
 				return next
 			})
 			if err == nil && manual.Terminal(published.State) {
-				h.finishEffectCleanup(ctx, published)
+				h.finishEffectCleanup(ctx, published, false)
 			}
 			e.lock.Unlock()
 		}
@@ -1108,14 +1125,22 @@ func (h *Hub) startEffectCleanup(ctx context.Context, parent proto.ManualProcess
 	if effect == nil {
 		return parent
 	}
-	tags, err := manual.TaggedProcesses(parent.ID)
-	if err != nil || len(tags) != 0 {
-		return parent
-	}
+	var workspaceCleanupErr error
+	var workspaceToClose string
 	fail := func(err error) proto.ManualProcess {
 		parent.Cleanup = "failed"
 		parent.CleanupNote = "could not start effect cleanup: " + err.Error()
+		if workspaceCleanupErr != nil {
+			parent.CleanupNote += "; cleanup workspace " + workspaceToClose + " could not close: " + workspaceCleanupErr.Error()
+		}
 		_ = h.publishManual(ctx, parent)
+		return parent
+	}
+	tags, err := manual.TaggedProcesses(parent.ID)
+	if err != nil {
+		return fail(fmt.Errorf("cannot check descendants: %w", err))
+	}
+	if len(tags) != 0 {
 		return parent
 	}
 	if manual.Effects == nil {
@@ -1134,11 +1159,9 @@ func (h *Hub) startEffectCleanup(ctx context.Context, parent proto.ManualProcess
 		if f := h.floors[parent.Session]; f != nil {
 			l.socket, l.running = f.socket, f.running
 		}
-		for child, link := range h.manualCleanups {
+		for _, link := range h.manualCleanups {
 			if link.Parent == parent.ID && link.Endpoint == effect.Endpoint {
-				if p, ok := h.manualProcesses[child]; ok && !manual.Terminal(p.State) {
-					l.active = true
-				}
+				l.active = true
 			}
 		}
 		return l
@@ -1167,10 +1190,11 @@ func (h *Hub) startEffectCleanup(ctx context.Context, parent proto.ManualProcess
 			return fail(err)
 		}
 		workspace, temporary = created.WorkspaceID, true
+		workspaceToClose = workspace
 	}
 	closeTemporary := func() {
 		if temporary && h.opts.Hire != nil {
-			_ = h.opts.Hire.CloseWorkspace(ctx, parent.Session, workspace)
+			workspaceCleanupErr = h.opts.Hire.CloseWorkspace(ctx, parent.Session, workspace)
 		}
 	}
 	var random [8]byte
@@ -1226,19 +1250,35 @@ func (h *Hub) startEffectCleanup(ctx context.Context, parent proto.ManualProcess
 	}
 	child = h.launchManualProcess(ctx, child, loc.socket, askpass, true)
 	if child.State == "failed" {
-		h.finishEffectCleanup(ctx, child)
+		h.finishEffectCleanup(ctx, child, true)
 		return fail(fmt.Errorf("cleanup process failed to start"))
 	}
 	parent.Cleanup = "needed"
-	parent.CleanupNote = "cleanup is running for " + effect.Endpoint
+	if child.State == "unknown" {
+		parent.CleanupNote = "cleanup process " + child.ID + " has an uncertain launch outcome"
+	} else {
+		parent.CleanupNote = "cleanup is running for " + effect.Endpoint
+	}
 	_ = h.publishManual(ctx, parent)
 	return parent
 }
 
-func (h *Hub) finishEffectCleanup(ctx context.Context, child proto.ManualProcess) {
+func (h *Hub) finishEffectCleanup(ctx context.Context, child proto.ManualProcess, parentLocked bool) {
 	link, err := query(ctx, h, func() manualCleanupLink { return h.manualCleanups[child.ID] })
 	if err != nil || link.Parent == "" {
 		return
+	}
+	if !parentLocked {
+		lock, err := query(ctx, h, func() *sync.Mutex { return h.manualLocks[link.Parent] })
+		if err != nil || lock == nil {
+			return
+		}
+		lock.Lock()
+		defer lock.Unlock()
+		current, err := query(ctx, h, func() manualCleanupLink { return h.manualCleanups[child.ID] })
+		if err != nil || current.Parent != link.Parent {
+			return
+		}
 	}
 	success := child.State == "exited" && child.ExitCode != nil && *child.ExitCode == 0
 	note := "cleanup command did not exit successfully"

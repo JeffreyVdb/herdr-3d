@@ -3,9 +3,11 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -476,5 +478,202 @@ func TestManualConcurrentOpDoesNotLaunchTwice(t *testing.T) {
 	fake.mu.Unlock()
 	if firstResult.ID != secondResult.ID || calls != 1 {
 		t.Fatalf("results: %s %s, launches %d", firstResult.ID, secondResult.ID, calls)
+	}
+}
+
+func TestManualEffectCleanupReportsUncertainLaunch(t *testing.T) {
+	previous := manual.Effects
+	manual.Effects = fakeEffects{}
+	t.Cleanup(func() { manual.Effects = previous })
+	var calls atomic.Int32
+	fake := &fakeManual{onLaunch: func(string) error {
+		if calls.Add(1) == 2 {
+			return errors.New("ambiguous launch")
+		}
+		return nil
+	}}
+	dir := t.TempDir()
+	tb := startTermBridge(t, func(o *server.Options) {
+		o.Manual = fake
+		o.ManualDir = dir
+		o.ManualShell = "/bin/bash"
+		o.ManualNoNewPrivs = func(context.Context, string) (bool, error) { return false, nil }
+		o.ManualEffectStatus = func(context.Context) ([]byte, error) { return []byte(`{}`), nil }
+	}, worker("w1", "agent", "", "idle"))
+	c := tb.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	_, m := c.command(proto.CmdManualProcessStart, "bg", proto.ManualProcessStartArgs{Op: "uncertain-effect", Worker: id, Cwd: dir, Command: "tailscale serve --bg --https=8443 http://127.0.0.1:9999"})
+	parent := ackData[proto.ManualProcessResult](t, m).Process
+	zero := 0
+	if err := manual.WriteStatus(filepath.Join(dir, parent.ID), manual.Status{PID: 99999999, StartTicks: 123, ExitCode: &zero, EndedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	tb.world(func(w proto.World) bool {
+		for _, p := range w.ManualProcesses {
+			if p.ID == parent.ID {
+				return p.State == "exited" && p.Cleanup == "needed"
+			}
+		}
+		return false
+	})
+	_, m = c.command(proto.CmdManualProcessStop, "cleanup", proto.ManualProcessIDArgs{ID: parent.ID})
+	got := ackData[proto.ManualProcessResult](t, m).Process
+	if got.Cleanup != "needed" || !strings.Contains(got.CleanupNote, "uncertain launch") {
+		t.Fatalf("cleanup: %+v", got)
+	}
+}
+
+func TestManualAuditSurvivesClientDisconnect(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	defer once.Do(func() { close(release) })
+	fake := &fakeManual{onLaunch: func(string) error { close(entered); <-release; return nil }}
+	dir := t.TempDir()
+	tb := startTermBridge(t, func(o *server.Options) {
+		o.Manual = fake
+		o.ManualDir = dir
+		o.ManualShell = "/bin/bash"
+		o.ManualNoNewPrivs = func(context.Context, string) (bool, error) { return false, nil }
+	}, worker("w1", "agent", "", "idle"))
+	c := tb.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	command := "echo private-disconnect-marker"
+	args, _ := json.Marshal(proto.ManualProcessStartArgs{Op: "disconnect", Worker: id, Cwd: dir, Command: command})
+	c.send(proto.Command{T: proto.CmdManualProcessStart, ReqID: "disconnect", Args: args})
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("launch did not start")
+	}
+	rows, err := tb.st.AuditLog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, row := range rows {
+		if row.Cmd == proto.CmdManualProcessStart {
+			found = true
+			if row.Done || strings.Contains(row.Args, command) {
+				t.Fatalf("in-flight audit: %+v", row)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("accepted command was not audited")
+	}
+	_ = c.conn.CloseNow()
+	once.Do(func() { close(release) })
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		rows, err = tb.st.AuditLog(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range rows {
+			if row.Cmd == proto.CmdManualProcessStart && row.Done {
+				if !row.OK || strings.Contains(row.Args, command) || strings.Contains(row.Result, command) {
+					t.Fatalf("completed audit: %+v", row)
+				}
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("audit did not complete after disconnect")
+}
+
+type cleanupGateHire struct {
+	server.HireHerdr
+	entered, release chan struct{}
+	once             sync.Once
+}
+
+func (g *cleanupGateHire) CloseWorkspace(ctx context.Context, session, workspace string) error {
+	if workspace != "w1" {
+		g.once.Do(func() { close(g.entered) })
+		select {
+		case <-g.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return g.HireHerdr.CloseWorkspace(ctx, session, workspace)
+}
+
+func TestManualEffectCleanupDoesNotDuplicateWhileCompleting(t *testing.T) {
+	previous := manual.Effects
+	manual.Effects = fakeEffects{}
+	t.Cleanup(func() { manual.Effects = previous })
+	fake := &fakeManual{}
+	dir := t.TempDir()
+	gate := &cleanupGateHire{entered: make(chan struct{}), release: make(chan struct{})}
+	var release sync.Once
+	defer release.Do(func() { close(gate.release) })
+	hb := startHireBridge(t, func(o *server.Options) {
+		gate.HireHerdr = o.Hire
+		o.Hire = gate
+		o.Manual = fake
+		o.ManualDir = dir
+		o.ManualShell = "/bin/bash"
+		o.ManualNoNewPrivs = func(context.Context, string) (bool, error) { return false, nil }
+		o.ManualEffectStatus = func(context.Context) ([]byte, error) { return []byte(`{}`), nil }
+	}, worker("w1", "notes", "", "idle"))
+	ws := workersOf(hb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 1 }), "s")
+	_, m := hb.c.command(proto.CmdManualProcessStart, "bg", proto.ManualProcessStartArgs{Op: "bg-concurrent", Worker: ws["w1"].ID, Cwd: dir, Command: "tailscale serve --bg --https=8443 http://127.0.0.1:9999"})
+	parent := ackData[proto.ManualProcessResult](t, m).Process
+	zero := 0
+	if err := manual.WriteStatus(filepath.Join(dir, parent.ID), manual.Status{PID: 99999999, StartTicks: 123, ExitCode: &zero, EndedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	hb.world(func(w proto.World) bool {
+		for _, p := range w.ManualProcesses {
+			if p.ID == parent.ID {
+				return p.State == "exited" && p.Cleanup == "needed"
+			}
+		}
+		return false
+	})
+	hb.fl.close("w1")
+	hb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 0 })
+	hb.c.mustAck(proto.CmdManualProcessStop, proto.ManualProcessIDArgs{ID: parent.ID})
+	var child proto.ManualProcess
+	hb.world(func(w proto.World) bool {
+		for _, p := range w.ManualProcesses {
+			if p.ID != parent.ID && strings.HasPrefix(p.Op, "cleanup_") {
+				child = p
+				return true
+			}
+		}
+		return false
+	})
+	c := hb.connect(proto.Hello{})
+	c.snapshot()
+	if err := manual.WriteStatus(filepath.Join(dir, child.ID), manual.Status{PID: 99999998, StartTicks: 124, ExitCode: &zero, EndedAt: 2}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-gate.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cleanup did not reach workspace close")
+	}
+	raw, _ := json.Marshal(proto.ManualProcessIDArgs{ID: parent.ID})
+	c.send(proto.Command{T: proto.CmdManualProcessStop, ReqID: "again", Args: raw})
+	release.Do(func() { close(gate.release) })
+	for {
+		m = c.next()
+		if m.env.ReqID == "again" {
+			break
+		}
+	}
+	got := ackData[proto.ManualProcessResult](t, m).Process
+	if got.Cleanup != "done" {
+		t.Fatalf("cleanup: %+v", got)
+	}
+	fake.mu.Lock()
+	calls := fake.launches
+	fake.mu.Unlock()
+	if calls != 2 {
+		t.Fatalf("expected one process and one cleanup, got %d launches", calls)
 	}
 }
