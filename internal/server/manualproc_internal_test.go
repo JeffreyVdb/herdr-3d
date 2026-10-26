@@ -109,7 +109,7 @@ func TestManualStopKeepsPendingCleanupWorkspaceVisible(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.manualLocks[p.ID].Lock()
-	result, verified, err := h.cleanupManual(ctx, p.ID, "stopped by user", false)
+	result, verified, err := h.cleanupManual(ctx, p.ID, "stopped by user", false, true)
 	h.manualLocks[p.ID].Unlock()
 	if err != nil || !verified || result.Cleanup != "needed" || !strings.Contains(result.CleanupNote, "workspace") {
 		t.Fatalf("cleanup: %+v verified=%v err=%v", result, verified, err)

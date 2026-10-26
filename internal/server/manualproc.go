@@ -211,7 +211,7 @@ func backgroundServe(command string) bool {
 
 // startManualAsync records acceptance before work starts. The completion row
 // contains no result payload: a process record includes the reviewed command.
-func (h *Hub) startManualAsync(ctx context.Context, c *Client, cmd proto.Command, work func(context.Context) (any, error)) error {
+func (h *Hub) startManualAsync(ctx context.Context, c *Client, cmd proto.Command, work func(context.Context) (any, error), finish ...func()) error {
 	auditID, err := h.st.AuditBegin(ctx, c.name, cmd.T, auditArgs(cmd))
 	if err != nil {
 		return err
@@ -225,7 +225,12 @@ func (h *Hub) startManualAsync(ctx context.Context, c *Client, cmd proto.Command
 			h.log.Error("manual command audit completion failed", "cmd", cmd.T, "err", err)
 		}
 		cancel()
-		_ = h.do(ctx, func(context.Context) { h.reply(c, cmd, data, workErr) })
+		_ = h.do(ctx, func(context.Context) {
+			if len(finish) > 0 && finish[0] != nil {
+				finish[0]()
+			}
+			h.reply(c, cmd, data, workErr)
+		})
 	}()
 	return nil
 }
@@ -534,15 +539,22 @@ func (h *Hub) stopManualCommand(ctx context.Context, c *Client, cmd proto.Comman
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	_, ok := h.manualProcess(a.ID)
+	p, ok := h.manualProcess(a.ID)
 	if !ok {
 		return fmt.Errorf("%w: manual process not found", errStale)
 	}
+	if h.manualStopBusy[a.ID] {
+		h.audit(ctx, c, cmd, nil)
+		h.reply(c, cmd, proto.ManualProcessResult{Process: p}, nil)
+		return nil
+	}
+	h.manualStopBusy[a.ID] = true
+	retryReported := p.Cleanup == "needed" || p.Cleanup == "failed"
 	lock := h.manualLocks[a.ID]
-	return h.startManualAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
+	err := h.startManualAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
 		lock.Lock()
 		defer lock.Unlock()
-		result, verified, err := h.cleanupManual(ctx, a.ID, "stopped by user", false)
+		result, verified, err := h.cleanupManual(ctx, a.ID, "stopped by user", false, retryReported)
 		if err != nil {
 			return nil, err
 		}
@@ -550,7 +562,11 @@ func (h *Hub) stopManualCommand(ctx context.Context, c *Client, cmd proto.Comman
 			result = h.startEffectCleanup(ctx, result)
 		}
 		return proto.ManualProcessResult{Process: result}, nil
-	})
+	}, func() { delete(h.manualStopBusy, a.ID) })
+	if err != nil {
+		delete(h.manualStopBusy, a.ID)
+	}
+	return err
 }
 
 func (h *Hub) dismissManualCommand(ctx context.Context, c *Client, cmd proto.Command) error {
@@ -576,7 +592,7 @@ func (h *Hub) dismissManualCommand(ctx context.Context, c *Client, cmd proto.Com
 		if !manual.Terminal(current.State) || (current.Cleanup != "none" && current.Cleanup != "done") {
 			return nil, fmt.Errorf("%w: process still needs cleanup", errInvalidState)
 		}
-		cleaned, verified, err := h.cleanupManual(ctx, a.ID, "dismissed", false)
+		cleaned, verified, err := h.cleanupManual(ctx, a.ID, "dismissed", false, false)
 		if err != nil {
 			return nil, err
 		}
@@ -605,7 +621,7 @@ func (h *Hub) dismissManualCommand(ctx context.Context, c *Client, cmd proto.Com
 // cleanupManual is called while the process lock is held, off the hub loop.
 // verified means the launcher and every tagged process are gone, independent
 // of persistent external effects which remain visible as cleanup needed.
-func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone bool) (proto.ManualProcess, bool, error) {
+func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone, retryReported bool) (proto.ManualProcess, bool, error) {
 	p, err := query(ctx, h, func() proto.ManualProcess { return h.manualProcesses[id] })
 	if err != nil {
 		return p, false, err
@@ -613,7 +629,7 @@ func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone bool
 	if p.ID == "" {
 		return p, false, fmt.Errorf("%w: manual process not found", errStale)
 	}
-	retrySurvivors := reason == "stopped by user" && (p.Cleanup == "needed" || p.Cleanup == "failed")
+	retrySurvivors := reason == "stopped by user" && retryReported
 	if !manual.Terminal(p.State) {
 		p.State = "stopping"
 		p.Credential = nil
@@ -915,12 +931,12 @@ func (h *Hub) pollManualProcesses(ctx context.Context) {
 			}
 			status, statusErr := manual.ReadStatus(filepath.Join(h.opts.ManualDir, p.ID))
 			if p.State == "stopping" {
-				_, _, _ = h.cleanupManual(ctx, p.ID, "resumed interrupted stop", known && !present)
+				_, _, _ = h.cleanupManual(ctx, p.ID, "resumed interrupted stop", known && !present, false)
 				e.lock.Unlock()
 				continue
 			}
 			if known && p.TabID != "" && !present {
-				_, _, _ = h.cleanupManual(ctx, p.ID, "tab closed externally", true)
+				_, _, _ = h.cleanupManual(ctx, p.ID, "tab closed externally", true, false)
 				e.lock.Unlock()
 				continue
 			}
@@ -1134,7 +1150,7 @@ func (h *Hub) stopManualWork(ctx context.Context, work []manualWork, reason stri
 	var firstErr error
 	for _, item := range work {
 		item.lock.Lock()
-		result, verified, err := h.cleanupManual(ctx, item.id, reason, tabGone)
+		result, verified, err := h.cleanupManual(ctx, item.id, reason, tabGone, false)
 		item.lock.Unlock()
 		if err == nil && !verified && !(reason == "stopped for floor sleep" && result.State == "stopped") {
 			err = fmt.Errorf("process could not be verified stopped")
@@ -1162,7 +1178,7 @@ func (h *Hub) scheduleManualCleanup(ctx context.Context, worker, session, reason
 		defer h.wg.Done()
 		for _, item := range work {
 			item.lock.Lock()
-			_, _, _ = h.cleanupManual(ctx, item.id, reason, tabGone)
+			_, _, _ = h.cleanupManual(ctx, item.id, reason, tabGone, false)
 			item.lock.Unlock()
 		}
 	}()

@@ -27,6 +27,7 @@ type fakeManual struct {
 	creates, launches int
 	closed            []string
 	onLaunch          func(string) error
+	onClose           func() error
 	closeErr          error
 }
 
@@ -38,11 +39,17 @@ func (f *fakeManual) CreateManualTab(_ context.Context, _, workspace, _, _ strin
 }
 func (f *fakeManual) CloseManualTab(_ context.Context, _, tab string) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if f.closeErr != nil {
-		return f.closeErr
+		err := f.closeErr
+		f.mu.Unlock()
+		return err
 	}
 	f.closed = append(f.closed, tab)
+	fn := f.onClose
+	f.mu.Unlock()
+	if fn != nil {
+		return fn()
+	}
 	return nil
 }
 func (f *fakeManual) LaunchManual(_ context.Context, _, _, dir string) error {
@@ -868,5 +875,176 @@ func TestManualFloorSleepKeepsDetachedSurvivorActionable(t *testing.T) {
 	result := ackData[proto.ManualProcessResult](t, m).Process
 	if result.Cleanup != "done" || manual.IdentityAlive(child.PID, child.StartTicks) {
 		t.Fatalf("retry: %+v", result)
+	}
+}
+
+func TestManualDuplicateStopDoesNotKillUnreportedSurvivor(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var signal, once sync.Once
+	defer once.Do(func() { close(release) })
+	fake := &fakeManual{onClose: func() error { signal.Do(func() { close(entered) }); <-release; return nil }}
+	dir := t.TempDir()
+	tb := startTermBridge(t, func(o *server.Options) {
+		o.Manual = fake
+		o.ManualDir = dir
+		o.ManualShell = "/bin/bash"
+		o.ManualNoNewPrivs = func(context.Context, string) (bool, error) { return false, nil }
+	}, worker("w1", "notes", "", "idle"))
+	first := tb.connect(proto.Hello{})
+	id := idOf(t, first.snapshot(), "w1")
+	second := tb.connect(proto.Hello{})
+	second.snapshot()
+	_, m := first.command(proto.CmdManualProcessStart, "start", proto.ManualProcessStartArgs{Op: "dup-stop", Worker: id, Cwd: dir, Command: "echo fixture"})
+	p := ackData[proto.ManualProcessResult](t, m).Process
+	if err := manual.WriteStatus(filepath.Join(dir, p.ID), manual.Status{PID: 99999999, StartTicks: 1, StartedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command("sleep", "120")
+	child.Env = append(os.Environ(), "H3D_MANUAL_PROCESS="+p.ID)
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ticks, err := manual.StartTicks(child.Process.Pid)
+	if err != nil {
+		_ = child.Process.Kill()
+		_ = child.Wait()
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- child.Wait() }()
+	t.Cleanup(func() {
+		if manual.IdentityAlive(child.Process.Pid, ticks) {
+			_ = syscall.Kill(child.Process.Pid, syscall.SIGKILL)
+		}
+		<-done
+	})
+	raw, _ := json.Marshal(proto.ManualProcessIDArgs{ID: p.ID})
+	first.send(proto.Command{T: proto.CmdManualProcessStop, ReqID: "stop-first", Args: raw})
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first stop did not reach tab close")
+	}
+	_, m = second.command(proto.CmdManualProcessStop, "stop-duplicate", proto.ManualProcessIDArgs{ID: p.ID})
+	duplicate := ackData[proto.ManualProcessResult](t, m).Process
+	if duplicate.State != "stopping" || !manual.IdentityAlive(child.Process.Pid, ticks) {
+		t.Fatalf("duplicate: %+v", duplicate)
+	}
+	once.Do(func() { close(release) })
+	for {
+		m = first.next()
+		if m.env.ReqID == "stop-first" {
+			break
+		}
+	}
+	result := ackData[proto.ManualProcessResult](t, m).Process
+	if result.Cleanup != "needed" || !manual.IdentityAlive(child.Process.Pid, ticks) {
+		t.Fatalf("first stop: %+v", result)
+	}
+	_, m = second.command(proto.CmdManualProcessStop, "stop-retry", proto.ManualProcessIDArgs{ID: p.ID})
+	result = ackData[proto.ManualProcessResult](t, m).Process
+	if result.Cleanup != "done" || manual.IdentityAlive(child.Process.Pid, ticks) {
+		t.Fatalf("explicit retry: %+v", result)
+	}
+}
+
+func TestManualStopQueuedDuringSleepDoesNotKillNewSurvivor(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var signal, once sync.Once
+	defer once.Do(func() { close(release) })
+	fake := &fakeManual{onLaunch: func(dir string) error {
+		return manual.WriteStatus(dir, manual.Status{PID: 99999999, StartTicks: 1, StartedAt: 1})
+	}, onClose: func() error { signal.Do(func() { close(entered) }); <-release; return nil }}
+	dir := t.TempDir()
+	fh := newFakeHerdr()
+	opts := fastOps(fh)
+	opts.Manual = fake
+	opts.ManualDir = dir
+	opts.ManualShell = "/bin/bash"
+	opts.ManualNoNewPrivs = func(context.Context, string) (bool, error) { return false, nil }
+	b := startBridge(t, "", opts)
+	workers := []world.WorkerObs{worker("w1", "notes", "", "idle")}
+	b.floorAt("s", true, workers)
+	first := b.connect(proto.Hello{})
+	id := idOf(t, first.snapshot(), "w1")
+	second := b.connect(proto.Hello{})
+	second.snapshot()
+	_, m := first.command(proto.CmdManualProcessStart, "start", proto.ManualProcessStartArgs{Op: "sleep-queued", Worker: id, Cwd: dir, Command: "echo fixture"})
+	p := ackData[proto.ManualProcessResult](t, m).Process
+	child := exec.Command("sleep", "120")
+	child.Env = append(os.Environ(), "H3D_MANUAL_PROCESS="+p.ID)
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ticks, err := manual.StartTicks(child.Process.Pid)
+	if err != nil {
+		_ = child.Process.Kill()
+		_ = child.Wait()
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- child.Wait() }()
+	t.Cleanup(func() {
+		if manual.IdentityAlive(child.Process.Pid, ticks) {
+			_ = syscall.Kill(child.Process.Pid, syscall.SIGKILL)
+		}
+		<-done
+	})
+	fh.onStop = func() { b.floorAt("s", false, withStatus(workers, "unknown")) }
+	raw, _ := json.Marshal(proto.FloorArgs{Session: "s"})
+	first.send(proto.Command{T: proto.CmdFloorSleep, ReqID: "sleep", Args: raw})
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sleep did not reach tab close")
+	}
+	raw, _ = json.Marshal(proto.ManualProcessIDArgs{ID: p.ID})
+	second.send(proto.Command{T: proto.CmdManualProcessStop, ReqID: "queued-stop", Args: raw})
+	deadline := time.Now().Add(5 * time.Second)
+	accepted := false
+	for time.Now().Before(deadline) {
+		rows, err := b.st.AuditLog(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range rows {
+			if row.Cmd == proto.CmdManualProcessStop && !row.Done {
+				accepted = true
+			}
+		}
+		if accepted {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !accepted {
+		t.Fatal("queued Stop was not accepted")
+	}
+	once.Do(func() { close(release) })
+	for {
+		m = second.next()
+		if m.env.ReqID == "queued-stop" {
+			break
+		}
+	}
+	result := ackData[proto.ManualProcessResult](t, m).Process
+	if result.Cleanup != "needed" || !manual.IdentityAlive(child.Process.Pid, ticks) {
+		t.Fatalf("queued Stop killed an unreported survivor: %+v", result)
+	}
+	for {
+		m = first.next()
+		if m.env.ReqID == "sleep" {
+			if m.env.T != proto.TAck {
+				t.Fatalf("sleep: %s", m.raw)
+			}
+			break
+		}
+	}
+	_, m = second.command(proto.CmdManualProcessStop, "explicit-retry", proto.ManualProcessIDArgs{ID: p.ID})
+	result = ackData[proto.ManualProcessResult](t, m).Process
+	if result.Cleanup != "done" || manual.IdentityAlive(child.Process.Pid, ticks) {
+		t.Fatalf("explicit retry: %+v", result)
 	}
 }

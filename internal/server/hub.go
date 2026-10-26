@@ -435,6 +435,7 @@ type Hub struct {
 	manualOrder     map[string]uint64
 	manualNext      uint64
 	manualLocks     map[string]*sync.Mutex
+	manualStopBusy  map[string]bool
 	manualPolling   bool
 	manualCleanups  map[string]manualCleanupLink
 	opts            Options
@@ -739,6 +740,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		manualProcesses: map[string]proto.ManualProcess{},
 		manualOrder:     map[string]uint64{},
 		manualLocks:     map[string]*sync.Mutex{},
+		manualStopBusy:  map[string]bool{},
 		manualCleanups:  map[string]manualCleanupLink{},
 		log:             opts.Log,
 		st:              st,
