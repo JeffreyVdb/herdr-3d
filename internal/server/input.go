@@ -285,6 +285,8 @@ func (h *Hub) startKeys(ctx context.Context, c *Client, cmd proto.Command) error
 	}
 	h.tookOver(ctx, a.ID)      // #83: a person types: an armed wrap-up is off
 	h.agentTookOver(ctx, a.ID) // #224: and a handoff request
+	delete(h.cr.latest, a.ID)
+	h.closeCommandRequest(a.ID, "", "moved")
 	h.clearFollowup(ctx, a.ID) // #90: and its follow-up questions are moot
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
 		t := h.opts.Term
@@ -423,6 +425,8 @@ func (h *Hub) planPrompt(ctx context.Context, a proto.WorkerPromptArgs, r prompt
 	terminal := h.opts.Prompts != nil && h.opts.Prompts.TerminalOnly(kind, a.Text)
 	h.tookOver(ctx, a.ID)      // #83: a person prompts: an armed wrap-up is off
 	h.agentTookOver(ctx, a.ID) // #224: and a handoff request
+	delete(h.cr.latest, a.ID)
+	h.closeCommandRequest(a.ID, "", "moved")
 	h.clearFollowup(ctx, a.ID) // #90: and its follow-up questions are moot
 	return func(ctx context.Context, session, pane string) (any, error) {
 		if rewrites {
@@ -722,6 +726,8 @@ func (h *Hub) typeIn(ctx context.Context, id, session, pane, text string, settli
 // lengths and the key names).
 func auditArgs(cmd proto.Command) json.RawMessage {
 	switch cmd.T {
+	case proto.CmdWorkerDismissCommandRequest:
+		return redacted(cmd.Args)
 	// #108 round 2: a hire's prompt (a schedule's fire's too, whose args
 	// name the schedule), a run's texts and a stored prompt by their
 	// lengths, never their text, with the switch on or off; a review by its

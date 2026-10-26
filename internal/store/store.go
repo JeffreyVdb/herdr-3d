@@ -230,6 +230,7 @@ var migrations = []string{
 	migrationCodexProfileHire,
 	migrationPackupReasoning,
 	migrationExpectedMCP, // #196
+	migrationCommandRequest,
 }
 
 // Fingerprint kinds.

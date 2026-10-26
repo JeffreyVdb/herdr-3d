@@ -133,6 +133,8 @@ const EnvPackupEnabled = "HERDR_WORLD_PACKUP_ENABLED"
 
 // #66 schedule suggestions: the environment's toggle (true or false; unset:
 // the panel's). While set it wins and the panel shows it read-only.
+const EnvCommandRequestsEnabled = "HERDR_WORLD_COMMAND_REQUESTS_ENABLED"
+
 const EnvScheduleSuggestionsEnabled = "HERDR_WORLD_SCHEDULE_SUGGESTIONS_ENABLED"
 
 // #118 phase 2 floor overview summaries: the environment's toggle (true or
@@ -504,8 +506,9 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	aiLLMBase := fs.String("ai-llm-base-url", os.Getenv(EnvAILLMBaseURL), "OpenAI-compatible endpoint's base URL; overrides the panel's ($"+EnvAILLMBaseURL+")")
 	aiLLMKey := fs.String("ai-llm-key-file", os.Getenv(EnvAILLMKeyFile), "file holding the LLM's key; overrides the panel's ($"+EnvAILLMKeyFile+")")
 	aiLLMModel := fs.String("ai-llm-model", os.Getenv(EnvAILLMModel), "LLM model; overrides the panel's ($"+EnvAILLMModel+")")
-	followupsEnabled := fs.String("followups-enabled", os.Getenv(EnvFollowupsEnabled), "true or false: switch the follow-up questions on or off, overriding the panel's toggle ($"+EnvFollowupsEnabled+")")                                           // #90
-	packupEnabled := fs.String("packup-enabled", os.Getenv(EnvPackupEnabled), "true or false: switch pack up on request on or off, overriding the panel's toggle ($"+EnvPackupEnabled+")")                                                            // #110
+	followupsEnabled := fs.String("followups-enabled", os.Getenv(EnvFollowupsEnabled), "true or false: switch the follow-up questions on or off, overriding the panel's toggle ($"+EnvFollowupsEnabled+")") // #90
+	packupEnabled := fs.String("packup-enabled", os.Getenv(EnvPackupEnabled), "true or false: switch pack up on request on or off, overriding the panel's toggle ($"+EnvPackupEnabled+")")                  // #110
+	commandRequestsEnabled := fs.String("command-requests-enabled", os.Getenv(EnvCommandRequestsEnabled), "true or false: switch command requests on or off")
 	scheduleSuggestionsEnabled := fs.String("schedule-suggestions-enabled", os.Getenv(EnvScheduleSuggestionsEnabled), "true or false: switch the schedule suggestions on or off, overriding the panel's toggle ($"+EnvScheduleSuggestionsEnabled+")") // #66
 	digestEnabled := fs.String("digest-enabled", os.Getenv(EnvDigestEnabled), "true or false: switch the floor overview summaries on or off, overriding the panel's toggle ($"+EnvDigestEnabled+")")                                                  // #118
 	handoffLLMEnabled := fs.String("handoff-llm-enabled", os.Getenv(EnvHandoffLLMEnabled), "true or false: switch LLM handoffs on or off, overriding the panel's toggle ($"+EnvHandoffLLMEnabled+")")                                                 // #9
@@ -556,6 +559,14 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 			return fmt.Errorf("-followups-enabled must be true or false, got %q", *followupsEnabled)
 		}
 		followupsOn = &on
+	}
+	var commandRequestsOn *bool
+	if *commandRequestsEnabled != "" {
+		on, err := strconv.ParseBool(*commandRequestsEnabled)
+		if err != nil {
+			return fmt.Errorf("-command-requests-enabled must be true or false, got %q", *commandRequestsEnabled)
+		}
+		commandRequestsOn = &on
 	}
 	var scheduleSuggestionsOn *bool // #66
 	if *scheduleSuggestionsEnabled != "" {
@@ -702,8 +713,9 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		DropsRoot:        *dropzoneData,                                                     // M13 drops.list
 		AI: &ai.Options{File: orDefault(*aiFile, DefaultAIFile(*db)), Env: ai.Overrides{ // #92 AI integration
 			ClassifierKeyFile: *aiClsKey, ClassifierModel: *aiClsModel, LLMBaseURL: *aiLLMBase, LLMKeyFile: *aiLLMKey, LLMModel: *aiLLMModel}},
-		FollowupsEnabled:           followupsOn,           // #90 follow-up questions
-		PackupEnabled:              packupOn,              // #110 pack up on request
+		FollowupsEnabled:           followupsOn, // #90 follow-up questions
+		PackupEnabled:              packupOn,    // #110 pack up on request
+		CommandRequestsEnabled:     commandRequestsOn,
 		ScheduleSuggestionsEnabled: scheduleSuggestionsOn, // #66 schedule suggestions
 		ActivityModel:              activityOn,            // #98 activity
 		DigestEnabled:              digestOn,              // #118 floor overview summaries
@@ -832,6 +844,7 @@ type ServeConfig struct {
 	// #110 pack up on request: the environment's toggle (nil: the panel's).
 	PackupEnabled *bool
 	// #66 schedule suggestions: the environment's toggle (nil: the panel's).
+	CommandRequestsEnabled     *bool
 	ScheduleSuggestionsEnabled *bool
 	// #98 activity: the environment's "Classify unknown commands" toggle
 	// (nil: the panel's).
@@ -976,9 +989,10 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		}
 		opts.AI = svc
 	}
-	opts.Kaneo = cfg.Kaneo                                           // #184
-	opts.FollowupsEnabled = cfg.FollowupsEnabled                     // #90
-	opts.PackupEnabled = cfg.PackupEnabled                           // #110
+	opts.Kaneo = cfg.Kaneo                       // #184
+	opts.FollowupsEnabled = cfg.FollowupsEnabled // #90
+	opts.PackupEnabled = cfg.PackupEnabled       // #110
+	opts.CommandRequestsEnabled = cfg.CommandRequestsEnabled
 	opts.ScheduleSuggestionsEnabled = cfg.ScheduleSuggestionsEnabled // #66
 	opts.ActivityModel = cfg.ActivityModel                           // #98
 	opts.DigestEnabled = cfg.DigestEnabled                           // #118

@@ -6557,3 +6557,9 @@ herdr-world cmd run.start '{"session":"h3d-scratch","desk_index":1,"issue":3,"pr
 
 `dump` prints the `welcome` line on stderr. `cmd` prints the `ack` or `error` and exits 1 on error; it waits up to
 `--timeout` (1 min) for a reply. All three take `--socket`.
+
+## Command requests
+
+A worker can include `command_request: {key, at, commands}` after a settled agent reply asks the human to run a command. Each entry has the exact `command`, its `cwd` and `cwd_named`, `host` (`bridge`, `other`, or `unknown`), optional `host_text` and `why`, and optional reviewed `variants`. The key is the reply's SHA-256. A variant is a separate, visible choice and never replaces the original command. Only bridge-host entries can be launched as suggestions.
+
+`worker.dismiss_command_request {id, key}` closes the current card; a stale key returns `stale`. A new prompt or turn and a launch from the request also close it. `worker.upsert` publishes changes. The bridge persists seen replies, including dismissed or stale requests, to avoid showing them again after a restart. The feature defaults on with configured AI and can be disabled with `HERDR_WORLD_COMMAND_REQUESTS_ENABLED=false`.

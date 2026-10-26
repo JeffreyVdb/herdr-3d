@@ -175,6 +175,7 @@ func (h *Hub) followupView(id string) *proto.Followup {
 // turn_id is stale and a newer message is looked at in its place.
 func (h *Hub) followupSeen(ctx context.Context, u followupUpdate) {
 	h.suggestionSeen(ctx, u) // #66: the same turn end
+	h.commandRequestSeen(ctx, u)
 	s := h.fu.shown[u.id]
 	if u.turn == nil {
 		delete(h.fu.pending, u.id) // a prompt or a new turn: nothing to look at
@@ -183,7 +184,7 @@ func (h *Hub) followupSeen(ctx context.Context, u followupUpdate) {
 		}
 		return
 	}
-	if s != nil && s.hash == u.turn.Hash && !h.suggestionWants(u.id, u.turn.Hash) {
+	if s != nil && s.hash == u.turn.Hash && !h.suggestionWants(u.id, u.turn.Hash) && !h.commandRequestWants(u.id, u.turn.Hash) {
 		return // shown already
 	}
 	if s != nil && s.hash != u.turn.Hash {
@@ -243,8 +244,8 @@ func (h *Hub) considerFollowup(ctx context.Context, id string, c *followupCand) 
 	if w == nil || strings.TrimSpace(c.turn.Text) == "" {
 		return false
 	}
-	fu, ss := h.followupSkip(w) == "", h.suggestionSkip(w) == ""
-	if !fu && !ss {
+	fu, ss, cr := h.followupSkip(w) == "", h.suggestionSkip(w) == "", h.commandRequestSkip(w) == ""
+	if !fu && !ss && !cr {
 		return false
 	}
 	now := h.opts.Now()
@@ -258,11 +259,14 @@ func (h *Hub) considerFollowup(ctx context.Context, id string, c *followupCand) 
 	if ss {
 		ss = h.suggestionUnseen(ctx, id, c)
 	}
-	if !fu && !ss {
+	if cr {
+		cr = h.commandRequestUnseen(ctx, id, c)
+	}
+	if !fu && !ss && !cr {
 		return false
 	}
 	c.inflight = true
-	h.runTurn(ctx, id, c, fu, ss)
+	h.runTurn(ctx, id, c, fu, ss, cr)
 	return true
 }
 
@@ -699,6 +703,8 @@ func (h *Hub) sendFollowupAnswers(a proto.WorkerAnswerFollowupArgs, text string,
 		}
 		h.kickUsage()
 		_ = h.doWait(ctx, func() {
+			delete(h.cr.latest, a.ID)
+			h.closeCommandRequest(a.ID, "", "moved")
 			if _, err := h.followupOf(a.ID, a.TurnID); err == nil {
 				h.clearFollowup(ctx, a.ID)
 			}

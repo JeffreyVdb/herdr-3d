@@ -122,6 +122,7 @@ func startFuBridgeWith(t *testing.T, db, dir string, roles *fuRoles, on *bool, w
 		o.Usage = &server.UsageConfig{Roots: usage.Roots{ClaudeProjects: filepath.Join(dir, "claude"), CodexSessions: filepath.Join(dir, "codex")},
 			Interval: 15 * time.Millisecond}
 		o.FollowupRoles = roles
+		o.CommandRequestsEnabled = off()
 		o.FollowupsEnabled = on
 		o.FollowupDebounce = 40 * time.Millisecond
 		if tweak != nil {
