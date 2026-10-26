@@ -1,12 +1,16 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/store"
 )
 
 func TestManualStorageOmitsCredentialMetadata(t *testing.T) {
@@ -51,5 +55,31 @@ func TestManualEffectsReserveSamePort(t *testing.T) {
 	}
 	if manualEffectsConflict(a, proto.ManualEffect{Kind: "tailscale_serve", Endpoint: "https:443"}) {
 		t.Fatal("different ports conflict")
+	}
+}
+
+func TestManualCredentialIsEphemeralAndIdempotentRepliesAreCurrent(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "world.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	p := proto.ManualProcess{ID: "mp_12345678", Op: "same", Worker: "worker", State: "waiting", Cleanup: "none", Credential: &proto.ManualCredential{Request: "cr_1", Prompt: "password", Attempt: 1}}
+	if _, _, err := st.CreateManualProcess(ctx, manualToStore(p)); err != nil {
+		t.Fatal(err)
+	}
+	h := &Hub{st: st, opts: Options{ManualDir: t.TempDir()}, manualProcesses: map[string]proto.ManualProcess{}, manualOrder: map[string]uint64{}, manualLocks: map[string]*sync.Mutex{}, manualCleanups: map[string]manualCleanupLink{}}
+	if err := h.initManualProcesses(ctx); err != nil {
+		t.Fatal(err)
+	}
+	restored := h.manualProcesses[p.ID]
+	if restored.State != "unknown" || restored.Credential != nil {
+		t.Fatalf("restart: %+v", restored)
+	}
+	h.manualProcesses[p.ID] = p
+	got, ok, err := h.manualByOp(ctx, p.Op)
+	if err != nil || !ok || got.Credential == nil || got.Credential.Request != "cr_1" {
+		t.Fatalf("duplicate: %+v %v %v", got, ok, err)
 	}
 }

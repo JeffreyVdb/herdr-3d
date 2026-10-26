@@ -54,6 +54,13 @@ func (h *Hub) initManualProcesses(ctx context.Context) error {
 	}
 	for i := len(records) - 1; i >= 0; i-- {
 		p := manualFromStore(records[i])
+		if p.State == "waiting" {
+			p.State = "unknown"
+			p.Error = "credential request interrupted by bridge restart"
+			if err := h.st.SaveManualProcess(ctx, manualToStore(p)); err != nil {
+				return err
+			}
+		}
 		h.rememberManualOrder(p.ID)
 		h.manualProcesses[p.ID] = p
 		h.manualLocks[p.ID] = &sync.Mutex{}
@@ -214,6 +221,19 @@ func (h *Hub) startManualCommand(ctx context.Context, c *Client, cmd proto.Comma
 	return bad("unknown manual process command")
 }
 
+// manualByOp keeps idempotent replies current while credentials remain ephemeral.
+func (h *Hub) manualByOp(ctx context.Context, op string) (proto.ManualProcess, bool, error) {
+	record, ok, err := h.st.ManualProcessByOp(ctx, op)
+	if err != nil || !ok {
+		return proto.ManualProcess{}, ok, err
+	}
+	p := manualFromStore(record)
+	if current, ok := h.manualProcesses[p.ID]; ok {
+		p = current
+	}
+	return p, true, nil
+}
+
 func (h *Hub) startManualProcess(ctx context.Context, c *Client, cmd proto.Command) error {
 	var a proto.ManualProcessStartArgs
 	if err := decodeArgs(cmd.Args, &a); err != nil {
@@ -222,13 +242,13 @@ func (h *Hub) startManualProcess(ctx context.Context, c *Client, cmd proto.Comma
 	if !manualOpRE.MatchString(a.Op) {
 		return bad("invalid operation key")
 	}
-	old, exists, err := h.st.ManualProcessByOp(ctx, a.Op)
+	old, exists, err := h.manualByOp(ctx, a.Op)
 	if err != nil {
 		return err
 	}
 	if exists {
 		h.audit(ctx, c, cmd, nil)
-		h.reply(c, cmd, proto.ManualProcessResult{Process: manualFromStore(old)}, nil)
+		h.reply(c, cmd, proto.ManualProcessResult{Process: old}, nil)
 		return nil
 	}
 	w := h.workers[a.Worker]
@@ -311,10 +331,10 @@ func (h *Hub) startManualProcess(ctx context.Context, c *Client, cmd proto.Comma
 			err     error
 		}
 		reserved, err := query(ctx, h, func() reservation {
-			if existing, ok, err := h.st.ManualProcessByOp(ctx, a.Op); err != nil {
+			if existing, ok, err := h.manualByOp(ctx, a.Op); err != nil {
 				return reservation{err: err}
 			} else if ok {
-				return reservation{p: manualFromStore(existing)}
+				return reservation{p: existing}
 			}
 			current := h.workers[a.Worker]
 			if current == nil || current.Session != p.Session || current.WorkspaceID != p.WorkspaceID {

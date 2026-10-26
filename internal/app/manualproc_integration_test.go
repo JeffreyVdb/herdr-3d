@@ -261,6 +261,15 @@ func TestIntegrationManualProcess(t *testing.T) {
 	childFile := filepath.Join(root, "child.pid")
 	first := start("ordinary", fmt.Sprintf("sleep 120 & echo $! > %q; wait", childFile))
 	state(first.ID, func(p proto.ManualProcess) bool { return p.State == "running" })
+	samePane := false
+	for _, w := range snapshot().Workers {
+		if w.ID == worker.ID && w.PaneID == worker.PaneID {
+			samePane = true
+		}
+	}
+	if !samePane {
+		t.Fatal("manual launch changed the worker pane")
+	}
 	waitManual(t, 10*time.Second, func() bool { _, err := os.Stat(childFile); return err == nil }, "child pid")
 	bytes, err := os.ReadFile(childFile)
 	if err != nil {
@@ -282,7 +291,7 @@ func TestIntegrationManualProcess(t *testing.T) {
 		t.Fatal("ordinary child survived stop")
 	}
 	detachedFile := filepath.Join(root, "detached.pid")
-	detached := start("detached", fmt.Sprintf("setsid sh -c 'trap \"\" HUP; echo $$ > %s; exec sleep 120' </dev/null >/dev/null 2>&1 & wait", detachedFile))
+	detached := start("detached", fmt.Sprintf("setsid nohup sh -c 'echo $$ > %s; exec sleep 120' </dev/null >/dev/null 2>&1 & wait", detachedFile))
 	state(detached.ID, func(p proto.ManualProcess) bool { return p.State == "running" })
 	waitManual(t, 10*time.Second, func() bool { _, err := os.Stat(detachedFile); return err == nil }, "detached pid")
 	bytes, err = os.ReadFile(detachedFile)
