@@ -25,7 +25,7 @@ export class ManualProcessBook {
   reset(list: ManualProcess[] | undefined): void {
     this.known = Array.isArray(list);
     this.byId.clear();
-    for (const process of list ?? []) if (validProcess(process)) this.byId.set(process.id, process);
+    for (const process of Array.isArray(list) ? list : []) if (validProcess(process)) this.byId.set(process.id, process);
     this.version++;
   }
   upsert(process: ManualProcess): void {

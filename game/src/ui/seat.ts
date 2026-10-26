@@ -83,6 +83,8 @@ export class SeatBar implements SeatView {
   private readonly fsText = el('span', 'seat-fs-text');
   private fsAction: FullscreenChip['action'] = null;
   /** #108 round 4: the seated worker's protected files (hidden while it holds none): a press asks to remove them. */
+  private readonly manualRunBtn = el('button', 'secret-chip seat-manual-run', 'Run a command…');
+  private readonly processesBtn = el('button', 'secret-chip seat-processes');
   private readonly secretsBtn = el('button', 'secret-chip seat-secrets');
   private readonly secretsCount = el('span', 'seat-secrets-n');
   /** The count's words: a phone's bar keeps the count alone (its name says the rest). */
@@ -103,6 +105,8 @@ export class SeatBar implements SeatView {
       toggle(): void;
       fullscreen?(action: 'zoom' | 'unzoom'): void;
       revoke?(from: HTMLElement): void;
+      processes?(from: HTMLElement): void;
+      manualRun?(from: HTMLElement): void;
       /** #176: a view picked on the switch. */
       mode?(m: SeatMode): void;
       /** #176: "Back to live": the terminal's view to the live bottom of herdr's history. */
@@ -133,6 +137,19 @@ export class SeatBar implements SeatView {
       this.secretsBtn.append(tape);
       this.secretsBtn.addEventListener('click', () => revoke(this.secretsBtn));
       line.append(this.secretsBtn);
+    }
+    if (handlers.processes) {
+      this.processesBtn.type = 'button';
+      this.processesBtn.hidden = true;
+      this.processesBtn.setAttribute('aria-haspopup', 'dialog');
+      this.processesBtn.addEventListener('click', () => handlers.processes?.(this.processesBtn));
+      line.append(this.processesBtn);
+    }
+    if (handlers.manualRun) {
+      this.manualRunBtn.type = 'button';
+      this.manualRunBtn.setAttribute('aria-haspopup', 'dialog');
+      this.manualRunBtn.addEventListener('click', () => handlers.manualRun?.(this.manualRunBtn));
+      line.append(this.manualRunBtn);
     }
     this.standBtn.type = 'button';
     this.standBtn.append(el('kbd', '', 'Esc'), document.createTextNode('Stand up'));
@@ -315,6 +332,13 @@ export class SeatBar implements SeatView {
    * #108 round 4: how many protected files the seated worker holds (0: hide the chip; also on a bridge without
    * `prompt_secrets.revoke`). A press opens the confirmation that removes them.
    */
+  manualProcesses(count: number, hasRecords: boolean): void {
+    this.processesBtn.hidden = !hasRecords;
+    this.manualRunBtn.hidden = hasRecords;
+    this.processesBtn.textContent = `${count} manual process${count === 1 ? '' : 'es'}`;
+    this.processesBtn.setAttribute('aria-label', `${count} manual processes: open list`);
+  }
+
   secretFiles(n: number): void {
     const on = n > 0 && !!this.secretsBtn.parentElement;
     this.secretsBtn.hidden = !on;

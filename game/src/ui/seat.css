@@ -845,3 +845,18 @@
   }
 }
 /* ubuntu:end */
+
+/* Manual commands remain reachable before the first process; once records exist the count opens their list. */
+.seat .seat-processes,
+.seat .seat-manual-run {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--raised);
+  pointer-events: auto;
+}
+.seat .seat-processes[hidden],
+.seat .seat-manual-run[hidden] { display: none; }

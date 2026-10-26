@@ -70,7 +70,7 @@ export interface OverlayRect {
 
 export interface TranscriptModeHost {
   send<
-    T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'worker.dismiss_schedule_suggestion' | 'worker.retry_followup' | 'worker.followup_message' | 'worker.answer_async' | 'worker.dismiss_async' | 'transcript.page' | 'transcript.item' | 'worker.commands' | 'worker.files' | 'worker.repos',
+    T extends 'manual_process.start' | 'worker.dismiss_command_request' | 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'worker.dismiss_schedule_suggestion' | 'worker.retry_followup' | 'worker.followup_message' | 'worker.answer_async' | 'worker.dismiss_async' | 'transcript.page' | 'transcript.item' | 'worker.commands' | 'worker.files' | 'worker.repos',
   >(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** M16 phase 2: the images of a worker's transcript (thumbnails, full images, the session list); #26: of a child's. */
   feed(id: string, child?: TranscriptChild): ImageFeed | null;
@@ -114,6 +114,8 @@ export interface TranscriptModeHost {
    * with `s`, the worker's suggestion chip was clicked: prefilled from it too.
    */
   scheduleFollowup?(id: string, c: HandoffCandidate, s?: ScheduleSuggestion): void;
+  manualHost?(): string;
+  manualEntry?(id: string, command: string, cwd: string): void;
   /** #247: the shared "Repositories from other buildings" switch, for the prompt box's `@r:` (none: as if off). */
   repoRefs?: RepoSearchHost['refs'];
   /** #54: repository discovery, for the prompt box's `@r:` (none: as if off). */
@@ -228,6 +230,8 @@ interface Sitting {
   /** #90: the worker's follow-up questions, and their turn + questions (a new one told from the same one). */
   followup: Followup | null;
   followupKey: string;
+  commandRequest: import('../net/protocol').CommandRequest | null;
+  commandRequestKey: string;
   /** #223: the worker's handoff candidate (the inline button's), and its id + revision. */
   handoff: HandoffCandidate | null;
   handoffKey: string;
@@ -407,7 +411,7 @@ export class TranscriptMode {
     // The way to read it last time (what the first Ctrl+Esc shows when it opens in the terminal).
     const last: ReadMode = canRead && this.host.imagesRenderer && readModes(this.host.storage, IMAGES_KEY).includes(id) ? 'images' : 'transcript';
     this.s = {
-      id, name, harness, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', handoff: null, handoffKey: '', suggestion: null, suggestionKey: '', codex: null, codexWorking: false, codexKey: '', usage: null, usageKey: '', box: null, view: null,
+      id, name, harness, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', commandRequest: null, commandRequestKey: '', handoff: null, handoffKey: '', suggestion: null, suggestionKey: '', codex: null, codexWorking: false, codexKey: '', usage: null, usageKey: '', box: null, view: null,
       viewPane: null, tabPane: null, tab: null, mounting: false, loader: null, acked: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
       revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false, status: null, since: 0, mark: null, sendMark: null,
       pending: [], taken: new Set(), timeline: null, cueKey: '', cueDirty: true, child: null,
@@ -715,6 +719,7 @@ export class TranscriptMode {
     if (s.question) s.view.setBlocked(s.question);
     if (s.ask) s.view.setAsk(s.ask);
     if (s.followup) s.view.setFollowup(s.followup);
+    if (s.commandRequest) s.view.setCommandRequest?.(s.commandRequest);
     if (s.handoff) s.view.setHandoff?.(s.handoff);
     if (s.suggestion) s.view.setScheduleSuggestion?.(s.suggestion);
     if (s.codex) s.view.setCodex(s.id, s.codex, s.codexWorking);
@@ -919,6 +924,7 @@ export class TranscriptMode {
         if (live() && r.code !== 'stale') this.host.status('error', message);
         return { ok: false, code: r.code, message };
       },
+      commandRequest: { worker: s.id, host: () => this.host.manualHost?.() ?? '', start: (args) => this.host.send('manual_process.start', args), dismiss: (key) => this.host.send('worker.dismiss_command_request', { id: s.id, key }), edit: (command, cwd) => this.host.manualEntry?.(s.id, command, cwd) },
       images: this.host.feed(s.id),
       upload: this.host.upload ?? null,
       label: s.name,
@@ -1506,6 +1512,13 @@ export class TranscriptMode {
     s.followupKey = key;
     s.followup = f;
     s.view?.setFollowup(f);
+  }
+
+  commandRequestSeen(r: import('../net/protocol').CommandRequest | null): void {
+    const s = this.s; if (!s) return;
+    const key = r ? JSON.stringify(r) : '';
+    if (key === s.commandRequestKey) return;
+    s.commandRequestKey = key; s.commandRequest = r; s.view?.setCommandRequest?.(r);
   }
 
   /** #66: the worker's schedule suggestion (from the store; null when it has none). */

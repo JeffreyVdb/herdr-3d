@@ -129,6 +129,7 @@ import { SecretsReviewDialog } from './ui/secretsReview';
 import { PromptSecretsFlow, type Go } from './ui/secretsFlow';
 import { RevokeSecretsDialog } from './ui/revokeSecrets';
 import { ManualCredentialDialog } from './ui/manualCredential';
+import { ManualProcessesDialog } from './ui/manualProcesses';
 import { CommandCatalogs } from './laptop/commandCatalog';
 import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
@@ -268,6 +269,8 @@ export class App {
   /** #108 round 4: the confirmation before a worker's protected files are removed (the seat bar's chip opens it). */
   readonly revokeSecrets: RevokeSecretsDialog;
   readonly manualCredential: ManualCredentialDialog;
+  readonly manualProcesses: ManualProcessesDialog;
+  private manualCredentialLatest = '';
   /** #223: the filing dialog and the floor's filing cabinet. */
   readonly handoffDialog: HandoffDialog;
   readonly cabinet: Cabinet;
@@ -679,7 +682,7 @@ export class App {
           this.sendZone(); // #66
         },
         onEvent: (e) => this.onWorldEvent(e),
-        onConn: (m) => this.laptops.onConn(m),
+        onConn: (m) => { if (!this.manualProcesses.onConn(m)) this.laptops.onConn(m); },
         onBoard: (m) => this.onBoard(m),
         onScreen: (m) => this.screen.onMessage(m), // M13 screen
         onHost: (m) => this.rack.onMessage(m), // #74 server rack
@@ -700,6 +703,7 @@ export class App {
           }
           // M5: a dropped connection took every watch with it; the next live one watches again.
           this.laptops.setConnected(s.phase === 'live');
+          if (s.phase === 'live' && !wasLive) this.manualProcesses.reconnect();
           this.screen.setConnected(s.phase === 'live'); // M13: a new connection is told whether this game shares
           this.hud.setConn(s, this.fixture, Date.now());
           // #57: a switch in another tab drops this connection: ask the helper which bridge is in use now.
@@ -877,6 +881,7 @@ export class App {
       send: (t, args) => this.send(t, args).finally(() => this.laptops.syncSecretFiles()),
     });
     this.manualCredential = new ManualCredentialDialog(o.host, (args) => this.client.request('manual_process.credential', args), (msg) => this.hud.toast(msg, 5200, 'error'));
+    this.manualProcesses = new ManualProcessesDialog(o.host, { store: this.store, send: (t, args) => this.send(t, args), input: (args) => this.client.request('terminal.input', args), watch: (t, args) => this.sendWatch(t, args), changed: () => this.syncManualProcesses(), external: (url) => this.external(url) });
     // #223: a literal handoff, and the cabinet it goes into.
     const copy = (text: string) => copyText(text);
     this.handoffDialog = new HandoffDialog(o.host, {
@@ -924,6 +929,8 @@ export class App {
       live: () => this.laptops.toLive(),
       selection: () => this.laptops.selection(),
       // #108 round 4: the seated worker's "protected files" chip: the confirmation that removes them.
+      manualRun: (from) => { const id = this.laptops.seated; if (id) { this.manualProcesses.open(id, from); this.manualProcesses.entry(id); } },
+      processes: (from) => { const id = this.laptops.seated; if (id) this.manualProcesses.open(id, from); },
       revoke: (from) => {
         const id = this.laptops.seated;
         if (id) this.revokeSecrets.open(id, from);
@@ -938,6 +945,8 @@ export class App {
         toast: (m, kind) => this.hud.toast(m, kind === 'error' ? 5200 : 3200, kind),
         upload,
         seat: this.seatBar,
+        seatChanged: () => this.syncManualProcesses(),
+        manualEntry: (id, command, cwd) => this.manualProcesses.entry(id, command, cwd),
         // #176: the seated workspace covers the window (no bar over the scene): the monitor's glass is placed between the top bar and the edge.
         insets: () => ({ top: parseFloat(this.hud.root.style.getPropertyValue('--topbar-bottom')) || 70, bottom: 18 }),
         external: (url) => this.external(url), // #176: the seated terminal's links
@@ -1031,6 +1040,8 @@ export class App {
     this.hud.on('overview.all', () => this.openCityOverview()); // #188
     addFloorButton(this.hud, (b) => this.openAddFloor(b)); // #58, before Presets
     this.scheduleButtons(); // #64 schedules
+    const manualAll = h('button', { class: 'btn', 'data-action': 'manual-processes.all', 'aria-haspopup': 'dialog', onclick: () => this.manualProcesses.open(null) }, 'All manual processes');
+    this.hud.addTopbarButton(manualAll, 'buildings', () => true);
     this.m6Buttons = m6StartButtons(this.hud, { run: () => this.openStartRun(), presets: (b) => this.openPresets(b), off: () => runUnsupported(hireHost) });
     this.bindInput();
     // #124: the keys' names as this keyboard labels them (Chromium's layout map), in the titles that name a key.
@@ -1080,6 +1091,16 @@ export class App {
     void this.r.setAnimationLoop((t) => this.tick(t));
   }
 
+  private syncManualProcesses(): void {
+    this.manualProcesses.refresh();
+    this.laptops.syncSecretFiles();
+    const scope = this.manualProcesses.scope;
+    const seated = this.laptops.seated;
+    const candidates = this.store.manualProcesses.all().filter((p) => p.credential && (p.worker === seated || scope === null || (scope !== undefined && p.worker === scope)));
+    candidates.sort((a, b) => Number(`${b.id}:${b.credential?.request}` === this.manualCredentialLatest) - Number(`${a.id}:${a.credential?.request}` === this.manualCredentialLatest) || (b.credential?.attempt ?? 0) - (a.credential?.attempt ?? 0) || b.created_at - a.created_at);
+    this.manualCredential.refresh(candidates[0]);
+  }
+
   // ---- world -> views --------------------------------------------------------
 
   private applyChange(c: Change): void {
@@ -1123,7 +1144,7 @@ export class App {
     this.hireReview.refresh();
     this.sendHome.refresh();
     this.revokeSecrets.refresh(); // #108 round 4
-    this.manualCredential.refresh(this.store.manualProcesses.all().find((p) => p.worker === this.laptops.seated && p.credential));
+    this.syncManualProcesses();
     this.laptops.syncSecretFiles();
     this.handoffDialog.refresh(); // #223
     this.noteAgentHandoffs(); // #224
@@ -1461,6 +1482,7 @@ export class App {
       const old = this.store.workers.get(e.worker.id);
       if (old && (old.floor !== floorOf(e.worker) || old.desk_index !== e.worker.desk_index)) this.arrivals.cancel(e.worker.id);
     }
+    if (e.t === 'manual_process.upsert' && e.process.credential && this.store.manualProcesses.get(e.process.id)?.credential?.request !== e.process.credential.request) this.manualCredentialLatest = `${e.process.id}:${e.process.credential.request}`;
     this.wrapUpToasts(e); // #83
     if (e.t === 'schedule.upsert') this.scheduleToasts(e.schedule); // #64 schedules
     const was = e.t === 'worker.upsert' ? this.store.workers.get(e.worker.id) : undefined;
@@ -1964,7 +1986,7 @@ export class App {
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
     if (this.deskGames.isOpen) return true;
-    return this.manualCredential.isOpen || this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.secretsReview.isOpen || this.revokeSecrets.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.hirePresets.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen || this.mcpPage.isOpen;
+    return this.manualProcesses.isOpen || this.manualCredential.isOpen || this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.secretsReview.isOpen || this.revokeSecrets.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.hirePresets.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen || this.mcpPage.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -4212,7 +4234,7 @@ export class App {
     // #118: the overview opened from the transcript (O) keeps the seat: Esc closes it back onto the conversation.
     // #108: so does the review of a prompt's secrets (from the prompt box or a paste): Confirm sends from the seat.
     // Round 4: and the confirmation that removes the seated worker's protected files (the seat bar's chip opens it).
-    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.handoffDialog.keepsSeat && !this.scheduleForm.keepsSeat && !this.overview.isOpen && !this.secretsReview.isOpen && !this.revokeSecrets.keepsSeat && !this.manualCredential.isOpen) || this.hud.sheetOpen || this.transitioning;
+    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.handoffDialog.keepsSeat && !this.scheduleForm.keepsSeat && !this.overview.isOpen && !this.secretsReview.isOpen && !this.revokeSecrets.keepsSeat && !this.manualCredential.isOpen && !this.manualProcesses.keepsSeat) || this.hud.sheetOpen || this.transitioning;
     this.laptops.frame({ now: performance.now(), office: this.office, onFloor, camera: this.fpCam, walker: this.walker, blocked });
     if (this.orphaned && !this.laptops.seated && !this.transitioning) {
       this.orphaned = false;

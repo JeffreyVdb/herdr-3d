@@ -290,6 +290,7 @@ export interface H3DDebug {
   openSchedules(o?: SchedulesOpen): void;
   toastState(): { shown: boolean; text: string; kind: string; action: string | null } | null;
   /** #64 schedules: the fixture bridge's schedule plays (`sim=1`, tools/fixture-schedule.ts). */
+  simManual(t: 'sim.manual_list' | 'sim.manual_finish', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   simSchedule(t: 'sim.schedule_fire' | 'sim.schedule_fail', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #108: the files the fixture bridge wrote for protected prompt secrets (`sim.secret_files`; the simulator's own). */
   simSecretFiles(): Promise<Array<{ path: string; owner: string; text: string }>>;
@@ -363,7 +364,7 @@ export interface H3DDebug {
   /** #74: the fixture simulator's `sim.host` (script the host's numbers) and `sim.host_log` (the commands and frames of this connection). */
   simHost(t: 'sim.host' | 'sim.host_log', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #176: the fixture simulator's `sim.write` (raw text on a worker's screen) and `sim.terminal` (what its watch has). */
-  simTerm(t: 'sim.write' | 'sim.terminal', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  simTerm(t: 'sim.write' | 'sim.terminal' | 'sim.watches', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** M17: the light as shown (`daylight`, eased) and its `target`, the zone and where it comes from, the latitude, whether the time is pinned, the office lamps and what the wall clock's face shows. */
   daylight(): ReturnType<import('./app').App['daylightInfo']> | null;
   /** M13: the screen share (phase, surface, paused, video size), what this floor's TV shows, the frames answered and who looked. */
@@ -628,6 +629,11 @@ const h3d: H3DDebug = {
   scheduleForm: () => app?.scheduleForm.summary() ?? null,
   openSchedules: (o) => app?.openSchedules(o),
   toastState: () => app?.hud.toastState() ?? null,
+  simManual: async (t, args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    const r = await app.client.request(t as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: r.code };
+  },
   simSchedule: async (t, args) => {
     if (!app) return { ok: false, code: 'not_started' };
     const r = await app.client.request(t as CommandName, args as never);

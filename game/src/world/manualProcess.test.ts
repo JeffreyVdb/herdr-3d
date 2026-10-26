@@ -26,3 +26,20 @@ describe('manual processes', () => {
     expect(b.all()).toEqual([]);
   });
 });
+
+it('routes snapshot and live process events into the world book', async () => {
+  const { WorldStore } = await import('./store');
+  const { isWorldEvent } = await import('../net/protocol');
+  const store = new WorldStore();
+  store.applySnapshot({ t: 'world.snapshot', seq: 1, world: { buildings: [], unassigned: [], floors: [], workers: [], host: 'bridge', manual_processes: [process('a', 'running', 'none')] } });
+  expect(store.host).toBe('bridge');
+  const upsert = { t: 'manual_process.upsert', seq: 2, process: process('a', 'exited', 'needed') } as const;
+  expect(isWorldEvent(upsert)).toBe(true);
+  store.applyEvent(upsert);
+  expect(store.manualProcesses.get('a')?.cleanup).toBe('needed');
+  const removed = { t: 'manual_process.removed', seq: 3, id: 'a' } as const;
+  expect(isWorldEvent(removed)).toBe(true);
+  store.applyEvent(removed);
+  expect(store.manualProcesses.get('a')).toBeUndefined();
+  expect(isWorldEvent({ t: 'manual_process.upsert', seq: 4, process: {} } as never)).toBe(false);
+});
