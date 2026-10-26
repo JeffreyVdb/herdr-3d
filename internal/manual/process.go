@@ -85,7 +85,9 @@ func TaggedProcesses(id string) ([]Identity, error) {
 	return result, nil
 }
 
-// StopGroup escalates signals while the launcher's identity still matches.
+// StopGroup escalates while at least one re-identified original group member
+// remains in the group. This still reaches ordinary children if the launcher
+// exits on SIGINT, without signalling a reused group ID.
 func StopGroup(ctx context.Context, status Status, grace time.Duration) error {
 	alive, err := CheckIdentity(status.PID, status.StartTicks)
 	if err != nil || !alive {
@@ -94,29 +96,65 @@ func StopGroup(ctx context.Context, status Status, grace time.Duration) error {
 	if status.PGID <= 1 || status.PGID == syscall.Getpgrp() {
 		return fmt.Errorf("unsafe process group")
 	}
+	pgid, err := syscall.Getpgid(status.PID)
+	if errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if pgid != status.PGID {
+		return fmt.Errorf("process group changed")
+	}
+	members, err := GroupProcesses(status.PGID)
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, p := range members {
+		if p.PID == status.PID && p.StartTicks == status.StartTicks {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("cannot verify original process group")
+	}
+	groupAlive := func() (bool, error) {
+		for _, p := range members {
+			alive, err := CheckIdentity(p.PID, p.StartTicks)
+			if err != nil {
+				return false, err
+			}
+			if !alive {
+				continue
+			}
+			current, err := syscall.Getpgid(p.PID)
+			if errors.Is(err, syscall.ESRCH) {
+				continue
+			}
+			if err != nil {
+				return false, err
+			}
+			if current == status.PGID {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
 	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL} {
-		alive, err := CheckIdentity(status.PID, status.StartTicks)
+		alive, err = groupAlive()
 		if err != nil || !alive {
 			return err
 		}
-		pgid, err := syscall.Getpgid(status.PID)
-		if err != nil {
-			if errors.Is(err, syscall.ESRCH) {
-				return nil
-			}
-			return err
-		}
-		if pgid != status.PGID {
-			return fmt.Errorf("process group changed")
-		}
-		if err := syscall.Kill(-pgid, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
+		if err := syscall.Kill(-status.PGID, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
 			return err
 		}
 		deadline := time.NewTimer(grace)
 		ticker := time.NewTicker(50 * time.Millisecond)
 		waiting := true
 		for waiting {
-			alive, err := CheckIdentity(status.PID, status.StartTicks)
+			alive, err = groupAlive()
 			if err != nil || !alive {
 				ticker.Stop()
 				deadline.Stop()
@@ -135,12 +173,12 @@ func StopGroup(ctx context.Context, status Status, grace time.Duration) error {
 		ticker.Stop()
 		deadline.Stop()
 	}
-	alive, err = CheckIdentity(status.PID, status.StartTicks)
+	alive, err = groupAlive()
 	if err != nil {
 		return err
 	}
 	if alive {
-		return fmt.Errorf("process still running after SIGKILL")
+		return fmt.Errorf("process group still running after SIGKILL")
 	}
 	return nil
 }

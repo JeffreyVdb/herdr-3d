@@ -6,6 +6,9 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -90,4 +93,55 @@ func TestGroupProcessesIncludesCurrentIdentity(t *testing.T) {
 		}
 	}
 	t.Fatalf("current process absent from group: %+v", members)
+}
+
+func TestStopGroupEscalatesAfterLauncherExits(t *testing.T) {
+	dir := t.TempDir()
+	pidfile := filepath.Join(dir, "child.pid")
+	cmd := exec.Command("/bin/sh", "-c", `trap 'exit 0' INT; sh -c 'trap "" INT; echo $$ > "$1"; exec sleep 120' sh "$1" & wait`, "sh", pidfile)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	parentTicks, err := StartTicks(cmd.Process.Pid)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	var child Identity
+	t.Cleanup(func() {
+		if child.PID > 0 && IdentityAlive(child.PID, child.StartTicks) {
+			_ = syscall.Kill(child.PID, syscall.SIGKILL)
+		}
+		if IdentityAlive(cmd.Process.Pid, parentTicks) {
+			_ = syscall.Kill(cmd.Process.Pid, syscall.SIGKILL)
+		}
+		<-done
+	})
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		b, err := os.ReadFile(pidfile)
+		if err == nil {
+			child.PID, err = strconv.Atoi(strings.TrimSpace(string(b)))
+			if err == nil {
+				child.StartTicks, err = StartTicks(child.PID)
+				if err == nil {
+					break
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if child.PID == 0 || child.StartTicks == 0 {
+		t.Fatal("child did not start")
+	}
+	if err := StopGroup(context.Background(), Status{PID: cmd.Process.Pid, StartTicks: parentTicks, PGID: cmd.Process.Pid}, 200*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if IdentityAlive(child.PID, child.StartTicks) {
+		t.Fatal("foreground child survived escalation")
+	}
 }
