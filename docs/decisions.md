@@ -632,3 +632,7 @@ This page is a historical lookup for entries moved from the former single log. *
 ## 2026-10-25 — #198: Hire with handoff files the handoff, then hires once with its final path
 
 [Read this decision](decisions/worker-lifecycle-and-handoffs.md#2026-10-25--198-hire-with-handoff-files-the-handoff-then-hires-once-with-its-final-path)
+
+## 2026-10-26 — #156: a fake text owner cannot hide a Codex call
+
+[Read this decision](decisions/codex-integration-and-profiles.md#2026-10-26--156-a-fake-text-owner-cannot-hide-a-codex-call)

@@ -334,3 +334,11 @@ func TestPollsLiveAndCapped(t *testing.T) {
 		}
 	}
 }
+
+func TestPollAfterFakeOwner(t *testing.T) {
+	call := codexLineOf("response_item", fmt.Sprintf(`{"type":"custom_tool_call","call_id":"call_fake","name":"exec","input":%q}`, `/* tools.exec_command({cmd:" */ text(await tools.write_stdin({session_id:12,chars:''})); const suffix = ",}";`))
+	result := codexLineOf("response_item", `{"type":"custom_tool_call_output","call_id":"call_fake","output":"Script completed\nOutput:\n{\"chunk_id\":\"a\",\"exit_code\":1,\"output\":\"failed\"}"}`)
+	checkRows(t, "fake owner", rowsOf(itemsOf(t, Codex, call+result)), map[string]row{
+		"call_fake": {"Waited for background terminal 12", "exited 1", proto.ToolError, ""},
+	})
+}
