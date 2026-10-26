@@ -6,12 +6,13 @@ const (
 	CmdManualProcessDismiss = "manual_process.dismiss"
 	EvManualProcessUpsert   = "manual_process.upsert"
 	EvManualProcessRemoved  = "manual_process.removed"
+	ErrManualBadArgs        = "bad_args"
 )
 
 type ManualSource struct {
 	Kind  string `json:"kind"`
 	Key   string `json:"key,omitempty"`
-	Index int    `json:"index,omitempty"`
+	Index int    `json:"index"`
 }
 type ManualCredential struct {
 	Request   string `json:"request"`

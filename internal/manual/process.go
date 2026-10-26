@@ -14,26 +14,35 @@ import (
 	"time"
 )
 
-// IdentityAlive distinguishes PID reuse and treats zombies as no longer running.
-func IdentityAlive(pid int, ticks uint64) bool {
+// CheckIdentity distinguishes a vanished or reused PID from an unreadable
+// process. An error must not be treated as proof that a process is gone.
+func CheckIdentity(pid int, ticks uint64) (bool, error) {
 	if pid <= 0 || ticks == 0 {
-		return false
+		return false, fmt.Errorf("invalid process identity")
 	}
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
 	if err != nil {
-		return false
+		return false, err
 	}
 	end := strings.LastIndexByte(string(b), ')')
 	if end < 0 {
-		return false
+		return false, fmt.Errorf("invalid proc stat")
 	}
 	fields := strings.Fields(string(b[end+1:]))
-	if len(fields) == 0 || fields[0] == "Z" || fields[0] == "X" {
-		return false
+	if len(fields) == 0 {
+		return false, fmt.Errorf("invalid proc stat")
 	}
 	got, err := ParseStartTicks(string(b))
-	return err == nil && got == ticks
+	if err != nil {
+		return false, err
+	}
+	return got == ticks && fields[0] != "Z" && fields[0] != "X", nil
 }
+
+func IdentityAlive(pid int, ticks uint64) bool { alive, _ := CheckIdentity(pid, ticks); return alive }
 
 type Identity struct {
 	PID        int
@@ -78,15 +87,17 @@ func TaggedProcesses(id string) ([]Identity, error) {
 
 // StopGroup escalates signals while the launcher's identity still matches.
 func StopGroup(ctx context.Context, status Status, grace time.Duration) error {
-	if !IdentityAlive(status.PID, status.StartTicks) {
-		return nil
+	alive, err := CheckIdentity(status.PID, status.StartTicks)
+	if err != nil || !alive {
+		return err
 	}
 	if status.PGID <= 1 || status.PGID == syscall.Getpgrp() {
 		return fmt.Errorf("unsafe process group")
 	}
 	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL} {
-		if !IdentityAlive(status.PID, status.StartTicks) {
-			return nil
+		alive, err := CheckIdentity(status.PID, status.StartTicks)
+		if err != nil || !alive {
+			return err
 		}
 		pgid, err := syscall.Getpgid(status.PID)
 		if err != nil {
@@ -105,10 +116,11 @@ func StopGroup(ctx context.Context, status Status, grace time.Duration) error {
 		ticker := time.NewTicker(50 * time.Millisecond)
 		waiting := true
 		for waiting {
-			if !IdentityAlive(status.PID, status.StartTicks) {
+			alive, err := CheckIdentity(status.PID, status.StartTicks)
+			if err != nil || !alive {
 				ticker.Stop()
 				deadline.Stop()
-				return nil
+				return err
 			}
 			select {
 			case <-ctx.Done():
@@ -123,8 +135,54 @@ func StopGroup(ctx context.Context, status Status, grace time.Duration) error {
 		ticker.Stop()
 		deadline.Stop()
 	}
-	if IdentityAlive(status.PID, status.StartTicks) {
+	alive, err = CheckIdentity(status.PID, status.StartTicks)
+	if err != nil {
+		return err
+	}
+	if alive {
 		return fmt.Errorf("process still running after SIGKILL")
 	}
 	return nil
+}
+
+// StopTagged retries cleanup of precisely the currently tagged, re-identified
+// processes. It does not use process names or an unchecked PID.
+func StopTagged(ctx context.Context, id string, grace time.Duration) ([]Identity, error) {
+	found, err := TaggedProcesses(id)
+	if err != nil {
+		return nil, err
+	}
+	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
+		for _, p := range found {
+			alive, err := CheckIdentity(p.PID, p.StartTicks)
+			if err != nil {
+				return found, err
+			}
+			if !alive {
+				continue
+			}
+			if err := syscall.Kill(p.PID, sig); err != nil && !errors.Is(err, syscall.ESRCH) {
+				return found, err
+			}
+		}
+		timer := time.NewTimer(grace)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return found, ctx.Err()
+		case <-timer.C:
+		}
+		alive := false
+		for _, p := range found {
+			running, err := CheckIdentity(p.PID, p.StartTicks)
+			if err != nil {
+				return found, err
+			}
+			alive = alive || running
+		}
+		if !alive {
+			break
+		}
+	}
+	return TaggedProcesses(id)
 }

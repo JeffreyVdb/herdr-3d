@@ -1,0 +1,13 @@
+# Manual process decisions
+
+A manual process belongs to a worker's workspace and runs in a separate, unfocused tab. The user's command is stored as a file, not placed in Herdr's arguments. The fixed pane command invokes the bridge's `manual-launch` subcommand with only the private process directory; that subcommand reads the reviewed command, executes it with the configured bridge shell policy, and keeps the terminal foreground process group.
+
+Process directories live under `$XDG_STATE_HOME/herdr-world/manual/`, not the runtime directory. The state survives bridge restarts, including the atomic status file. The status records the launcher's PID and Linux `/proc/<pid>/stat` start ticks, its process group, and its exit code. The bridge checks both identity fields before signaling; PID reuse never establishes ownership.
+
+The Herdr server's privilege context is checked on the session socket: `SO_PEERCRED` identifies the server process, then `/proc/<pid>/status` supplies `NoNewPrivs`. An unreadable or restricted context refuses the launch. The bridge service's `NoNewPrivileges` setting is unchanged.
+
+All stop triggers converge on the same cleanup operation. For a verified live identity it signals the foreground group with SIGINT, SIGTERM, and SIGKILL, waiting between signals; it closes the tab and searches readable process environments for the process marker. Detached survivors remain visible as cleanup needed. On a later explicit Stop, the bridge may signal those exact PIDs only after verifying their start ticks again. It does not claim to reverse arbitrary external effects.
+
+Send-home stops manual processes before asking the agent to exit and refuses to close anything when a process cannot be verified stopped. Persistent effects do not block send-home; their records remain reachable. Sleep stops processes before stopping the session. On wake the bridge closes restored `⚙ ` tabs in workspaces with manual records; it never starts them again. On bridge restart status and tab observations reconcile existing records without relaunch.
+
+For a recognized background Tailscale Serve effect, the adapter checks read-only status before launch, reserves its endpoint against other tracked manual processes, and records a scoped cleanup command. An explicit Stop runs that command as a new manual process, using the password-dialog path when available. If the owner has gone, a temporary `manual cleanup` workspace on the same session hosts it. The effect remains cleanup needed until that command exits zero. No global Serve reset, daemon stop, or sudoers change is performed.

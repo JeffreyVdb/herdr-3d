@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -30,5 +31,26 @@ func TestManualTabControl(t *testing.T) {
 		if err := c.LaunchManual(context.Background(), "test", "w1:p3", dir); !errors.Is(err, ErrNotAllowed) {
 			t.Errorf("dir %q: %v", dir, err)
 		}
+	}
+}
+
+func TestManualControlValidation(t *testing.T) {
+	c := &Control{ManualDir: "/state/manual"}
+	for _, label := range []string{"bad\nlabel", "bad\u200bhidden", strings.Repeat("a", 65), "-flag"} {
+		if ValidLabel(label) {
+			t.Errorf("accepted label %q", label)
+		}
+	}
+	for _, tab := range []string{"w1:t1;bad", "--all", "w1/t1", ""} {
+		if _, err := c.argv(opTabClose, map[string]string{"session": "test", "tab": tab}); !errors.Is(err, ErrNotAllowed) {
+			t.Errorf("tab %q: %v", tab, err)
+		}
+	}
+	argv, err := c.argv(opManualLaunch, map[string]string{"session": "test", "pane": "w1:p2", "mpdir": "/state/manual/mp_12345678"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(argv) != 7 || !strings.Contains(argv[6], " manual-launch '/state/manual/mp_12345678'") {
+		t.Fatalf("argv: %q", argv)
 	}
 }

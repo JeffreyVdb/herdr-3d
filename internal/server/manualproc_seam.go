@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/manual"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
 
@@ -24,8 +25,11 @@ func (h *Hub) setManualCredential(id string, c *proto.ManualCredential) {
 	if !ok {
 		return
 	}
+	if c != nil && (manual.Terminal(p.State) || p.State == "stopping") {
+		return
+	}
 	p.Credential = c
-	if c != nil && p.State == "running" {
+	if c != nil {
 		p.State = "waiting"
 	}
 	if c == nil && p.State == "waiting" {

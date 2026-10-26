@@ -353,7 +353,7 @@ func ValidLabel(label string) bool {
 		return false
 	}
 	for _, r := range label {
-		if unicode.IsControl(r) {
+		if !unicode.IsPrint(r) {
 			return false
 		}
 	}

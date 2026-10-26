@@ -65,6 +65,9 @@ func Launch(dir string, out io.Writer) error {
 		code = exit.ExitCode()
 		if code < 0 {
 			code = 128
+			if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+				code += int(status.Signal())
+			}
 		}
 	}
 	status.ExitCode, status.EndedAt = &code, time.Now().UnixMilli()

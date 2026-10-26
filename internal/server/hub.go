@@ -434,6 +434,7 @@ type Hub struct {
 	manualProcesses map[string]proto.ManualProcess
 	manualLocks     map[string]*sync.Mutex
 	manualPolling   bool
+	manualCleanups  map[string]manualCleanupLink
 	opts            Options
 	log             *slog.Logger
 	st              *store.Store
@@ -735,6 +736,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		opts:            opts,
 		manualProcesses: map[string]proto.ManualProcess{},
 		manualLocks:     map[string]*sync.Mutex{},
+		manualCleanups:  map[string]manualCleanupLink{},
 		log:             opts.Log,
 		st:              st,
 		epoch:           hex.EncodeToString(epoch[:]),
