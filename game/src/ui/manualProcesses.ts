@@ -36,6 +36,7 @@ export class ManualProcessesDialog {
   private view: 'list' | 'entry' | 'terminal' = 'list';
   private terminal: SeatTerminal | null = null;
   private terminalId: string | null = null;
+  private terminalGeneration = 0;
   private terminalInput: HTMLTextAreaElement | null = null;
   private busy = new Set<string>();
   private entryOp = '';
@@ -130,6 +131,8 @@ export class ManualProcessesDialog {
   private async openTerminal(p: ManualProcess): Promise<void> {
     this.detach(); this.view = 'terminal'; this.title.textContent = p.title; this.status.textContent = '';
     const id = `mp:${p.id}`; this.terminalId = id;
+    const generation = ++this.terminalGeneration;
+    const current = () => this.terminalId === id && this.terminalGeneration === generation;
     const screen = h('div', { class: 'mp-terminal', 'aria-label': 'Process terminal' });
     const input = h('textarea', { class: 'mp-terminal-input', 'aria-label': 'Terminal input', autocapitalize: 'off', autocomplete: 'off', spellcheck: 'false', rows: 1 }); this.terminalInput = input;
     this.body.replaceChildren(h('p', {}, `${p.host} · ${p.state}`), screen, input, h('p', {}, 'Closing this view does not stop the process.'), h('button', { class: 'btn', onclick: () => this.list() }, 'Back to processes'));
@@ -140,9 +143,9 @@ export class ManualProcessesDialog {
         if (!part) return;
         const chunk = part; part = ''; bytes = 0;
         inputQueue = inputQueue.then(async () => {
-          if (this.terminalId !== id) return;
+          if (!current()) return;
           const result = await this.host.input({ id, text: chunk });
-          if (!result.ok && this.terminalId === id) this.status.textContent = 'Could not send terminal input. Try again.';
+          if (!result.ok && current()) this.status.textContent = 'Could not send terminal input. Try again.';
         });
       };
       for (const ch of text) { const n = new TextEncoder().encode(ch).length; if (bytes + n > 16384) flush(); part += ch; bytes += n; }
@@ -162,16 +165,17 @@ export class ManualProcessesDialog {
       else if (e.key === 'Escape') { e.preventDefault(); sendText('\x1b'); }
     });
     let watched = false;
-    this.terminal = new SeatTerminal(screen, { mac: /Mac/.test(navigator.platform), grid: (g) => { if (watched && this.terminalId === id) void this.host.watch('terminal.resize', { id, cols: g.cols, rows: g.rows }); }, wheel: (lines, column, row, modifiers) => { void this.host.watch('terminal.scroll', { id, direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), column, row, modifiers }); }, open: (url) => this.host.external(url), paste: (text) => sendText(text), keyboard: () => input.focus() });
-    await this.terminal.mount();
-    if (this.terminalId !== id) return;
+    const term = new SeatTerminal(screen, { mac: /Mac/.test(navigator.platform), grid: (g) => { if (watched && current()) void this.host.watch('terminal.resize', { id, cols: g.cols, rows: g.rows }); }, wheel: (lines, column, row, modifiers) => { if (current()) void this.host.watch('terminal.scroll', { id, direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), column, row, modifiers }); }, open: (url) => this.host.external(url), paste: (text) => sendText(text), keyboard: () => { if (current()) input.focus(); } });
+    this.terminal = term;
+    await term.mount();
+    if (!current()) { term.dispose(); return; }
     screen.querySelector('.xterm-helper-textarea')?.setAttribute('aria-hidden', 'true');
-    const grid = this.terminal.grid;
+    const grid = term.grid;
     const r = await this.host.watch('terminal.watch', { id, fps: 10, control: true, ...(grid ? { cols: grid.cols, rows: grid.rows } : {}) });
-    if (this.terminalId !== id) return;
+    if (!current()) return;
     watched = r.ok;
     if (!r.ok) this.status.textContent = failureText('terminal.watch', r.code, r.message);
-    else { const current = this.terminal?.grid; if (current) void this.host.watch('terminal.resize', { id, cols: current.cols, rows: current.rows }); }
+    else { const gridNow = term.grid; if (gridNow) void this.host.watch('terminal.resize', { id, cols: gridNow.cols, rows: gridNow.rows }); }
     input.focus();
   }
   onConn(m: ConnMessage): boolean {
@@ -186,7 +190,7 @@ export class ManualProcessesDialog {
   }
   reconnect(): void { const p = this.terminalId && this.host.store.manualProcesses.get(this.terminalId.slice(3)); if (p && this.isOpen) void this.openTerminal(p); }
   private detach(): void {
-    const id = this.terminalId; this.terminalId = null; this.terminalInput = null;
+    const id = this.terminalId; this.terminalId = null; this.terminalInput = null; this.terminalGeneration++;
     this.terminal?.dispose(); this.terminal = null;
     if (id) void this.host.watch('terminal.unwatch', { id });
   }
