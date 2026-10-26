@@ -83,3 +83,35 @@ func TestManualCredentialIsEphemeralAndIdempotentRepliesAreCurrent(t *testing.T)
 		t.Fatalf("duplicate: %+v %v %v", got, ok, err)
 	}
 }
+
+func TestManualStopKeepsPendingCleanupWorkspaceVisible(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "world.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := proto.ManualProcess{ID: "mp_12345678", Op: "pending", Worker: "gone", State: "exited", Cleanup: "failed", Effects: []proto.ManualEffect{{Kind: "tailscale_serve", Endpoint: "https:8443", State: "removed"}}}
+	if _, _, err := st.CreateManualProcess(ctx, manualToStore(p)); err != nil {
+		t.Fatal(err)
+	}
+	h, err := NewHub(ctx, st, Options{ManualDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { _ = h.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done; _ = st.Close() }()
+	_, err = query(ctx, h, func() struct{} {
+		h.manualCleanups["mp_abcdef12"] = manualCleanupLink{Parent: p.ID, TemporaryWorkspace: true}
+		return struct{}{}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.manualLocks[p.ID].Lock()
+	result, verified, err := h.cleanupManual(ctx, p.ID, "stopped by user", false)
+	h.manualLocks[p.ID].Unlock()
+	if err != nil || !verified || result.Cleanup != "needed" || !strings.Contains(result.CleanupNote, "workspace") {
+		t.Fatalf("cleanup: %+v verified=%v err=%v", result, verified, err)
+	}
+}

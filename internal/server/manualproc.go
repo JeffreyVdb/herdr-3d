@@ -776,6 +776,16 @@ func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone bool
 		}
 		p.Error = "could not verify that the process stopped"
 	}
+	if verified && p.Cleanup == "done" {
+		pending, err := query(ctx, h, func() bool { return h.manualCleanupPending(p.ID) })
+		if err != nil {
+			return p, false, err
+		}
+		if pending {
+			p.Cleanup = "needed"
+			p.CleanupNote = "cleanup workspace is still being reconciled"
+		}
+	}
 	if err := h.publishManual(ctx, p); err != nil {
 		return p, false, err
 	}
@@ -1104,6 +1114,15 @@ func (h *Hub) closeRestoredManualTabs(ctx context.Context, session, socket strin
 		}
 	}
 	return nil
+}
+
+func (h *Hub) manualCleanupPending(parent string) bool {
+	for _, link := range h.manualCleanups {
+		if link.Parent == parent {
+			return true
+		}
+	}
+	return false
 }
 
 type manualCleanupLink struct {
