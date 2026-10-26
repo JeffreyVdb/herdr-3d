@@ -86,6 +86,9 @@ func (h *Hub) manualProcessViews() []proto.ManualProcess {
 }
 
 func (h *Hub) saveManual(ctx context.Context, p proto.ManualProcess) error {
+	if current, ok := h.manualProcesses[p.ID]; ok && current.State != p.State && !manual.CanTransition(current.State, p.State) {
+		return fmt.Errorf("invalid manual process transition %s to %s", current.State, p.State)
+	}
 	if err := h.st.SaveManualProcess(ctx, p); err != nil {
 		return err
 	}
@@ -490,19 +493,12 @@ func (h *Hub) dismissManualCommand(ctx context.Context, c *Client, cmd proto.Com
 		if !manual.Terminal(current.State) || (current.Cleanup != "none" && current.Cleanup != "done") {
 			return nil, fmt.Errorf("%w: process still needs cleanup", errInvalidState)
 		}
-		if current.TabID != "" {
-			if h.opts.Manual == nil {
-				return nil, fmt.Errorf("%w: manual tab control unavailable", errInvalidState)
-			}
-			known, present := h.manualTabPresent(ctx, current)
-			if !known || present {
-				if err := h.opts.Manual.CloseManualTab(ctx, current.Session, current.TabID); err != nil {
-					afterKnown, afterPresent := h.manualTabPresent(ctx, current)
-					if !afterKnown || afterPresent {
-						return nil, fmt.Errorf("closing manual tab: %w", err)
-					}
-				}
-			}
+		cleaned, verified, err := h.cleanupManual(ctx, a.ID, "dismissed", false)
+		if err != nil {
+			return nil, err
+		}
+		if !verified || (cleaned.Cleanup != "none" && cleaned.Cleanup != "done") {
+			return nil, fmt.Errorf("%w: manual process still needs cleanup", errInvalidState)
 		}
 		deleteErr, err := query(ctx, h, func() error {
 			if err := h.st.DeleteManualProcess(ctx, a.ID); err != nil {
@@ -609,14 +605,19 @@ func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone bool
 			return p, false, nil
 		}
 	}
-	if !tabGone && p.TabID != "" && h.opts.Manual != nil {
-		known, present := h.manualTabPresent(ctx, p)
-		if !known || present {
-			if err := h.opts.Manual.CloseManualTab(ctx, p.Session, p.TabID); err != nil {
-				afterKnown, afterPresent := h.manualTabPresent(ctx, p)
-				if !afterKnown || afterPresent {
-					cleanupErr = fmt.Errorf("closing tab: %w", err)
-					verified = false
+	if !tabGone && p.TabID != "" {
+		if h.opts.Manual == nil {
+			cleanupErr = fmt.Errorf("manual tab control unavailable")
+			verified = false
+		} else {
+			known, present := h.manualTabPresent(ctx, p)
+			if !known || present {
+				if err := h.opts.Manual.CloseManualTab(ctx, p.Session, p.TabID); err != nil {
+					afterKnown, afterPresent := h.manualTabPresent(ctx, p)
+					if !afterKnown || afterPresent {
+						cleanupErr = fmt.Errorf("closing tab: %w", err)
+						verified = false
+					}
 				}
 			}
 		}
@@ -786,8 +787,9 @@ func (h *Hub) pollManualProcesses(ctx context.Context) {
 				}
 			}
 			if statusErr == nil {
-				if status.ExitCode != nil {
-					p.State = "exited"
+				derived := manual.Reconcile(&status, true, manual.IdentityAlive(status.PID, status.StartTicks))
+				if derived == "exited" || derived == "failed" {
+					p.State = derived
 					p.Error = ""
 					if status.Error != "" {
 						p.State = "failed"
@@ -843,7 +845,7 @@ func (h *Hub) pollManualProcesses(ctx context.Context) {
 							p.CleanupNote = "external effect " + effect.Endpoint + " still needs cleanup"
 						}
 					}
-				} else if manual.IdentityAlive(status.PID, status.StartTicks) {
+				} else if derived == "running" {
 					p.StartedAt = status.StartedAt
 					p.Error = ""
 					p.State = "running"
@@ -901,7 +903,7 @@ func (h *Hub) manualWorkFor(ctx context.Context, worker, session string) ([]manu
 		var work []manualWork
 		for id, p := range h.manualProcesses {
 			if (worker == "" || p.Worker == worker) && (session == "" || p.Session == session) && !manual.Terminal(p.State) {
-				work = append(work, manualWork{id, p.Title, h.manualLocks[id]})
+				work = append(work, manualWork{id, id, h.manualLocks[id]})
 			}
 		}
 		return work
@@ -920,7 +922,7 @@ func (h *Hub) stopManualForOwner(ctx context.Context, worker, reason string) (st
 		var out []manualWork
 		for id, p := range h.manualProcesses {
 			if p.Worker == worker && manual.Terminal(p.State) && (p.Cleanup == "needed" || p.Cleanup == "failed") {
-				out = append(out, manualWork{id, p.Title, h.manualLocks[id]})
+				out = append(out, manualWork{id, id, h.manualLocks[id]})
 			}
 		}
 		return out
@@ -972,7 +974,7 @@ func (h *Hub) scheduleManualCleanup(ctx context.Context, worker, session, reason
 	var work []manualWork
 	for id, p := range h.manualProcesses {
 		if (worker == "" || p.Worker == worker) && (session == "" || p.Session == session) && !manual.Terminal(p.State) {
-			work = append(work, manualWork{id, p.Title, h.manualLocks[id]})
+			work = append(work, manualWork{id, id, h.manualLocks[id]})
 		}
 	}
 	if len(work) == 0 {

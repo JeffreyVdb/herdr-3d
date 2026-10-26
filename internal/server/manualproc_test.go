@@ -138,8 +138,9 @@ func (f fakeEffects) CleanupCommand(proto.ManualEffect) string {
 }
 
 func TestManualEffectConflictDoesNotLaunch(t *testing.T) {
+	previous := manual.Effects
 	manual.Effects = fakeEffects{conflict: true}
-	t.Cleanup(func() { manual.Effects = nil })
+	t.Cleanup(func() { manual.Effects = previous })
 	fake := &fakeManual{}
 	dir := t.TempDir()
 	tb := startTermBridge(t, func(o *server.Options) {
@@ -262,8 +263,9 @@ func TestManualSleepStopsAndWakeClosesRestoredTabs(t *testing.T) {
 }
 
 func TestManualEffectCleanupNeedsSuccessfulExit(t *testing.T) {
+	previous := manual.Effects
 	manual.Effects = fakeEffects{}
-	t.Cleanup(func() { manual.Effects = nil })
+	t.Cleanup(func() { manual.Effects = previous })
 	fake := &fakeManual{}
 	dir := t.TempDir()
 	tb := startTermBridge(t, func(o *server.Options) {
@@ -346,6 +348,9 @@ func TestManualEffectCleanupNeedsSuccessfulExit(t *testing.T) {
 }
 
 func TestManualAskpassRequiresAdapter(t *testing.T) {
+	rewrite, env := manual.AskpassRewrite, manual.AskpassEnv
+	manual.AskpassRewrite, manual.AskpassEnv = nil, nil
+	t.Cleanup(func() { manual.AskpassRewrite, manual.AskpassEnv = rewrite, env })
 	fake := &fakeManual{}
 	dir := t.TempDir()
 	tb := startTermBridge(t, func(o *server.Options) { o.Manual = fake; o.ManualDir = dir; o.ManualShell = "/bin/bash" }, worker("w1", "agent", "", "idle"))
@@ -355,8 +360,9 @@ func TestManualAskpassRequiresAdapter(t *testing.T) {
 }
 
 func TestManualEffectCleanupAfterOwnerGone(t *testing.T) {
+	previous := manual.Effects
 	manual.Effects = fakeEffects{}
-	t.Cleanup(func() { manual.Effects = nil })
+	t.Cleanup(func() { manual.Effects = previous })
 	fake := &fakeManual{}
 	dir := t.TempDir()
 	hb := startHireBridge(t, func(o *server.Options) {
@@ -419,6 +425,9 @@ func TestManualEffectCleanupAfterOwnerGone(t *testing.T) {
 }
 
 func TestManualBackgroundServeNeedsAdapter(t *testing.T) {
+	previous := manual.Effects
+	manual.Effects = nil
+	t.Cleanup(func() { manual.Effects = previous })
 	fake := &fakeManual{}
 	dir := t.TempDir()
 	tb := startTermBridge(t, func(o *server.Options) { o.Manual = fake; o.ManualDir = dir; o.ManualShell = "/bin/bash" }, worker("w1", "agent", "", "idle"))

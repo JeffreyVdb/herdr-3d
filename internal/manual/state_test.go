@@ -7,7 +7,7 @@ func TestTransitions(t *testing.T) {
 		from, to string
 		ok       bool
 	}{
-		{"starting", "running", true}, {"starting", "failed", true}, {"running", "waiting", true},
+		{"starting", "running", true}, {"starting", "waiting", true}, {"unknown", "failed", true}, {"unknown", "waiting", true}, {"starting", "failed", true}, {"running", "waiting", true},
 		{"waiting", "running", true}, {"running", "stopping", true}, {"stopping", "stopped", true},
 		{"running", "exited", true}, {"unknown", "stopping", true}, {"exited", "running", false},
 		{"failed", "stopping", false}, {"starting", "exited", true}, {"bogus", "running", false},

@@ -35,9 +35,10 @@ func (h *Hub) setManualCredential(id string, c *proto.ManualCredential) {
 	if c == nil && p.State == "waiting" {
 		p.State = "running"
 	}
-	h.manualProcesses[id] = p
-	if h.st != nil {
-		_ = h.st.SaveManualProcess(context.Background(), p)
+	if h.st == nil {
+		h.manualProcesses[id] = p
+		h.emit(proto.Event{T: proto.EvManualProcessUpsert, Process: &p})
+		return
 	}
-	h.emit(proto.Event{T: proto.EvManualProcessUpsert, Process: &p})
+	_ = h.saveManual(context.Background(), p)
 }

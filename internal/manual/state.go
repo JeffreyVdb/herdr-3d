@@ -7,7 +7,7 @@ func Terminal(state string) bool { return state == "exited" || state == "stopped
 func CanTransition(from, to string) bool {
 	switch from {
 	case "starting":
-		return to == "running" || to == "stopping" || to == "exited" || to == "stopped" || to == "failed" || to == "unknown"
+		return to == "running" || to == "waiting" || to == "stopping" || to == "exited" || to == "stopped" || to == "failed" || to == "unknown"
 	case "running":
 		return to == "waiting" || to == "stopping" || to == "exited" || to == "stopped" || to == "unknown"
 	case "waiting":
@@ -15,7 +15,7 @@ func CanTransition(from, to string) bool {
 	case "stopping":
 		return to == "stopped" || to == "unknown" || to == "exited"
 	case "unknown":
-		return to == "running" || to == "stopping" || to == "exited" || to == "stopped"
+		return to == "running" || to == "waiting" || to == "stopping" || to == "exited" || to == "stopped" || to == "failed"
 	}
 	return false
 }
