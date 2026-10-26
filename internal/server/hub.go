@@ -481,12 +481,16 @@ type Hub struct {
 	usageFor map[string]usageTag
 	reported map[string]modelEffort
 	// M5 term
-	term      termWatches              // laptop screens being watched
-	zoom      zoomTabs                 // #74: the tabs zoomed for them
-	lanes     map[string]*inputLane    // worker id → its input commands, in order
-	questions map[string]questionState // worker id → what its blocked screen asks
-	calls     map[string]workerCalls   // #106: worker id → the calls its transcript waits on
-	asking    map[string]bool          // worker id → its screen reader runs
+	manualProcesses    map[string]proto.ManualProcess
+	credentials        map[string]*credentialRequest
+	credentialAttempts map[string]int
+	credentialTimeout  time.Duration
+	term               termWatches              // laptop screens being watched
+	zoom               zoomTabs                 // #74: the tabs zoomed for them
+	lanes              map[string]*inputLane    // worker id → its input commands, in order
+	questions          map[string]questionState // worker id → what its blocked screen asks
+	calls              map[string]workerCalls   // #106: worker id → the calls its transcript waits on
+	asking             map[string]bool          // worker id → its screen reader runs
 	// #57: worker id → its ask as last published, and the last ask call
 	// whose result its transcript recorded.
 	asks        map[string]*proto.Ask
@@ -963,14 +967,22 @@ func (h *Hub) Run(ctx context.Context) error {
 	}
 	manualC := time.NewTicker(time.Second)
 	defer manualC.Stop()
+	h.reconcileCredentials()
+	credentialTick := time.NewTicker(time.Second)
+	defer credentialTick.Stop()
 	schedC := time.NewTicker(h.opts.ScheduleTick) // #62: a look at the wall clock, not a timer to a due time
 	defer schedC.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			for id, r := range h.credentials {
+				h.expireCredential(id, r)
+			}
 			return nil
 		case <-manualC.C:
 			h.pollManualProcesses(ctx)
+		case <-credentialTick.C:
+			h.reconcileCredentials()
 		case <-schedC.C:
 			h.checkSchedules(ctx)
 		case <-boardC:
@@ -1124,6 +1136,10 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startResize
 		case proto.CmdTerminalScroll: // #176
 			start = h.startScroll
+		case proto.CmdManualProcessCredential:
+			start = h.startManualCredential
+		case proto.CmdTerminalInput:
+			start = h.startTerminalInput
 		case proto.CmdWorkerKeys:
 			start = h.startKeys
 		case proto.CmdWorkerPrompt:

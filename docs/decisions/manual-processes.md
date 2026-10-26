@@ -11,3 +11,24 @@ All stop triggers converge on the same cleanup operation. For a verified live id
 Send-home stops manual processes before asking the agent to exit and refuses to close anything when a process cannot be verified stopped. Persistent effects do not block send-home; their records remain reachable. Sleep stops processes before stopping the session. On wake the bridge closes restored `⚙ ` tabs in workspaces with manual records; it never starts them again. On bridge restart status and tab observations reconcile existing records without relaunch.
 
 For a recognized background Tailscale Serve effect, the adapter checks read-only status before launch, reserves its endpoint against other tracked manual processes, and records a scoped cleanup command. An explicit Stop runs that command as a new manual process, using the password-dialog path when available. If the owner has gone, a temporary `manual cleanup` workspace on the same session hosts it. The effect remains cleanup needed until that command exits zero. No global Serve reset, daemon stop, or sudoers change is performed.
+## Credentials
+
+For a supported top-level simple sudo invocation, the bridge inserts `-A` and shows the launched form alongside the
+reviewed command. Shell composition and substitutions are outside the dialog path. A 0700 per-process helper executes
+`herdr-world manual-askpass` with the process directory; a random per-process nonce is stored there with mode 0600. The
+helper connects to `$XDG_RUNTIME_DIR/herdr-world/askpass.sock` (0600). The broker checks `SO_PEERCRED`, the nonce,
+and the current process state before opening an unpredictable request id.
+
+At most one request is open per process. A new invocation replaces the old one and increments the attempt. Answers,
+cancellation, helper disconnect, process exit, and a 120-second timeout expire the request; late or replayed answers
+are stale. The bridge passes secret bytes only to the waiting helper and clears its byte slice after writing. Audit
+records keep the byte count, not the secret. Nested sudo, MFA, and non-sudo prompts use the interactive terminal.
+
+## Run terminal
+
+A run terminal is a watch of `mp:<process id>` on the manual tab's pane, independent of the worker pane. The same
+connection can control both, subject to the normal watch and observer limits. Input uses the terminal controller's
+JSON stdin, never a command-line `send-text`; messages contain either UTF-8 text or base64 bytes and are capped at
+16 KiB decoded. Controller input is ordered and is not superseded by scroll or resize; queue pressure returns an
+error. Closing the view releases the controller and leaves the process running. The target application controls
+whether its terminal echoes input.

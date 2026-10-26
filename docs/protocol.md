@@ -6513,6 +6513,35 @@ even an HTTP origin), token, account data or raw error or stderr text: none is d
 
 Errors not tied to a command have no `req_id`.
 
+### Manual process terminals
+
+The existing `terminal.watch`, `terminal.resize`, `terminal.scroll`, and `terminal.unwatch` commands accept
+`id: "mp:<process id>"` for a manual process's pane. Frames, control state, history, and closure messages carry that
+same id. These watches count toward the connection and host limits; a connection can control a manual pane while it
+also controls its worker pane. Unwatching detaches the view and does not stop the process. If the pane disappears,
+`terminal.closed` has reason `process_gone`.
+
+`terminal.input {id, text?, bytes?}` sends input to the connection's own control watch of that manual id. Supply
+exactly one of `text` (UTF-8) or `bytes` (base64), at most 16 KiB decoded per command. The bridge returns the view to
+the live bottom first, then writes the input through the terminal controller's stdin. `worker.keys` accepts worker
+ids only. The audit entry contains `{id, bytes}` and never the input. A terminal application controls whether input is
+echoed in its display; applications reading secrets should disable echo.
+
+### Manual process credentials
+
+A waiting manual process exposes `credential: {request, prompt, user, attempt, expires_at}`. The request is scoped to
+that process and helper invocation. Answer it with `manual_process.credential {id, request, secret}` or cancel it with
+`manual_process.credential {id, request, cancel: true}`. Exactly one of `secret` and `cancel` is required. The answer
+acks with `{}`; an answered, replaced, disconnected, expired, or ended request returns `stale`. A retry creates a new
+request and increments `attempt`. An unanswered request expires after 120 seconds. The audit entry contains only
+`{id, request, cancel, secret_bytes}`.
+
+For supported top-level sudo commands, the reviewed command remains unchanged in the record and the launched form has
+`-A` inserted. The helper authenticates to the bridge over a 0600 local socket with the process's 0600 nonce and a
+same-UID peer check. A credential is sent only over the WebSocket and that local helper connection, then written to
+sudo's askpass pipe; it is not placed in process arguments, environment, files, logs, audit rows, or world messages.
+Nested sudo and other password prompts use terminal input instead.
+
 ## Flow control and closing
 
 Each client has a bounded send queue (1024 messages). The bridge never waits for a slow client: if the queue fills up,

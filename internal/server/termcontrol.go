@@ -13,6 +13,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
@@ -78,7 +79,7 @@ func (t *termWatches) controls(c *Client, except string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for id, w := range t.byC[c] {
-		if id != except && w.control && !w.stopped {
+		if id != except && w.control && !w.stopped && strings.HasPrefix(id, "mp:") == strings.HasPrefix(except, "mp:") {
 			return true
 		}
 	}
@@ -296,7 +297,7 @@ func (h *Hub) startResize(ctx context.Context, c *Client, cmd proto.Command) err
 	case a.CellWidth < 0 || a.CellWidth > herdr.MaxCellPx || a.CellHeight < 0 || a.CellHeight > herdr.MaxCellPx:
 		return bad("cell_width_px and cell_height_px must be 0-%d", herdr.MaxCellPx)
 	}
-	if _, _, err := h.termWorker(a.ID); err != nil {
+	if _, _, _, err := h.terminalTarget(a.ID); err != nil {
 		return err
 	}
 	w := h.term.get(c, a.ID)
@@ -354,7 +355,7 @@ func (h *Hub) startScroll(ctx context.Context, c *Client, cmd proto.Command) err
 	case a.Modifiers < 0 || a.Modifiers > 7:
 		return bad("modifiers must be 0-7")
 	}
-	if _, _, err := h.termWorker(a.ID); err != nil {
+	if _, _, _, err := h.terminalTarget(a.ID); err != nil {
 		return err
 	}
 	w, cs, err := h.ownedStream(c, a.ID)

@@ -2,7 +2,9 @@ package herdr
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -608,4 +610,65 @@ func TestControlTerminalQueueOrderProperty(t *testing.T) {
 		t.Fatalf("the queue never filled (%d wheels refused, %d commands superseded): the test proves nothing", refused, dropped)
 	}
 	t.Logf("%d commands refused, %d superseded", refused, dropped)
+}
+
+func TestControllerInputChunks(t *testing.T) {
+	f := newFakeController(false)
+	ct := controlOn(t, f)
+	text := strings.Repeat("\x00é", 6000)
+	if err := ct.Input(text); err != nil {
+		t.Fatal(err)
+	}
+	b := bytes.Repeat([]byte{0, 255, 42}, 9000)
+	if err := ct.InputBytes(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := ct.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	var raw []byte
+	for _, line := range f.written() {
+		if len(line)+1 > maxControlLine {
+			t.Fatal("oversized line")
+		}
+		var v struct {
+			Type  string `json:"type"`
+			Text  string `json:"text"`
+			Bytes []byte `json:"bytes"`
+		}
+		if err := json.Unmarshal([]byte(line), &v); err != nil {
+			t.Fatal(err)
+		}
+		got += v.Text
+		raw = append(raw, v.Bytes...)
+	}
+	if got != text || !slices.Equal(raw, b) {
+		t.Fatal("input changed in transit")
+	}
+}
+
+func TestControllerInputSurvivesSupersedeAndClose(t *testing.T) {
+	p, ct := stalled(t, controlQueue-2)
+	if err := ct.Input("first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ct.Input("second"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ct.Input("rejected"); err == nil {
+		t.Fatal("full queue accepted input")
+	}
+	if err := ct.Live(); err != nil {
+		t.Fatal(err)
+	}
+	p.release()
+	if err := ct.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(p.written(), "\n")
+	first, second := strings.Index(got, `"text":"first"`), strings.Index(got, `"text":"second"`)
+	if first < 0 || second <= first || strings.Contains(got, "rejected") {
+		t.Fatalf("input order: %s", got)
+	}
 }
