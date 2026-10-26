@@ -23,7 +23,7 @@ type Variant struct {
 }
 type Command struct {
 	Command  string    `json:"command"`
-	Cwd      string    `json:"cwd,omitempty"`
+	Cwd      string    `json:"cwd"`
 	CwdNamed bool      `json:"cwd_named"`
 	Host     string    `json:"host"`
 	HostText string    `json:"host_text,omitempty"`
