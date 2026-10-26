@@ -147,3 +147,10 @@ describe('#108 round 4: every reviewed field of every route is masked in the com
     expect(loggedArgs('worker.prompt', hand)).toBe(hand);
   });
 });
+
+describe('manual process input redaction', () => {
+  it('does not retain credentials or terminal input in the command log', () => {
+    expect(JSON.stringify(loggedArgs('manual_process.credential', { id: 'p', request: 'r', secret: 'H3D-MARKER' }))).not.toContain('H3D-MARKER');
+    expect(JSON.stringify(loggedArgs('terminal.input', { id: 'mp:p', text: 'H3D-MARKER' }))).not.toContain('H3D-MARKER');
+  });
+});

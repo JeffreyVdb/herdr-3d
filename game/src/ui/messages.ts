@@ -24,6 +24,12 @@ export interface FailureContext {
 
 /** What each command does, for "This herdr-world can't … yet". */
 const DOES: Record<CommandName | LogoAction, string> = {
+  'manual_process.start': 'start manual processes',
+  'manual_process.stop': 'stop manual processes',
+  'manual_process.dismiss': 'dismiss manual processes',
+  'manual_process.credential': 'answer password requests',
+  'terminal.input': 'type in manual process terminals',
+  'worker.dismiss_command_request': 'dismiss command requests',
   // M3d
   'logo.set': 'store building logos',
   'logo.clear': 'store building logos',

@@ -613,6 +613,8 @@ export interface WrapUpAck {
 }
 
 export interface World {
+  host?: string;
+  manual_processes?: ManualProcess[];
   buildings: Building[];
   unassigned: string[];
   floors: Floor[];
@@ -809,6 +811,8 @@ export type WorldEvent =
   // #184 the Kaneo connection
   | KaneoUpdate
   // #62 scheduled agents
+  | ManualProcessUpsert
+  | ManualProcessRemoved
   | ScheduleUpsert
   | ScheduleRemoved
   // #93 hire presets
@@ -1009,6 +1013,12 @@ export interface SessionCreateAck {
  * its floor by `floor`, a floor id (a virtual floor's too); the bridge resolves the herdr session itself.
  */
 export interface CommandArgs {
+  'manual_process.start': { op: string; worker: string; command: string; cwd?: string; source?: ManualProcessSource; askpass?: boolean };
+  'manual_process.stop': { id: string };
+  'manual_process.dismiss': { id: string };
+  'manual_process.credential': { id: string; request: string; secret?: string; cancel?: boolean };
+  'terminal.input': { id: string; text?: string; bytes?: string };
+  'worker.dismiss_command_request': { id: string; key: string };
   'building.create': { name: string };
   'building.rename': { id: string; name: string };
   'building.delete': { id: string };
@@ -1581,6 +1591,8 @@ const EVENT_TYPES = new Set([
   'repo_discovery.update', // #54 repository discovery
   'codex_profiles.update', // #138 Codex profiles
   'kaneo.update', // #184 the Kaneo connection
+  'manual_process.upsert',
+  'manual_process.removed',
   'schedule.upsert', // #62 scheduled agents
   'schedule.removed',
   'hire_preset.upsert', // #93 hire presets
@@ -1705,6 +1717,10 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     case 'handoff.removed':
       return isStr(o.session) && isInt(o.handoff_id) && isInt(o.handoff_count);
     // #62: a schedule created, changed or moved on; one that left the view.
+    case 'manual_process.upsert':
+      return isObj(o.process) && isStr(o.process.id) && isStr(o.process.worker) && isStr(o.process.state);
+    case 'manual_process.removed':
+      return isStr(o.id);
     case 'schedule.upsert':
       return isObj(o.schedule) && isStr(o.schedule.id) && isStr(o.schedule.floor) && isStr(o.schedule.state) && isInt(o.schedule.due_at);
     case 'schedule.removed':
@@ -3941,3 +3957,23 @@ export function decodeChild(v: unknown): Child | null {
   }
   return c;
 }
+
+// #207 manual processes and command requests.
+export interface ManualProcessSource { kind: 'suggestion' | 'manual'; key?: string; index?: number }
+export interface ManualCredential { request: string; prompt: string; user: string; attempt: number; expires_at: number }
+export interface ManualProcessEffect { kind: string; endpoint: string; cleanup_command: string; state: 'active' | 'removed' | 'conflict' | 'unknown' }
+export interface ManualProcess {
+  id: string; op: string; worker: string; worker_name: string; floor: string; session: string;
+  workspace_id: string; tab_id: string; pane_id: string; host: string; cwd: string; command: string;
+  launched?: string; title: string; source: ManualProcessSource;
+  state: 'starting' | 'running' | 'waiting' | 'stopping' | 'exited' | 'stopped' | 'failed' | 'unknown';
+  exit_code?: number; error?: string; cleanup: 'none' | 'pending' | 'done' | 'needed' | 'failed';
+  cleanup_note?: string; effects?: ManualProcessEffect[]; credential?: ManualCredential;
+  created_at: number; started_at: number; ended_at: number;
+}
+export interface ManualProcessUpsert { t: 'manual_process.upsert'; seq: number; process: ManualProcess }
+export interface ManualProcessRemoved { t: 'manual_process.removed'; seq: number; id: string }
+export interface CommandRequestVariant { label: string; command: string; note: string }
+export interface RequestedCommand { command: string; cwd: string; cwd_named: boolean; host: 'bridge' | 'other' | 'unknown'; host_text: string; why: string; variants?: CommandRequestVariant[] }
+export interface CommandRequest { key: string; at: number; commands: RequestedCommand[] }
+export interface Worker { command_request?: CommandRequest }

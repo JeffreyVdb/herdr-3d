@@ -71,6 +71,8 @@ function maskPath(args: Record<string, unknown>, path: string, review: unknown):
  */
 export function loggedArgs(t: CommandName, args: unknown): unknown {
   if (!isObj(args)) return args;
+  if (t === 'manual_process.credential') return { id: args.id, request: args.request, cancel: args.cancel, secret: args.secret === undefined ? undefined : REDACTED };
+  if (t === 'terminal.input') return { id: args.id, text: args.text === undefined ? undefined : REDACTED, bytes: args.bytes === undefined ? undefined : REDACTED };
   if (t === 'prompt_secrets.scan' && typeof args.text === 'string') return { ...args, text: REDACTED, length: args.text.length };
   if (isObj(args.secrets)) {
     // One review (it has a revision) is of the command's one text; several are keyed by their texts' paths.

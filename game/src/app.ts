@@ -128,6 +128,7 @@ import { promptSecretsSection } from './ui/promptSecretsSection';
 import { SecretsReviewDialog } from './ui/secretsReview';
 import { PromptSecretsFlow, type Go } from './ui/secretsFlow';
 import { RevokeSecretsDialog } from './ui/revokeSecrets';
+import { ManualCredentialDialog } from './ui/manualCredential';
 import { CommandCatalogs } from './laptop/commandCatalog';
 import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
@@ -266,6 +267,7 @@ export class App {
   readonly secrets: PromptSecretsFlow;
   /** #108 round 4: the confirmation before a worker's protected files are removed (the seat bar's chip opens it). */
   readonly revokeSecrets: RevokeSecretsDialog;
+  readonly manualCredential: ManualCredentialDialog;
   /** #223: the filing dialog and the floor's filing cabinet. */
   readonly handoffDialog: HandoffDialog;
   readonly cabinet: Cabinet;
@@ -874,6 +876,7 @@ export class App {
       // An older bridge's `unknown_command` hides the seat bar's chip at once (`send` marked the command unsupported).
       send: (t, args) => this.send(t, args).finally(() => this.laptops.syncSecretFiles()),
     });
+    this.manualCredential = new ManualCredentialDialog(o.host, (args) => this.client.request('manual_process.credential', args), (msg) => this.hud.toast(msg, 5200, 'error'));
     // #223: a literal handoff, and the cabinet it goes into.
     const copy = (text: string) => copyText(text);
     this.handoffDialog = new HandoffDialog(o.host, {
@@ -1120,6 +1123,7 @@ export class App {
     this.hireReview.refresh();
     this.sendHome.refresh();
     this.revokeSecrets.refresh(); // #108 round 4
+    this.manualCredential.refresh(this.store.manualProcesses.all().find((p) => p.worker === this.laptops.seated && p.credential));
     this.laptops.syncSecretFiles();
     this.handoffDialog.refresh(); // #223
     this.noteAgentHandoffs(); // #224
@@ -1960,7 +1964,7 @@ export class App {
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
     if (this.deskGames.isOpen) return true;
-    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.secretsReview.isOpen || this.revokeSecrets.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.hirePresets.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen || this.mcpPage.isOpen;
+    return this.manualCredential.isOpen || this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.secretsReview.isOpen || this.revokeSecrets.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.hirePresets.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen || this.mcpPage.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -4208,7 +4212,7 @@ export class App {
     // #118: the overview opened from the transcript (O) keeps the seat: Esc closes it back onto the conversation.
     // #108: so does the review of a prompt's secrets (from the prompt box or a paste): Confirm sends from the seat.
     // Round 4: and the confirmation that removes the seated worker's protected files (the seat bar's chip opens it).
-    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.handoffDialog.keepsSeat && !this.scheduleForm.keepsSeat && !this.overview.isOpen && !this.secretsReview.isOpen && !this.revokeSecrets.keepsSeat) || this.hud.sheetOpen || this.transitioning;
+    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.handoffDialog.keepsSeat && !this.scheduleForm.keepsSeat && !this.overview.isOpen && !this.secretsReview.isOpen && !this.revokeSecrets.keepsSeat && !this.manualCredential.isOpen) || this.hud.sheetOpen || this.transitioning;
     this.laptops.frame({ now: performance.now(), office: this.office, onFloor, camera: this.fpCam, walker: this.walker, blocked });
     if (this.orphaned && !this.laptops.seated && !this.transitioning) {
       this.orphaned = false;
