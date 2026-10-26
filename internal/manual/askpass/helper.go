@@ -57,6 +57,10 @@ func Env(dir, id string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err = f.Chmod(0600); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
 	_, err = f.Write([]byte(hex.EncodeToString(n[:])))
 	closeErr := f.Close()
 	if err != nil {

@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -156,7 +158,7 @@ func (h *Hub) serveAskpass(ctx context.Context, c *net.UnixConn) {
 		select {
 		case res := <-r.result:
 			_ = c.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			_ = json.NewEncoder(c).Encode(res)
+			writeAskpassResponse(c, res)
 			clear(res.Secret)
 			return
 		case <-disconnected:
@@ -178,6 +180,20 @@ func (h *Hub) serveAskpass(ctx context.Context, c *net.UnixConn) {
 			})
 		}
 	}
+}
+
+// writeAskpassResponse keeps the transient base64 encoding in a byte slice
+// that can be cleared after it has been written to the helper.
+func writeAskpassResponse(w io.Writer, response askpass.Response) {
+	if !response.OK {
+		_, _ = io.WriteString(w, "{\"ok\":false}\n")
+		return
+	}
+	data := append([]byte(nil), `{"ok":true,"secret":"`...)
+	data = base64.StdEncoding.AppendEncode(data, response.Secret)
+	data = append(data, '"', '}', '\n')
+	_, _ = io.Copy(w, bytes.NewReader(data))
+	clear(data)
 }
 
 // The launcher can ask for a credential before the first status poll marks
