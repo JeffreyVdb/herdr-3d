@@ -2,8 +2,11 @@ package server
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -57,6 +60,9 @@ func TestManualTerminalWatchInputAndDetach(t *testing.T) {
 	control := &herdr.Control{Duplex: func([]string) (herdr.DuplexProc, error) { p := newInputProc(); procs <- p; return p, nil }}
 	r := newManualRigWithTerm(t, control)
 	r.action(func() {
+		r.hub.opts.MaxWatches = 2
+		r.hub.opts.MaxObservers = 2
+		r.hub.manualProcesses["mp_11111111"] = proto.ManualProcess{ID: "mp_11111111", State: "running", Session: "s", PaneID: "w1:p3"}
 		r.hub.floors["s"] = &floorState{sessionState: &sessionState{session: "s", running: true}, id: "s"}
 		r.hub.workers["worker"] = &proto.Worker{ID: "worker", Session: "s", PaneID: "w1:p1"}
 		p := r.hub.manualProcesses[testManualID]
@@ -84,6 +90,9 @@ func TestManualTerminalWatchInputAndDetach(t *testing.T) {
 	}
 	agent := watch("worker")
 	mp := watch("mp:" + testManualID)
+	if e := r.command(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: "mp:mp_11111111"}); e.Code != proto.ErrCapacity {
+		t.Fatalf("per-connection cap: %+v", e)
+	}
 	marker := "H3D-MARKER-terminal-0123456789"
 	if e := r.command(proto.CmdTerminalInput, proto.TerminalInputArgs{ID: "mp:" + testManualID, Text: &marker}); e.T != "" {
 		t.Fatalf("input: %+v", e)
@@ -103,6 +112,55 @@ func TestManualTerminalWatchInputAndDetach(t *testing.T) {
 			t.Fatal("input did not reach controller")
 		}
 	}
+	bytesMarker := []byte("H3D-MARKER-terminal-bytes-987654321")
+	if e := r.command(proto.CmdTerminalInput, proto.TerminalInputArgs{ID: "mp:" + testManualID, Bytes: &bytesMarker}); e.T != "" {
+		t.Fatalf("bytes input: %+v", e)
+	}
+	foundBytes := false
+	for !foundBytes {
+		select {
+		case m := <-mp.commands:
+			if v, ok := m["bytes"].(string); ok {
+				decoded, err := base64.StdEncoding.DecodeString(v)
+				if err != nil || string(decoded) != string(bytesMarker) {
+					t.Fatal("bytes input changed")
+				}
+				foundBytes = true
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("bytes input did not arrive")
+		}
+	}
+	if e := r.command(proto.CmdTerminalResize, proto.TerminalResizeArgs{ID: "mp:" + testManualID, Cols: 110, Rows: 35}); e.T != "" {
+		t.Fatalf("resize: %+v", e)
+	}
+	if e := r.command(proto.CmdTerminalScroll, proto.TerminalScrollArgs{ID: "mp:" + testManualID, Direction: "up", Lines: 2}); e.T != "" {
+		t.Fatalf("scroll: %+v", e)
+	}
+	if e := r.command(proto.CmdTerminalInput, proto.TerminalInputArgs{ID: "mp:" + testManualID, Text: &marker, Bytes: &bytesMarker}); e.Code != proto.ErrBadRequest {
+		t.Fatalf("two payloads accepted: %+v", e)
+	}
+	large := strings.Repeat("x", (16<<10)+1)
+	if e := r.command(proto.CmdTerminalInput, proto.TerminalInputArgs{ID: "mp:" + testManualID, Text: &large}); e.Code != proto.ErrBadRequest {
+		t.Fatalf("oversized input accepted: %+v", e)
+	}
+	other, err := proto.Dial(r.ctx, filepath.Join(r.root, "bridge.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.CloseNow()
+	if _, err = other.Hello(r.ctx, proto.Hello{Client: "not-owner"}); err != nil {
+		t.Fatal(err)
+	}
+	otherRig := &manualRig{t: t, ctx: r.ctx, ws: other}
+	otherRig.read()
+	if e := otherRig.command(proto.CmdTerminalWatch, proto.TerminalWatchArgs{ID: "mp:mp_11111111"}); e.Code != proto.ErrCapacity {
+		t.Fatalf("host cap: %+v", e)
+	}
+	if e := otherRig.command(proto.CmdTerminalInput, proto.TerminalInputArgs{ID: "mp:" + testManualID, Text: &marker}); e.Code != proto.ErrBadRequest {
+		t.Fatalf("unowned input: %+v", e)
+	}
+	assertNoMarker(t, "unowned input response", marker, otherRig.wire.Bytes())
 	if e := r.command(proto.CmdTerminalScroll, proto.TerminalScrollArgs{ID: "worker", Direction: "up", Lines: 1}); e.T != "" {
 		t.Fatalf("agent control was lost: %+v", e)
 	}
@@ -122,5 +180,60 @@ func TestManualTerminalWatchInputAndDetach(t *testing.T) {
 			t.Error("detach stopped process")
 		}
 	})
-	r.hygiene(marker)
+	select {
+	case <-mp.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("manual controller did not detach")
+	}
+	mp2 := watch("mp:" + testManualID)
+	r.action(func() {
+		p := r.hub.manualProcesses[testManualID]
+		p.State = "exited"
+		p.PaneID = ""
+		r.hub.manualProcesses[testManualID] = p
+		r.hub.syncWatches()
+	})
+	for {
+		e, b := r.read()
+		if e.T == proto.TTerminalClosed {
+			var closed proto.TerminalClosed
+			_ = json.Unmarshal(b, &closed)
+			if closed.ID == "mp:"+testManualID {
+				if closed.Reason != "process_gone" {
+					t.Fatalf("close reason %q", closed.Reason)
+				}
+				break
+			}
+		}
+	}
+	select {
+	case <-mp2.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("closed pane controller did not exit")
+	}
+	r.action(func() {
+		p := r.hub.manualProcesses[testManualID]
+		p.State = "running"
+		p.PaneID = "w1:p2"
+		r.hub.manualProcesses[testManualID] = p
+	})
+	mp3 := watch("mp:" + testManualID)
+	go func() {
+		_, _ = io.WriteString(mp3.out, `{"type":"terminal.closed","reason":"terminal term_1 not found"}`+"\n")
+	}()
+	for {
+		e, b := r.read()
+		if e.T == proto.TTerminalClosed {
+			var closed proto.TerminalClosed
+			_ = json.Unmarshal(b, &closed)
+			if closed.ID == "mp:"+testManualID {
+				if closed.Reason != proto.ClosedProcessGone {
+					t.Fatalf("pane disappearance: %+v", closed)
+				}
+				break
+			}
+		}
+	}
+	r.inspectProc(os.Getpid(), marker, string(bytesMarker))
+	r.hygiene(marker, string(bytesMarker))
 }

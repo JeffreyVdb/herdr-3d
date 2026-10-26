@@ -50,7 +50,15 @@ func (h *Hub) startTerminalInput(ctx context.Context, c *Client, cmd proto.Comma
 	if _, _, _, err := h.terminalTarget(a.ID); err != nil {
 		return err
 	}
-	_, cs, err := h.ownedStream(c, a.ID)
+	w, cs, err := h.ownedStream(c, a.ID)
+	if err == nil {
+		h.term.mu.Lock()
+		owned := w.ctl.mode == proto.ControlOwned
+		h.term.mu.Unlock()
+		if !owned {
+			err = fmt.Errorf("%w: the terminal controller is starting", errInvalidState)
+		}
+	}
 	if err == nil {
 		h.toLive(a.ID)
 		if a.Text != nil {
@@ -68,4 +76,11 @@ func (h *Hub) startTerminalInput(ctx context.Context, c *Client, cmd proto.Comma
 	h.audit(ctx, c, cmd, nil)
 	h.reply(c, cmd, nil, nil)
 	return nil
+}
+
+// Herdr reports a removed pane as a terminal.closed reason. A closed process
+// may still have a tab, so its state alone does not end a watch.
+func manualPaneGone(reason string) bool {
+	reason = strings.ToLower(reason)
+	return strings.Contains(reason, "not found") || strings.Contains(reason, "closed") || strings.Contains(reason, "removed") || strings.Contains(reason, "destroyed")
 }

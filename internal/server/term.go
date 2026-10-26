@@ -302,7 +302,7 @@ func (h *Hub) syncWatches() {
 		if strings.HasPrefix(w.id, "mp:") {
 			session, pane, ok := h.manualPane(strings.TrimPrefix(w.id, "mp:"))
 			if !ok || session != w.session || pane != w.pane {
-				h.closeWatch(w, "process_gone")
+				h.closeWatch(w, proto.ClosedProcessGone)
 			}
 			continue
 		}
@@ -441,8 +441,8 @@ func (h *Hub) runWatch(hctx, ctx context.Context, w *watch, cmd proto.Command) {
 			fails = nil
 			continue
 		}
-		if strings.HasPrefix(w.id, "mp:") && errors.As(err, &closed) && strings.Contains(closed.reason, "not found") {
-			_ = h.doWait(hctx, func() { h.closeWatch(w, "process_gone") })
+		if strings.HasPrefix(w.id, "mp:") && errors.As(err, &closed) && manualPaneGone(closed.reason) {
+			_ = h.doWait(hctx, func() { h.closeWatch(w, proto.ClosedProcessGone) })
 			return
 		}
 		if errors.Is(err, errResync) {

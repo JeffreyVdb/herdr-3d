@@ -47,6 +47,7 @@ const (
 	ClosedAsleep         = "asleep"
 	ClosedPaneChanged    = "pane_changed"
 	ClosedObserverFailed = "observer_failed"
+	ClosedProcessGone    = "process_gone"
 )
 
 // Question kinds.

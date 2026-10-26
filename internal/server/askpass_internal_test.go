@@ -5,6 +5,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/manual/askpass"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
+	"github.com/JeffreyVdb/herdr-3d/internal/usage"
 )
 
 const testManualID = "mp_01234567"
@@ -61,6 +63,7 @@ type manualRig struct {
 	log           *lockedLog
 	models        *hygieneRoles
 	transcript    string
+	bridgeExe     string
 	seq           int
 }
 
@@ -93,14 +96,25 @@ func newManualRigWithTerm(t *testing.T, term TermHerdr) *manualRig {
 	_, _ = models.cls.Classify(ctx, map[string]any{"fixture": "benign"}, "fixture request")
 	_, _ = models.llm.Complete(ctx, ai.Request{Messages: []ai.Message{{Role: "user", Content: "benign fixture request"}}})
 	on := true
-	transcript := filepath.Join(root, "agent-transcript.jsonl")
-	if err := os.WriteFile(transcript, []byte("{\"type\":\"assistant\",\"text\":\"fixture\"}\n"), 0600); err != nil {
+	const agentSession = "4ae7eb8b-7b42-45bb-aff8-0eb249e27406"
+	projects := filepath.Join(root, "projects")
+	transcript := filepath.Join(projects, "-home-u-w1", agentSession+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0700); err != nil {
 		t.Fatal(err)
 	}
-	h, err := NewHub(ctx, st, Options{Log: slog.New(slog.NewTextHandler(log, nil)), Term: term, FollowupRoles: models, FollowupsEnabled: &on})
+	fixture, err := os.ReadFile(filepath.Join("..", "transcript", "testdata", "claude", "message.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(transcript, fixture, 0600); err != nil {
+		t.Fatal(err)
+	}
+	h, err := NewHub(ctx, st, Options{Log: slog.New(slog.NewTextHandler(log, nil)), Term: term, FollowupRoles: models, FollowupsEnabled: &on, Usage: &UsageConfig{Roots: usage.Roots{ClaudeProjects: projects}, Interval: 50 * time.Millisecond}, TranscriptFlush: 10 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.floors["s"] = &floorState{sessionState: &sessionState{session: "s", running: true}, id: "s"}
+	h.workers["fixture-worker"] = &proto.Worker{ID: "fixture-worker", Session: "s", AgentKind: "claude", Harness: "claude", AgentSession: agentSession, Cwd: "/home/u/w1", Status: "working"}
 	h.manualProcesses = map[string]proto.ManualProcess{testManualID: {ID: testManualID, State: "running", Session: "s", PaneID: "w:p2", Launched: "sudo -A -u root true"}}
 	sock := filepath.Join(root, "bridge.sock")
 	ln, err := Listen(sock)
@@ -109,6 +123,10 @@ func newManualRigWithTerm(t *testing.T, term TermHerdr) *manualRig {
 	}
 	if err := h.ListenAskpass(ctx, askpass.SocketPath()); err != nil {
 		t.Fatal(err)
+	}
+	socketInfo, err := os.Stat(askpass.SocketPath())
+	if err != nil || socketInfo.Mode().Perm() != 0600 {
+		t.Fatalf("askpass socket mode: %v %v", socketInfo, err)
 	}
 	hubDone := make(chan struct{})
 	go func() { _ = h.Run(ctx); close(hubDone) }()
@@ -125,6 +143,12 @@ func newManualRigWithTerm(t *testing.T, term TermHerdr) *manualRig {
 	}
 	r := &manualRig{t: t, ctx: ctx, cancel: cancel, hub: h, st: st, ws: ws, root: root, dir: dir, db: db, log: log, models: models, transcript: transcript}
 	r.read() // snapshot
+	if e := r.command(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: "fixture-worker"}); e.T != "" {
+		t.Fatalf("transcript watch: %+v", e)
+	}
+	for !bytes.Contains(r.wire.Bytes(), []byte("Repo use GitHub issues likely")) {
+		r.read()
+	}
 	t.Cleanup(func() { ws.CloseNow(); cancel(); <-srvDone; <-hubDone; _ = st.Close() })
 	return r
 }
@@ -224,7 +248,11 @@ func (r *manualRig) sudo(marker string) (*exec.Cmd, *bytes.Buffer) {
 		r.t.Fatal(err)
 	}
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
-	script := "#!/bin/sh\necho $$ > " + quote(filepath.Join(r.root, "helper.pid")) + "\nexec " + quote(exe) + " -test.run '^TestManualAskpassHelperProcess$' -- " + quote(r.dir) + " \"$@\"\n"
+	helperCmd := quote(exe) + " -test.run '^TestManualAskpassHelperProcess$' -- "
+	if r.bridgeExe != "" {
+		helperCmd = quote(r.bridgeExe) + " manual-askpass "
+	}
+	script := "#!/bin/sh\necho $$ > " + quote(filepath.Join(r.root, "helper.pid")) + "\nexec " + helperCmd + quote(r.dir) + " \"$@\"\n"
 	helper := filepath.Join(r.dir, "askpass")
 	if err := os.WriteFile(helper, []byte(script), 0700); err != nil {
 		r.t.Fatal(err)
@@ -247,7 +275,7 @@ func (r *manualRig) sudo(marker string) (*exec.Cmd, *bytes.Buffer) {
 }
 func assertNoMarker(t *testing.T, label, marker string, data []byte) {
 	t.Helper()
-	if bytes.Contains(data, []byte(marker)) {
+	if bytes.Contains(data, []byte(marker)) || bytes.Contains(data, []byte(base64.StdEncoding.EncodeToString([]byte(marker)))) {
 		t.Fatalf("marker leaked into %s", label)
 	}
 }
@@ -328,6 +356,45 @@ func (r *manualRig) hygiene(markers ...string) {
 		}
 		snapshot, _ = json.Marshal(r.hub.snapshot())
 	})
+	// Inspect both a newly requested snapshot and an actual replay from the
+	// connection-scoped WebSocket protocol while the helper may be waiting.
+	fresh, err := proto.Dial(r.ctx, filepath.Join(r.root, "bridge.sock"))
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	_, err = fresh.Hello(r.ctx, proto.Hello{Client: "snapshot-check"})
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	_, snapshotWire, err := fresh.Read(r.ctx)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	fresh.CloseNow()
+	replay, err := proto.Dial(r.ctx, filepath.Join(r.root, "bridge.sock"))
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	since := uint64(0)
+	welcome, err := replay.Hello(r.ctx, proto.Hello{Client: "replay-check", Epoch: r.hub.Epoch(), SinceSeq: &since})
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if welcome.Resume != "replay" {
+		r.t.Fatalf("expected replay, got %q", welcome.Resume)
+	}
+	var replayWire []byte
+	for seq := uint64(0); seq < welcome.ServerSeq; {
+		e, b, err := replay.Read(r.ctx)
+		if err != nil {
+			r.t.Fatal(err)
+		}
+		replayWire = append(replayWire, b...)
+		if e.Seq > seq {
+			seq = e.Seq
+		}
+	}
+	replay.CloseNow()
 	db, err := os.ReadFile(r.db)
 	if err != nil {
 		r.t.Fatal(err)
@@ -347,19 +414,34 @@ func (r *manualRig) hygiene(markers ...string) {
 		r.t.Fatal("fake AI request recorder was not exercised")
 	}
 	for _, marker := range markers {
-		for label, b := range map[string][]byte{"database": db, "WAL": wal, "audit": audit, "logs": []byte(r.log.String()), "wire": r.wire.Bytes(), "snapshot": snapshot, "replay ring": bytes.Join(ring, nil), "agent transcript": transcript, "AI request recorder": modelRequests} {
+		for label, b := range map[string][]byte{"database": db, "WAL": wal, "audit": audit, "logs": []byte(r.log.String()), "wire": r.wire.Bytes(), "snapshot": snapshot, "replay ring": bytes.Join(ring, nil), "agent transcript": transcript, "AI request recorder": modelRequests, "snapshot wire": snapshotWire, "replay wire": replayWire} {
 			assertNoMarker(r.t, label, marker, b)
 		}
 	}
 }
 
 func TestManualAskpassSuccessRetryCancelExpiry(t *testing.T) {
-	r := newManualRig(t)
+	runManualAskpassScenarios(t, newManualRig(t))
+}
+func runManualAskpassScenarios(t *testing.T, r *manualRig) {
 	marker := "H3D-MARKER-credential-0123456789"
 	wrong := "H3D-MARKER-wrong-0123456789"
 	cmd, out := r.sudo(marker)
+	direct := r.credential()
+	if direct.Attempt != 1 {
+		t.Fatalf("first attempt: %+v", direct)
+	}
+	r.inspectDescendants(cmd.Process.Pid, marker, wrong)
+	r.hygiene(marker, wrong)
+	if e := r.answer(direct, &marker, nil); e.T != "" {
+		t.Fatalf("successful answer: %+v", e)
+	}
+	if err := cmd.Wait(); err != nil || out.String() != "completed" {
+		t.Fatalf("fake sudo success %v %q", err, out.String())
+	}
+	cmd, out = r.sudo(marker)
 	first := r.credential()
-	if first.Attempt != 1 || first.User != "root" || first.Prompt != "[sudo] password for x: " {
+	if first.Attempt != 2 || first.User != "root" || first.Prompt != "[sudo] password for x: " {
 		t.Fatalf("first request: %+v", first)
 	}
 	r.inspectProc(cmd.Process.Pid, marker, wrong)
@@ -378,7 +460,7 @@ func TestManualAskpassSuccessRetryCancelExpiry(t *testing.T) {
 		t.Fatalf("wrong answer: %+v", e)
 	}
 	second := r.credential()
-	if second.Attempt != 2 || second.Request == first.Request {
+	if second.Attempt != first.Attempt+1 || second.Request == first.Request {
 		t.Fatalf("retry: %+v", second)
 	}
 	if e := r.answer(first, &marker, nil); e.Code != proto.ErrStale {
@@ -403,15 +485,16 @@ func TestManualAskpassSuccessRetryCancelExpiry(t *testing.T) {
 		t.Fatal("cancel succeeded")
 	}
 	assertNoMarker(t, "cancel output", marker, out.Bytes())
+	r.action(func() { r.hub.credentialTimeout = 80 * time.Millisecond })
 	cmd, _ = r.sudo(marker)
 	expired := r.credential()
-	r.action(func() { r.hub.credentials[testManualID].expires = time.Now().Add(-time.Second) })
-	if e := r.answer(expired, &marker, nil); e.Code != proto.ErrStale {
-		t.Fatalf("expired: %+v", e)
-	}
 	if err := cmd.Wait(); err == nil {
 		t.Fatal("expiry succeeded")
 	}
+	if e := r.answer(expired, &marker, nil); e.Code != proto.ErrStale {
+		t.Fatalf("expired: %+v", e)
+	}
+	r.action(func() { r.hub.credentialTimeout = 0 })
 	cmd, _ = r.sudo(marker)
 	late := r.credential()
 	r.process("exited")
@@ -467,6 +550,13 @@ func TestManualAskpassReplacementDisconnectTimeout(t *testing.T) {
 		t.Fatalf("replaced helper: %+v %v", canceled, err)
 	}
 	secret := "H3D-MARKER-replaced-answer"
+	if e := r.command(proto.CmdManualProcessCredential, map[string]any{"id": testManualID, "request": second.Request, "secret": map[string]string{"unexpected": secret}}); e.Code != proto.ErrBadRequest {
+		t.Fatalf("invalid secret type: %+v", e)
+	}
+	both := true
+	if e := r.answer(second, &secret, &both); e.Code != proto.ErrBadRequest {
+		t.Fatalf("secret and cancel accepted: %+v", e)
+	}
 	if e := r.answer(first, &secret, nil); e.Code != proto.ErrStale {
 		t.Fatalf("replaced answer: %+v", e)
 	}
@@ -498,4 +588,80 @@ func TestManualAskpassReplacementDisconnectTimeout(t *testing.T) {
 		t.Fatalf("timed-out answer: %+v", e)
 	}
 	r.hygiene(secret)
+}
+
+func TestManualAskpassShutdownExpiresRequest(t *testing.T) {
+	r := newManualRig(t)
+	c := r.helperConn(r.nonce())
+	req := r.credential()
+	if req.Request == "" {
+		t.Fatal("missing request")
+	}
+	r.cancel()
+	select {
+	case <-r.hub.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("hub did not stop")
+	}
+	if p := r.hub.manualProcesses[testManualID]; p.Credential != nil || p.State == "waiting" {
+		t.Fatalf("shutdown left request open: %+v", p)
+	}
+	_ = c.SetReadDeadline(time.Now().Add(time.Second))
+	var response askpass.Response
+	if err := json.NewDecoder(c).Decode(&response); err != nil && err != io.EOF {
+		t.Fatalf("shutdown response: %v", err)
+	}
+	if response.OK {
+		t.Fatal("shutdown returned a credential")
+	}
+}
+
+func TestManualAskpassBeforeFirstStatusPoll(t *testing.T) {
+	r := newManualRig(t)
+	r.process("starting")
+	marker := "H3D-MARKER-starting"
+	cmd, _ := r.sudo(marker)
+	request := r.credential()
+	if e := r.answer(request, &marker, nil); e.T != "" {
+		t.Fatalf("answer during launch: %+v", e)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("helper during launch: %v", err)
+	}
+	r.hygiene(marker)
+}
+
+func TestManualAskpassStatusUpdatesKeepCurrentRequest(t *testing.T) {
+	r := newManualRig(t)
+	conn := r.helperConn(r.nonce())
+	first := r.credential()
+	// A status poll can have captured the record before the helper opened.
+	r.action(func() {
+		p := r.hub.manualProcesses[testManualID]
+		p.Credential = nil
+		p.State = "running"
+		r.hub.manualProcesses[testManualID] = p
+	})
+	restored := r.credential()
+	if restored.Request != first.Request || restored.Attempt != first.Attempt {
+		t.Fatalf("lost open request: %+v", restored)
+	}
+	yes := true
+	if e := r.answer(first, nil, &yes); e.T != "" {
+		t.Fatalf("cancel: %+v", e)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	var response askpass.Response
+	_ = json.NewDecoder(conn).Decode(&response)
+	// A status poll can also publish a copy from just before the answer.
+	r.action(func() {
+		p := r.hub.manualProcesses[testManualID]
+		p.Credential = &first
+		p.State = "waiting"
+		r.hub.manualProcesses[testManualID] = p
+		r.hub.reconcileCredentials()
+		if r.hub.manualProcesses[testManualID].Credential != nil {
+			t.Error("answered request resurrected")
+		}
+	})
 }

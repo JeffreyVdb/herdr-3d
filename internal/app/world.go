@@ -37,7 +37,6 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/imgcache"
 	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
-	"github.com/JeffreyVdb/herdr-3d/internal/manual"
 	"github.com/JeffreyVdb/herdr-3d/internal/manual/askpass"
 	"github.com/JeffreyVdb/herdr-3d/internal/notify"
 	"github.com/JeffreyVdb/herdr-3d/internal/notify/telegram"
@@ -861,11 +860,6 @@ type ServeConfig struct {
 
 // Serve runs the bridge until ctx is done: store, hub, session watchers and
 // the WebSocket server on a private unix socket.
-func init() {
-	manual.AskpassEnv = askpass.Env
-	manual.AskpassRewrite = askpass.Rewrite
-}
-
 func Serve(ctx context.Context, cfg ServeConfig) error {
 	log := cfg.Log
 	st, err := store.Open(ctx, cfg.DB)

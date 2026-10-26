@@ -376,8 +376,8 @@ func (ct *controller) RestoreOnRelease(cols, rows int) {
 }
 
 // Close releases the pane: the restore size first (when set), then
-// terminal.release and EOF, even when the queue is full (the oldest queued
-// commands, moot once the pane is released, make room); the controller has
+// terminal.release and EOF, even when the queue is full (old non-input
+// commands make room; queued input is kept in order); the controller has
 // ReleaseGrace to exit by itself, then it is stopped (SIGTERM, SIGKILL) and
 // reaped. The error says a controller that had to be stopped never read its
 // release. Safe to call twice.

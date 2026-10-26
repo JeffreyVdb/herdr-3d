@@ -12,7 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/manual/askpass"
@@ -22,9 +22,12 @@ import (
 var manualIDPattern = regexp.MustCompile(`^mp_[0-9a-f]{8,}$`)
 
 type credentialRequest struct {
-	request string
-	expires time.Time
-	result  chan askpass.Response
+	request      string
+	expires      time.Time
+	result       chan askpass.Response
+	answered     bool
+	info         proto.ManualCredential
+	disconnected atomic.Bool
 }
 
 func manualStateDir() string {
@@ -51,7 +54,7 @@ func validAskpassNonce(req askpass.Request) bool {
 	}
 	defer f.Close()
 	st, err := f.Stat()
-	if err != nil || !st.Mode().IsRegular() || st.Mode().Perm() != 0600 {
+	if err != nil || !st.Mode().IsRegular() || st.Mode().Perm() != 0600 || !askpassFileOwner(st) {
 		return false
 	}
 	nonce, err := io.ReadAll(io.LimitReader(f, 65))
@@ -89,7 +92,7 @@ func (h *Hub) serveAskpass(ctx context.Context, c *net.UnixConn) {
 	defer c.Close()
 	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
 	var req askpass.Request
-	if err := json.NewDecoder(io.LimitReader(c, 8192)).Decode(&req); err != nil || !validAskpassNonce(req) {
+	if err := json.NewDecoder(io.LimitReader(c, 32<<10)).Decode(&req); err != nil || !validAskpassNonce(req) {
 		return
 	}
 	_ = c.SetReadDeadline(time.Time{})
@@ -101,7 +104,7 @@ func (h *Hub) serveAskpass(ctx context.Context, c *net.UnixConn) {
 	opened := make(chan bool, 1)
 	if h.do(ctx, func(context.Context) {
 		p, ok := h.manualProcess(req.Process)
-		if !ok || (p.State != "running" && p.State != "waiting") {
+		if !ok || !credentialProcessActive(p.State) {
 			opened <- false
 			return
 		}
@@ -117,7 +120,8 @@ func (h *Hub) serveAskpass(ctx context.Context, c *net.UnixConn) {
 		}
 		h.credentialAttempts[req.Process]++
 		h.credentials[req.Process] = r
-		h.setManualCredential(req.Process, &proto.ManualCredential{Request: r.request, Prompt: req.Prompt, User: askpassUser(p.Launched), Attempt: h.credentialAttempts[req.Process], ExpiresAt: r.expires.UnixMilli()})
+		r.info = proto.ManualCredential{Request: r.request, Prompt: req.Prompt, User: askpass.User(p.Launched), Attempt: h.credentialAttempts[req.Process], ExpiresAt: r.expires.UnixMilli()}
+		h.setManualCredential(req.Process, &r.info)
 		opened <- true
 	}) != nil {
 		return
@@ -133,7 +137,7 @@ func (h *Hub) serveAskpass(ctx context.Context, c *net.UnixConn) {
 		return
 	}
 	disconnected := make(chan struct{})
-	go func() { _, _ = io.Copy(io.Discard, c); close(disconnected) }()
+	go func() { _, _ = io.Copy(io.Discard, c); r.disconnected.Store(true); close(disconnected) }()
 	timer := time.NewTimer(time.Until(r.expires))
 	defer timer.Stop()
 	poll := time.NewTicker(250 * time.Millisecond)
@@ -166,28 +170,34 @@ func (h *Hub) serveAskpass(ctx context.Context, c *net.UnixConn) {
 		case <-poll.C:
 			_ = h.do(ctx, func(context.Context) {
 				p, ok := h.manualProcess(req.Process)
-				if !ok || !time.Now().Before(r.expires) || (p.State != "running" && p.State != "waiting") {
+				if !ok || !time.Now().Before(r.expires) || !credentialProcessActive(p.State) {
 					h.expireCredential(req.Process, r)
+				} else if h.credentials[req.Process] == r && !r.answered && (p.Credential == nil || p.Credential.Request != r.request) {
+					h.setManualCredential(req.Process, &r.info)
 				}
 			})
 		}
 	}
 }
 
-func askpassUser(command string) string {
-	fields := strings.Fields(command)
-	for i, f := range fields {
-		if (f == "-u" || f == "--user") && i+1 < len(fields) {
-			return fields[i+1]
+// The launcher can ask for a credential before the first status poll marks
+// it running. Starting is therefore live for the purpose of the request.
+func credentialProcessActive(state string) bool {
+	return state == "starting" || state == "running" || state == "waiting"
+}
+
+// Reconciliation clears metadata left by a restart or a process-status
+// update that raced an answer. A secret is never stored in the record.
+func (h *Hub) reconcileCredentials() {
+	for _, p := range h.manualProcessViews() {
+		if p.Credential == nil {
+			continue
 		}
-		if strings.HasPrefix(f, "--user=") {
-			return strings.TrimPrefix(f, "--user=")
-		}
-		if strings.HasPrefix(f, "-u") && len(f) > 2 {
-			return f[2:]
+		r := h.credentials[p.ID]
+		if r == nil || r.answered || r.disconnected.Load() || r.request != p.Credential.Request || !time.Now().Before(r.expires) || !credentialProcessActive(p.State) {
+			h.setManualCredential(p.ID, nil)
 		}
 	}
-	return "root"
 }
 
 // expireCredential acts only on the current request, so a retry cannot be
@@ -198,6 +208,11 @@ func (h *Hub) expireCredential(id string, r *credentialRequest) {
 	}
 	delete(h.credentials, id)
 	h.setManualCredential(id, nil)
+	select {
+	case res := <-r.result:
+		clear(res.Secret)
+	default:
+	}
 	select {
 	case r.result <- askpass.Response{}:
 	default:
@@ -212,18 +227,15 @@ func (h *Hub) startManualCredential(ctx context.Context, c *Client, cmd proto.Co
 	if (a.Secret == nil) == (a.Cancel == nil) || (a.Cancel != nil && !*a.Cancel) {
 		return bad("give exactly one of secret or cancel")
 	}
-	if a.Secret != nil && len(*a.Secret) > 16<<10 {
-		return bad("credential too long")
-	}
 	r := h.credentials[a.ID]
 	p, ok := h.manualProcess(a.ID)
-	if r == nil || r.request != a.Request || !time.Now().Before(r.expires) || !ok || (p.State != "running" && p.State != "waiting") {
-		if r != nil && (!ok || !time.Now().Before(r.expires) || (p.State != "running" && p.State != "waiting")) {
+	if r == nil || r.answered || r.disconnected.Load() || r.request != a.Request || !time.Now().Before(r.expires) || !ok || !credentialProcessActive(p.State) {
+		if r != nil && (r.disconnected.Load() || !ok || !time.Now().Before(r.expires) || !credentialProcessActive(p.State)) {
 			h.expireCredential(a.ID, r)
 		}
 		return fmt.Errorf("%w: credential request is no longer open", errStale)
 	}
-	delete(h.credentials, a.ID)
+	r.answered = true
 	h.setManualCredential(a.ID, nil)
 	res := askpass.Response{}
 	if a.Secret != nil {

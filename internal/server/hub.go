@@ -944,12 +944,20 @@ func (h *Hub) Run(ctx context.Context) error {
 		defer t.Stop()
 		boardC = t.C
 	}
+	h.reconcileCredentials()
+	credentialTick := time.NewTicker(time.Second)
+	defer credentialTick.Stop()
 	schedC := time.NewTicker(h.opts.ScheduleTick) // #62: a look at the wall clock, not a timer to a due time
 	defer schedC.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			for id, r := range h.credentials {
+				h.expireCredential(id, r)
+			}
 			return nil
+		case <-credentialTick.C:
+			h.reconcileCredentials()
 		case <-schedC.C:
 			h.checkSchedules(ctx)
 		case <-boardC:
