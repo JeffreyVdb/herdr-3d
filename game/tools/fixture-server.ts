@@ -272,6 +272,8 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             // #66: the schedule suggestions' state with no models, and Zippy's seeded suggestion remembered by the key (tools/fixture-schedsuggest.ts).
             ...(q.get('simschedsuggest') ? { schedSuggest: q.get('simschedsuggest') as string } : {}),
             ...(q.get('simsuggest') ? { suggestKey: q.get('simsuggest') as string } : {}),
+            ...(q.get('simmanual') ? { manual: q.get('simmanual') as string } : {}),
+            ...(q.get('simcmdreq') ? { commandRequest: q.get('simcmdreq') as string } : {}),
             // #9: LLM handoffs with no endpoint: the feature's state and the jobs' outcome (tools/fixture-handoff.ts).
             ...(q.get('simhandoffllm') ? { handoffLlm: q.get('simhandoffllm') as string } : {}),
             ...(q.get('simhandoffllmout') ? { handoffLlmOut: q.get('simhandoffllmout') as string } : {}),

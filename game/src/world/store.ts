@@ -43,6 +43,7 @@ import { KaneoBook } from './kaneo';
 import { NotifyBook } from './notifySettings';
 import { HandoffBook } from './handoff';
 import { ScheduleBook } from './schedule';
+import { ManualProcessBook } from './manualProcess';
 import { ChildBook } from './children';
 import { floorGroups, FloorListBook } from './floorList';
 import { LimitBook } from './limits';
@@ -260,6 +261,8 @@ export class WorldStore {
   readonly kaneo = new KaneoBook(); // #184
   readonly notifySettings = new NotifyBook(); // #11
   readonly handoffs = new HandoffBook(); // #223
+  readonly manualProcesses = new ManualProcessBook();
+  host = '';
   readonly schedules = new ScheduleBook(); // #64 schedules
   /** #22 native child agents, per worker and generation (`known` false from a bridge before #22: none). */
   readonly children = new ChildBook();
@@ -321,6 +324,8 @@ export class WorldStore {
     this.retainProfiles();
     this.kaneo.reset(s.world.kaneo); // #184
     this.handoffs.reset(s.world.handoffs); // #223
+    this.host = typeof s.world.host === 'string' ? s.world.host : '';
+    this.manualProcesses.reset(s.world.manual_processes);
     this.schedules.reset(s.world.schedules, s.world.schedule_herdr_instructions); // #64 schedules (a bridge before #62 sends none), #127
     this.children.reset(s.world.children, s.world.workers.filter((w) => w && typeof w.id === 'string')); // #22 (none before #22)
     this.hirePresets.reset(s.world.hire_presets, s.world.herdr_instructions); // #93 (a bridge before #93 sends none), #95
@@ -506,6 +511,12 @@ export class WorldStore {
         c.floors.add(e.floor_id ?? e.session);
         break;
       // #64 schedules
+      case 'manual_process.upsert':
+        this.manualProcesses.upsert(e.process);
+        break;
+      case 'manual_process.removed':
+        this.manualProcesses.removed(e.id);
+        break;
       case 'schedule.upsert':
         this.schedules.upsert(e.schedule);
         break;

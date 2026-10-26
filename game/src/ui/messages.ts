@@ -24,6 +24,12 @@ export interface FailureContext {
 
 /** What each command does, for "This herdr-world can't … yet". */
 const DOES: Record<CommandName | LogoAction, string> = {
+  'manual_process.start': 'start manual processes',
+  'manual_process.stop': 'stop manual processes',
+  'manual_process.dismiss': 'dismiss manual processes',
+  'manual_process.credential': 'answer password requests',
+  'terminal.input': 'type in manual process terminals',
+  'worker.dismiss_command_request': 'dismiss command requests',
   // M3d
   'logo.set': 'store building logos',
   'logo.clear': 'store building logos',
@@ -197,6 +203,15 @@ const DOES: Record<CommandName | LogoAction, string> = {
 export function failureText(t: CommandName | LogoAction, code: string, message: string, ctx: FailureContext = {}): string {
   const floor = ctx.floor ?? 'This floor';
   const why = message.trim();
+  if (t === 'manual_process.credential' || t === 'terminal.input') return code === 'stale' ? 'This request is out of date.' : 'Could not send the input. Try again.';
+  if (t === 'manual_process.start' || t === 'manual_process.stop' || t === 'manual_process.dismiss' || t === 'worker.dismiss_command_request') {
+    if (code === 'stale') return 'This request is out of date.';
+    if (code === 'timeout' || code === 'disconnected') return 'The bridge did not confirm the action. Check the process list before retrying.';
+    if (code === 'offline') return 'Not connected to the bridge. Try again after reconnecting.';
+    if (code === 'unknown_command') return `This bridge cannot ${DOES[t]} yet. Update the bridge.`;
+    const action = t === 'manual_process.start' ? 'start the command' : t === 'manual_process.stop' ? 'stop the process' : t === 'manual_process.dismiss' ? 'dismiss the process' : 'dismiss the request';
+    return `Could not ${action}${why ? `: ${why}` : '.'}`;
+  }
   if (t === 'worker.answer_async' || t === 'worker.dismiss_async') {
     const asyncWhy = asyncFailure(t, code, why);
     if (asyncWhy) return asyncWhy;

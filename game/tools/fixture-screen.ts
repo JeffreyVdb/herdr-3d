@@ -94,6 +94,7 @@ export const SIM_MAX_WATCHES = 6;
 
 export interface ScreenHost {
   worker(id: string): Worker | undefined;
+  manualProcess?(id: string): boolean;
   floor(session: string): Floor | undefined;
   later(fn: () => void, ms: number): unknown;
   cancel(h: unknown): void;
@@ -208,6 +209,18 @@ export class SimScreens {
           ack();
           return true;
         }
+        case 'terminal.input': {
+          this.only(a, ['id', 'text', 'bytes']);
+          const id = this.str(a, 'id');
+          if (!id.startsWith('mp:') || !this.host.manualProcess?.(id.slice(3))) throw new ScreenError('not_found', 'manual process not found');
+          const watch = this.watches.get(id);
+          if (watch?.control?.mode !== 'control') throw new ScreenError('invalid_state', 'terminal is not controlled');
+          if ((typeof a.text === 'string') === (typeof a.bytes === 'string')) throw new ScreenError('bad_request', 'send text or bytes');
+          const data = typeof a.text === 'string' ? Buffer.from(a.text, 'utf8') : Buffer.from(String(a.bytes), 'base64');
+          if (data.length > 16384) throw new ScreenError('bad_request', 'input too long');
+          const screen = this.screen(this.target(id));
+          screen.tape.push(data); this.push(watch, data, false); ack(); return true;
+        }
         case 'worker.keys':
           this.keys(a);
           ack();
@@ -263,6 +276,7 @@ export class SimScreens {
 
   /** The worker a command is about, with its pane, on an awake floor. */
   private target(id: string): Worker {
+    if (id.startsWith('mp:') && this.host.manualProcess?.(id.slice(3))) return { id, session: '', pane_id: id } as Worker;
     const w = this.host.worker(id);
     if (!w) throw new ScreenError('unknown_worker', `unknown worker: "${id}"`);
     if (this.host.floor(w.session)?.state !== 'running') throw new ScreenError('invalid_state', `invalid state: ${w.session} is asleep`);
@@ -288,7 +302,7 @@ export class SimScreens {
     const rows = int('rows', 10, 100);
     const w = this.target(id);
     const owning = a.control === true && ctl !== 'none';
-    if (owning && [...this.watches.values()].some((x) => x.id !== id && x.control)) throw new ScreenError('capacity', 'capacity: this connection already controls a terminal (one per connection)');
+    if (owning && !id.startsWith('mp:') && [...this.watches.values()].some((x) => x.id !== id && !x.id.startsWith('mp:') && x.control)) throw new ScreenError('capacity', 'capacity: this connection already controls a terminal (one per connection)');
     // Watching again restarts the watch: a fresh full frame.
     this.stop(id);
     if (this.watches.size >= SIM_MAX_WATCHES) throw new ScreenError('capacity', `capacity: ${this.watches.size} watches on this connection (max ${SIM_MAX_WATCHES})`);
@@ -415,6 +429,11 @@ export class SimScreens {
     let s = this.screens.get(w.id);
     if (!s) {
       const rec = loadRecording(this.host.recording?.() ?? (w.agent_kind ? 'agent' : 'shell'));
+      if (w.id.startsWith('mp:')) {
+        s = { rec, pos: 0, tape: [Buffer.from('Manual process terminal\r\n')], typed: true, timer: null };
+        this.screens.set(w.id, s);
+        return s;
+      }
       // Each worker at its own point of the recording (the fixture floor would look copy-pasted otherwise).
       const upto = hash(w.id) % rec.frames.length;
       s = { rec, pos: 0, tape: [], typed: false, timer: null };
