@@ -133,10 +133,12 @@ const EnvFollowupsEnabled = "HERDR_WORLD_FOLLOWUPS_ENABLED"
 // the panel's). While set it wins and the panel shows it read-only.
 const EnvPackupEnabled = "HERDR_WORLD_PACKUP_ENABLED"
 
-// #66 schedule suggestions: the environment's toggle (true or false; unset:
-// the panel's). While set it wins and the panel shows it read-only.
+// #207 command requests: the environment's toggle (true or false; unset: on
+// while the AI integration is configured). There is no panel toggle yet.
 const EnvCommandRequestsEnabled = "HERDR_WORLD_COMMAND_REQUESTS_ENABLED"
 
+// #66 schedule suggestions: the environment's toggle (true or false; unset:
+// the panel's). While set it wins and the panel shows it read-only.
 const EnvScheduleSuggestionsEnabled = "HERDR_WORLD_SCHEDULE_SUGGESTIONS_ENABLED"
 
 // #118 phase 2 floor overview summaries: the environment's toggle (true or
@@ -524,7 +526,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	aiLLMModel := fs.String("ai-llm-model", os.Getenv(EnvAILLMModel), "LLM model; overrides the panel's ($"+EnvAILLMModel+")")
 	followupsEnabled := fs.String("followups-enabled", os.Getenv(EnvFollowupsEnabled), "true or false: switch the follow-up questions on or off, overriding the panel's toggle ($"+EnvFollowupsEnabled+")") // #90
 	packupEnabled := fs.String("packup-enabled", os.Getenv(EnvPackupEnabled), "true or false: switch pack up on request on or off, overriding the panel's toggle ($"+EnvPackupEnabled+")")                  // #110
-	commandRequestsEnabled := fs.String("command-requests-enabled", os.Getenv(EnvCommandRequestsEnabled), "true or false: switch command requests on or off")
+	commandRequestsEnabled := fs.String("command-requests-enabled", os.Getenv(EnvCommandRequestsEnabled), "true or false: switch command requests on or off ($"+EnvCommandRequestsEnabled+")")
 	scheduleSuggestionsEnabled := fs.String("schedule-suggestions-enabled", os.Getenv(EnvScheduleSuggestionsEnabled), "true or false: switch the schedule suggestions on or off, overriding the panel's toggle ($"+EnvScheduleSuggestionsEnabled+")") // #66
 	digestEnabled := fs.String("digest-enabled", os.Getenv(EnvDigestEnabled), "true or false: switch the floor overview summaries on or off, overriding the panel's toggle ($"+EnvDigestEnabled+")")                                                  // #118
 	handoffLLMEnabled := fs.String("handoff-llm-enabled", os.Getenv(EnvHandoffLLMEnabled), "true or false: switch LLM handoffs on or off, overriding the panel's toggle ($"+EnvHandoffLLMEnabled+")")                                                 // #9
