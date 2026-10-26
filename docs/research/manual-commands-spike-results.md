@@ -8,7 +8,7 @@ A detached, HUP-ignoring child survived the initial Stop and was reported as `cl
 
 The fake sudo fixture honoured `-A` and invoked the private askpass helper. A wrong synthetic marker caused a new request at attempt 2, the right marker let the command run, cancellation ended another command, and a late answer was stale. Scans of the bridge log, database and WAL, audit rows, session state and process command lines and environments found no marker. These are synthetic tests, not a PAM or real-password validation. The fake Tailscale fixture refused a pre-existing endpoint, recorded a clean start as active, and recorded `serve --bg --https=8443 off` after the cleanup password dialog; the effect then became removed.
 
-The real-bridge browser trial used manual entry. The requested end-to-end demonstration of a command request produced by a real agent reply through the classifier was not completed in that trial; classifier fixtures and the browser fixture suite cover the respective halves, but do not prove that combined path. No paid model call was made.
+The real-bridge browser trial used manual entry. The requested end-to-end demonstration of a command request produced by a real agent reply through the classifier was not completed in that trial; classifier fixtures and the browser fixture suite cover the respective halves, but do not prove that combined path. The bridge CLI and AI configuration do not expose the classifier endpoint: it uses the TypeSafe URL, although the AI service accepts a URL in its test options. The local fake HTTP approach therefore cannot configure both models through the private bridge; no paid model call was made.
 
 ## Cleanup contract
 
