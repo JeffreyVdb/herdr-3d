@@ -47,3 +47,24 @@ func TestManualProcessRetention(t *testing.T) {
 		t.Fatalf("got %d: %v", len(got), err)
 	}
 }
+
+func TestDismissKeepsOperationReservation(t *testing.T) {
+	ctx := context.Background()
+	st := open(t, filepath.Join(t.TempDir(), "world.db"))
+	p := proto.ManualProcess{ID: "mp_12345678", Op: "same", Worker: "w", State: "exited", Cleanup: "none"}
+	if _, _, err := st.CreateManualProcess(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteManualProcess(ctx, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	p.ID = "mp_abcdefab"
+	got, created, err := st.CreateManualProcess(ctx, p)
+	if err != nil || created || got.ID != "mp_12345678" {
+		t.Fatalf("got %+v, created %v, err %v", got, created, err)
+	}
+	visible, err := st.AllManualProcesses(ctx)
+	if err != nil || len(visible) != 0 {
+		t.Fatalf("visible %+v, %v", visible, err)
+	}
+}

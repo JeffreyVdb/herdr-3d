@@ -6,6 +6,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -722,6 +724,27 @@ func (h *Hub) typeIn(ctx context.Context, id, session, pane, text string, settli
 // lengths and the key names).
 func auditArgs(cmd proto.Command) json.RawMessage {
 	switch cmd.T {
+	case proto.CmdManualProcessStart:
+		var a proto.ManualProcessStartArgs
+		if json.Unmarshal(cmd.Args, &a) != nil {
+			return redacted(cmd.Args)
+		}
+		sum := sha256.Sum256([]byte(a.Command))
+		return mustJSON(struct {
+			Op           string `json:"op"`
+			Worker       string `json:"worker"`
+			CommandBytes int    `json:"command_bytes"`
+			CommandSHA   string `json:"command_sha256_prefix"`
+			Askpass      bool   `json:"askpass"`
+		}{clip(a.Op), clip(a.Worker), len(a.Command), hex.EncodeToString(sum[:8]), a.Askpass})
+	case proto.CmdManualProcessStop, proto.CmdManualProcessDismiss:
+		var a proto.ManualProcessIDArgs
+		if json.Unmarshal(cmd.Args, &a) != nil {
+			return redacted(cmd.Args)
+		}
+		return mustJSON(struct {
+			ID string `json:"id"`
+		}{clip(a.ID)})
 	// #108 round 2: a hire's prompt (a schedule's fire's too, whose args
 	// name the schedule), a run's texts and a stored prompt by their
 	// lengths, never their text, with the switch on or off; a review by its

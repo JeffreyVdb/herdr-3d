@@ -1967,6 +1967,10 @@ func (h *Hub) runFire(ctx context.Context, op *fireOp) {
 		}
 	}
 
+	if name, err := h.stopManualForOwner(ctx, op.id, "stopped for send-home"); err != nil {
+		h.finishFire(ctx, op, nil, fmt.Errorf("%w: cannot verify manual process %s stopped: nothing was closed or removed", errFireFailed, name), rep)
+		return
+	}
 	exit := h.exitAgent(ctx, op, rep)
 	res.Released = exit == exitedByItself
 	rep.Released = res.Released

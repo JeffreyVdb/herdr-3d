@@ -869,6 +869,19 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		WakeTimeout: cfg.WakeTimeout, ResumeTimeout: cfg.ResumeTimeout, ResumePoll: cfg.ResumePoll, ResumeSettle: cfg.ResumeSettle}
 	if cfg.Control != nil {
 		opts.Herdr = floorHerdr{Control: cfg.Control, read: cfg.Herdr}
+		cfg.Control.ManualDir = filepath.Join(filepath.Dir(DefaultDB()), "manual")
+		opts.Manual = cfg.Control
+		opts.ManualDir = cfg.Control.ManualDir
+		opts.ManualShell = cfg.Control.ShellBin
+		if opts.ManualShell == "" {
+			opts.ManualShell, err = shell.Resolve(cfg.Control.Shell)
+			if err != nil {
+				return err
+			}
+		}
+		if cfg.Herdr != nil {
+			opts.ManualSnapshot = cfg.Herdr.Snapshot
+		}
 		opts.Hire = cfg.Control
 		opts.Term = cfg.Control // M5 term
 	}

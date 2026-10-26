@@ -53,3 +53,23 @@ type ManualProcess struct {
 	StartedAt   int64             `json:"started_at"`
 	EndedAt     int64             `json:"ended_at"`
 }
+
+func init() {
+	Commands = append(Commands, CmdManualProcessStart, CmdManualProcessStop, CmdManualProcessDismiss)
+}
+
+type ManualProcessStartArgs struct {
+	Op      string        `json:"op"`
+	Worker  string        `json:"worker"`
+	Command string        `json:"command"`
+	Cwd     string        `json:"cwd,omitempty"`
+	Source  *ManualSource `json:"source,omitempty"`
+	Askpass bool          `json:"askpass,omitempty"`
+}
+
+type ManualProcessIDArgs struct {
+	ID string `json:"id"`
+}
+type ManualProcessResult struct {
+	Process ManualProcess `json:"process"`
+}

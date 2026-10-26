@@ -173,10 +173,12 @@ type Snapshot struct {
 // floors in floor order; Unassigned is the lot of sessions not in any
 // building, by name. Floors and Workers follow the same order.
 type World struct {
-	Buildings  []Building `json:"buildings"`
-	Unassigned []string   `json:"unassigned"`
-	Floors     []Floor    `json:"floors"`
-	Workers    []Worker   `json:"workers"`
+	Host            string          `json:"host"`
+	ManualProcesses []ManualProcess `json:"manual_processes"`
+	Buildings       []Building      `json:"buildings"`
+	Unassigned      []string        `json:"unassigned"`
+	Floors          []Floor         `json:"floors"`
+	Workers         []Worker        `json:"workers"`
 	// HireOptions are the harness/model/effort choices the bridge accepts
 	// (floor.settings.set default_hire, and hiring later).
 	HireOptions *HireOptions `json:"hire_options,omitempty"`

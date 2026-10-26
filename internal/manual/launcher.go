@@ -14,8 +14,9 @@ import (
 
 // LaunchConfig contains the resolved policy shell and non-secret environment additions.
 type LaunchConfig struct {
-	Shell string   `json:"shell"`
-	Env   []string `json:"env,omitempty"`
+	Shell   string   `json:"shell"`
+	Command string   `json:"command,omitempty"`
+	Env     []string `json:"env,omitempty"`
 }
 
 // Launch runs the reviewed command in the terminal's existing foreground group.
@@ -46,6 +47,9 @@ func Launch(dir string, out io.Writer) error {
 	status := Status{PID: os.Getpid(), StartTicks: ticks, PGID: pgid, StartedAt: time.Now().UnixMilli()}
 	if err := WriteStatus(dir, status); err != nil {
 		return err
+	}
+	if cfg.Command != "" {
+		command = []byte(cfg.Command)
 	}
 	cmd := exec.Command(cfg.Shell, "-c", string(command))
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, out, os.Stderr
