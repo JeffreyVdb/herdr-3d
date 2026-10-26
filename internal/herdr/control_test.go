@@ -20,6 +20,9 @@ import (
 // Changing either must be a deliberate, reviewed change to this test.
 func TestControlAllowlist(t *testing.T) {
 	want := map[string][]string{
+		"tab-create":           {"{herdr}", "--session", "{session}", "tab", "create", "--workspace", "{workspace}", "--cwd", "{dir}", "--label", "{label}", "--no-focus"},
+		"tab-close":            {"{herdr}", "--session", "{session}", "tab", "close", "{tab}"},
+		"manual-launch":        {"{herdr}", "--session", "{session}", "pane", "run", "{pane}", "{manual-exe} manual-launch {mpdir}"},
 		"rename-started-agent": {"{herdr}", "--session", "{session}", "agent", "rename", "{pane}", "{agent}"},
 		"start": {"{systemd-run}", "--user", "--unit=herdr-s-{session}", "--collect", "-p", "KillMode=process",
 			"--working-directory={home}", "{shell}", "-l", "-c", "exec herdr --session '{session}' server"},
@@ -106,7 +109,7 @@ func TestControlAllowlist(t *testing.T) {
 	for i := range typ.NumMethod() {
 		methods = append(methods, typ.Method(i).Name)
 	}
-	if w := []string{"CloseWorkspace", "ControlTerminal", "CreateSession", "CreateWorkspace", "CreateWorktree", "EraseTyped", "ExportCodexHome", "MarkPane", "Observe", "PaneProcesses", "Prompt",
+	if w := []string{"CloseManualTab", "CloseWorkspace", "ControlTerminal", "CreateManualTab", "CreateSession", "CreateWorkspace", "CreateWorktree", "EraseTyped", "ExportCodexHome", "LaunchManual", "MarkPane", "Observe", "PaneProcesses", "Prompt",
 		"QueuePrompt", "ReadPane", "RemoveWorktree", "ReportCodexSession", "ResumeAgent", "ResumeCodexEmbedded", "ResumeCodexRemote", "SendKey", "SendKeys",
 		"SendSequence", "SendText", "SetZoom", "StartAgent", "StartCodexRemote", "StartCodexServer", "StartSession", "StopSession",
 		"SubmitPrompt", "TypeExit", "TypePrompt"}; !slices.Equal(methods, w) {
