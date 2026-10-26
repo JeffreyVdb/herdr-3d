@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"reflect"
 	"regexp"
 	"sort"
@@ -2344,7 +2343,6 @@ func (h *Hub) snapshot() proto.Snapshot {
 	hire := h.hireOptions()
 	w := proto.World{Buildings: h.buildingViews(), Unassigned: []string{}, Floors: []proto.Floor{}, Workers: []proto.Worker{},
 		HireOptions: &hire, Presets: h.presetViews(), Limits: h.limitsViews(), Children: []proto.Child{}} // M6 launch: presets; M10 limits; #22
-	w.Host, _ = os.Hostname()
 	w.ManualProcesses = h.manualProcessViews()
 	w.Screen = h.screenView()                           // M13 screen
 	w.AI = h.aiView()                                   // #92 AI integration

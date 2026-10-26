@@ -11,7 +11,7 @@ const (
 type ManualSource struct {
 	Kind  string `json:"kind"`
 	Key   string `json:"key,omitempty"`
-	Index int    `json:"index,omitempty"`
+	Index int    `json:"index"`
 }
 type ManualCredential struct {
 	Request   string `json:"request"`

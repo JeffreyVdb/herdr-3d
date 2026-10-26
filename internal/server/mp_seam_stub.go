@@ -17,7 +17,7 @@ func (h *Hub) setManualCredential(id string, c *proto.ManualCredential) {
 		return
 	}
 	p.Credential = c
-	if c != nil && p.State == "running" {
+	if c != nil && (p.State == "running" || p.State == "starting") {
 		p.State = "waiting"
 	}
 	if c == nil && p.State == "waiting" {

@@ -622,6 +622,11 @@ func TestManualAskpassBeforeFirstStatusPoll(t *testing.T) {
 	marker := "H3D-MARKER-starting"
 	cmd, _ := r.sudo(marker)
 	request := r.credential()
+	r.action(func() {
+		if p := r.hub.manualProcesses[testManualID]; p.State != "waiting" {
+			t.Errorf("credential did not set waiting: %s", p.State)
+		}
+	})
 	if e := r.answer(request, &marker, nil); e.T != "" {
 		t.Fatalf("answer during launch: %+v", e)
 	}

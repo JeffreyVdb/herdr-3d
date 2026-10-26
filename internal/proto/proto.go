@@ -173,8 +173,7 @@ type Snapshot struct {
 // floors in floor order; Unassigned is the lot of sessions not in any
 // building, by name. Floors and Workers follow the same order.
 type World struct {
-	Host            string          `json:"host"`
-	ManualProcesses []ManualProcess `json:"manual_processes"`
+	ManualProcesses []ManualProcess `json:"manual_processes,omitempty"`
 	Buildings       []Building      `json:"buildings"`
 	Unassigned      []string        `json:"unassigned"`
 	Floors          []Floor         `json:"floors"`
