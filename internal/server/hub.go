@@ -311,6 +311,7 @@ type Options struct {
 	// not set), ScheduleSuggestRoles the models (default FollowupRoles, then
 	// AI; tests pass fakes). They look at the follow-up questions' turn ends
 	// (FollowupDebounce).
+	CommandRequestsEnabled     *bool
 	ScheduleSuggestionsEnabled *bool
 	ScheduleSuggestRoles       schedsuggest.Roles
 	// #110 pack up on request: PackupEnabled is the environment's toggle
@@ -527,7 +528,8 @@ type Hub struct {
 
 	dismissed map[string]int64 // #106: inbox dismissals, worker id → status_since
 
-	fu  followupState     // #90 follow-up questions
+	fu  followupState // #90 follow-up questions
+	cr  commandRequestState
 	ss  suggestState      // #66 schedule suggestions
 	ho  handoffState      // #223 handoffs
 	ah  agentHandoffState // #224 agent handoff requests
@@ -812,6 +814,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if err := h.initFollowups(ctx); err != nil { // #90
 		return nil, err
 	}
+	h.initCommandRequests()
 	if err := h.initScheduleSuggestions(ctx); err != nil { // #66
 		return nil, err
 	}
@@ -1170,6 +1173,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startFollowups
 		case proto.CmdScheduleSuggestionsGet, proto.CmdScheduleSuggestionsSet, proto.CmdScheduleSuggestionsZone: // #66
 			start = h.startScheduleSuggestions
+		case proto.CmdWorkerDismissCommandRequest:
+			start = h.startDismissCommandRequest
 		case proto.CmdWorkerDismissScheduleSuggestion: // #66
 			start = h.startDismissScheduleSuggestion
 		case proto.CmdPackupGet, proto.CmdPackupSet, proto.CmdPackupTest, proto.CmdPackupDetect: // #110
@@ -1589,9 +1594,10 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 			delete(h.typed, id)    // #95
 			delete(h.starts, id)
 			delete(h.dirty, id)
-			delete(h.dg, id)                                                      // #118
-			delete(h.dgs.ws, id)                                                  // #118 phase 2
-			h.dropFollowup(context.Background(), id, true)                        // #90: gone
+			delete(h.dg, id)                               // #118
+			delete(h.dgs.ws, id)                           // #118 phase 2
+			h.dropFollowup(context.Background(), id, true) // #90: gone
+			h.dropCommandRequest(context.Background(), id, "gone")
 			h.dropSuggestion(context.Background(), id, store.ScheduleSuggestGone) // #66
 			h.ch.reg.Remove(id)                                                   // #22: its children go with its worker.removed
 			if w != nil {
@@ -1776,9 +1782,10 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		delete(h.typed, id)    // #95
 		delete(h.starts, id)
 		delete(h.dirty, id)
-		delete(h.dg, id)                                     // #118
-		delete(h.dgs.ws, id)                                 // #118 phase 2
-		h.dropFollowup(ctx, id, true)                        // #90: gone
+		delete(h.dg, id)              // #118
+		delete(h.dgs.ws, id)          // #118 phase 2
+		h.dropFollowup(ctx, id, true) // #90: gone
+		h.dropCommandRequest(ctx, id, "gone")
 		h.dropSuggestion(ctx, id, store.ScheduleSuggestGone) // #66
 		delete(h.ho.cands, id)                               // #223
 		h.ch.reg.Remove(id)                                  // #22: its children go with its worker.removed
@@ -1926,6 +1933,11 @@ func (h *Hub) syncFloorWorkers(ctx context.Context, f *floorState, obs []world.W
 			h.dropFollowup(ctx, id, false)
 		}
 		next.Followup = h.followupView(id)
+		if s := h.cr.shown[id]; s.request != nil && s.source.Agent != next.AgentSession {
+			h.dropCommandRequest(ctx, id, "moved")
+			delete(h.cr.latest, id)
+		}
+		next.CommandRequest = h.commandRequestView(id)
 		next.ScheduleSuggestion = h.suggestionView(id)      // #66
 		next.Handoff = h.handoffView(id, next.AgentSession) // #223
 		next.AgentHandoff = h.agentHandoffView(id)          // #224

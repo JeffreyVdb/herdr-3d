@@ -231,6 +231,7 @@ var migrations = []string{
 	migrationPackupReasoning,
 	migrationExpectedMCP, // #196
 	migrationManualProcess,
+	migrationCommandRequest,
 }
 
 // Fingerprint kinds.

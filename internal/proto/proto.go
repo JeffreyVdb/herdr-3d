@@ -447,6 +447,7 @@ type Worker struct {
 	// suggests, until it is accepted (a schedule.create from it), dismissed,
 	// or the transcript goes on.
 	ScheduleSuggestion *ScheduleSuggestion `json:"schedule_suggestion,omitempty"`
+	CommandRequest     *CommandRequest     `json:"command_request,omitempty"`
 	// #223: Handoff is the agent's latest completed final reply a literal
 	// handoff can file (absent: none now, or no filing cabinet).
 	Handoff *HandoffCandidate `json:"handoff,omitempty"`

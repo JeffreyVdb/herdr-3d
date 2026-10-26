@@ -27,6 +27,7 @@ import (
 	"fmt"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
+	"github.com/JeffreyVdb/herdr-3d/internal/cmdrequest"
 	"github.com/JeffreyVdb/herdr-3d/internal/followup"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/schedsuggest"
@@ -201,8 +202,8 @@ func (h *Hub) suggestionUnseen(ctx context.Context, id string, c *followupCand) 
 // runTurn runs the pipeline on c's message off the hub goroutine (fu: the
 // follow-up questions look at it, ss: the schedule suggestions). Each result
 // goes to the hub as it comes; c stays pending until the last.
-func (h *Hub) runTurn(ctx context.Context, id string, c *followupCand, fu, ss bool) {
-	fsvc, ssvc := h.fu.svc, h.ss.svc
+func (h *Hub) runTurn(ctx context.Context, id string, c *followupCand, fu, ss, cr bool) {
+	fsvc, ssvc, roles := h.fu.svc, h.ss.svc, h.ss.roles
 	text, turnID := c.turn.Text, c.turn.ID
 	c.left = 0
 	if fu {
@@ -215,36 +216,77 @@ func (h *Hub) runTurn(ctx context.Context, id string, c *followupCand, fu, ss bo
 		}
 		h.ss.running[id][c.turn.Hash] = true
 	}
+	if cr {
+		c.left++
+		if h.cr.running[id] == nil {
+			h.cr.running[id] = map[string]bool{}
+		}
+		h.cr.running[id][c.turn.Hash] = true
+	}
 	fuDone := func(res *followup.Result, err error) {
 		_ = h.do(ctx, func(ctx context.Context) { h.followupDone(ctx, id, c, turnID, res, err) })
 	}
 	ssDone := func(res *schedsuggest.Result, err error) {
 		_ = h.do(ctx, func(ctx context.Context) { h.suggestionDone(ctx, id, c, res, err) })
 	}
+	crDone := func(res []cmdrequest.Command, err error) {
+		_ = h.do(ctx, func(ctx context.Context) { h.commandRequestDone(ctx, id, c, res, err) })
+	}
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
-		switch {
-		case fu && ss:
-			// One call scores both gates (one slot, one retry); then the
-			// follow-up extraction first: the schedule's never delays it.
-			scores, err := h.ss.roles.Classifier().ClassifyMany(ctx, schedsuggest.State(text),
-				map[string]string{gateFollowup: followup.GateQuestion, gateSchedule: schedsuggest.GateQuestion})
-			if err != nil {
+		if !cr && fu && !ss {
+			r, e := fsvc.Detect(ctx, text)
+			fuDone(r, e)
+			return
+		}
+		if !cr && ss && !fu {
+			r, e := ssvc.Detect(ctx, text)
+			ssDone(r, e)
+			return
+		}
+		questions := map[string]string{}
+		if fu {
+			questions[gateFollowup] = followup.GateQuestion
+		}
+		if ss {
+			questions[gateSchedule] = schedsuggest.GateQuestion
+		}
+		if cr {
+			questions["command_request"] = cmdrequest.GateQuestion
+		}
+		scores, err := roles.Classifier().ClassifyMany(ctx, schedsuggest.State(text), questions)
+		if err != nil {
+			if fu {
 				fuDone(nil, err)
-				ssDone(nil, err)
-				return
 			}
-			res, err := fsvc.Scored(ctx, text, scores[gateFollowup])
-			fuDone(res, err)
-			sres, err := ssvc.Scored(ctx, text, scores[gateSchedule])
-			ssDone(sres, err)
-		case fu:
-			res, err := fsvc.Detect(ctx, text)
-			fuDone(res, err)
-		default:
-			res, err := ssvc.Detect(ctx, text)
-			ssDone(res, err)
+			if ss {
+				ssDone(nil, err)
+			}
+			if cr {
+				crDone(nil, err)
+			}
+			return
+		}
+		if fu {
+			r, e := fsvc.Scored(ctx, text, scores[gateFollowup])
+			fuDone(r, e)
+		}
+		if ss {
+			r, e := ssvc.Scored(ctx, text, scores[gateSchedule])
+			ssDone(r, e)
+		}
+		if cr {
+			var commands []cmdrequest.Command
+			var e error
+			if scores["command_request"] >= cmdrequest.Threshold {
+				if !h.commandRequestReady() {
+					e = ai.ErrNotReady
+				} else {
+					commands, e = cmdrequest.Extract(ctx, roles.LLM(), text)
+				}
+			}
+			crDone(commands, e)
 		}
 	}()
 }
