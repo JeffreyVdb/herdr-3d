@@ -3711,6 +3711,8 @@ export class App {
    * Esc first: `inPalette` keeps the previews' own capture-phase Esc away from it); a card being dragged is let go first.
    */
   private onPaletteKey(e: KeyboardEvent): void {
+    // The process terminal owns Ctrl+P (readline history), including while it is over a seat.
+    if (e.target instanceof HTMLElement && e.target.classList.contains('mp-terminal-input') && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) return;
     if (e.isComposing || !pressesBinding(e, 'palette')) return;
     e.preventDefault();
     e.stopImmediatePropagation();

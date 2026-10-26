@@ -37,7 +37,9 @@ test('request runs once, terminal detaches, stop and dismiss', async ({ page }) 
   }).toEqual(expect.arrayContaining([zippy.id, expect.stringMatching(/^mp:/)]));
   const input = dialog.locator('.mp-terminal-input'); await input.fill('hello-terminal');
   await expect(dialog.locator('.xterm-rows')).toContainText('hello-terminal');
-  await input.press('Enter'); await input.fill('second-line');
+  await input.press('Enter'); await input.press('Control+p');
+  await expect(page.locator('dialog.palette')).toBeHidden();
+  await input.fill('second-line');
   await expect(dialog.locator('.xterm-rows')).toContainText('second-line'); await snap(page, 'desktop-terminal');
   await dialog.getByRole('button', { name: 'Back to processes' }).click();
   await expect(dialog).toContainText('State: running');
