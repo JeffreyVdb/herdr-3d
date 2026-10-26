@@ -12,7 +12,7 @@ const SIM = 'play=none&sim=1&simms=150';
 const URL7 = 'https://github.com/JeffreyVdb/herdr-3d/issues/7';
 const PLACEMENT = "Start every agent you hire in its own herdr workspace or tab, never in a split pane of your tab or of another agent's tab: a laptop shows a pane at its own size, and a fullscreen terminal is wanted.";
 const FLOOR = 'Also tag every herdr workspace you create with the token h3d_floor=herdr-3d, in the same herdr workspace report-metadata call as its other h3d_ tokens: it puts that agent on your floor.';
-const AGENT = "Also tag every herdr workspace you create with the tokens h3d_harness, h3d_model and h3d_effort, the harness, model id and effort you start that agent with, in the same herdr workspace report-metadata call as the floor token: the floor shows them as that agent's model line.";
+const AGENT = "Also tag every herdr workspace you create with the tokens h3d_harness, h3d_model and h3d_effort, the harness, model id and effort you start that agent with, in the same herdr workspace report-metadata call as the floor token: use h3d_harness=claude for Claude Code and h3d_harness=codex for Codex. The floor shows them as that agent's model line.";
 const TEAM = ['Team:', '- coders: claude claude-opus-5-5, effort medium', '- reviewers: codex gpt-6-sol, reasoning high', '- ux reviewers: codex gpt-6-sol, reasoning high', '- researchers: codex gpt-6-sol, reasoning low', '', PLACEMENT, '', FLOOR, '', AGENT];
 const STATUS = 'Move the ticket status accordingly, pull request always means QA, merging the PR always means Done.';
 

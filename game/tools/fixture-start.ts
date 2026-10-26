@@ -84,7 +84,7 @@ export const floorLine = (floor: string): string =>
   `Also tag every herdr workspace you create with the token h3d_floor=${floor}, in the same herdr workspace report-metadata call as its other h3d_ tokens: it puts that agent on your floor.`;
 /** H3D-2: the bridge's agentLine: tag the workspaces you create with the harness, model and effort their agents start with. */
 export const AGENT_LINE =
-  "Also tag every herdr workspace you create with the tokens h3d_harness, h3d_model and h3d_effort, the harness, model id and effort you start that agent with, in the same herdr workspace report-metadata call as the floor token: the floor shows them as that agent's model line.";
+  "Also tag every herdr workspace you create with the tokens h3d_harness, h3d_model and h3d_effort, the harness, model id and effort you start that agent with, in the same herdr workspace report-metadata call as the floor token: use h3d_harness=claude for Claude Code and h3d_harness=codex for Codex. The floor shows them as that agent's model line.";
 /** #95: the herdr hiring instructions for a floor (the bridge's hireInstructions): `worker.hire` adds them after a blank line. */
 export const herdrInstructions = (floor: string): string => `${PLACEMENT_LINE}\n\n${floorLine(floor)}\n\n${AGENT_LINE}`;
 

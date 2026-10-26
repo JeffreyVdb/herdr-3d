@@ -1998,6 +1998,7 @@ func nextMeta(m workerMeta, w world.WorkerObs, now int64) workerMeta {
 	if w.Harness != "" {
 		m.harness = w.Harness
 	}
+	m.harness = world.ResolveHarness(m.harness, w.AgentKind)
 	if w.Model != "" {
 		m.model = w.Model
 	}

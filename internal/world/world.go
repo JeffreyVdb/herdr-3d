@@ -151,14 +151,27 @@ const (
 )
 
 // HarnessOf returns the harness, model and effort a workspace shows: the
-// h3d_harness / h3d_model / h3d_effort tokens, the harness falling back to
-// the agent kind when that is claude or codex.
+// h3d_harness / h3d_model / h3d_effort tokens. Supported reported
+// harnesses take precedence; an unsupported one falls back to a supported
+// detected agent kind. Unknown values are retained when no kind is known.
 func HarnessOf(tokens map[string]string, agentKind string) (harness, model, effort string) {
 	harness, model, effort = tokens["h3d_harness"], tokens["h3d_model"], tokens["h3d_effort"]
-	if harness == "" && (agentKind == HarnessClaude || agentKind == HarnessCodex) {
-		harness = agentKind
-	}
+	harness = ResolveHarness(harness, agentKind)
 	return harness, model, effort
+}
+
+// ResolveHarness applies the same rule to reported and remembered metadata.
+func ResolveHarness(reported, agentKind string) string {
+	if reported == "claude-code" {
+		reported = HarnessClaude
+	}
+	if reported == HarnessClaude || reported == HarnessCodex {
+		return reported
+	}
+	if agentKind == HarnessClaude || agentKind == HarnessCodex {
+		return agentKind
+	}
+	return reported
 }
 
 // IsMarker reports whether a pane label is an identity marker h3d-<hex>.

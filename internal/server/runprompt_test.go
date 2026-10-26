@@ -38,7 +38,7 @@ const floorLineS = "Also tag every herdr workspace you create with the token h3d
 // harness, model and effort it starts them with (H3D-2).
 const agentLineT = "Also tag every herdr workspace you create with the tokens h3d_harness, h3d_model and h3d_effort, " +
 	"the harness, model id and effort you start that agent with, in the same herdr workspace report-metadata call as the floor token: " +
-	"the floor shows them as that agent's model line."
+	"use h3d_harness=claude for Claude Code and h3d_harness=codex for Codex. The floor shows them as that agent's model line."
 
 // buildHead is the team of buildTeam, the placement rule, the floor line
 // of floor "s" and the agent line.

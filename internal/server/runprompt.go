@@ -38,7 +38,7 @@ func floorLine(floor string) string {
 // harness, model and effort until its transcript says what it runs on.
 const agentLine = "Also tag every herdr workspace you create with the tokens h3d_harness, h3d_model and h3d_effort, " +
 	"the harness, model id and effort you start that agent with, in the same herdr workspace report-metadata call as the floor token: " +
-	"the floor shows them as that agent's model line."
+	"use h3d_harness=claude for Claude Code and h3d_harness=codex for Codex. The floor shows them as that agent's model line."
 
 // hireInstructions are the herdr hiring instructions for floor: where an
 // agent starts the agents it hires, and the floor, harness, model and effort

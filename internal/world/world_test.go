@@ -82,6 +82,12 @@ func TestHarnessOf(t *testing.T) {
 		{nil, "", "", "", ""},
 		{nil, "claude", "claude", "", ""},
 		{nil, "h3dprobe", "", "", ""},
+		{nil, "codex", "codex", "", ""},
+		{map[string]string{"h3d_harness": "claude-code"}, "claude", "claude", "", ""},
+		{map[string]string{"h3d_harness": "claude"}, "codex", "claude", "", ""},
+		{map[string]string{"h3d_harness": "unsupported"}, "claude", "claude", "", ""},
+		{map[string]string{"h3d_harness": "unsupported"}, "codex", "codex", "", ""},
+		{map[string]string{"h3d_harness": "unsupported"}, "", "unsupported", "", ""},
 		{map[string]string{"h3d_harness": "codex", "h3d_model": "gpt-6-sol", "h3d_effort": "high"}, "claude", "codex", "gpt-6-sol", "high"},
 		{map[string]string{"h3d_model": "claude-opus-5-5"}, "claude", "claude", "claude-opus-5-5", ""},
 	} {
@@ -89,6 +95,15 @@ func TestHarnessOf(t *testing.T) {
 		if h != tc.harness || m != tc.model || e != tc.effort {
 			t.Errorf("HarnessOf(%v, %q) = %q %q %q, want %q %q %q", tc.tokens, tc.kind, h, m, e, tc.harness, tc.model, tc.effort)
 		}
+	}
+}
+
+func TestSnapshotCanonicalizesHarness(t *testing.T) {
+	snap := snapshot(t, "snapshot.json")
+	snap.Workspaces[0].Tokens["h3d_harness"] = "claude-code"
+	w := byWS(world.FromSnapshot(snap))["w1"]
+	if w.AgentKind != "claude" || w.Harness != "claude" || w.Tokens["h3d_harness"] != "claude-code" {
+		t.Fatalf("derived worker = %+v", w)
 	}
 }
 
