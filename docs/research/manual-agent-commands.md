@@ -1,5 +1,7 @@
 # Agent-requested manual commands: feasibility and spike
 
+For the subsequent integrated trial and its remaining limitations, see [manual commands spike results](manual-commands-spike-results.md).
+
 Investigated 2026-10-26 at `f0b78531e0b2524ddc51f42fc4651c30f39f1442`, with installed Herdr 0.9.1. Scope: source investigation and an isolated executable probe, not a shipped feature. The supplied screenshot shows `sudo tailscale serve --bg --https=8443 http://127.0.0.1:39525` failing because the agent's command runner has no terminal.
 
 Follow-up: [GitHub #207 — Spike: run agent-requested commands with remote sudo input and workspace-owned cleanup](https://github.com/JeffreyVdb/herdr-3d/issues/207), created at the user's request. The issue includes the findings, implementation seams and acceptance criteria independently of these local files. The earlier Kaneo task is H3D-11.
