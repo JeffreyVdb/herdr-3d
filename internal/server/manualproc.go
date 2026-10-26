@@ -280,6 +280,9 @@ func (h *Hub) startManualProcess(ctx context.Context, c *Client, cmd proto.Comma
 	if f == nil || !f.running || f.op != nil {
 		return fmt.Errorf("%w: floor is not running", errInvalidState)
 	}
+	if f.fires[w.ID] != nil {
+		return fmt.Errorf("%w: worker is being sent home", errBusy)
+	}
 	if h.opts.Manual == nil || h.opts.ManualDir == "" || h.opts.ManualShell == "" {
 		return fmt.Errorf("%w: manual process launcher unavailable", errInvalidState)
 	}
@@ -366,6 +369,9 @@ func (h *Hub) startManualProcess(ctx context.Context, c *Client, cmd proto.Comma
 			floor := h.floors[current.Floor]
 			if floor == nil || !floor.running || floor.op != nil {
 				return reservation{err: fmt.Errorf("%w: floor is not running", errInvalidState)}
+			}
+			if floor.fires[current.ID] != nil {
+				return reservation{err: fmt.Errorf("%w: worker is being sent home", errBusy)}
 			}
 			if source.Kind == "suggestion" {
 				entry, variants, host, ok := h.commandRequestEntry(a.Worker, source.Key, source.Index)

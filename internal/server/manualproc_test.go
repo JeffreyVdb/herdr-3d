@@ -677,3 +677,64 @@ func TestManualEffectCleanupDoesNotDuplicateWhileCompleting(t *testing.T) {
 		t.Fatalf("expected one process and one cleanup, got %d launches", calls)
 	}
 }
+
+type manualFireGate struct {
+	server.FloorHerdr
+	entered, release chan struct{}
+	once             sync.Once
+}
+
+func (g *manualFireGate) PaneProcesses(ctx context.Context, session, pane string) (*herdr.ProcessInfo, error) {
+	g.once.Do(func() { close(g.entered) })
+	select {
+	case <-g.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return g.FloorHerdr.PaneProcesses(ctx, session, pane)
+}
+
+func TestManualStartRefusedWhileSendHomeIsPending(t *testing.T) {
+	gate := &manualFireGate{entered: make(chan struct{}), release: make(chan struct{})}
+	var release sync.Once
+	defer release.Do(func() { close(gate.release) })
+	fake := &fakeManual{}
+	dir := t.TempDir()
+	hb := startHireBridge(t, func(o *server.Options) {
+		gate.FloorHerdr = o.Herdr
+		o.Herdr = gate
+		o.Manual = fake
+		o.ManualDir = dir
+		o.ManualShell = "/bin/bash"
+		o.ManualNoNewPrivs = func(context.Context, string) (bool, error) { return false, nil }
+	}, worker("w1", "notes", "", "idle"))
+	hb.fl.setProcs("w1:p1", atShell())
+	ws := workersOf(hb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 1 }), "s")
+	id := ws["w1"].ID
+	c := hb.connect(proto.Hello{})
+	c.snapshot()
+	raw, _ := json.Marshal(proto.WorkerFireArgs{ID: id})
+	hb.c.send(proto.Command{T: proto.CmdWorkerFire, ReqID: "fire-pending", Args: raw})
+	select {
+	case <-gate.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("send-home did not reach its exit check")
+	}
+	c.mustError(proto.CmdManualProcessStart, proto.ManualProcessStartArgs{Op: "during-fire", Worker: id, Cwd: dir, Command: "echo race"}, proto.ErrBusy)
+	release.Do(func() { close(gate.release) })
+	for {
+		m := hb.c.next()
+		if m.env.ReqID == "fire-pending" {
+			if m.env.T != proto.TAck {
+				t.Fatalf("send-home: %s", m.raw)
+			}
+			break
+		}
+	}
+	fake.mu.Lock()
+	calls := fake.launches
+	fake.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("manual process launched during send-home")
+	}
+}
