@@ -1,5 +1,8 @@
 # Contributing
 
+Record decisions in the relevant feature file under [`docs/decisions/`](docs/decisions.md). The old log is a
+historical lookup; new decisions do not need an entry there.
+
 ## Layout
 
 - `cmd/herdr-world` — server-side bridge daemon (Go).

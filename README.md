@@ -12,7 +12,7 @@ The game runs on the MacBook (three.js, WebGPU/Metal, Chrome app window); all da
 reached through an SSH tunnel to a Go bridge daemon.
 
 - Architecture: [`docs/architecture.md`](docs/architecture.md)
-- Decisions: [`docs/decisions.md`](docs/decisions.md)
+- Decisions by feature: [`docs/decisions/`](docs/decisions.md)
 - Bridge protocol: [`docs/protocol.md`](docs/protocol.md)
 - Dictated hiring (Ctrl/⌘+Shift+Space, Hire in background): [`docs/dictation.md`](docs/dictation.md)
 - Keyboard shortcuts (press `?` in the game): [`docs/shortcuts.md`](docs/shortcuts.md), generated from `game/src/input/shortcuts.ts`
