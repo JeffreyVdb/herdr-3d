@@ -424,13 +424,14 @@ const (
 // event sequence numbers and fans events out to clients. Nothing it does
 // blocks on a client: a client that cannot keep up is dropped.
 type Hub struct {
-	opts    Options
-	log     *slog.Logger
-	st      *store.Store
-	epoch   string
-	updates chan world.Update
-	ops     chan func(context.Context)
-	done    chan struct{} // closed when Run stops processing operations, before waiting for background tasks
+	manualProcesses map[string]proto.ManualProcess
+	opts            Options
+	log             *slog.Logger
+	st              *store.Store
+	epoch           string
+	updates         chan world.Update
+	ops             chan func(context.Context)
+	done            chan struct{} // closed when Run stops processing operations, before waiting for background tasks
 
 	seq     uint64
 	ring    *ring

@@ -643,13 +643,14 @@ type Worktree struct {
 //	followups.update the fields of Followups (#90)
 //	inbox.dismissed  id, status_since (#106)
 type Event struct {
-	T        string    `json:"t"`
-	Seq      uint64    `json:"seq"`
-	Building *Building `json:"building,omitempty"`
-	Floor    *Floor    `json:"floor,omitempty"`
-	Worker   *Worker   `json:"worker,omitempty"`
-	ID       string    `json:"id,omitempty"`
-	Session  string    `json:"session,omitempty"`
+	Process  *ManualProcess `json:"process,omitempty"`
+	T        string         `json:"t"`
+	Seq      uint64         `json:"seq"`
+	Building *Building      `json:"building,omitempty"`
+	Floor    *Floor         `json:"floor,omitempty"`
+	Worker   *Worker        `json:"worker,omitempty"`
+	ID       string         `json:"id,omitempty"`
+	Session  string         `json:"session,omitempty"`
 	// FloorID (#58) is the floor id on floor.removed, worker.removed,
 	// worker.status, handoff.added and handoff.removed (the key "floor" is
 	// the floor.upsert's Floor).
