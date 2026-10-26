@@ -7,7 +7,7 @@ import type { WorldStore } from '../world/store';
 import { h, replaceKeepingFocus } from './dom';
 import { failureText } from './messages';
 
-export const askpassEligible = (command: string): boolean => /^sudo +[^\s-]/.test(command);
+export const askpassEligible = (command: string): boolean => /^sudo [ \t]*[^\s-]/.test(command);
 export const askpassForm = (command: string): string => command.replace(/^sudo(?=\s)/, 'sudo -A');
 export const newManualOp = (): string => `mp-${crypto.randomUUID()}`;
 const terminalState = (p: ManualProcess) => ['exited', 'stopped', 'failed'].includes(p.state);

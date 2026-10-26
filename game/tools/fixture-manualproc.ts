@@ -8,7 +8,7 @@ const shared = new Map<string, State>();
 const state = (): State => ({ records: new Map(), retired: new Map(), ops: new Map(), next: 0, closed: false });
 const hostName = 'fixture-bridge';
 const withoutCredential = (p: ManualProcess): ManualProcess => { const copy = { ...p }; delete copy.credential; return copy; };
-const sudo = (s: string) => /^sudo\s+[^\s-]/.test(s);
+const sudo = (s: string) => /^sudo [ \t]*[^\s-]/.test(s);
 
 /** Deterministic process simulator. No shell or external effects are run. */
 export class ManualProcessSim {

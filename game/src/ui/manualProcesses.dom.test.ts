@@ -50,6 +50,7 @@ describe('manual process list', () => {
   });
   it('offers askpass only for top-level sudo followed by a non-flag word', () => {
     expect(askpassEligible('sudo id')).toBe(true);
+    expect(askpassEligible('sudo  \tid')).toBe(true);
     expect(askpassEligible('sudo -n id')).toBe(false);
     expect(askpassEligible('echo sudo id')).toBe(false);
     expect(askpassEligible('sudo\nid')).toBe(false);
