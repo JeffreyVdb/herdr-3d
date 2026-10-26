@@ -700,24 +700,44 @@ func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone bool
 			return p, false, nil
 		}
 	}
+	closed := tabGone
 	if !tabGone && p.TabID != "" {
-		if h.opts.Manual == nil {
-			cleanupErr = fmt.Errorf("manual tab control unavailable")
+		marked, err := manual.TabClosed(dir)
+		if err != nil {
+			cleanupErr = fmt.Errorf("reading tab state: %w", err)
 			verified = false
 		} else {
 			known, present := h.manualTabPresent(ctx, p)
-			if !known || present {
+			switch {
+			case known && !present:
+				closed = true
+			case !known && marked:
+				closed = true
+			case h.opts.Manual == nil:
+				cleanupErr = fmt.Errorf("manual tab control unavailable")
+				verified = false
+			default:
 				if err := h.opts.Manual.CloseManualTab(ctx, p.Session, p.TabID); err != nil {
 					afterKnown, afterPresent := h.manualTabPresent(ctx, p)
-					if !afterKnown || afterPresent {
+					if afterKnown && !afterPresent {
+						closed = true
+					} else {
 						cleanupErr = fmt.Errorf("closing tab: %w", err)
 						verified = false
 					}
+				} else {
+					closed = true
 				}
 			}
 		}
 	}
-	if errors.Is(statusErr, os.ErrNotExist) && tabGone {
+	if closed && p.TabID != "" {
+		if err := manual.MarkTabClosed(dir); err != nil {
+			cleanupErr = fmt.Errorf("recording tab closure: %w", err)
+			verified = false
+		}
+	}
+	if errors.Is(statusErr, os.ErrNotExist) && tabGone && cleanupErr == nil {
 		verified = true
 	}
 	if statusErr == nil {
@@ -774,6 +794,7 @@ func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone bool
 		p.CleanupNote = "processes remain: " + strings.Join(ids, ", ")
 	}
 	if cleanupErr != nil {
+		verified = false
 		p.Cleanup = "failed"
 		if len(tags) > 0 {
 			p.CleanupNote = cleanupErr.Error() + "; " + p.CleanupNote
@@ -811,6 +832,9 @@ func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone bool
 			p.State = "unknown"
 		}
 		p.Error = "could not verify that the process stopped"
+	}
+	if reason == "stopped for floor sleep" && p.State == "stopped" && p.CleanupNote != "" && !strings.Contains(p.CleanupNote, reason) {
+		p.CleanupNote = reason + "; " + p.CleanupNote
 	}
 	if verified && p.Cleanup == "done" {
 		pending, err := query(ctx, h, func() bool { return h.manualCleanupPending(p.ID) })
@@ -1110,9 +1134,9 @@ func (h *Hub) stopManualWork(ctx context.Context, work []manualWork, reason stri
 	var firstErr error
 	for _, item := range work {
 		item.lock.Lock()
-		_, verified, err := h.cleanupManual(ctx, item.id, reason, tabGone)
+		result, verified, err := h.cleanupManual(ctx, item.id, reason, tabGone)
 		item.lock.Unlock()
-		if err == nil && !verified {
+		if err == nil && !verified && !(reason == "stopped for floor sleep" && result.State == "stopped") {
 			err = fmt.Errorf("process could not be verified stopped")
 		}
 		if err != nil && firstErr == nil {

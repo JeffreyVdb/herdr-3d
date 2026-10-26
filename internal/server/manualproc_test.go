@@ -27,6 +27,7 @@ type fakeManual struct {
 	creates, launches int
 	closed            []string
 	onLaunch          func(string) error
+	closeErr          error
 }
 
 func (f *fakeManual) CreateManualTab(_ context.Context, _, workspace, _, _ string) (herdr.ManualTab, error) {
@@ -38,6 +39,9 @@ func (f *fakeManual) CreateManualTab(_ context.Context, _, workspace, _, _ strin
 func (f *fakeManual) CloseManualTab(_ context.Context, _, tab string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.closeErr != nil {
+		return f.closeErr
+	}
 	f.closed = append(f.closed, tab)
 	return nil
 }
@@ -802,5 +806,67 @@ func TestManualRetrySignalsOnlyPreviouslyReportedDescendants(t *testing.T) {
 	after = ackData[proto.ManualProcessResult](t, m).Process
 	if manual.IdentityAlive(second.PID, second.StartTicks) || after.Cleanup != "done" {
 		t.Fatalf("second retry: %+v", after)
+	}
+}
+
+func TestManualFloorSleepKeepsDetachedSurvivorActionable(t *testing.T) {
+	fake := &fakeManual{onLaunch: func(dir string) error {
+		return manual.WriteStatus(dir, manual.Status{PID: 99999999, StartTicks: 123, PGID: 0, StartedAt: 1})
+	}}
+	dir := t.TempDir()
+	fh := newFakeHerdr()
+	opts := fastOps(fh)
+	opts.Manual = fake
+	opts.ManualDir = dir
+	opts.ManualShell = "/bin/bash"
+	opts.ManualNoNewPrivs = func(context.Context, string) (bool, error) { return false, nil }
+	b := startBridge(t, "", opts)
+	workers := []world.WorkerObs{worker("w1", "notes", "", "idle")}
+	b.floorAt("s", true, workers)
+	c := b.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	_, m := c.command(proto.CmdManualProcessStart, "manual", proto.ManualProcessStartArgs{Op: "sleep-detached", Worker: id, Cwd: dir, Command: "echo fixture"})
+	p := ackData[proto.ManualProcessResult](t, m).Process
+	cmd := exec.Command("sleep", "120")
+	cmd.Env = append(os.Environ(), "H3D_MANUAL_PROCESS="+p.ID)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ticks, err := manual.StartTicks(cmd.Process.Pid)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		t.Fatal(err)
+	}
+	child := manual.Identity{PID: cmd.Process.Pid, StartTicks: ticks}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	t.Cleanup(func() {
+		if manual.IdentityAlive(child.PID, child.StartTicks) {
+			_ = syscall.Kill(child.PID, syscall.SIGKILL)
+		}
+		<-done
+	})
+	fh.onStop = func() { b.floorAt("s", false, withStatus(workers, "unknown")) }
+	c.mustAck(proto.CmdFloorSleep, proto.FloorArgs{Session: "s"})
+	w := b.world(func(w proto.World) bool {
+		for _, v := range w.ManualProcesses {
+			if v.ID == p.ID {
+				return v.State == "stopped" && v.Cleanup == "needed" && strings.Contains(v.CleanupNote, "stopped for floor sleep") && strings.Contains(v.CleanupNote, fmt.Sprint(child.PID))
+			}
+		}
+		return false
+	})
+	_ = w
+	if !manual.IdentityAlive(child.PID, child.StartTicks) {
+		t.Fatal("detached child was killed without an explicit retry")
+	}
+	fake.mu.Lock()
+	fake.closeErr = errors.New("session is asleep")
+	fake.mu.Unlock()
+	_, m = c.command(proto.CmdManualProcessStop, "retry", proto.ManualProcessIDArgs{ID: p.ID})
+	result := ackData[proto.ManualProcessResult](t, m).Process
+	if result.Cleanup != "done" || manual.IdentityAlive(child.PID, child.StartTicks) {
+		t.Fatalf("retry: %+v", result)
 	}
 }
