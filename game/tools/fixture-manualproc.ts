@@ -13,7 +13,11 @@ const sudo = (s: string) => /^sudo [ \t]*[^\s-]/.test(s);
 /** Deterministic process simulator. No shell or external effects are run. */
 export class ManualProcessSim {
   private readonly data: State;
-  constructor(private readonly h: Host, private readonly preset: string | undefined, private readonly requestPreset: string | undefined) {
+  private readonly h: Host;
+  private readonly preset: string | undefined;
+  private readonly requestPreset: string | undefined;
+  constructor(h: Host, preset: string | undefined, requestPreset: string | undefined) {
+    this.h = h; this.preset = preset; this.requestPreset = requestPreset;
     if (preset) { this.data = shared.get(preset) ?? state(); shared.set(preset, this.data); }
     else this.data = state();
   }
