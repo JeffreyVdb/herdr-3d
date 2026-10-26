@@ -1,10 +1,11 @@
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
 import { frames, openGame, openMenu, seatMode, watchErrors } from './game';
 
-const screens = '/home/jeff/.local/state/write-code/runs/20261026-2123-mancmd/screens-d-r1';
+const screens = process.env.H3D_MANUAL_SCREEN_DIR ?? resolve(import.meta.dirname, '../test-results/manual-processes');
+mkdirSync(screens, { recursive: true });
 const zippy = (JSON.parse(readFileSync(resolve(import.meta.dirname, '../fixtures/demo-m5.jsonl'), 'utf8').split('\n')[0]!) as { world: { workers: Worker[] } }).world.workers.find((w) => w.name === 'Zippy')!;
 const sent = (page: Page) => page.evaluate(() => window.__h3d.sent());
 const snap = (page: Page, name: string) => page.screenshot({ path: `${screens}/${name}.png`, animations: 'disabled' });
