@@ -37,7 +37,7 @@ func TestWorkerUsage(t *testing.T) {
 	c := b.connect(proto.Hello{})
 	c.snapshot()
 	w1 := worker("w1", "a", sess, "working")
-	w1.Harness = world.HarnessClaude
+	w1.AgentKind, w1.Harness = world.HarnessClaude, "claude-code"
 	b.floor("s1", true, w1, worker("w2", "shell", "", "idle"))
 	ev := c.untilFirstUsage()
 	if ev.Usage == nil || ev.Usage.Input != 1000 || ev.Usage.Tokens != 1010 || ev.Usage.Priced != proto.PricedKnown ||
@@ -109,7 +109,7 @@ func TestUsageGoesWithItsAgentSession(t *testing.T) {
 	c := b.connect(proto.Hello{})
 	c.snapshot()
 	w := worker("w1", "a", oldID, "working")
-	w.Harness = world.HarnessClaude
+	w.AgentKind, w.Harness = world.HarnessClaude, "claude-code"
 	b.floor("s1", true, w)
 	id := c.untilFirstUsage().ID
 

@@ -25,7 +25,7 @@ func floorLineOf(floor string) string {
 // agentLineOf is the agent line (H3D-2): the harness, model and effort tokens.
 const agentLineOf = "Also tag every herdr workspace you create with the tokens h3d_harness, h3d_model and h3d_effort, " +
 	"the harness, model id and effort you start that agent with, in the same herdr workspace report-metadata call as the floor token: " +
-	"the floor shows them as that agent's model line."
+	"use h3d_harness=claude for Claude Code and h3d_harness=codex for Codex. The floor shows them as that agent's model line."
 
 // herdrLines are #95's herdr hiring instructions for floor: run.start's
 // placement line, floor line and agent line, a blank line between them.

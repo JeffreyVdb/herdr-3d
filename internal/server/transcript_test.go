@@ -106,7 +106,8 @@ func TestTranscriptWatch(t *testing.T) {
 	c := b.connect(proto.Hello{})
 	c.snapshot()
 	w1 := worker("w1", "a", sess, "working")
-	w1.Harness = world.HarnessClaude
+	// An already-present worker may carry the old reported alias.
+	w1.AgentKind, w1.Harness = world.HarnessClaude, "claude-code"
 	w2 := worker("w2", "b", "", "idle")
 	b.floor("s1", true, w1, w2)
 	id := workerID(t, c, sess)
