@@ -482,7 +482,6 @@ type Hub struct {
 	usageFor map[string]usageTag
 	reported map[string]modelEffort
 	// M5 term
-	manualProcesses    map[string]proto.ManualProcess
 	credentials        map[string]*credentialRequest
 	credentialAttempts map[string]int
 	credentialTimeout  time.Duration

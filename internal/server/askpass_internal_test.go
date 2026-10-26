@@ -116,6 +116,10 @@ func newManualRigWithTerm(t *testing.T, term TermHerdr) *manualRig {
 	h.floors["s"] = &floorState{sessionState: &sessionState{session: "s", running: true}, id: "s"}
 	h.workers["fixture-worker"] = &proto.Worker{ID: "fixture-worker", Session: "s", AgentKind: "claude", Harness: "claude", AgentSession: agentSession, Cwd: "/home/u/w1", Status: "working"}
 	h.manualProcesses = map[string]proto.ManualProcess{testManualID: {ID: testManualID, State: "running", Session: "s", PaneID: "w:p2", Launched: "sudo -A -u root true"}}
+	// This synthetic process has no launcher status; keep lifecycle polling from reconciling it.
+	lock := &sync.Mutex{}
+	lock.Lock()
+	h.manualLocks[testManualID] = lock
 	sock := filepath.Join(root, "bridge.sock")
 	ln, err := Listen(sock)
 	if err != nil {

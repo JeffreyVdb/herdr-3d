@@ -63,6 +63,9 @@ func TestManualTerminalWatchInputAndDetach(t *testing.T) {
 		r.hub.opts.MaxWatches = 2
 		r.hub.opts.MaxObservers = 2
 		r.hub.manualProcesses["mp_11111111"] = proto.ManualProcess{ID: "mp_11111111", State: "running", Session: "s", PaneID: "w1:p3"}
+		lock := &sync.Mutex{}
+		lock.Lock()
+		r.hub.manualLocks["mp_11111111"] = lock
 		r.hub.floors["s"] = &floorState{sessionState: &sessionState{session: "s", running: true}, id: "s"}
 		r.hub.workers["worker"] = &proto.Worker{ID: "worker", Session: "s", PaneID: "w1:p1"}
 		p := r.hub.manualProcesses[testManualID]
