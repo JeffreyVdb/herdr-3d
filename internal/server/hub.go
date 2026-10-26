@@ -1096,6 +1096,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startResize
 		case proto.CmdTerminalScroll: // #176
 			start = h.startScroll
+		case proto.CmdTerminalInput:
+			start = h.startTerminalInput
 		case proto.CmdWorkerKeys:
 			start = h.startKeys
 		case proto.CmdWorkerPrompt:

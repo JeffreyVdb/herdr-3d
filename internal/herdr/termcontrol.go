@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // DuplexProc is a started long-running command with a stdin.
@@ -89,6 +90,8 @@ type ControlStream interface {
 	// Live brings the view back to the live bottom of the history (an
 	// empty terminal.input: herdr resets the scroll before any input).
 	Live() error
+	Input(text string) error
+	InputBytes(b []byte) error
 	// RestoreOnRelease makes Close resize the PTY to cols × rows before it
 	// releases the pane (0, 0: release only).
 	RestoreOnRelease(cols, rows int)
@@ -146,6 +149,7 @@ const (
 	kindResize ctlKind = iota
 	kindScroll
 	kindLive
+	kindInput
 	kindRelease
 )
 
@@ -309,6 +313,62 @@ func (ct *controller) Live() error {
 	}{"terminal.input"})
 }
 
+// Input and InputBytes keep each controller line below its size limit.
+// Queue all chunks together so an error cannot leave a partially sent input.
+func (ct *controller) Input(text string) error {
+	if !utf8.ValidString(text) {
+		return fmt.Errorf("%w: input is not UTF-8", ErrNotAllowed)
+	}
+	var chunks []ctlCmd
+	for len(text) > 0 {
+		n := min(len(text), 8192)
+		for n < len(text) && !utf8.RuneStart(text[n]) {
+			n--
+		}
+		c, err := command(kindInput, struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}{"terminal.input", text[:n]})
+		if err != nil {
+			return err
+		}
+		chunks = append(chunks, c)
+		text = text[n:]
+	}
+	return ct.inputChunks(chunks)
+}
+
+func (ct *controller) InputBytes(b []byte) error {
+	var chunks []ctlCmd
+	for len(b) > 0 {
+		n := min(len(b), 8192)
+		c, err := command(kindInput, struct {
+			Type  string `json:"type"`
+			Bytes []byte `json:"bytes"`
+		}{"terminal.input", b[:n]})
+		if err != nil {
+			return err
+		}
+		chunks = append(chunks, c)
+		b = b[n:]
+	}
+	return ct.inputChunks(chunks)
+}
+
+func (ct *controller) inputChunks(chunks []ctlCmd) error {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	if ct.closed {
+		return ErrControlClosed
+	}
+	if len(ct.queue)+len(chunks) > controlQueue {
+		return errors.New("herdr: the terminal controller is not reading its commands")
+	}
+	ct.queue = append(ct.queue, chunks...)
+	ct.more.Signal()
+	return nil
+}
+
 func (ct *controller) RestoreOnRelease(cols, rows int) {
 	ct.mu.Lock()
 	ct.restore = [2]int{cols, rows}
@@ -334,8 +394,17 @@ func (ct *controller) Close() error {
 			final = []ctlCmd{restore, release}
 		}
 		ct.closed = true
-		if over := len(ct.queue) + len(final) - controlQueue; over > 0 {
-			ct.queue = ct.queue[over:]
+		over := len(ct.queue) + len(final) - controlQueue
+		if over > 0 {
+			kept := ct.queue[:0]
+			for _, item := range ct.queue {
+				if over > 0 && item.kind != kindInput {
+					over--
+					continue
+				}
+				kept = append(kept, item)
+			}
+			ct.queue = kept
 		}
 		ct.queue = append(ct.queue, final...)
 		ct.more.Signal()

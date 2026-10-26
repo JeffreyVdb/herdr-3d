@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -236,7 +237,7 @@ func (h *Hub) startWatch(ctx context.Context, c *Client, cmd proto.Command) erro
 	case a.Rows != 0 && (a.Rows < herdr.MinRows || a.Rows > herdr.MaxRows):
 		return bad("rows must be %d-%d", herdr.MinRows, herdr.MaxRows)
 	}
-	wk, f, err := h.termWorker(a.ID)
+	session, pane, f, err := h.terminalTarget(a.ID)
 	if err != nil {
 		return err
 	}
@@ -254,7 +255,7 @@ func (h *Hub) startWatch(ctx context.Context, c *Client, cmd proto.Command) erro
 		return fmt.Errorf("%w: %d panes are watched already (--max-observers)", errCapacity, host)
 	}
 	control := a.Control && h.controller() != nil // #176: a controller's size is the client's, never the pane's
-	w := &watch{c: c, id: a.ID, session: wk.Session, pane: wk.PaneID, cols: a.Cols, rows: a.Rows, fps: a.Fps,
+	w := &watch{c: c, id: a.ID, session: session, pane: pane, cols: a.Cols, rows: a.Rows, fps: a.Fps,
 		socket: f.socket, autoCols: a.Cols == 0 && !control, autoRows: a.Rows == 0 && !control, resize: make(chan [2]int, 1),
 		fullscreen: a.Fullscreen != nil && *a.Fullscreen, follow: a.Fullscreen != nil,
 		control: control, ctl: ctlWatch{poke: make(chan struct{}, 1)}}
@@ -298,6 +299,13 @@ func (h *Hub) dropWatches(c *Client) {
 // its pane, with terminal.closed (hub goroutine, after each observation).
 func (h *Hub) syncWatches() {
 	for _, w := range h.term.all() {
+		if strings.HasPrefix(w.id, "mp:") {
+			session, pane, ok := h.manualPane(strings.TrimPrefix(w.id, "mp:"))
+			if !ok || session != w.session || pane != w.pane {
+				h.closeWatch(w, "process_gone")
+			}
+			continue
+		}
 		reason := ""
 		wk := h.workers[w.id]
 		switch {

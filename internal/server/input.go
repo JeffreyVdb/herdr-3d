@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -275,6 +276,9 @@ func (h *Hub) startKeys(ctx context.Context, c *Client, cmd proto.Command) error
 	var a proto.WorkerKeysArgs
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
+	}
+	if strings.HasPrefix(a.ID, "mp:") {
+		return bad("worker.keys does not accept manual process ids")
 	}
 	steps, err := inputSteps(a.Input)
 	if err != nil {
@@ -749,6 +753,22 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 			Secrets          *secretsAudit `json:"secrets,omitempty"` // #108 round 2
 		}{clip(a.Worker), clip(a.Mode), clip(a.Session), clip(a.Candidate), clip(a.Revision), len(a.Instruction), a.SendHome, clip(a.Op),
 			auditReviews(a.Secrets)})
+	case proto.CmdTerminalInput:
+		var a proto.TerminalInputArgs
+		if json.Unmarshal(cmd.Args, &a) != nil {
+			return redacted(cmd.Args)
+		}
+		n := 0
+		if a.Text != nil {
+			n = len(*a.Text)
+		}
+		if a.Bytes != nil {
+			n += len(*a.Bytes)
+		}
+		return mustJSON(struct {
+			ID    string `json:"id"`
+			Bytes int    `json:"bytes"`
+		}{clip(a.ID), n})
 	case proto.CmdWorkerKeys:
 		var a proto.WorkerKeysArgs
 		if json.Unmarshal(cmd.Args, &a) != nil {

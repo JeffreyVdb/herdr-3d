@@ -51,7 +51,9 @@ func (c *fakeCtl) Scroll(up bool, lines, col, row, mods int) error {
 	return c.cmd("scroll %s %d at %d,%d mods %d", dir, lines, col, row, mods)
 }
 
-func (c *fakeCtl) Live() error { return c.cmd("live") }
+func (c *fakeCtl) Live() error               { return c.cmd("live") }
+func (c *fakeCtl) Input(text string) error   { return c.cmd("input:%s", text) }
+func (c *fakeCtl) InputBytes(b []byte) error { return c.cmd("input:%s", string(b)) }
 
 func (c *fakeCtl) RestoreOnRelease(cols, rows int) { _ = c.cmd("restore %dx%d", cols, rows) }
 
