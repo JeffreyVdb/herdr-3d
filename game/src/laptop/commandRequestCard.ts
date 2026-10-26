@@ -79,7 +79,7 @@ export class CommandRequestCard {
         c.why ? h('p', {}, c.why) : null,
         c.host !== 'bridge' ? h('p', { class: 'mp-warning' }, `The agent asked to run this on ${c.host_text || 'an unknown machine'}`) : null,
         option(c.command),
-        h('div', { class: 'mp-actions' }, h('button', { class: 'btn btn--primary', disabled, onclick: () => void this.start(index, c.command) }, this.busy ? 'Starting…' : 'Run'), h('button', { class: 'btn', disabled: this.busy, onclick: () => this.host.edit(c.command, c.cwd) }, 'Edit and run…')),
+        h('div', { class: 'mp-actions' }, h('button', { class: 'btn btn--primary', disabled, onclick: () => void this.start(index, c.command) }, this.busy ? 'Starting…' : 'Run'), c.host === 'bridge' ? h('button', { class: 'btn', disabled: this.busy, onclick: () => this.host.edit(c.command, c.cwd) }, 'Edit and run…') : null),
         ...(c.variants ?? []).map((v) => h('div', { class: 'mp-variant' }, h('p', {}, v.note), h('pre', { class: 'mp-code' }, v.command), option(v.command), h('button', { class: 'btn', disabled, onclick: () => void this.start(index, v.command) }, `Run ${v.label}`))));
     });
     this.el.replaceChildren(h('h3', {}, 'Run this command?'), ...cards, h('div', { class: 'mp-actions' }, h('button', { class: 'btn', disabled: this.busy, onclick: () => void this.dismiss() }, 'Dismiss')), h('p', { role: 'alert', class: 'mp-warning' }, this.message));

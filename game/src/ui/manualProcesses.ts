@@ -38,6 +38,8 @@ export class ManualProcessesDialog {
   private readonly closeBtn = h('button', { class: 'btn', onclick: () => this.close() }, 'Close');
   private worker: string | null = null;
   private view: 'list' | 'entry' | 'terminal' = 'list';
+  private viewGeneration = 0;
+  private terminalStateLabel: HTMLElement | null = null;
   private terminal: SeatTerminal | null = null;
   private terminalId: string | null = null;
   private terminalGeneration = 0;
@@ -52,7 +54,7 @@ export class ManualProcessesDialog {
   constructor(parent: HTMLElement, private readonly host: ManualHost) {
     this.dialog.append(h('header', { class: 'dd-head' }, h('div', { class: 'dd-titles' }, this.title)), this.body, h('footer', { class: 'dd-foot' }, this.status, h('div', { class: 'dd-actions' }, this.closeBtn)));
     this.dialog.addEventListener('cancel', (e) => { e.preventDefault(); if (this.view !== 'list') this.list(); else this.close(); });
-    this.dialog.addEventListener('close', () => { this.detach(); this.returnTo?.focus({ preventScroll: true }); this.returnTo = null; this.host.changed(); });
+    this.dialog.addEventListener('close', () => { this.viewGeneration++; this.detach(); this.returnTo?.focus({ preventScroll: true }); this.returnTo = null; this.host.changed(); });
     parent.append(this.dialog);
   }
   get isOpen(): boolean { return this.dialog.open; }
@@ -61,14 +63,21 @@ export class ManualProcessesDialog {
   open(worker: string | null, from?: HTMLElement | null): void {
     this.worker = worker;
     this.returnTo = from ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
-    this.view = 'list'; this.status.textContent = '';
+    this.viewGeneration++; this.detach(); this.view = 'list'; this.status.textContent = '';
     this.renderList();
     if (!this.dialog.open) this.dialog.showModal();
     this.host.changed();
   }
   close(): void { if (this.dialog.open) this.dialog.close(); }
-  refresh(force = false): void { if (this.isOpen && this.view === 'list' && (force || this.listVersion !== this.host.store.manualProcesses.version)) this.renderList(); }
-  private list(): void { this.detach(); this.view = 'list'; this.status.textContent = ''; this.renderList(); }
+  refresh(force = false): void {
+    if (!this.isOpen) return;
+    if (this.view === 'list' && (force || this.listVersion !== this.host.store.manualProcesses.version)) this.renderList();
+    if (this.view === 'terminal' && this.terminalId) {
+      const p = this.host.store.manualProcesses.get(this.terminalId.slice(3));
+      if (p) this.updateTerminalState(p);
+    }
+  }
+  private list(): void { this.viewGeneration++; this.detach(); this.view = 'list'; this.status.textContent = ''; this.renderList(); }
   private renderList(): void {
     this.title.textContent = this.worker ? 'Manual processes' : 'All manual processes';
     const records = this.host.store.manualProcesses.all().filter((p) => !this.worker || p.worker === this.worker).sort((a, b) => b.created_at - a.created_at);
@@ -102,15 +111,17 @@ export class ManualProcessesDialog {
   }
   private async action(t: 'manual_process.stop' | 'manual_process.dismiss', id: string): Promise<void> {
     if (this.busy.has(id)) return;
+    const generation = this.viewGeneration;
     this.busy.add(id); this.refresh(true);
     const r = await this.host.send(t, { id });
     this.busy.delete(id);
-    this.status.textContent = r.ok ? '' : failureText(t, r.code, r.message);
+    if (this.isOpen && this.viewGeneration === generation) this.status.textContent = r.ok ? '' : failureText(t, r.code, r.message);
     this.refresh(true);
   }
   entry(worker: string, command = '', cwd?: string): void {
     if (!this.isOpen) this.open(worker);
-    this.worker = worker; this.view = 'entry'; this.entryOp = ''; this.entrySpec = ''; this.title.textContent = 'Run a command'; this.status.textContent = '';
+    const generation = ++this.viewGeneration;
+    this.detach(); this.worker = worker; this.view = 'entry'; this.entryOp = ''; this.entrySpec = ''; this.title.textContent = 'Run a command'; this.status.textContent = '';
     const field = h('textarea', { class: 'mp-command-input', rows: 5, 'aria-label': 'Command', spellcheck: 'false' }); field.value = command;
     const folder = h('input', { type: 'text', 'aria-label': 'Folder' }); folder.value = cwd ?? this.host.store.workers.get(worker)?.cwd ?? '';
     const check = h('input', { type: 'checkbox', checked: true });
@@ -124,22 +135,27 @@ export class ManualProcessesDialog {
       if (spec !== this.entrySpec) { this.entrySpec = spec; this.entryOp = newManualOp(); }
       run.disabled = true;
       const r = await this.host.send('manual_process.start', { op: this.entryOp, worker, command: field.value, ...(folder.value ? { cwd: folder.value } : {}), source: { kind: 'manual' }, askpass: !option.hidden && check.checked });
+      if (!this.isOpen || this.viewGeneration !== generation) return;
       run.disabled = false;
       if (r.ok) this.list();
       else if ((r.code === 'bad_args' || r.code === 'bad_request') && !option.hidden && check.checked) { check.checked = false; update(); this.status.textContent = `${r.message} You can run without the password dialog.`; }
       else this.status.textContent = r.code === 'stale' ? 'This request is out of date.' : failureText('manual_process.start', r.code, r.message);
     } }, 'Run');
-    this.body.replaceChildren(h('label', {}, 'Command', field), h('label', {}, 'Folder', folder), option, preview, h('div', { class: 'mp-actions' }, h('button', { class: 'btn', onclick: () => this.list() }, 'Back'), run));
+    this.body.replaceChildren(h('p', {}, `Machine: ${this.host.store.host || 'Bridge host'}`), h('label', {}, 'Command', field), h('label', {}, 'Folder', folder), option, preview, h('div', { class: 'mp-actions' }, h('button', { class: 'btn', onclick: () => this.list() }, 'Back'), run));
     field.focus();
   }
   private async openTerminal(p: ManualProcess): Promise<void> {
-    this.detach(); this.view = 'terminal'; this.title.textContent = p.title; this.status.textContent = '';
+    this.viewGeneration++; this.detach(); this.view = 'terminal'; this.title.textContent = p.title; this.status.textContent = '';
     const id = `mp:${p.id}`; this.terminalId = id;
     const generation = ++this.terminalGeneration;
     const current = () => this.terminalId === id && this.terminalGeneration === generation;
     const screen = h('div', { class: 'mp-terminal', 'aria-label': 'Process terminal' });
     const input = h('textarea', { class: 'mp-terminal-input', 'aria-label': 'Terminal input', autocapitalize: 'off', autocomplete: 'off', spellcheck: 'false', rows: 1 }); this.terminalInput = input;
-    this.body.replaceChildren(h('p', {}, `${p.host} · ${p.state}`), screen, input, h('p', {}, 'Closing this view does not stop the process.'), h('button', { class: 'btn', onclick: () => this.list() }, 'Back to processes'));
+    const state = h('p', { 'aria-live': 'polite' }); this.terminalStateLabel = state;
+    this.updateTerminalState(p);
+    const back = h('button', { class: 'btn', onclick: () => this.list() }, 'Back to processes');
+    this.body.replaceChildren(state, screen, input, h('p', {}, 'Ctrl Esc releases the keyboard to Back. Tab and Esc are sent to the process.'), h('p', {}, 'Closing this view does not stop the process.'), back);
+    input.focus();
     let inputQueue = Promise.resolve();
     const sendText = (text: string) => {
       let part = ''; let bytes = 0;
@@ -164,6 +180,7 @@ export class ManualProcessesDialog {
     });
     input.addEventListener('keydown', (e) => {
       if (e.isComposing) return;
+      if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); back.focus(); return; }
       // In this modal Ctrl+P belongs to the process, not the game's palette.
       if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); sendText('\x10'); return; }
       const key = seatedKey(e, /Mac/.test(navigator.platform));
@@ -182,7 +199,11 @@ export class ManualProcessesDialog {
     watched = r.ok;
     if (!r.ok) this.status.textContent = failureText('terminal.watch', r.code, r.message);
     else { const gridNow = term.grid; if (gridNow) void this.host.watch('terminal.resize', { id, cols: gridNow.cols, rows: gridNow.rows }); }
-    input.focus();
+  }
+  private updateTerminalState(p: ManualProcess): void {
+    if (!this.terminalStateLabel) return;
+    const result = p.state === 'exited' ? `Exited${p.exit_code !== undefined ? ` with code ${p.exit_code}` : ''} — output stays until you dismiss it` : p.state;
+    this.terminalStateLabel.textContent = `${p.host} · ${result} · Cleanup: ${p.cleanup}${p.cleanup_note ? ` — ${p.cleanup_note}` : ''}${p.error ? ` — ${p.error}` : ''}`;
   }
   onConn(m: ConnMessage): boolean {
     if (!('id' in m) || typeof m.id !== 'string' || !m.id.startsWith('mp:')) return false;
@@ -196,7 +217,7 @@ export class ManualProcessesDialog {
   }
   reconnect(): void { const p = this.terminalId && this.host.store.manualProcesses.get(this.terminalId.slice(3)); if (p && this.isOpen) void this.openTerminal(p); }
   private detach(): void {
-    const id = this.terminalId; this.terminalId = null; this.terminalInput = null; this.terminalGeneration++;
+    const id = this.terminalId; this.terminalId = null; this.terminalInput = null; this.terminalStateLabel = null; this.terminalGeneration++;
     this.terminal?.dispose(); this.terminal = null;
     if (id) void this.host.watch('terminal.unwatch', { id });
   }

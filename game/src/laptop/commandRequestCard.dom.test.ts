@@ -22,13 +22,13 @@ describe('command request card', () => {
     expect(start.mock.calls[0]![0].op).toBe(start.mock.calls[1]![0].op);
     expect(start.mock.calls[1]![0]).toMatchObject({ askpass: false, source: { kind: 'suggestion', key: 'turn', index: 0 } });
   });
-  it('disables run for another machine and opens explicit manual editing', () => {
+  it('disables run and editing for another machine', () => {
     const edit = vi.fn();
     const card = new CommandRequestCard({ worker: 'w', host: () => 'host', start: vi.fn(), dismiss: vi.fn(), edit });
     card.set({ ...req, commands: [{ ...req.commands[0]!, host: 'other', host_text: 'build machine' }] });
     expect(button(card.el, 'Run').disabled).toBe(true);
     expect(card.el.textContent).toContain('The agent asked to run this on build machine');
-    button(card.el, 'Edit and run…').click();
-    expect(edit).toHaveBeenCalledWith(req.commands[0]!.command, '/work');
+    expect(button(card.el, 'Edit and run…')).toBeUndefined();
+    expect(edit).not.toHaveBeenCalled();
   });
 });

@@ -48,6 +48,38 @@ describe('manual process list', () => {
     expect(send.mock.calls[0]![1]).toMatchObject({ worker: 'w', command: 'echo ok', cwd: '/work', source: { kind: 'manual' } });
     expect(send.mock.calls[0]![1].op).toBe(send.mock.calls[1]![1].op);
   });
+  it('keeps a newer unsent entry when an earlier start completes', async () => {
+    let finish!: (result: { ok: true; data: object }) => void;
+    const send = vi.fn(() => new Promise<{ ok: true; data: object }>((resolve) => { finish = resolve; }));
+    const store = new WorldStore(); store.host = 'fixture-bridge';
+    store.workers.set('w', { id: 'w', name: 'Worker', cwd: '/tmp' } as never);
+    const dlg = new ManualProcessesDialog(document.body, { store, send, input: vi.fn(), watch: vi.fn(), changed: vi.fn(), external: vi.fn() });
+    dlg.entry('w', 'first command'); button('Run').click(); button('Back').click(); button('Run a command…').click();
+    const field = document.querySelector<HTMLTextAreaElement>('.mp-command-input')!; field.value = 'second unsent command';
+    finish({ ok: true, data: {} }); await Promise.resolve(); await Promise.resolve();
+    expect(document.querySelector('.mp-command-input')).toBe(field);
+    expect(field.value).toBe('second unsent command');
+    expect(document.body.textContent).toContain('Machine: fixture-bridge');
+  });
+  it('ignores a start response after closing and reopening the dialog', async () => {
+    let finish!: (result: { ok: true; data: object }) => void;
+    const send = vi.fn(() => new Promise<{ ok: true; data: object }>((resolve) => { finish = resolve; }));
+    const store = new WorldStore(); store.workers.set('w', { id: 'w', name: 'Worker' } as never);
+    const dlg = new ManualProcessesDialog(document.body, { store, send, input: vi.fn(), watch: vi.fn(), changed: vi.fn(), external: vi.fn() });
+    dlg.entry('w', 'first'); button('Run').click(); dlg.close(); dlg.entry('w', 'new');
+    finish({ ok: true, data: {} }); await Promise.resolve(); await Promise.resolve();
+    expect(document.querySelector<HTMLTextAreaElement>('.mp-command-input')?.value).toBe('new');
+  });
+  it('does not show an old stop failure in a newer entry', async () => {
+    let finish!: (result: { ok: false; code: string; message: string }) => void;
+    const send = vi.fn(() => new Promise<{ ok: false; code: string; message: string }>((resolve) => { finish = resolve; }));
+    const store = new WorldStore(); store.manualProcesses.reset([p]); store.workers.set('w', { id: 'w', name: 'Worker' } as never);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const dlg = new ManualProcessesDialog(document.body, { store, send, input: vi.fn(), watch: vi.fn(), changed: vi.fn(), external: vi.fn() });
+    dlg.open('w'); button('Stop').click(); button('Run a command…').click();
+    finish({ ok: false, code: 'error', message: 'old failure' }); await Promise.resolve(); await Promise.resolve();
+    expect(document.body.textContent).not.toContain('old failure'); vi.restoreAllMocks();
+  });
   it('generates usable operation IDs without randomUUID', () => {
     vi.spyOn(crypto, 'randomUUID').mockImplementation(() => { throw new Error('unavailable'); });
     expect(newManualOp()).toMatch(/^mp-[a-z0-9]{20}$/);
