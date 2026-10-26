@@ -6,12 +6,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // ReadSurvivors returns identities reported by an earlier cleanup. A missing
 // file means no identity has yet been approved for a retry.
 func ReadSurvivors(dir string) ([]Identity, error) {
-	b, err := os.ReadFile(filepath.Join(dir, "survivors.json"))
+	return readIdentities(dir, "survivors.json")
+}
+
+func readIdentities(dir, name string) ([]Identity, error) {
+	b, err := os.ReadFile(filepath.Join(dir, name))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -33,7 +38,11 @@ func ReadSurvivors(dir string) ([]Identity, error) {
 // RecordSurvivors preserves still-live prior identities and adds newly seen
 // tagged processes. They can only be signalled by a later explicit Stop.
 func RecordSurvivors(dir string, current []Identity) error {
-	previous, err := ReadSurvivors(dir)
+	return recordIdentities(dir, "survivors.json", current)
+}
+
+func recordIdentities(dir, name string, current []Identity) error {
+	previous, err := readIdentities(dir, name)
 	if err != nil {
 		return err
 	}
@@ -59,7 +68,7 @@ func RecordSurvivors(dir string, current []Identity) error {
 		}
 	}
 	if len(ids) == 0 {
-		if err := os.Remove(filepath.Join(dir, "survivors.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 		return nil
@@ -84,5 +93,38 @@ func RecordSurvivors(dir string, current []Identity) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), filepath.Join(dir, "survivors.json"))
+	return os.Rename(f.Name(), filepath.Join(dir, name))
+}
+
+// GroupSurvivors records group members only while the launcher identity is
+// verified, and subsequently returns only those exact still-live identities.
+func GroupSurvivors(dir string, status Status) ([]Identity, error) {
+	alive, err := CheckIdentity(status.PID, status.StartTicks)
+	if err != nil {
+		return nil, err
+	}
+	var members []Identity
+	if alive && status.PGID > 1 {
+		pgid, err := syscall.Getpgid(status.PID)
+		if err != nil && !errors.Is(err, syscall.ESRCH) {
+			return nil, err
+		}
+		if err == nil && pgid == status.PGID {
+			members, err = GroupProcesses(status.PGID)
+			if err != nil {
+				return nil, err
+			}
+			alive, err = CheckIdentity(status.PID, status.StartTicks)
+			if err != nil {
+				return nil, err
+			}
+			if !alive {
+				members = nil
+			}
+		}
+	}
+	if err := recordIdentities(dir, "group.json", members); err != nil {
+		return nil, err
+	}
+	return readIdentities(dir, "group.json")
 }

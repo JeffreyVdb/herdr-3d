@@ -649,7 +649,10 @@ func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone, ret
 		if err != nil {
 			cleanupErr = err
 		} else if alive {
-			cleanupErr = manual.StopGroup(ctx, status, 3*time.Second)
+			_, cleanupErr = manual.GroupSurvivors(dir, status)
+			if cleanupErr == nil {
+				cleanupErr = manual.StopGroup(ctx, status, 3*time.Second)
+			}
 		}
 		if cleanupErr == nil {
 			alive, err = manual.CheckIdentity(status.PID, status.StartTicks)
@@ -666,7 +669,7 @@ func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone, ret
 	}
 	var group []manual.Identity
 	if statusErr == nil && status.PGID > 1 {
-		group, err = manual.GroupProcesses(status.PGID)
+		group, err = manual.GroupSurvivors(dir, status)
 		if err != nil {
 			cleanupErr = err
 			verified = false
@@ -784,7 +787,7 @@ func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone, ret
 		verified = false
 	}
 	if statusErr == nil && status.PGID > 1 {
-		group, err = manual.GroupProcesses(status.PGID)
+		group, err = manual.GroupSurvivors(dir, status)
 		if err != nil {
 			cleanupErr = err
 			verified = false
@@ -930,6 +933,9 @@ func (h *Hub) pollManualProcesses(ctx context.Context) {
 				}
 			}
 			status, statusErr := manual.ReadStatus(filepath.Join(h.opts.ManualDir, p.ID))
+			if statusErr == nil {
+				_, statusErr = manual.GroupSurvivors(filepath.Join(h.opts.ManualDir, p.ID), status)
+			}
 			if p.State == "stopping" {
 				_, _, _ = h.cleanupManual(ctx, p.ID, "resumed interrupted stop", known && !present, false)
 				e.lock.Unlock()
@@ -982,7 +988,7 @@ func (h *Hub) pollManualProcesses(ctx context.Context) {
 						}
 					}
 					if status.PGID > 1 {
-						group, err := manual.GroupProcesses(status.PGID)
+						group, err := manual.GroupSurvivors(filepath.Join(h.opts.ManualDir, p.ID), status)
 						if err != nil {
 							scanErr = err
 						} else {
@@ -1130,7 +1136,7 @@ func (h *Hub) stopManualForOwner(ctx context.Context, worker, reason string) (st
 		}
 		status, err := manual.ReadStatus(dir)
 		if err == nil && status.PGID > 1 {
-			group, gerr := manual.GroupProcesses(status.PGID)
+			group, gerr := manual.GroupSurvivors(dir, status)
 			if gerr != nil || len(group) > 0 {
 				return item.title, fmt.Errorf("owned process group could not be verified stopped")
 			}
@@ -1432,7 +1438,7 @@ func (h *Hub) finishEffectCleanup(ctx context.Context, child proto.ManualProcess
 		}
 	}
 	if status, err := manual.ReadStatus(filepath.Join(h.opts.ManualDir, link.Parent)); err == nil && status.PGID > 1 {
-		group, err := manual.GroupProcesses(status.PGID)
+		group, err := manual.GroupSurvivors(filepath.Join(h.opts.ManualDir, link.Parent), status)
 		if err != nil {
 			scanErr = err
 		} else {

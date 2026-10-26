@@ -1048,3 +1048,35 @@ func TestManualStopQueuedDuringSleepDoesNotKillNewSurvivor(t *testing.T) {
 		t.Fatalf("explicit retry: %+v", result)
 	}
 }
+func TestReviewReusedProcessGroupDoesNotBecomeOwned(t *testing.T) {
+	unrelated := exec.Command("sleep", "120")
+	unrelated.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := unrelated.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unrelated.Process.Kill(); _ = unrelated.Wait() }()
+	ticks, err := manual.StartTicks(unrelated.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeManual{onLaunch: func(dir string) error {
+		// A stored launcher PID/PGID has been reused by an unrelated process.
+		return manual.WriteStatus(dir, manual.Status{PID: unrelated.Process.Pid, StartTicks: ticks + 1, PGID: unrelated.Process.Pid, StartedAt: 1})
+	}}
+	dir := t.TempDir()
+	tb := startTermBridge(t, func(o *server.Options) {
+		o.Manual = fake
+		o.ManualDir = dir
+		o.ManualShell = "/bin/bash"
+		o.ManualNoNewPrivs = func(context.Context, string) (bool, error) { return false, nil }
+	}, worker("w1", "notes", "", "idle"))
+	c := tb.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	_, m := c.command(proto.CmdManualProcessStart, "start", proto.ManualProcessStartArgs{Op: "reused-group", Worker: id, Cwd: dir, Command: "echo fixture"})
+	p := ackData[proto.ManualProcessResult](t, m).Process
+	_, m = c.command(proto.CmdManualProcessStop, "stop", proto.ManualProcessIDArgs{ID: p.ID})
+	stopped := ackData[proto.ManualProcessResult](t, m).Process
+	if stopped.Cleanup != "done" {
+		t.Fatalf("unrelated reused process group falsely owned: state=%s cleanup=%s note=%s", stopped.State, stopped.Cleanup, stopped.CleanupNote)
+	}
+}
