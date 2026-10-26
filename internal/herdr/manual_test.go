@@ -41,7 +41,7 @@ func TestManualControlValidation(t *testing.T) {
 			t.Errorf("accepted label %q", label)
 		}
 	}
-	for _, tab := range []string{"w1:t1;bad", "--all", "w1/t1", ""} {
+	for _, tab := range []string{"w1:t1;bad", "--all", "w1/t1", "w1:p1", ""} {
 		if _, err := c.argv(opTabClose, map[string]string{"session": "test", "tab": tab}); !errors.Is(err, ErrNotAllowed) {
 			t.Errorf("tab %q: %v", tab, err)
 		}

@@ -304,6 +304,7 @@ var controlShapes = map[string][]string{
 var (
 	sessionNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 	paneIDRe      = regexp.MustCompile(`^[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}$`)
+	tabIDRe       = regexp.MustCompile(`^[A-Za-z0-9]{1,32}:t[A-Za-z0-9]{1,31}$`)
 	agentIDRe     = regexp.MustCompile(`^[A-Za-z0-9-]{1,128}$`)
 	workspaceIDRe = regexp.MustCompile(`^[A-Za-z0-9]{1,32}$`)
 	branchRe      = regexp.MustCompile(`^h3d/[a-z0-9]+(-[a-z0-9]+)*$`)
@@ -328,6 +329,9 @@ func ValidSessionName(name string) bool {
 
 // ValidPaneID reports whether id looks like a herdr pane id ("w1:p2").
 func ValidPaneID(id string) bool { return paneIDRe.MatchString(id) }
+
+// ValidTabID reports whether id looks like a herdr tab id ("w1:t2").
+func ValidTabID(id string) bool { return tabIDRe.MatchString(id) }
 
 // ValidAgentSessionID reports whether id may be resumed or reported: an
 // agent's native session id (a UUID for Claude and Codex).
@@ -545,7 +549,7 @@ func (p *ProcessInfo) Runs(harness, agentSession string) bool {
 var placeholders = map[string]func(string) bool{
 	"session":   ValidSessionName,
 	"pane":      ValidPaneID,
-	"tab":       ValidPaneID,
+	"tab":       ValidTabID,
 	"mpdir":     ValidDir,
 	"id":        ValidAgentSessionID,
 	"home":      validHome,
