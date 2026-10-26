@@ -37,6 +37,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/imgcache"
 	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
+	"github.com/JeffreyVdb/herdr-3d/internal/manual"
 	"github.com/JeffreyVdb/herdr-3d/internal/notify"
 	"github.com/JeffreyVdb/herdr-3d/internal/notify/telegram"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -290,6 +291,12 @@ func World(name string, args []string, stdout, stderr io.Writer) int {
 	defer stop()
 	var err error
 	switch sub {
+	case "manual-launch":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "manual-launch requires a directory")
+			return 2
+		}
+		err = manual.Launch(args[0], stdout)
 	case "serve":
 		err = serveMain(ctx, name, args, stdout, stderr)
 	case "dump":

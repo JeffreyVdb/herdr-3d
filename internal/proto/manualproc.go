@@ -8,10 +8,6 @@ const (
 	EvManualProcessRemoved  = "manual_process.removed"
 )
 
-func init() {
-	Commands = append(Commands, CmdManualProcessStart, CmdManualProcessStop, CmdManualProcessDismiss)
-}
-
 type ManualSource struct {
 	Kind  string `json:"kind"`
 	Key   string `json:"key,omitempty"`
