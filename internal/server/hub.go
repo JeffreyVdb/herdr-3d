@@ -432,6 +432,8 @@ const (
 // blocks on a client: a client that cannot keep up is dropped.
 type Hub struct {
 	manualProcesses map[string]proto.ManualProcess
+	manualOrder     map[string]uint64
+	manualNext      uint64
 	manualLocks     map[string]*sync.Mutex
 	manualPolling   bool
 	manualCleanups  map[string]manualCleanupLink
@@ -735,6 +737,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	h := &Hub{
 		opts:            opts,
 		manualProcesses: map[string]proto.ManualProcess{},
+		manualOrder:     map[string]uint64{},
 		manualLocks:     map[string]*sync.Mutex{},
 		manualCleanups:  map[string]manualCleanupLink{},
 		log:             opts.Log,

@@ -52,8 +52,9 @@ func (h *Hub) initManualProcesses(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for _, record := range records {
-		p := manualFromStore(record)
+	for i := len(records) - 1; i >= 0; i-- {
+		p := manualFromStore(records[i])
+		h.rememberManualOrder(p.ID)
 		h.manualProcesses[p.ID] = p
 		h.manualLocks[p.ID] = &sync.Mutex{}
 		b, err := os.ReadFile(filepath.Join(h.opts.ManualDir, p.ID, "cleanup-parent.json"))
@@ -67,6 +68,12 @@ func (h *Hub) initManualProcesses(ctx context.Context) error {
 	return nil
 }
 
+// Creation order disambiguates records sharing the same millisecond.
+func (h *Hub) rememberManualOrder(id string) {
+	h.manualNext++
+	h.manualOrder[id] = h.manualNext
+}
+
 func (h *Hub) manualProcessViews() []proto.ManualProcess {
 	all := make([]proto.ManualProcess, 0, len(h.manualProcesses))
 	for _, p := range h.manualProcesses {
@@ -74,7 +81,7 @@ func (h *Hub) manualProcessViews() []proto.ManualProcess {
 	}
 	sort.Slice(all, func(i, j int) bool {
 		if all[i].CreatedAt == all[j].CreatedAt {
-			return all[i].ID > all[j].ID
+			return h.manualOrder[all[i].ID] > h.manualOrder[all[j].ID]
 		}
 		return all[i].CreatedAt > all[j].CreatedAt
 	})
@@ -152,6 +159,21 @@ func manualTitle(command string, max int) string {
 		return string(r[:limit]) + "…"
 	}
 	return string(r[:limit])
+}
+
+func manualEffectsConflict(a, b proto.ManualEffect) bool {
+	if a.Kind != b.Kind {
+		return false
+	}
+	if a.Endpoint == b.Endpoint {
+		return true
+	}
+	if a.Kind != "tailscale_serve" {
+		return false
+	}
+	_, ap, okA := strings.Cut(a.Endpoint, ":")
+	_, bp, okB := strings.Cut(b.Endpoint, ":")
+	return okA && okB && ap != "" && ap == bp
 }
 
 // backgroundServe recognizes the supported top-level CLI form when the
@@ -320,7 +342,7 @@ func (h *Hub) startManualProcess(ctx context.Context, c *Client, cmd proto.Comma
 					effect.State = "unknown"
 					for _, other := range h.manualProcesses {
 						for _, owned := range other.Effects {
-							if owned.Endpoint == effect.Endpoint && (owned.State == "active" || owned.State == "unknown") {
+							if manualEffectsConflict(owned, effect) && (owned.State == "active" || owned.State == "unknown") {
 								effect.State = "conflict"
 								p.State = "failed"
 								p.Error = effect.Endpoint + " is already served by another manual process"
@@ -339,6 +361,7 @@ func (h *Hub) startManualProcess(ctx context.Context, c *Client, cmd proto.Comma
 				return reservation{p: manualFromStore(saved)}
 			}
 			h.manualProcesses[p.ID] = p
+			h.rememberManualOrder(p.ID)
 			lock := newLock
 			h.manualLocks[p.ID] = lock
 			h.emit(proto.Event{T: proto.EvManualProcessUpsert, Process: &p})
@@ -521,6 +544,7 @@ func (h *Hub) dismissManualCommand(ctx context.Context, c *Client, cmd proto.Com
 				return err
 			}
 			delete(h.manualProcesses, a.ID)
+			delete(h.manualOrder, a.ID)
 			h.emit(proto.Event{T: proto.EvManualProcessRemoved, ID: a.ID})
 			return nil
 		})
@@ -857,8 +881,13 @@ func (h *Hub) pollManualProcesses(ctx context.Context) {
 					}
 					for _, effect := range p.Effects {
 						if effect.State == "active" || effect.State == "unknown" {
-							p.Cleanup = "needed"
-							p.CleanupNote = "external effect " + effect.Endpoint + " still needs cleanup"
+							note := "external effect " + effect.Endpoint + " still needs cleanup"
+							if p.Cleanup == "failed" || (p.Cleanup == "needed" && p.CleanupNote != "") {
+								p.CleanupNote += "; " + note
+							} else {
+								p.Cleanup = "needed"
+								p.CleanupNote = note
+							}
 						}
 					}
 				} else if derived == "running" {
@@ -1161,6 +1190,7 @@ func (h *Hub) startEffectCleanup(ctx context.Context, parent proto.ManualProcess
 			return err
 		}
 		h.manualProcesses[child.ID] = child
+		h.rememberManualOrder(child.ID)
 		h.manualLocks[child.ID] = childLock
 		h.manualCleanups[child.ID] = link
 		h.emit(proto.Event{T: proto.EvManualProcessUpsert, Process: &child})
@@ -1212,6 +1242,24 @@ func (h *Hub) finishEffectCleanup(ctx context.Context, child proto.ManualProcess
 			workspaceClosed = true
 		}
 	}
+	remaining, scanErr := manual.TaggedProcesses(link.Parent)
+	if status, err := manual.ReadStatus(filepath.Join(h.opts.ManualDir, link.Parent)); err == nil && status.PGID > 1 {
+		group, err := manual.GroupProcesses(status.PGID)
+		if err != nil {
+			scanErr = err
+		} else {
+			seen := map[int]bool{}
+			for _, v := range remaining {
+				seen[v.PID] = true
+			}
+			for _, v := range group {
+				if !seen[v.PID] {
+					remaining = append(remaining, v)
+					seen[v.PID] = true
+				}
+			}
+		}
+	}
 	updated, err := query(ctx, h, func() bool {
 		parent, ok := h.manualProcesses[link.Parent]
 		if !ok {
@@ -1239,6 +1287,19 @@ func (h *Hub) finishEffectCleanup(ctx context.Context, child proto.ManualProcess
 		} else {
 			parent.Cleanup = "failed"
 			parent.CleanupNote = note
+		}
+		if scanErr != nil {
+			parent.Cleanup = "failed"
+			parent.CleanupNote += "; cannot check descendants: " + scanErr.Error()
+		} else if len(remaining) > 0 {
+			ids := make([]string, 0, len(remaining))
+			for _, v := range remaining {
+				ids = append(ids, fmt.Sprint(v.PID))
+			}
+			if parent.Cleanup != "failed" {
+				parent.Cleanup = "needed"
+			}
+			parent.CleanupNote += "; processes remain: " + strings.Join(ids, ", ")
 		}
 		if current := h.manualProcesses[parent.ID]; !reflect.DeepEqual(current, parent) {
 			if err := h.saveManual(ctx, parent); err != nil {
