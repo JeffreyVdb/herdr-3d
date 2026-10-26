@@ -2,10 +2,12 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/manual"
@@ -21,11 +23,11 @@ type fakeManual struct {
 	onLaunch          func(string) error
 }
 
-func (f *fakeManual) CreateManualTab(_ context.Context, _, _, _, _ string) (herdr.ManualTab, error) {
+func (f *fakeManual) CreateManualTab(_ context.Context, _, workspace, _, _ string) (herdr.ManualTab, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.creates++
-	return herdr.ManualTab{TabID: "w1:t2", PaneID: "w1:p2"}, nil
+	return herdr.ManualTab{TabID: workspace + ":t2", PaneID: workspace + ":p2"}, nil
 }
 func (f *fakeManual) CloseManualTab(_ context.Context, _, tab string) error {
 	f.mu.Lock()
@@ -203,6 +205,11 @@ func TestManualSendHomeRefusesUnverifiedProcess(t *testing.T) {
 	if calls := hb.fl.Calls(); len(calls) != 0 {
 		t.Fatalf("agent/workspace touched: %v", calls)
 	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.closed) != 0 {
+		t.Fatalf("manual tab closed: %v", fake.closed)
+	}
 }
 
 func TestManualSleepStopsAndWakeClosesRestoredTabs(t *testing.T) {
@@ -345,4 +352,120 @@ func TestManualAskpassRequiresAdapter(t *testing.T) {
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
 	c.mustError(proto.CmdManualProcessStart, proto.ManualProcessStartArgs{Op: "askpass", Worker: id, Cwd: dir, Command: "sudo id", Askpass: true}, proto.ErrManualBadArgs)
+}
+
+func TestManualEffectCleanupAfterOwnerGone(t *testing.T) {
+	manual.Effects = fakeEffects{}
+	t.Cleanup(func() { manual.Effects = nil })
+	fake := &fakeManual{}
+	dir := t.TempDir()
+	hb := startHireBridge(t, func(o *server.Options) {
+		o.Manual = fake
+		o.ManualDir = dir
+		o.ManualShell = "/bin/bash"
+		o.ManualNoNewPrivs = func(context.Context, string) (bool, error) { return false, nil }
+		o.ManualEffectStatus = func(context.Context) ([]byte, error) { return []byte(`{}`), nil }
+	}, worker("w1", "notes", "", "idle"))
+	ws := workersOf(hb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 1 }), "s")
+	_, m := hb.c.command(proto.CmdManualProcessStart, "bg-owner", proto.ManualProcessStartArgs{Op: "bg-owner", Worker: ws["w1"].ID, Cwd: dir, Command: "tailscale serve --bg --https=8443 http://127.0.0.1:9999"})
+	parent := ackData[proto.ManualProcessResult](t, m).Process
+	zero := 0
+	if err := manual.WriteStatus(filepath.Join(dir, parent.ID), manual.Status{PID: 99999999, StartTicks: 123, ExitCode: &zero, EndedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	hb.world(func(w proto.World) bool {
+		for _, p := range w.ManualProcesses {
+			if p.ID == parent.ID {
+				return p.State == "exited" && p.Cleanup == "needed"
+			}
+		}
+		return false
+	})
+	hb.fl.close("w1")
+	hb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 0 })
+	_, m = hb.c.command(proto.CmdManualProcessStop, "cleanup-gone", proto.ManualProcessIDArgs{ID: parent.ID})
+	result := ackData[proto.ManualProcessResult](t, m).Process
+	if result.Cleanup != "needed" {
+		t.Fatalf("cleanup: %+v", result)
+	}
+	var child proto.ManualProcess
+	hb.world(func(w proto.World) bool {
+		for _, p := range w.ManualProcesses {
+			if p.ID != parent.ID && strings.HasPrefix(p.Op, "cleanup_") {
+				child = p
+				return true
+			}
+		}
+		return false
+	})
+	if child.WorkspaceID == parent.WorkspaceID {
+		t.Fatalf("cleanup reused vanished workspace: %+v", child)
+	}
+	if err := manual.WriteStatus(filepath.Join(dir, child.ID), manual.Status{PID: 99999998, StartTicks: 124, ExitCode: &zero, EndedAt: 2}); err != nil {
+		t.Fatal(err)
+	}
+	hb.world(func(w proto.World) bool {
+		for _, p := range w.ManualProcesses {
+			if p.ID == parent.ID {
+				return p.Cleanup == "done"
+			}
+		}
+		return false
+	})
+	calls := strings.Join(hb.fl.Calls(), "\n")
+	if !strings.Contains(calls, "manual cleanup") || !strings.Contains(calls, "close "+child.WorkspaceID) {
+		t.Fatalf("cleanup workspace calls: %s", calls)
+	}
+}
+
+func TestManualBackgroundServeNeedsAdapter(t *testing.T) {
+	fake := &fakeManual{}
+	dir := t.TempDir()
+	tb := startTermBridge(t, func(o *server.Options) { o.Manual = fake; o.ManualDir = dir; o.ManualShell = "/bin/bash" }, worker("w1", "agent", "", "idle"))
+	c := tb.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	c.mustError(proto.CmdManualProcessStart, proto.ManualProcessStartArgs{Op: "bg-unavailable", Worker: id, Cwd: dir, Command: "sudo tailscale serve --bg --https=8443 http://127.0.0.1:1"}, proto.ErrUnsupported)
+}
+
+func TestManualConcurrentOpDoesNotLaunchTwice(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	defer once.Do(func() { close(release) })
+	fake := &fakeManual{onLaunch: func(string) error { close(entered); <-release; return nil }}
+	dir := t.TempDir()
+	tb := startTermBridge(t, func(o *server.Options) {
+		o.Manual = fake
+		o.ManualDir = dir
+		o.ManualShell = "/bin/bash"
+		o.ManualNoNewPrivs = func(context.Context, string) (bool, error) { return false, nil }
+	}, worker("w1", "agent", "", "idle"))
+	first := tb.connect(proto.Hello{})
+	id := idOf(t, first.snapshot(), "w1")
+	second := tb.connect(proto.Hello{})
+	second.snapshot()
+	args := proto.ManualProcessStartArgs{Op: "simultaneous", Worker: id, Cwd: dir, Command: "echo once"}
+	raw, _ := json.Marshal(args)
+	first.send(proto.Command{T: proto.CmdManualProcessStart, ReqID: "first", Args: raw})
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("launch did not begin")
+	}
+	_, m := second.command(proto.CmdManualProcessStart, "second", args)
+	secondResult := ackData[proto.ManualProcessResult](t, m).Process
+	once.Do(func() { close(release) })
+	for {
+		m = first.next()
+		if m.env.ReqID == "first" {
+			break
+		}
+	}
+	firstResult := ackData[proto.ManualProcessResult](t, m).Process
+	fake.mu.Lock()
+	calls := fake.launches
+	fake.mu.Unlock()
+	if firstResult.ID != secondResult.ID || calls != 1 {
+		t.Fatalf("results: %s %s, launches %d", firstResult.ID, secondResult.ID, calls)
+	}
 }

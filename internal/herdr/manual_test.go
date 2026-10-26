@@ -54,3 +54,13 @@ func TestManualControlValidation(t *testing.T) {
 		t.Fatalf("argv: %q", argv)
 	}
 }
+
+func TestManualTabRejectsWrongWorkspaceWithoutEchoingOutput(t *testing.T) {
+	c := &Control{Run: func(context.Context, []string) ([]byte, []byte, error) {
+		return []byte(`{"result":{"tab":{"tab_id":"w2:t2"},"root_pane":{"pane_id":"w2:p2"},"label":"sensitive-command-marker"}}`), nil, nil
+	}}
+	_, err := c.CreateManualTab(context.Background(), "test", "w1", "/work", "safe")
+	if err == nil || strings.Contains(err.Error(), "sensitive-command-marker") {
+		t.Fatalf("error: %v", err)
+	}
+}

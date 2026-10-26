@@ -14,6 +14,7 @@ type Status struct {
 	StartedAt  int64  `json:"started_at"`
 	ExitCode   *int   `json:"exit_code,omitempty"`
 	EndedAt    int64  `json:"ended_at,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 func ReadStatus(dir string) (Status, error) {

@@ -135,6 +135,32 @@ func manualTitle(command string, max int) string {
 	return string(r[:limit])
 }
 
+// backgroundServe recognizes the supported top-level CLI form when the
+// effect adapter is absent or declines a command. Such a command must not run
+// without conflict detection and a scoped cleanup record.
+func backgroundServe(command string) bool {
+	fields := strings.Fields(command)
+	i := 0
+	if i < len(fields) && fields[i] == "sudo" {
+		i++
+		for i < len(fields) && strings.HasPrefix(fields[i], "-") {
+			i++
+		}
+	}
+	if i+1 >= len(fields) || fields[i] != "tailscale" || fields[i+1] != "serve" {
+		return false
+	}
+	if len(fields) > i+2 && fields[len(fields)-1] == "off" {
+		return false
+	}
+	for _, field := range fields[i+2:] {
+		if field == "--bg" {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Hub) startManualCommand(ctx context.Context, c *Client, cmd proto.Command) error {
 	switch cmd.T {
 	case proto.CmdManualProcessStart:
@@ -177,6 +203,14 @@ func (h *Hub) startManualProcess(ctx context.Context, c *Client, cmd proto.Comma
 	}
 	if a.Command == "" || len(a.Command) > 8192 || !utf8.ValidString(a.Command) || strings.ContainsRune(a.Command, 0) {
 		return bad("command must be valid UTF-8, nonempty and at most 8 KiB")
+	}
+	if backgroundServe(a.Command) {
+		if manual.Effects == nil {
+			return &codedError{proto.ErrUnsupported, fmt.Errorf("background Tailscale Serve cleanup is unavailable")}
+		}
+		if _, ok := manual.Effects.Parse(a.Command); !ok {
+			return bad("this background Tailscale Serve command is not supported")
+		}
 	}
 	cwd := a.Cwd
 	if cwd == "" {
@@ -310,6 +344,7 @@ func (h *Hub) startManualProcess(ctx context.Context, c *Client, cmd proto.Comma
 }
 
 func (h *Hub) launchManualProcess(ctx context.Context, p proto.ManualProcess, socket string, askpass, isCleanup bool) proto.ManualProcess {
+	p.Effects = append([]proto.ManualEffect(nil), p.Effects...)
 	launchAttempted := false
 	fail := func(err error) proto.ManualProcess {
 		if !launchAttempted {
@@ -391,7 +426,7 @@ func (h *Hub) launchManualProcess(ctx context.Context, p proto.ManualProcess, so
 	}
 	tab, err := h.opts.Manual.CreateManualTab(ctx, p.Session, p.WorkspaceID, p.Cwd, "⚙ "+manualTitle(p.Command, 40))
 	if err != nil {
-		return fail(err)
+		return fail(fmt.Errorf("could not create the manual tab"))
 	}
 	p.TabID, p.PaneID = tab.TabID, tab.PaneID
 	if err := h.publishManual(ctx, p); err != nil {
@@ -455,8 +490,19 @@ func (h *Hub) dismissManualCommand(ctx context.Context, c *Client, cmd proto.Com
 		if !manual.Terminal(current.State) || (current.Cleanup != "none" && current.Cleanup != "done") {
 			return nil, fmt.Errorf("%w: process still needs cleanup", errInvalidState)
 		}
-		if current.TabID != "" && h.opts.Manual != nil {
-			_ = h.opts.Manual.CloseManualTab(ctx, current.Session, current.TabID)
+		if current.TabID != "" {
+			if h.opts.Manual == nil {
+				return nil, fmt.Errorf("%w: manual tab control unavailable", errInvalidState)
+			}
+			known, present := h.manualTabPresent(ctx, current)
+			if !known || present {
+				if err := h.opts.Manual.CloseManualTab(ctx, current.Session, current.TabID); err != nil {
+					afterKnown, afterPresent := h.manualTabPresent(ctx, current)
+					if !afterKnown || afterPresent {
+						return nil, fmt.Errorf("closing manual tab: %w", err)
+					}
+				}
+			}
 		}
 		deleteErr, err := query(ctx, h, func() error {
 			if err := h.st.DeleteManualProcess(ctx, a.ID); err != nil {
@@ -522,6 +568,47 @@ func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone bool
 	if cleanupErr != nil {
 		verified = false
 	}
+	var group []manual.Identity
+	if statusErr == nil && status.PGID > 1 {
+		group, err = manual.GroupProcesses(status.PGID)
+		if err != nil {
+			cleanupErr = err
+			verified = false
+		}
+		if len(group) > 0 && reason == "stopped for send-home" {
+			verified = false
+		}
+	}
+	if reason == "stopped for send-home" {
+		tags, err := manual.TaggedProcesses(p.ID)
+		if err != nil || len(tags) > 0 || len(group) > 0 || !verified {
+			p.Cleanup = "needed"
+			p.CleanupNote = "could not verify that the process stopped"
+			if len(tags) > 0 || len(group) > 0 {
+				tags = append(tags, group...)
+				ids := make([]string, 0, len(tags))
+				for _, item := range tags {
+					ids = append(ids, fmt.Sprint(item.PID))
+				}
+				p.CleanupNote = "processes remain: " + strings.Join(ids, ", ")
+			}
+			if err != nil {
+				p.Cleanup = "failed"
+				p.CleanupNote = err.Error()
+			}
+			if identityGone {
+				p.State = "stopped"
+				p.EndedAt = h.opts.Now().UnixMilli()
+			} else {
+				p.State = "unknown"
+			}
+			p.Error = "could not verify that the process stopped"
+			if err := h.publishManual(ctx, p); err != nil {
+				return p, false, err
+			}
+			return p, false, nil
+		}
+	}
 	if !tabGone && p.TabID != "" && h.opts.Manual != nil {
 		known, present := h.manualTabPresent(ctx, p)
 		if !known || present {
@@ -549,6 +636,23 @@ func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone bool
 	if err != nil {
 		cleanupErr = err
 		verified = false
+	}
+	if statusErr == nil && status.PGID > 1 {
+		group, err = manual.GroupProcesses(status.PGID)
+		if err != nil {
+			cleanupErr = err
+			verified = false
+		}
+	}
+	seen := map[int]bool{}
+	for _, item := range tags {
+		seen[item.PID] = true
+	}
+	for _, item := range group {
+		if !seen[item.PID] {
+			tags = append(tags, item)
+			seen[item.PID] = true
+		}
 	}
 	if len(tags) > 0 {
 		verified = false
@@ -672,16 +776,59 @@ func (h *Hub) pollManualProcesses(ctx context.Context) {
 				e.lock.Unlock()
 				continue
 			}
+			if statusErr == nil && status.ExitCode != nil {
+				alive, identityErr := manual.CheckIdentity(status.PID, status.StartTicks)
+				if identityErr != nil {
+					statusErr = identityErr
+				} else if alive {
+					e.lock.Unlock()
+					continue
+				}
+			}
 			if statusErr == nil {
 				if status.ExitCode != nil {
 					p.State = "exited"
-					p.ExitCode = status.ExitCode
-					p.StartedAt = status.StartedAt
+					p.Error = ""
+					if status.Error != "" {
+						p.State = "failed"
+						p.Error = status.Error
+						p.Effects = append([]proto.ManualEffect(nil), p.Effects...)
+						for i := range p.Effects {
+							if p.Effects[i].State == "active" || p.Effects[i].State == "unknown" {
+								p.Effects[i].State = "removed"
+							}
+						}
+					}
+					if status.Error == "" {
+						p.ExitCode = status.ExitCode
+						p.StartedAt = status.StartedAt
+					} else {
+						p.ExitCode = nil
+						p.StartedAt = 0
+					}
 					p.EndedAt = status.EndedAt
 					p.Credential = nil
-					if tags, err := manual.TaggedProcesses(p.ID); err != nil {
+					tags, scanErr := manual.TaggedProcesses(p.ID)
+					if status.PGID > 1 {
+						group, err := manual.GroupProcesses(status.PGID)
+						if err != nil {
+							scanErr = err
+						} else {
+							seen := map[int]bool{}
+							for _, v := range tags {
+								seen[v.PID] = true
+							}
+							for _, v := range group {
+								if !seen[v.PID] {
+									tags = append(tags, v)
+									seen[v.PID] = true
+								}
+							}
+						}
+					}
+					if scanErr != nil {
 						p.Cleanup = "failed"
-						p.CleanupNote = err.Error()
+						p.CleanupNote = scanErr.Error()
 					} else if len(tags) > 0 {
 						ids := make([]string, 0, len(tags))
 						for _, v := range tags {
@@ -786,6 +933,13 @@ func (h *Hub) stopManualForOwner(ctx context.Context, worker, reason string) (st
 		if err != nil || len(tags) > 0 {
 			return item.title, fmt.Errorf("owned descendants could not be verified stopped")
 		}
+		status, err := manual.ReadStatus(filepath.Join(h.opts.ManualDir, item.id))
+		if err == nil && status.PGID > 1 {
+			group, gerr := manual.GroupProcesses(status.PGID)
+			if gerr != nil || len(group) > 0 {
+				return item.title, fmt.Errorf("owned process group could not be verified stopped")
+			}
+		}
 	}
 	return "", nil
 }
@@ -797,18 +951,20 @@ func (h *Hub) stopManualForSession(ctx context.Context, session, reason string) 
 	return h.stopManualWork(ctx, work, reason, false)
 }
 func (h *Hub) stopManualWork(ctx context.Context, work []manualWork, reason string, tabGone bool) (string, error) {
+	var firstName string
+	var firstErr error
 	for _, item := range work {
 		item.lock.Lock()
 		_, verified, err := h.cleanupManual(ctx, item.id, reason, tabGone)
 		item.lock.Unlock()
-		if err != nil {
-			return item.title, err
+		if err == nil && !verified {
+			err = fmt.Errorf("process could not be verified stopped")
 		}
-		if !verified {
-			return item.title, fmt.Errorf("process could not be verified stopped")
+		if err != nil && firstErr == nil {
+			firstName, firstErr = item.title, err
 		}
 	}
-	return "", nil
+	return firstName, firstErr
 }
 
 // Called from the event loop when an observed owner or session disappears.
@@ -1021,10 +1177,21 @@ func (h *Hub) finishEffectCleanup(ctx context.Context, child proto.ManualProcess
 	if success {
 		note = "effect removed"
 	}
-	if link.TemporaryWorkspace && h.opts.Hire != nil {
-		if err := h.opts.Hire.CloseWorkspace(ctx, child.Session, child.WorkspaceID); err != nil {
+	workspaceClosed := !link.TemporaryWorkspace
+	if link.TemporaryWorkspace {
+		if h.opts.Hire == nil {
 			success = false
-			note = "could not close cleanup workspace: " + err.Error()
+			note = "cleanup workspace control unavailable"
+		} else if err := h.opts.Hire.CloseWorkspace(ctx, child.Session, child.WorkspaceID); err != nil {
+			known, present := h.manualWorkspacePresent(ctx, child.Session, child.WorkspaceID)
+			if known && !present {
+				workspaceClosed = true
+			} else {
+				success = false
+				note = "could not close cleanup workspace: " + err.Error()
+			}
+		} else {
+			workspaceClosed = true
 		}
 	}
 	updated, err := query(ctx, h, func() bool {
@@ -1055,7 +1222,12 @@ func (h *Hub) finishEffectCleanup(ctx context.Context, child proto.ManualProcess
 			parent.Cleanup = "failed"
 			parent.CleanupNote = note
 		}
-		if err := h.saveManual(ctx, parent); err != nil {
+		if current := h.manualProcesses[parent.ID]; !reflect.DeepEqual(current, parent) {
+			if err := h.saveManual(ctx, parent); err != nil {
+				return false
+			}
+		}
+		if !workspaceClosed {
 			return false
 		}
 		delete(h.manualCleanups, child.ID)
@@ -1085,6 +1257,31 @@ func (h *Hub) manualTabPresent(ctx context.Context, p proto.ManualProcess) (bool
 	}
 	for _, tab := range snap.Tabs {
 		if tab.TabID == p.TabID && tab.WorkspaceID == p.WorkspaceID {
+			return true, true
+		}
+	}
+	return true, false
+}
+
+func (h *Hub) manualWorkspacePresent(ctx context.Context, session, workspace string) (bool, bool) {
+	if h.opts.ManualSnapshot == nil {
+		return false, false
+	}
+	socket, err := query(ctx, h, func() string {
+		if f := h.floors[session]; f != nil {
+			return f.socket
+		}
+		return ""
+	})
+	if err != nil || socket == "" {
+		return false, false
+	}
+	snap, err := h.opts.ManualSnapshot(ctx, socket)
+	if err != nil || snap == nil {
+		return false, false
+	}
+	for _, w := range snap.Workspaces {
+		if w.WorkspaceID == workspace {
 			return true, true
 		}
 	}

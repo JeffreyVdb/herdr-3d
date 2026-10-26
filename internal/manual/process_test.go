@@ -74,3 +74,20 @@ func TestStopGroupReportsTimeoutWithoutClaimingSuccess(t *testing.T) {
 		t.Fatalf("timeout: %v", err)
 	}
 }
+
+func TestGroupProcessesIncludesCurrentIdentity(t *testing.T) {
+	members, err := GroupProcesses(syscall.Getpgrp())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticks, err := StartTicks(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range members {
+		if p.PID == os.Getpid() && p.StartTicks == ticks {
+			return
+		}
+	}
+	t.Fatalf("current process absent from group: %+v", members)
+}

@@ -186,3 +186,45 @@ func StopTagged(ctx context.Context, id string, grace time.Duration) ([]Identity
 	}
 	return TaggedProcesses(id)
 }
+
+// GroupProcesses lists live members visible in /proc, including members whose
+// environment cannot be read. The group ID is evidence for verification only;
+// callers must still check an individual identity before signalling it.
+func GroupProcesses(pgid int) ([]Identity, error) {
+	if pgid <= 1 {
+		return nil, fmt.Errorf("invalid process group")
+	}
+	dirs, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, err
+	}
+	var out []Identity
+	for _, d := range dirs {
+		pid, err := strconv.Atoi(d.Name())
+		if err != nil || pid <= 0 {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join("/proc", d.Name(), "stat"))
+		if err != nil {
+			continue
+		}
+		end := strings.LastIndexByte(string(b), ')')
+		if end < 0 {
+			continue
+		}
+		fields := strings.Fields(string(b[end+1:]))
+		if len(fields) < 20 || fields[0] == "Z" || fields[0] == "X" {
+			continue
+		}
+		group, err := strconv.Atoi(fields[2])
+		if err != nil || group != pgid {
+			continue
+		}
+		ticks, err := strconv.ParseUint(fields[19], 10, 64)
+		if err == nil && ticks != 0 {
+			out = append(out, Identity{PID: pid, StartTicks: ticks})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].PID < out[j].PID })
+	return out, nil
+}

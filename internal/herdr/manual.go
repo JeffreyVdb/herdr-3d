@@ -34,8 +34,8 @@ func (c *Control) CreateManualTab(ctx context.Context, session, workspace, dir, 
 			} `json:"root_pane"`
 		} `json:"result"`
 	}
-	if json.Unmarshal(out, &resp) != nil || resp.Result == nil || resp.Result.Tab == nil || resp.Result.RootPane == nil || !ValidPaneID(resp.Result.Tab.ID) || !ValidPaneID(resp.Result.RootPane.ID) {
-		return ManualTab{}, fmt.Errorf("herdr tab create: unexpected output %.300q", out)
+	if json.Unmarshal(out, &resp) != nil || resp.Result == nil || resp.Result.Tab == nil || resp.Result.RootPane == nil || !ValidPaneID(resp.Result.Tab.ID) || !ValidPaneID(resp.Result.RootPane.ID) || !strings.HasPrefix(resp.Result.Tab.ID, workspace+":") || !strings.HasPrefix(resp.Result.RootPane.ID, workspace+":") {
+		return ManualTab{}, fmt.Errorf("herdr tab create: unexpected response")
 	}
 	return ManualTab{TabID: resp.Result.Tab.ID, PaneID: resp.Result.RootPane.ID}, nil
 }

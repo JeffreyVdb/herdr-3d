@@ -17,6 +17,7 @@ func TestReconcile(t *testing.T) {
 		{"no status and tab", nil, true, false, "unknown"},
 		{"no status or tab", nil, false, false, "stopped"},
 		{"exit", &Status{ExitCode: &exit}, true, false, "exited"},
+		{"failed to start", &Status{ExitCode: &exit, Error: "shell missing"}, true, false, "failed"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := Reconcile(tt.status, tt.tab, tt.alive); got != tt.state {

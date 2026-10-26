@@ -57,12 +57,16 @@ func Launch(dir string, out io.Writer) error {
 	cmd.Env = append(cmd.Env, "H3D_MANUAL_PROCESS="+filepath.Base(dir))
 	err = cmd.Run()
 	code := 0
+	var startErr error
 	if err != nil {
 		var exit *exec.ExitError
 		if !errors.As(err, &exit) {
-			return err
+			startErr = err
+			status.Error = "could not start the configured shell"
+			code = 127
+		} else {
+			code = exit.ExitCode()
 		}
-		code = exit.ExitCode()
 		if code < 0 {
 			code = 128
 			if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() {
@@ -75,5 +79,8 @@ func Launch(dir string, out io.Writer) error {
 		return err
 	}
 	_, err = fmt.Fprintf(out, "\x1b[2m[exited %d]\x1b[0m\n", code)
-	return err
+	if err != nil {
+		return err
+	}
+	return startErr
 }
