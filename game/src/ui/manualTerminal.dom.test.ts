@@ -22,7 +22,8 @@ it('does not start an old watch if its terminal was closed and reopened while mo
   const store = new WorldStore();
   store.manualProcesses.reset([{ id: 'p', worker: 'w', worker_name: 'Worker', host: 'bridge', title: 'server', state: 'running', cleanup: 'none', created_at: 1, started_at: 1 } as ManualProcess]);
   const watch = vi.fn().mockResolvedValue({ ok: true, data: {} });
-  const dialog = new ManualProcessesDialog(document.body, { store, send: vi.fn(), input: vi.fn(), watch, changed: vi.fn(), external: vi.fn() });
+  const input = vi.fn().mockResolvedValue({ ok: true, data: {} });
+  const dialog = new ManualProcessesDialog(document.body, { store, send: vi.fn(), input, watch, changed: vi.fn(), external: vi.fn() });
   const button = (name: string) => [...document.querySelectorAll('button')].find((b) => b.textContent === name)!;
   dialog.open('w'); button('Open terminal').click();
   button('Back to processes').click(); button('Open terminal').click();
@@ -30,4 +31,7 @@ it('does not start an old watch if its terminal was closed and reopened while mo
   expect(watch.mock.calls.filter(([t]) => t === 'terminal.watch')).toHaveLength(0);
   mounts[1]!(); await Promise.resolve(); await Promise.resolve();
   expect(watch.mock.calls.filter(([t]) => t === 'terminal.watch')).toHaveLength(1);
+  document.querySelector('.mp-terminal-input')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', code: 'KeyP', ctrlKey: true, bubbles: true }));
+  await Promise.resolve(); await Promise.resolve();
+  expect(input).toHaveBeenCalledWith({ id: 'mp:p', text: '\x10' });
 });

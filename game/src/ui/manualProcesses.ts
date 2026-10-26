@@ -164,6 +164,8 @@ export class ManualProcessesDialog {
     });
     input.addEventListener('keydown', (e) => {
       if (e.isComposing) return;
+      // In this modal Ctrl+P belongs to the process, not the game's palette.
+      if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); sendText('\x10'); return; }
       const key = seatedKey(e, /Mac/.test(navigator.platform));
       if (key.items.length && key.items.some((it) => 'key' in it)) { e.preventDefault(); sendText(key.items.map((it) => 'text' in it ? it.text : keyBytes[it.key] ?? '').join('')); }
       else if (e.key === 'Escape') { e.preventDefault(); sendText('\x1b'); }
