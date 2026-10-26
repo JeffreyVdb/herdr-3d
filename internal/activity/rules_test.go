@@ -440,3 +440,81 @@ func TestStarts(t *testing.T) {
 		}
 	}
 }
+
+func TestIssue156FalseOwner(t *testing.T) {
+	s := `/* tools.exec_command({cmd:" */ text(await tools.write_stdin({session_id:12,chars:''})); const suffix = ",}";`
+	got := CodexTerminals("exec", script(s))
+	if len(got.Polls) != 1 || got.Polls[0] != 12 {
+		t.Fatalf("poll disappeared: %+v", got)
+	}
+}
+
+// Fake owners must never consume the real call following them, regardless of
+// the surrounding lexical hazards or which terminal tool the real call uses.
+func TestFalseOwnersMatrix(t *testing.T) {
+	owners := []struct{ prefix, suffix string }{
+		{`/* tools.exec_command({cmd:" */ `, ` const end = ",}";`},
+		{`// tools.exec_command({cmd:"`, "\n" + ` ` + "\n" + `const end = ",}";`},
+		{`const fake = 'tools.exec_command({cmd:"'; `, ` const end = ",}";`},
+		{"const fake = `tools.write_stdin({chars:\"`; ", ` const end = ",}";`},
+	}
+	reals := []struct{ code, name string }{
+		{`await tools.write_stdin({session_id:12,chars:''});`, "write_stdin"},
+		{`await tools.write_stdin({session_id:12,chars:'yes'});`, "write_stdin"},
+		{`await tools.exec_command({cmd:'go test'});`, "exec_command"},
+	}
+	hazards := []string{``, `const q = /"/;`, `const x = 8 / 2;`, "const t = `hi ${1}`;"}
+	for _, o := range owners {
+		for _, real := range reals {
+			for _, hazard := range hazards {
+				s := hazard + "\n" + o.prefix + real.code + o.suffix
+				// A line comment needs its newline before the real call.
+				if strings.HasPrefix(o.prefix, "//") {
+					s = hazard + "\n" + o.prefix + "\n" + real.code + o.suffix
+				}
+				calls := scriptCalls(s)
+				found := false
+				for _, c := range calls {
+					if c.name == real.name && (strings.Contains(c.args, "session_id:12") || strings.Contains(c.args, "go test")) {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("real %s disappeared from %q: %+v", real.name, s, calls)
+				}
+			}
+		}
+	}
+}
+
+func TestUnparseableScriptKeepsMatches(t *testing.T) {
+	s := `await tools.write_stdin({session_id:1,chars:"tools.exec_command("}); const broken = ;`
+	calls := scriptCalls(s)
+	if len(calls) != 2 || calls[1].name != "exec_command" {
+		t.Fatalf("uncertain script excluded a match: %+v", calls)
+	}
+}
+
+func TestFalseOwnerRealActions(t *testing.T) {
+	cases := []struct {
+		input string
+		want  Terminals
+	}{
+		{`/* tools.exec_command({cmd:" */ await tools.write_stdin({session_id:12,chars:'yes'}); const end = ",}";`, Terminals{Nested: []Nested{{Session: 12, Chars: "yes"}}, Polls: []int64{12}}},
+		{`const fake = 'tools.exec_command({cmd:"'; await tools.write_stdin({session_id:12,chars:'yes'}); const end = ",}";`, Terminals{Nested: []Nested{{Session: 12, Chars: "yes"}}, Polls: []int64{12}}},
+		{`/* tools.write_stdin({chars:" */ await tools.exec_command({cmd:'go test ./...'}); const end = ",}";`, Terminals{Nested: []Nested{{Command: "go test ./..."}}}},
+	}
+	for _, c := range cases {
+		if got := CodexTerminals("exec", script(c.input)); fmt.Sprintf("%+v", got) != fmt.Sprintf("%+v", c.want) {
+			t.Errorf("%q: got %+v, want %+v", c.input, got, c.want)
+		}
+	}
+}
+
+func TestNamespacedOwner(t *testing.T) {
+	s := `await namespace.tools.exec_command({cmd:"echo tools.write_stdin("});`
+	calls := scriptCalls(s)
+	if len(calls) != 1 || calls[0].name != "exec_command" {
+		t.Fatalf("%+v", calls)
+	}
+}

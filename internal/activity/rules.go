@@ -7,9 +7,13 @@ package activity
 import (
 	"encoding/json"
 	"path"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/dop251/goja/ast"
+	"github.com/dop251/goja/parser"
 )
 
 // Harnesses the rules know.
@@ -319,9 +323,9 @@ func codexScript(script string) Call {
 // scriptCall is one tools.<name>( call of a Codex script: its name and the
 // script after it, up to the next call. What a write_stdin types (chars)
 // and what an exec_command runs (cmd) is text, not code: a call written in
-// it is not one (#132: typed code, a grep for a call). Any other match
-// counts, wherever it is (a comment, another string): the script is not
-// lexed, so a regex literal or a division can never hide a real call.
+// it is not one (#132: typed code, a grep for a call). Other matches count,
+// except a confirmed fake owner that would otherwise hide a later match.
+// An unparseable script never excludes a match.
 type scriptCall struct{ name, args string }
 
 // textKeys are the argument of a call whose string value is text.
@@ -330,17 +334,32 @@ var textKeys = map[string]string{"write_stdin": "chars", "exec_command": "cmd"}
 func scriptCalls(script string) []scriptCall {
 	var texts [][2]int // the text of the calls kept so far, still ahead
 	locs := toolCallRe.FindAllStringSubmatchIndex(script, -1)
+	// Parse only when a value could actually hide another match.
+	var owners map[int]bool
+	parsed := false
 	kept := locs[:0]
-	for _, l := range locs {
+	for n, l := range locs {
 		if inText(&texts, l[0]) {
 			continue
 		}
-		kept = append(kept, l)
 		if key, ok := textKeys[script[l[2]:l[3]]]; ok {
 			if start, end, ok := textArg(script, l[1], key); ok {
-				texts = append(texts, [2]int{start, end})
+				if n+1 < len(locs) && locs[n+1][0] < end {
+					if !parsed {
+						owners = realScriptCalls(script)
+						parsed = true
+					}
+					if owners != nil && !owners[l[0]] {
+						// This bogus owner would also mislabel the real call.
+						continue
+					}
+					if owners[l[0]] {
+						texts = append(texts, [2]int{start, end})
+					}
+				}
 			}
 		}
+		kept = append(kept, l)
 	}
 	var calls []scriptCall
 	for i, l := range kept {
@@ -351,6 +370,65 @@ func scriptCalls(script string) []scriptCall {
 		calls = append(calls, scriptCall{name: script[l[2]:l[3]], args: script[l[1]:end]})
 	}
 	return calls
+}
+
+// realScriptCalls finds actual calls, while leaving all other matches visible.
+// A parse error makes every owner uncertain, so no text is excluded. Wrapping
+// the script in an async function permits code mode's top-level await.
+func realScriptCalls(script string) map[int]bool {
+	const prefix = "async function __scan() {\n"
+	program, err := parser.ParseFile(nil, "", prefix+script+"\n}", 0, parser.WithDisableSourceMaps)
+	if err != nil {
+		return nil
+	}
+	owners := make(map[int]bool)
+	var visit func(reflect.Value)
+	visit = func(v reflect.Value) {
+		if !v.IsValid() {
+			return
+		}
+		switch v.Kind() {
+		case reflect.Interface, reflect.Pointer:
+			if v.IsNil() {
+				return
+			}
+			var callee ast.Expression
+			switch call := v.Interface().(type) {
+			case *ast.CallExpression:
+				callee = call.Callee
+			case *ast.NewExpression:
+				callee = call.Callee
+			}
+			if dot, ok := callee.(*ast.DotExpression); ok {
+				var id *ast.Identifier
+				switch left := dot.Left.(type) {
+				case *ast.Identifier:
+					id = left
+				case *ast.DotExpression:
+					id = &left.Identifier // e.g. namespace.tools.exec_command
+				}
+				if id != nil && id.Name.String() == "tools" {
+					owners[int(id.Idx)-1-len(prefix)] = true
+				}
+			}
+			visit(v.Elem())
+		case reflect.Slice:
+			for i := 0; i < v.Len(); i++ {
+				visit(v.Index(i))
+			}
+		case reflect.Struct:
+			if v.Type().PkgPath() != "github.com/dop251/goja/ast" {
+				return
+			}
+			for i := 0; i < v.NumField(); i++ {
+				if v.Field(i).CanInterface() {
+					visit(v.Field(i))
+				}
+			}
+		}
+	}
+	visit(reflect.ValueOf(program))
+	return owners
 }
 
 // inText says whether at is inside one of texts, dropping those that end
