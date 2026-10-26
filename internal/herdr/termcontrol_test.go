@@ -2,6 +2,7 @@ package herdr
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -618,7 +619,7 @@ func TestControllerInputChunks(t *testing.T) {
 	if err := ct.Input(text); err != nil {
 		t.Fatal(err)
 	}
-	b := []byte{0, 255, 42}
+	b := bytes.Repeat([]byte{0, 255, 42}, 9000)
 	if err := ct.InputBytes(b); err != nil {
 		t.Fatal(err)
 	}
