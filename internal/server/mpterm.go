@@ -62,10 +62,10 @@ func (h *Hub) startTerminalInput(ctx context.Context, c *Client, cmd proto.Comma
 			err = fmt.Errorf("%w: terminal input failed", errInputFailed)
 		}
 	}
-	h.audit(ctx, c, cmd, err)
 	if err != nil {
 		return err
 	}
+	h.audit(ctx, c, cmd, nil)
 	h.reply(c, cmd, nil, nil)
 	return nil
 }

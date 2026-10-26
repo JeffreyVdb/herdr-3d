@@ -37,6 +37,8 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/imgcache"
 	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
+	"github.com/JeffreyVdb/herdr-3d/internal/manual"
+	"github.com/JeffreyVdb/herdr-3d/internal/manual/askpass"
 	"github.com/JeffreyVdb/herdr-3d/internal/notify"
 	"github.com/JeffreyVdb/herdr-3d/internal/notify/telegram"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -290,6 +292,14 @@ func World(name string, args []string, stdout, stderr io.Writer) int {
 	defer stop()
 	var err error
 	switch sub {
+	case "manual-askpass":
+		if len(args) != 2 {
+			return 1
+		}
+		if askpass.Helper(args[0], args[1], stdout) != nil {
+			return 1
+		}
+		return 0
 	case "serve":
 		err = serveMain(ctx, name, args, stdout, stderr)
 	case "dump":
@@ -679,7 +689,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		return fmt.Errorf("telegram settings: %w", err)
 	}
 	return Serve(ctx, ServeConfig{
-		Socket: *socket, DB: *db, Herdr: &herdr.Client{Bin: *herdrBin}, Only: only,
+		Socket: *socket, DB: *db, Askpass: true, Herdr: &herdr.Client{Bin: *herdrBin}, Only: only,
 		Poll: poll, Resnapshot: resnap, MaxDesks: maxDesks, NameHold: nameHold, Log: log, Name: name,
 		Control:     &herdr.Control{Herdr: *herdrBin, SystemdRun: *systemdRun, Only: only, CodexRun: orNone(*codexRun), Shell: shellKind, ShellBin: shellBin},
 		CodexRun:    orNone(*codexRun), // #155 shared Codex server
@@ -715,6 +725,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 
 // ServeConfig configures Serve.
 type ServeConfig struct {
+	Askpass    bool // enable the private credential broker
 	Socket     string
 	DB         string
 	Herdr      watch.Herdr
@@ -850,6 +861,11 @@ type ServeConfig struct {
 
 // Serve runs the bridge until ctx is done: store, hub, session watchers and
 // the WebSocket server on a private unix socket.
+func init() {
+	manual.AskpassEnv = askpass.Env
+	manual.AskpassRewrite = askpass.Rewrite
+}
+
 func Serve(ctx context.Context, cfg ServeConfig) error {
 	log := cfg.Log
 	st, err := store.Open(ctx, cfg.DB)
@@ -1008,6 +1024,12 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if cfg.Askpass {
+		if err := hub.ListenAskpass(ctx, askpass.SocketPath()); err != nil {
+			_ = ln.Close()
+			return fmt.Errorf("askpass listener: %w", err)
+		}
+	}
 	var wg sync.WaitGroup
 	errs := make(chan error, 3)
 	run := func(what string, fn func() error) {

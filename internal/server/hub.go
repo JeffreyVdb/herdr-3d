@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"reflect"
 	"regexp"
 	"sort"
@@ -467,12 +468,16 @@ type Hub struct {
 	usageFor map[string]usageTag
 	reported map[string]modelEffort
 	// M5 term
-	term      termWatches              // laptop screens being watched
-	zoom      zoomTabs                 // #74: the tabs zoomed for them
-	lanes     map[string]*inputLane    // worker id → its input commands, in order
-	questions map[string]questionState // worker id → what its blocked screen asks
-	calls     map[string]workerCalls   // #106: worker id → the calls its transcript waits on
-	asking    map[string]bool          // worker id → its screen reader runs
+	manualProcesses    map[string]proto.ManualProcess
+	credentials        map[string]*credentialRequest
+	credentialAttempts map[string]int
+	credentialTimeout  time.Duration
+	term               termWatches              // laptop screens being watched
+	zoom               zoomTabs                 // #74: the tabs zoomed for them
+	lanes              map[string]*inputLane    // worker id → its input commands, in order
+	questions          map[string]questionState // worker id → what its blocked screen asks
+	calls              map[string]workerCalls   // #106: worker id → the calls its transcript waits on
+	asking             map[string]bool          // worker id → its screen reader runs
 	// #57: worker id → its ask as last published, and the last ask call
 	// whose result its transcript recorded.
 	asks        map[string]*proto.Ask
@@ -1096,6 +1101,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startResize
 		case proto.CmdTerminalScroll: // #176
 			start = h.startScroll
+		case proto.CmdManualProcessCredential:
+			start = h.startManualCredential
 		case proto.CmdTerminalInput:
 			start = h.startTerminalInput
 		case proto.CmdWorkerKeys:
@@ -2329,6 +2336,8 @@ func (h *Hub) snapshot() proto.Snapshot {
 	hire := h.hireOptions()
 	w := proto.World{Buildings: h.buildingViews(), Unassigned: []string{}, Floors: []proto.Floor{}, Workers: []proto.Worker{},
 		HireOptions: &hire, Presets: h.presetViews(), Limits: h.limitsViews(), Children: []proto.Child{}} // M6 launch: presets; M10 limits; #22
+	w.Host, _ = os.Hostname()
+	w.ManualProcesses = h.manualProcessViews()
 	w.Screen = h.screenView()                           // M13 screen
 	w.AI = h.aiView()                                   // #92 AI integration
 	w.Kaneo = h.kaneoView()                             // #184 Kaneo

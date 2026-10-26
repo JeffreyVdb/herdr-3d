@@ -753,6 +753,22 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 			Secrets          *secretsAudit `json:"secrets,omitempty"` // #108 round 2
 		}{clip(a.Worker), clip(a.Mode), clip(a.Session), clip(a.Candidate), clip(a.Revision), len(a.Instruction), a.SendHome, clip(a.Op),
 			auditReviews(a.Secrets)})
+	case proto.CmdManualProcessCredential:
+		var a proto.ManualProcessCredentialArgs
+		if json.Unmarshal(cmd.Args, &a) != nil {
+			return redacted(cmd.Args)
+		}
+		n := 0
+		if a.Secret != nil {
+			n = len(*a.Secret)
+		}
+		cancel := a.Cancel != nil && *a.Cancel
+		return mustJSON(struct {
+			ID          string `json:"id"`
+			Request     string `json:"request"`
+			Cancel      bool   `json:"cancel"`
+			SecretBytes int    `json:"secret_bytes"`
+		}{clip(a.ID), clip(a.Request), cancel, n})
 	case proto.CmdTerminalInput:
 		var a proto.TerminalInputArgs
 		if json.Unmarshal(cmd.Args, &a) != nil {

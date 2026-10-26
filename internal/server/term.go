@@ -441,6 +441,10 @@ func (h *Hub) runWatch(hctx, ctx context.Context, w *watch, cmd proto.Command) {
 			fails = nil
 			continue
 		}
+		if strings.HasPrefix(w.id, "mp:") && errors.As(err, &closed) && strings.Contains(closed.reason, "not found") {
+			_ = h.doWait(hctx, func() { h.closeWatch(w, "process_gone") })
+			return
+		}
 		if errors.Is(err, errResync) {
 			h.log.Debug("watch resync", "client", w.c.name, "worker", w.id)
 			if !h.awaitRoom(ctx, w) {

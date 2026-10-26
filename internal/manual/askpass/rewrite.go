@@ -28,6 +28,9 @@ func Rewrite(cmd string) (string, bool) {
 			break
 		}
 		if f == "--" {
+			if j+1 >= len(fields) {
+				return "", false
+			}
 			command = true
 			continue
 		}
