@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ManualProcess } from '../net/protocol';
 import { WorldStore } from '../world/store';
-import { askpassEligible, ManualProcessesDialog } from './manualProcesses';
+import { askpassEligible, ManualProcessesDialog, newManualOp } from './manualProcesses';
 
 beforeEach(() => {
   document.body.replaceChildren();
@@ -47,6 +47,11 @@ describe('manual process list', () => {
     button('Run').click(); await Promise.resolve(); await Promise.resolve();
     expect(send.mock.calls[0]![1]).toMatchObject({ worker: 'w', command: 'echo ok', cwd: '/work', source: { kind: 'manual' } });
     expect(send.mock.calls[0]![1].op).toBe(send.mock.calls[1]![1].op);
+  });
+  it('generates usable operation IDs without randomUUID', () => {
+    vi.spyOn(crypto, 'randomUUID').mockImplementation(() => { throw new Error('unavailable'); });
+    expect(newManualOp()).toMatch(/^mp-[a-z0-9]{20}$/);
+    vi.restoreAllMocks();
   });
   it('offers askpass only for top-level sudo followed by a non-flag word', () => {
     expect(askpassEligible('sudo id')).toBe(true);

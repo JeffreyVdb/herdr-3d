@@ -4,12 +4,16 @@ import type { CommandArgs, CommandName, ConnMessage, ManualProcess } from '../ne
 import { SeatTerminal } from '../laptop/seatTerm';
 import { seatedKey } from '../laptop/keys';
 import type { WorldStore } from '../world/store';
+import { newOp } from '../world/handoff';
 import { h, replaceKeepingFocus } from './dom';
 import { failureText } from './messages';
 
 export const askpassEligible = (command: string): boolean => /^sudo [ \t]*[^\s-]/.test(command);
 export const askpassForm = (command: string): string => command.replace(/^sudo(?=\s)/, 'sudo -A');
-export const newManualOp = (): string => `mp-${crypto.randomUUID()}`;
+export function newManualOp(): string {
+  try { if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return `mp-${crypto.randomUUID()}`; } catch { /* A non-secure browser context uses the game's regular operation IDs. */ }
+  return newOp().replace(/^ho-/, 'mp-');
+}
 const terminalState = (p: ManualProcess) => ['exited', 'stopped', 'failed'].includes(p.state);
 const dismissible = (p: ManualProcess) => terminalState(p) && ['none', 'done'].includes(p.cleanup);
 const keyBytes: Record<string, string> = { enter: '\r', tab: '\t', 'shift+tab': '\x1b[Z', esc: '\x1b', backspace: '\x7f', delete: '\x1b[3~', up: '\x1b[A', down: '\x1b[B', right: '\x1b[C', left: '\x1b[D', home: '\x1b[H', end: '\x1b[F', pageup: '\x1b[5~', pagedown: '\x1b[6~', space: ' ', 'shift+enter': '\x1b[13;2u', 'alt+enter': '\x1b\r', 'alt+backspace': '\x1b\x7f', 'ctrl+left': '\x1b[1;5D', 'ctrl+right': '\x1b[1;5C', 'alt+left': '\x1b[1;3D', 'alt+right': '\x1b[1;3C', 'shift+up': '\x1b[1;2A', 'shift+down': '\x1b[1;2B', 'shift+left': '\x1b[1;2D', 'shift+right': '\x1b[1;2C' };
