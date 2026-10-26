@@ -145,3 +145,35 @@ func TestStopGroupEscalatesAfterLauncherExits(t *testing.T) {
 		t.Fatal("foreground child survived escalation")
 	}
 }
+
+func TestStopIdentitiesKillsOnlyPreviouslyRecordedProcesses(t *testing.T) {
+	start := func() Identity {
+		cmd := exec.Command("sleep", "120")
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		ticks, err := StartTicks(cmd.Process.Pid)
+		if err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			t.Fatal(err)
+		}
+		id := Identity{PID: cmd.Process.Pid, StartTicks: ticks}
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		t.Cleanup(func() {
+			if IdentityAlive(id.PID, id.StartTicks) {
+				_ = syscall.Kill(id.PID, syscall.SIGKILL)
+			}
+			<-done
+		})
+		return id
+	}
+	first, second := start(), start()
+	if _, err := StopIdentities(context.Background(), []Identity{first}, 100*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if IdentityAlive(first.PID, first.StartTicks) || !IdentityAlive(second.PID, second.StartTicks) {
+		t.Fatalf("first=%v second=%v", IdentityAlive(first.PID, first.StartTicks), IdentityAlive(second.PID, second.StartTicks))
+	}
+}

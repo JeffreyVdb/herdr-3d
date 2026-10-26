@@ -45,8 +45,8 @@ func CheckIdentity(pid int, ticks uint64) (bool, error) {
 func IdentityAlive(pid int, ticks uint64) bool { alive, _ := CheckIdentity(pid, ticks); return alive }
 
 type Identity struct {
-	PID        int
-	StartTicks uint64
+	PID        int    `json:"pid"`
+	StartTicks uint64 `json:"start_ticks"`
 }
 
 // TaggedProcesses finds live descendants that retained the launch marker.
@@ -183,15 +183,28 @@ func StopGroup(ctx context.Context, status Status, grace time.Duration) error {
 	return nil
 }
 
-// StopTagged retries cleanup of precisely the currently tagged, re-identified
-// processes. It does not use process names or an unchecked PID.
-func StopTagged(ctx context.Context, id string, grace time.Duration) ([]Identity, error) {
-	found, err := TaggedProcesses(id)
-	if err != nil {
-		return nil, err
+// StopIdentities signals only identities recorded during an earlier cleanup.
+// Every signal is preceded by a fresh PID and start-tick check.
+func StopIdentities(ctx context.Context, found []Identity, grace time.Duration) ([]Identity, error) {
+	live := func() ([]Identity, error) {
+		var remaining []Identity
+		for _, p := range found {
+			alive, err := CheckIdentity(p.PID, p.StartTicks)
+			if err != nil {
+				return found, err
+			}
+			if alive {
+				remaining = append(remaining, p)
+			}
+		}
+		return remaining, nil
 	}
 	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
-		for _, p := range found {
+		current, err := live()
+		if err != nil || len(current) == 0 {
+			return current, err
+		}
+		for _, p := range current {
 			alive, err := CheckIdentity(p.PID, p.StartTicks)
 			if err != nil {
 				return found, err
@@ -204,25 +217,29 @@ func StopTagged(ctx context.Context, id string, grace time.Duration) ([]Identity
 			}
 		}
 		timer := time.NewTimer(grace)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return found, ctx.Err()
-		case <-timer.C:
-		}
-		alive := false
-		for _, p := range found {
-			running, err := CheckIdentity(p.PID, p.StartTicks)
-			if err != nil {
-				return found, err
+		ticker := time.NewTicker(50 * time.Millisecond)
+		waiting := true
+		for waiting {
+			current, err = live()
+			if err != nil || len(current) == 0 {
+				ticker.Stop()
+				timer.Stop()
+				return current, err
 			}
-			alive = alive || running
+			select {
+			case <-ctx.Done():
+				ticker.Stop()
+				timer.Stop()
+				return found, ctx.Err()
+			case <-ticker.C:
+			case <-timer.C:
+				waiting = false
+			}
 		}
-		if !alive {
-			break
-		}
+		ticker.Stop()
+		timer.Stop()
 	}
-	return TaggedProcesses(id)
+	return live()
 }
 
 // GroupProcesses lists live members visible in /proc, including members whose

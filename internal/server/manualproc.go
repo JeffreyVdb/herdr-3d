@@ -613,6 +613,7 @@ func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone bool
 	if p.ID == "" {
 		return p, false, fmt.Errorf("%w: manual process not found", errStale)
 	}
+	retrySurvivors := reason == "stopped by user" && (p.Cleanup == "needed" || p.Cleanup == "failed")
 	if !manual.Terminal(p.State) {
 		p.State = "stopping"
 		p.Credential = nil
@@ -660,6 +661,13 @@ func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone bool
 	}
 	if reason == "stopped for send-home" {
 		tags, err := manual.TaggedProcesses(p.ID)
+		if err == nil {
+			if e := manual.RecordSurvivors(dir, tags); e != nil {
+				err = e
+			} else {
+				tags, err = manual.ReadSurvivors(dir)
+			}
+		}
 		if err != nil || len(tags) > 0 || len(group) > 0 || !verified {
 			p.Cleanup = "needed"
 			p.CleanupNote = "could not verify that the process stopped"
@@ -673,7 +681,11 @@ func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone bool
 			}
 			if err != nil {
 				p.Cleanup = "failed"
-				p.CleanupNote = err.Error()
+				if strings.HasPrefix(p.CleanupNote, "processes remain:") {
+					p.CleanupNote = err.Error() + "; " + p.CleanupNote
+				} else {
+					p.CleanupNote = err.Error()
+				}
 			}
 			if identityGone {
 				p.State = "stopped"
@@ -713,9 +725,23 @@ func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone bool
 			status = updated
 		}
 	}
+	if retrySurvivors {
+		recorded, err := manual.ReadSurvivors(dir)
+		if err == nil && len(recorded) > 0 {
+			_, err = manual.StopIdentities(ctx, recorded, 3*time.Second)
+		}
+		if err != nil {
+			cleanupErr = err
+			verified = false
+		}
+	}
 	tags, err := manual.TaggedProcesses(p.ID)
-	if err == nil && wasTerminal && len(tags) > 0 && (p.Cleanup == "needed" || p.Cleanup == "failed") {
-		tags, err = manual.StopTagged(ctx, p.ID, 3*time.Second)
+	if err == nil {
+		if e := manual.RecordSurvivors(dir, tags); e != nil {
+			err = e
+		} else {
+			tags, err = manual.ReadSurvivors(dir)
+		}
 	}
 	if err != nil {
 		cleanupErr = err
@@ -749,7 +775,11 @@ func (h *Hub) cleanupManual(ctx context.Context, id, reason string, tabGone bool
 	}
 	if cleanupErr != nil {
 		p.Cleanup = "failed"
-		p.CleanupNote = cleanupErr.Error()
+		if len(tags) > 0 {
+			p.CleanupNote = cleanupErr.Error() + "; " + p.CleanupNote
+		} else {
+			p.CleanupNote = cleanupErr.Error()
+		}
 	}
 	if !verified && p.Cleanup == "pending" {
 		p.Cleanup = "needed"
@@ -904,6 +934,13 @@ func (h *Hub) pollManualProcesses(ctx context.Context) {
 					p.EndedAt = status.EndedAt
 					p.Credential = nil
 					tags, scanErr := manual.TaggedProcesses(p.ID)
+					if scanErr == nil {
+						if e := manual.RecordSurvivors(filepath.Join(h.opts.ManualDir, p.ID), tags); e != nil {
+							scanErr = e
+						} else {
+							tags, scanErr = manual.ReadSurvivors(filepath.Join(h.opts.ManualDir, p.ID))
+						}
+					}
 					if status.PGID > 1 {
 						group, err := manual.GroupProcesses(status.PGID)
 						if err != nil {
@@ -924,6 +961,13 @@ func (h *Hub) pollManualProcesses(ctx context.Context) {
 					if scanErr != nil {
 						p.Cleanup = "failed"
 						p.CleanupNote = scanErr.Error()
+						if len(tags) > 0 {
+							ids := make([]string, 0, len(tags))
+							for _, v := range tags {
+								ids = append(ids, fmt.Sprint(v.PID))
+							}
+							p.CleanupNote += "; processes remain: " + strings.Join(ids, ", ")
+						}
 					} else if len(tags) > 0 {
 						ids := make([]string, 0, len(tags))
 						for _, v := range tags {
@@ -1029,11 +1073,22 @@ func (h *Hub) stopManualForOwner(ctx context.Context, worker, reason string) (st
 		return "", err
 	}
 	for _, item := range remaining {
+		dir := filepath.Join(h.opts.ManualDir, item.id)
+		recorded, err := manual.ReadSurvivors(dir)
+		if err != nil {
+			return item.title, fmt.Errorf("owned descendants could not be verified stopped")
+		}
+		for _, p := range recorded {
+			alive, err := manual.CheckIdentity(p.PID, p.StartTicks)
+			if err != nil || alive {
+				return item.title, fmt.Errorf("owned descendants could not be verified stopped")
+			}
+		}
 		tags, err := manual.TaggedProcesses(item.id)
 		if err != nil || len(tags) > 0 {
 			return item.title, fmt.Errorf("owned descendants could not be verified stopped")
 		}
-		status, err := manual.ReadStatus(filepath.Join(h.opts.ManualDir, item.id))
+		status, err := manual.ReadStatus(dir)
 		if err == nil && status.PGID > 1 {
 			group, gerr := manual.GroupProcesses(status.PGID)
 			if gerr != nil || len(group) > 0 {
@@ -1328,6 +1383,14 @@ func (h *Hub) finishEffectCleanup(ctx context.Context, child proto.ManualProcess
 		}
 	}
 	remaining, scanErr := manual.TaggedProcesses(link.Parent)
+	if scanErr == nil {
+		dir := filepath.Join(h.opts.ManualDir, link.Parent)
+		if e := manual.RecordSurvivors(dir, remaining); e != nil {
+			scanErr = e
+		} else {
+			remaining, scanErr = manual.ReadSurvivors(dir)
+		}
+	}
 	if status, err := manual.ReadStatus(filepath.Join(h.opts.ManualDir, link.Parent)); err == nil && status.PGID > 1 {
 		group, err := manual.GroupProcesses(status.PGID)
 		if err != nil {

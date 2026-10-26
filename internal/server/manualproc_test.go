@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -736,5 +740,67 @@ func TestManualStartRefusedWhileSendHomeIsPending(t *testing.T) {
 	fake.mu.Unlock()
 	if calls != 0 {
 		t.Fatalf("manual process launched during send-home")
+	}
+}
+
+func TestManualRetrySignalsOnlyPreviouslyReportedDescendants(t *testing.T) {
+	fake := &fakeManual{}
+	dir := t.TempDir()
+	tb := startTermBridge(t, func(o *server.Options) {
+		o.Manual = fake
+		o.ManualDir = dir
+		o.ManualShell = "/bin/bash"
+		o.ManualNoNewPrivs = func(context.Context, string) (bool, error) { return false, nil }
+	}, worker("w1", "notes", "", "idle"))
+	c := tb.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	_, m := c.command(proto.CmdManualProcessStart, "start", proto.ManualProcessStartArgs{Op: "survivors", Worker: id, Cwd: dir, Command: "echo fixture"})
+	parent := ackData[proto.ManualProcessResult](t, m).Process
+	start := func() manual.Identity {
+		cmd := exec.Command("sleep", "120")
+		cmd.Env = append(os.Environ(), "H3D_MANUAL_PROCESS="+parent.ID)
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		ticks, err := manual.StartTicks(cmd.Process.Pid)
+		if err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			t.Fatal(err)
+		}
+		p := manual.Identity{PID: cmd.Process.Pid, StartTicks: ticks}
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		t.Cleanup(func() {
+			if manual.IdentityAlive(p.PID, p.StartTicks) {
+				_ = syscall.Kill(p.PID, syscall.SIGKILL)
+			}
+			<-done
+		})
+		return p
+	}
+	first := start()
+	zero := 0
+	if err := manual.WriteStatus(filepath.Join(dir, parent.ID), manual.Status{PID: 99999999, StartTicks: 1, ExitCode: &zero, EndedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	tb.world(func(w proto.World) bool {
+		for _, p := range w.ManualProcesses {
+			if p.ID == parent.ID {
+				return p.Cleanup == "needed" && strings.Contains(p.CleanupNote, fmt.Sprint(first.PID))
+			}
+		}
+		return false
+	})
+	second := start()
+	_, m = c.command(proto.CmdManualProcessStop, "retry-first", proto.ManualProcessIDArgs{ID: parent.ID})
+	after := ackData[proto.ManualProcessResult](t, m).Process
+	if manual.IdentityAlive(first.PID, first.StartTicks) || !manual.IdentityAlive(second.PID, second.StartTicks) || after.Cleanup != "needed" || !strings.Contains(after.CleanupNote, fmt.Sprint(second.PID)) {
+		t.Fatalf("first retry: %+v", after)
+	}
+	_, m = c.command(proto.CmdManualProcessStop, "retry-second", proto.ManualProcessIDArgs{ID: parent.ID})
+	after = ackData[proto.ManualProcessResult](t, m).Process
+	if manual.IdentityAlive(second.PID, second.StartTicks) || after.Cleanup != "done" {
+		t.Fatalf("second retry: %+v", after)
 	}
 }
