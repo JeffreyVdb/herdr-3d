@@ -407,8 +407,16 @@ func TestHandoffHireRestart(t *testing.T) {
 		snap.HandoffHires[0].State != proto.HandoffHireFailed || snap.HandoffHires[0].DeskIndex != 5 {
 		t.Fatalf("after the restart %+v", snap.HandoffHires)
 	}
-	if r, _ := ab2.st.HandoffRequestByOp(context.Background(), "op-r"); r.Hire != nil {
-		t.Fatalf("the marker stays %+v", r.Hire)
+	// The resumed request keeps its marker until it settles: a second
+	// restart meanwhile says the same.
+	if r, _ := ab2.st.HandoffRequestByOp(context.Background(), "op-r"); r.Hire == nil {
+		t.Fatal("the pending request lost its marker")
+	}
+	ab2.stop()
+	ab2 = startAgentBridge(t, ab.db, ab.dir, ab.hdir, nil)
+	c2 = ab2.connect(proto.Hello{})
+	if hh := c2.snapshot().World.HandoffHires; len(hh) != 1 || hh[0].Code != proto.HandoffHireInterrupted {
+		t.Fatalf("after a second restart %+v", hh)
 	}
 	writeDoc(t, path, agentDoc)
 	appendTo(t, ab2.claude, claudeTurn(text, "Done."))
@@ -417,6 +425,9 @@ func TestHandoffHireRestart(t *testing.T) {
 		t.Fatalf("filed after the restart %+v", rec)
 	}
 	upsertFor(c2, id, agentState(proto.AgentHandoffFiled))
+	if r, _ := ab2.st.HandoffRequestByOp(context.Background(), "op-r"); r.Hire != nil {
+		t.Fatalf("the marker stays after filing %+v", r.Hire)
+	}
 	if _, m := c2.command(proto.CmdWorkerHire, "free", hireArgs(5)); m.env.T != proto.TAck {
 		t.Fatalf("the desk is held after the restart: %s", m.raw)
 	}

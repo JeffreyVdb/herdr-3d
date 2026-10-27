@@ -5865,7 +5865,8 @@ type: a bridge from before #219 refuses the field.
    a marker (`hire`: floor, desk, label, harness, model, effort, origin, the source's name, send home, accepted at;
    never the task, a secret or review data) until the record ends. A bridge that starts with a marked row publishes
    its record `failed` with `interrupted`, holds no desk and never hires for it; a resumed agent request that files
-   later sets the record's `path` and skips the send home. The marker is cleared then.
+   later sets the record's `path` and skips the send home. The marker is cleared then (a pending agent request's when it
+   settles, so a second restart meanwhile publishes the same).
 
 **`HandoffHire`** `{op, worker, worker_name, mode, floor, desk_index, label?, harness, model, effort, origin?, state,
 code?, reason?, handoff?, path?, hired?, prompted?, delivery?, prompt_error?, send_home?, send_home_result?,

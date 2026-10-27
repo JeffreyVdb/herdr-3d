@@ -466,15 +466,20 @@ func (h *Hub) endHandoffHire(ctx context.Context, r *handoffHire, state, code, r
 	}
 	r.sec = nil
 	r.args.Prompt = "" // the task is not kept past its end
-	if err := h.st.ClearHandoffHire(ctx, r.rec.Op); err != nil {
-		h.log.Error("clearing the handoff hire's marker failed", "op", r.rec.Op, "err", err)
-	}
+	h.clearHandoffMarker(ctx, r.rec.Op)
 	h.publishHandoffHire(r)
 	if held {
 		h.syncLayout()
 	}
 	h.log.Info("handoff hire ended", "op", r.rec.Op, "state", state, "code", code, "hired", r.rec.Hired)
 	h.trimHandoffHires()
+}
+
+// clearHandoffMarker drops op's restart marker: its hire ended.
+func (h *Hub) clearHandoffMarker(ctx context.Context, op string) {
+	if err := h.st.ClearHandoffHire(ctx, op); err != nil {
+		h.log.Error("clearing the handoff hire's marker failed", "op", op, "err", err)
+	}
 }
 
 // clipReason keeps a reason to a line's worth.
@@ -528,14 +533,18 @@ func (h *Hub) handoffHireFiled(ctx context.Context, op string, marked bool, file
 	sendHome func(result, why string)) (handled bool) {
 	r := h.hh.byOp[op]
 	if r == nil {
-		if marked && sendHome != nil {
-			sendHome(proto.HandoffSendSkipped, "The new agent was not hired; the worker stays.")
+		if marked {
+			h.clearHandoffMarker(ctx, op)
+			if sendHome != nil {
+				sendHome(proto.HandoffSendSkipped, "The new agent was not hired; the worker stays.")
+			}
 		}
 		return marked
 	}
 	switch r.rec.State {
 	case proto.HandoffHireWaiting:
 	case proto.HandoffHireFailed, proto.HandoffHireCancelled: // it ended first: filed, not hired
+		h.clearHandoffMarker(ctx, op) // an interrupted one's request kept it until now
 		if r.rec.Path == "" {
 			r.rec.Handoff, r.rec.Path = filed.ID, filed.Path
 		}
@@ -721,7 +730,9 @@ func (h *Hub) removeHandoffHire(op string) {
 // loadHandoffHires reads the hires a restart interrupted (NewHub, after the
 // agent requests and LLM jobs): each marked request or job is published as
 // failed, interrupted, with its handoff's path when it was filed; nothing
-// is hired for it and no desk held. Its marker is cleared.
+// is hired for it and no desk held. Its marker is cleared, but a pending
+// agent request's, which resumes, keeps it until it settles: a second
+// restart meanwhile says the same, and its filing still sends nobody home.
 func (h *Hub) loadHandoffHires(ctx context.Context) error {
 	rows, err := h.st.HandoffHireRows(ctx)
 	if err != nil {
@@ -746,10 +757,13 @@ func (h *Hub) loadHandoffHires(ctx context.Context) error {
 			r.rec.SendHomeResult, r.rec.SendHomeReason = proto.HandoffSendSkipped, "The new agent was not hired; "+m.WorkerName+" stays."
 		}
 		h.hh.byOp[row.Op] = r
+		h.log.Info("handoff hire interrupted by the restart", "op", row.Op, "floor", m.Floor, "desk", m.Desk)
+		if row.Mode == store.HandoffHireAgent && row.State == store.HandoffRequestPending {
+			continue // kept until the resumed request settles
+		}
 		if err := h.st.ClearHandoffHire(ctx, row.Op); err != nil {
 			return err
 		}
-		h.log.Info("handoff hire interrupted by the restart", "op", row.Op, "floor", m.Floor, "desk", m.Desk)
 	}
 	h.trimHandoffHires()
 	return nil
