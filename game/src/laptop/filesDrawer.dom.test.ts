@@ -103,6 +103,8 @@ describe('FilesDrawer', () => {
     // A key on a row of the old tree does nothing either.
     key('Enter', old);
     key('ArrowDown', old);
+    // Nor a double click on one.
+    rows(d).find((r) => r.dataset.path === 'README.md')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     expect(deps.insertRef).not.toHaveBeenCalled();
     expect(deps.list).toHaveBeenCalledTimes(2); // no second ask for the same text
     done(answer([f('README.md'), f('docs/readme-old.md')]));

@@ -348,6 +348,39 @@ test('the files drawer while the worker asks: nothing goes in, the drawer says w
   clean();
 });
 
+for (const ui of ['quiet', 'ubuntu'] as const) {
+  test(`${ui}: blocked Tofu, its question sheet put away: the drawer's Enter leaves the disabled prompt box as it was and says why`, async ({ page }) => {
+    test.setTimeout(180_000);
+    const clean = watchErrors(page);
+    const tofu = workers.find((w) => w.name === 'Tofu')!;
+    await page.setViewportSize({ width: 900, height: 700 });
+    await boot(page, `files-blocked-${ui}-${Date.now()}`, { ui });
+    await sit(page, tofu.id);
+    await expect.poll(() => mode(page)).toBe('transcript');
+    const sheet = page.locator('dialog.tx-qsheet');
+    await expect(sheet).toHaveAttribute('open', '');
+    await page.keyboard.press('Escape');
+    await expect(sheet).toBeHidden();
+    const input = page.locator('.seat-transcript .tx-input');
+    await expect(input).toBeDisabled();
+    const before = await input.innerHTML();
+    await page.keyboard.press('Control+Shift+KeyE');
+    const drawer = page.locator('.fdr');
+    await expect(drawer).toHaveAttribute('data-open', 'true');
+    const readme = drawer.getByRole('treeitem', { name: /README\.md/i }).first();
+    await readme.focus();
+    await page.keyboard.press('Enter');
+    await expect(drawer.locator('.fdr-said')).toHaveText(/Tofu is waiting for your answer/);
+    expect(await contrast(page, '.fdr-said')).toBeGreaterThanOrEqual(4.5);
+    expect(await input.innerHTML()).toBe(before);
+    await expect(page.locator('.seat-transcript .tx-prompt .cmp-chip, .seat-transcript .tx-prompt [data-chip]')).toHaveCount(0);
+    expect(await mode(page)).toBe('transcript');
+    expect(await page.evaluate(() => window.__h3d.seat().note)).not.toMatch(/Added/);
+    expect(await page.evaluate(() => window.__h3d.seated())).toBe(tofu.id);
+    clean();
+  });
+}
+
 test('an older bridge (no transcripts): a Runs view restored on sitting stays up with its terminal; Chat says why', async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);

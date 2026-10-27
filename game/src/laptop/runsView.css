@@ -50,6 +50,11 @@
   scrollbar-width: thin;
   scrollbar-color: var(--scroll-thumb) transparent;
 }
+/* Compact (the column is short): the card's bottom fades while more of it is below (its Run row, scrolled to). */
+.seat-runs-body > .mp-request[data-more] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+}
 .seat-runs-status {
   flex: none;
   margin: 0;

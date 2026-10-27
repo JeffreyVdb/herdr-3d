@@ -95,6 +95,8 @@ export class RunsView {
   private visible = false;
   private timer: ReturnType<typeof setInterval> | null = null;
   private disposed = false;
+  /** Watches the card's size (and its content's) for its "more below" fade. */
+  private readonly sized: ResizeObserver | null;
   /** Open terminal asked for the keyboard in the run's terminal before the view could take it (not placed yet). */
   private termFocus = false;
 
@@ -109,6 +111,12 @@ export class RunsView {
     this.el.hidden = true;
     this.status.hidden = true;
     this.list.addEventListener('keydown', (e) => this.onListKey(e));
+    // In a short column the card is compact and scrolls inside: its bottom fades while more of it is below.
+    const more = () => this.card.el.toggleAttribute('data-more', this.card.el.scrollHeight - this.card.el.scrollTop - this.card.el.clientHeight > 1);
+    this.card.el.addEventListener('scroll', more, { passive: true });
+    this.sized = typeof ResizeObserver === 'function' ? new ResizeObserver(more) : null;
+    this.sized?.observe(this.card.el);
+    new MutationObserver(more).observe(this.card.el, { childList: true });
   }
 
   private now(): number {
@@ -370,6 +378,7 @@ export class RunsView {
     if (this.disposed) return;
     this.disposed = true;
     this.drop();
+    this.sized?.disconnect();
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.el.remove();

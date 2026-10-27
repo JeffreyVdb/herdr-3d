@@ -376,6 +376,8 @@ export class FilesDrawer {
   }
 
   private insert(n: TreeNode): void {
+    // A row of the tree before the filter's answer (a double click on it too) is not what the filter shows.
+    if (this.stale) return this.waitForAnswer();
     this.say(this.deps.insertRef(n.path, n.kind) || null);
   }
 
