@@ -58,17 +58,21 @@ type HandoffRequest struct {
 	State, Reason                              string
 	HandoffID                                  int64 // 0: none
 	CreatedAt                                  int64 // unix ms
+	// Hire (#219) is the marker of the hire that follows its filing (nil:
+	// none, or it ended).
+	Hire *HandoffHireMarker
 }
 
 const handoffRequestCols = `op, worker_uuid, floor, harness, agent_session, transcript, transcript_offset, path, nonce,
-	instruction, send_home, state, reason, handoff_id, created_at`
+	instruction, send_home, state, reason, handoff_id, created_at, hire`
 
 func scanHandoffRequest(sc interface{ Scan(...any) error }) (HandoffRequest, error) {
 	var r HandoffRequest
 	var id sql.NullInt64
+	var hire string
 	err := sc.Scan(&r.Op, &r.WorkerID, &r.Floor, &r.Harness, &r.AgentSession, &r.Transcript, &r.Offset, &r.Path, &r.Nonce,
-		&r.Instruction, &r.SendHome, &r.State, &r.Reason, &id, &r.CreatedAt)
-	r.HandoffID = id.Int64
+		&r.Instruction, &r.SendHome, &r.State, &r.Reason, &id, &r.CreatedAt, &hire)
+	r.HandoffID, r.Hire = id.Int64, markerOf(hire)
 	return r, err
 }
 
@@ -76,9 +80,9 @@ func scanHandoffRequest(sc interface{ Scan(...any) error }) (HandoffRequest, err
 // row, or its worker a pending one.
 func (s *Store) AddHandoffRequest(ctx context.Context, r HandoffRequest) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO handoff_request (`+handoffRequestCols+`, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.Op, r.WorkerID, r.Floor, r.Harness, r.AgentSession, r.Transcript, r.Offset, r.Path, r.Nonce, r.Instruction, r.SendHome,
-		r.State, r.Reason, nullID(r.HandoffID), r.CreatedAt, s.ts())
+		r.State, r.Reason, nullID(r.HandoffID), r.CreatedAt, markerText(r.Hire), s.ts())
 	if err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed") {
 		return ErrRequestTaken
 	}

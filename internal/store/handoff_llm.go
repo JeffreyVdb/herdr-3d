@@ -94,25 +94,29 @@ type HandoffLLMJob struct {
 	State, Code, Message            string
 	HandoffID                       int64 // 0: none
 	CreatedAt, UpdatedAt            int64 // unix ms
+	// Hire (#219) is the marker of the hire that follows its filing (nil:
+	// none, or it ended).
+	Hire *HandoffHireMarker
 }
 
 const handoffLLMJobCols = `op, worker_uuid, floor, agent_session, candidate, args_hash, config, prompt_version, send_home, state, code,
-	message, handoff_id, created_at, updated_at`
+	message, handoff_id, created_at, updated_at, hire`
 
 func scanHandoffLLMJob(sc interface{ Scan(...any) error }) (HandoffLLMJob, error) {
 	var j HandoffLLMJob
 	var id sql.NullInt64
+	var hire string
 	err := sc.Scan(&j.Op, &j.WorkerID, &j.Floor, &j.AgentSession, &j.Candidate, &j.ArgsHash, &j.Config, &j.PromptVersion, &j.SendHome,
-		&j.State, &j.Code, &j.Message, &id, &j.CreatedAt, &j.UpdatedAt)
-	j.HandoffID = id.Int64
+		&j.State, &j.Code, &j.Message, &id, &j.CreatedAt, &j.UpdatedAt, &hire)
+	j.HandoffID, j.Hire = id.Int64, markerOf(hire)
 	return j, err
 }
 
 // AddHandoffLLMJob stores a new job: ErrRequestTaken when its op has a row.
 func (s *Store) AddHandoffLLMJob(ctx context.Context, j HandoffLLMJob) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO handoff_llm_job (`+handoffLLMJobCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err := s.db.ExecContext(ctx, `INSERT INTO handoff_llm_job (`+handoffLLMJobCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		j.Op, j.WorkerID, j.Floor, j.AgentSession, j.Candidate, j.ArgsHash, j.Config, j.PromptVersion, j.SendHome, j.State, j.Code,
-		j.Message, nullID(j.HandoffID), j.CreatedAt, j.UpdatedAt)
+		j.Message, nullID(j.HandoffID), j.CreatedAt, j.UpdatedAt, markerText(j.Hire))
 	if err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed") {
 		return ErrRequestTaken
 	}

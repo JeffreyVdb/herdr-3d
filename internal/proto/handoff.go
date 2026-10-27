@@ -224,6 +224,9 @@ type WorkerHandoffArgs struct {
 	// Secrets (#108 round 2, optional; modes agent and llm): the review of
 	// Instruction's possible secrets.
 	Secrets *SecretsReview `json:"secrets,omitempty"`
+	// Hire (#219, optional; modes agent and llm): the hire the bridge
+	// starts once the handoff is filed (World.HandoffHires follows it).
+	Hire *WorkerHandoffHire `json:"hire,omitempty"`
 }
 
 // Agent handoff request states (AgentHandoff.State).
@@ -268,6 +271,8 @@ type WorkerHandoffRequestResult struct {
 	// Protected (#108 round 2): how many ranges of the instruction went to
 	// private files (absent: none, or Existing).
 	Protected int `json:"protected,omitempty"`
+	// HandoffHire (#219): the pending hire, when the request carried one.
+	HandoffHire *HandoffHire `json:"handoff_hire,omitempty"`
 }
 
 // WorkerHandoffCancelArgs are the args of worker.handoff_cancel (#224).
