@@ -27,6 +27,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/handoff"
+	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/secretfiles"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
@@ -300,40 +301,55 @@ func (h *Hub) reviewedHandoff(ctx context.Context, c *Client, cmd proto.Command,
 	}, func(ctx context.Context, p protected) { h.unprotect(ctx, p) }, func(ctx context.Context, p protected) error {
 		b := a
 		b.Instruction, b.Secrets = p.text, nil
-		if a.Mode == proto.HandoffModeAgent {
-			ask := agentAsk{worker: b.Worker, op: b.Op, instruction: b.Instruction, sendHome: b.SendHome, rev: rev,
-				answer: func(r proto.AgentHandoff, existing, _ bool) any {
-					res := proto.WorkerHandoffRequestResult{Request: r, Existing: existing}
-					if !existing {
-						res.Protected = len(p.files)
-					}
-					return res
-				}}
-			if len(p.files) > 0 {
-				ask.settle = h.settleHandoff(p, owner)
-			}
-			return h.startAgentHandoff(ctx, c, cmd, ask)
-		}
-		started := false
-		if err := h.startLLMHandoff(ctx, c, cmd, b, rev, func() { started = true }); err != nil {
-			return err
-		}
-		h.settleHandoff(p, owner)(nil, !started)
-		return nil
+		return h.startHandoffProtected(ctx, c, cmd, b, rev, p, owner, nil)
 	})
+	return nil
+}
+
+// startHandoffProtected starts the handoff of a (modes agent and llm) whose
+// instruction went through the gate (p, its files owner's; a.Instruction
+// is p's text), with its pending hire (#219; nil: none). The hire's review
+// is the hire's: refused here, it is the caller's to undo.
+func (h *Hub) startHandoffProtected(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHandoffArgs, rev *promptsecret.Reviewer,
+	p protected, owner secretfiles.Owner, hire *handoffHire) error {
+	if a.Mode == proto.HandoffModeAgent {
+		ask := agentAsk{worker: a.Worker, op: a.Op, instruction: a.Instruction, sendHome: a.SendHome, rev: rev, hire: hire,
+			answer: func(r proto.AgentHandoff, existing, _ bool) any {
+				res := proto.WorkerHandoffRequestResult{Request: r, Existing: existing, HandoffHire: h.handoffHireView(r.Op)}
+				if !existing {
+					res.Protected = len(p.files)
+				}
+				return res
+			}}
+		if len(p.files) > 0 {
+			ask.settle = h.settleHandoff(p, owner)
+		}
+		return h.startAgentHandoff(ctx, c, cmd, ask)
+	}
+	started := false
+	if err := h.startLLMHandoff(ctx, c, cmd, a, rev, func() { started = true }, hire); err != nil {
+		return err
+	}
+	h.settleHandoff(p, owner)(nil, !started)
 	return nil
 }
 
 // startHandoffOf is startHandoff's modes agent (#224) and llm (#9) for
 // args read.
 func (h *Hub) startHandoffOf(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHandoffArgs) error {
+	return h.startHandoffPlain(ctx, c, cmd, a, nil)
+}
+
+// startHandoffPlain is startHandoffOf with its pending hire (#219; nil:
+// none), the instruction as given.
+func (h *Hub) startHandoffPlain(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHandoffArgs, hire *handoffHire) error {
 	if a.Mode == proto.HandoffModeAgent {
 		return h.startAgentHandoff(ctx, c, cmd, agentAsk{worker: a.Worker, op: a.Op, instruction: a.Instruction, sendHome: a.SendHome,
-			answer: func(r proto.AgentHandoff, existing, _ bool) any {
-				return proto.WorkerHandoffRequestResult{Request: r, Existing: existing}
+			hire: hire, answer: func(r proto.AgentHandoff, existing, _ bool) any {
+				return proto.WorkerHandoffRequestResult{Request: r, Existing: existing, HandoffHire: h.handoffHireView(r.Op)}
 			}})
 	}
-	return h.startLLMHandoff(ctx, c, cmd, a, nil, nil)
+	return h.startLLMHandoff(ctx, c, cmd, a, nil, nil, hire)
 }
 
 // startHandoffPreview answers worker.handoff_preview: the candidate's text,
@@ -395,12 +411,17 @@ func (h *Hub) startHandoff(ctx context.Context, c *Client, cmd proto.Command) er
 		return err
 	}
 	if a.Mode == proto.HandoffModeAgent || a.Mode == proto.HandoffModeLLM { // #224, #9
+		if a.Hire != nil || h.hh.byOp[a.Op] != nil { // #219: with a hire, or a replay of one
+			return h.startHandoffHire(ctx, c, cmd, a)
+		}
 		if h.gated(a.Secrets != nil) { // #108
 			return h.reviewedHandoff(ctx, c, cmd, a)
 		}
 		return h.startHandoffOf(ctx, c, cmd, a)
 	}
 	switch {
+	case a.Hire != nil: // #219: a literal handoff is filed first, then hired by the client
+		return bad("hire needs mode %q or %q", proto.HandoffModeAgent, proto.HandoffModeLLM)
 	case a.Mode != proto.HandoffModeLiteral:
 		return bad("mode must be %q, %q or %q, got %q", proto.HandoffModeLiteral, proto.HandoffModeAgent, proto.HandoffModeLLM, a.Mode)
 	case !handoffOp.MatchString(a.Op):

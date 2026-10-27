@@ -201,6 +201,8 @@ type LLMHandoff struct {
 type WorkerHandoffJobResult struct {
 	Job      LLMHandoff `json:"job"`
 	Existing bool       `json:"existing,omitempty"`
+	// HandoffHire (#219): the pending hire, when the request carried one.
+	HandoffHire *HandoffHire `json:"handoff_hire,omitempty"`
 }
 
 // HandoffLLMProvenance is an LLM handoff's provenance, from its front

@@ -164,6 +164,9 @@ type Options struct {
 	// AgentHandoffGrace how long after the turn ended the file may still
 	// appear (default DefaultAgentHandoffGrace).
 	AgentHandoffTimeout, AgentHandoffGrace time.Duration
+	// #219: HandoffHireKeep is how long an ended pending handoff hire stays
+	// in the world (default DefaultHandoffHireKeep).
+	HandoffHireKeep time.Duration
 	// HirePoll is how often a hire or send-home looks at a pane, and
 	// ExitPause the pause between Codex's /quit and Enter (defaults 250 ms,
 	// 400 ms).
@@ -545,6 +548,7 @@ type Hub struct {
 	ho  handoffState      // #223 handoffs
 	ah  agentHandoffState // #224 agent handoff requests
 	llm llmHandoffState   // #9 LLM handoffs
+	hh  handoffHireState  // #219 the handoffs' pending hires
 	pk  packupState       // #110 pack up on request
 	kn  kaneoState        // #184 Kaneo
 
@@ -723,6 +727,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if opts.AgentHandoffGrace <= 0 {
 		opts.AgentHandoffGrace = DefaultAgentHandoffGrace
 	}
+	if opts.HandoffHireKeep <= 0 { // #219
+		opts.HandoffHireKeep = DefaultHandoffHireKeep
+	}
 	if opts.CommandRequestRetry <= 0 { // #213
 		opts.CommandRequestRetry = DefaultCommandRequestRetry
 	}
@@ -836,10 +843,14 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if err := h.initHandoffs(ctx); err != nil { // #223
 		return nil, err
 	}
-	if err := h.loadAgentHandoffs(ctx); err != nil { // #224
+	h.hh = handoffHireState{byOp: map[string]*handoffHire{}} // #219
+	if err := h.loadAgentHandoffs(ctx); err != nil {         // #224
 		return nil, err
 	}
 	if err := h.initHandoffLLM(ctx); err != nil { // #9
+		return nil, err
+	}
+	if err := h.loadHandoffHires(ctx); err != nil { // #219: after both
 		return nil, err
 	}
 	if err := h.initPackup(ctx); err != nil { // #110
@@ -1006,6 +1017,7 @@ func (h *Hub) Run(ctx context.Context) error {
 		case <-manualC.C:
 			h.pollManualProcesses(ctx)
 			h.syncManualInputTicker()
+			h.pruneHandoffHires() // #219
 		case <-h.manualInputTick(): // #213
 			h.sampleManualInput(ctx)
 		case <-credentialTick.C:
@@ -1609,6 +1621,11 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 		return
 	}
 	h.scheduleManualCleanup(context.Background(), "", u.Session, "session removed", true)
+	var gone []string
+	for _, g := range h.sessionFloors(u.Session) {
+		gone = append(gone, g.id)
+	}
+	h.handoffHireFloorGone(context.Background(), gone...) // #219: a later filing does not hire
 	for _, g := range h.sessionFloors(u.Session) {
 		for _, id := range g.order {
 			w := h.workers[id]
@@ -1905,6 +1922,7 @@ func (h *Hub) syncFloorWorkers(ctx context.Context, f *floorState, obs []world.W
 			used[op.desk] = true // reserved
 		}
 	}
+	h.heldDesks(floor, used) // #219
 	var evs []proto.Event
 	order := make([]string, 0, len(obs))
 	for i, w := range obs {
@@ -2351,6 +2369,12 @@ func (h *Hub) deskCount(floor string, f *floorState) int {
 			count++
 		}
 	}
+	for _, r := range h.hh.byOp { // #219: a desk held for a handoff's hire
+		if r.holds() && r.rec.Floor == floor {
+			highest = max(highest, r.rec.DeskIndex)
+			count++
+		}
+	}
 	return max(highest+1, min(h.opts.MaxDesks, max(minDesks, count+spareDesks)))
 }
 
@@ -2411,6 +2435,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 		HireOptions: &hire, Presets: h.presetViews(), Limits: h.limitsViews(), Children: []proto.Child{}} // M6 launch: presets; M10 limits; #22
 	w.Host, _ = os.Hostname()
 	w.ManualProcesses = h.manualProcessViews()
+	w.HandoffHires = h.handoffHiresView()               // #219
 	w.Screen = h.screenView()                           // M13 screen
 	w.AI = h.aiView()                                   // #92 AI integration
 	w.Kaneo = h.kaneoView()                             // #184 Kaneo

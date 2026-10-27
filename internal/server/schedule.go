@@ -271,9 +271,9 @@ func (h *Hub) scheduleFloor(floor string) (f *floorState, gone bool) {
 	return nil, true
 }
 
-// freeDesk is the first desk of floor that no worker holds and no hire is
-// on its way to (the game's first free desk); the hire grows the floor's
-// desks as any hire does.
+// freeDesk is the first desk of floor that no worker holds, no hire is on
+// its way to and (#219) no handoff's hire holds (the game's first free
+// desk); the hire grows the floor's desks as any hire does.
 func (h *Hub) freeDesk(floor string, f *floorState) (int, bool) {
 	taken := map[int]bool{}
 	for _, d := range h.desks[floor] {
@@ -284,6 +284,7 @@ func (h *Hub) freeDesk(floor string, f *floorState) (int, bool) {
 			taken[op.desk] = true
 		}
 	}
+	h.heldDesks(floor, taken) // #219
 	for d := range h.deskCount(floor, f) {
 		if !taken[d] {
 			return d, true
@@ -343,8 +344,7 @@ func (h *Hub) fireSchedule(ctx context.Context, s store.Schedule, now time.Time)
 	// #127: the herdr hiring instructions for the schedule's own floor (a
 	// virtual floor's v-… id), once, after the task (the late notice, the
 	// prompt, the handoff), as worker.hire adds them: the whole prompt is
-	// checked, the task alone translated.
-	a, compose := hireLines(a)
+	// checked, the task alone translated (startInternalHire).
 	sid := s.ID
 	// #108 round 2: with prompt secrets reviewed, the stored prompt goes
 	// only as its review left it (runHire checks it before anything else).
@@ -352,13 +352,13 @@ func (h *Hub) fireSchedule(ctx context.Context, s store.Schedule, now time.Time)
 	if h.ps.enabled && s.Prompt != "" {
 		sec = &hireSecrets{rev: h.ps.rev, stored: &storedPrompt{text: s.Prompt, record: s.SecretsReview}}
 	}
-	err := h.beginHire(ctx, h.sc.client, cmd, a, nil, compose, &hireWatch{
+	err := h.startInternalHire(ctx, scheduleClient, cmd, a, &hireWatch{
 		begun: func(ctx context.Context, id string) error {
 			s.State, s.StateReason, s.FiredAt, s.WorkerID = store.ScheduleRunning, "", now.UnixMilli(), id
 			h.log.Info("schedule fired", "schedule", sid, "floor", s.Floor, "desk", desk, "worker", id)
 			return h.saveSchedule(ctx, s)
 		},
-		settled: func(ctx context.Context, id string, res *proto.HireResult, err error) {
+		settled: func(ctx context.Context, id string, res *proto.HireResult, _ string, err error) {
 			h.scheduleSettled(ctx, sid, id, res, err)
 		},
 	}, sec)

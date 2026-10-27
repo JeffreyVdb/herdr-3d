@@ -232,6 +232,8 @@ var migrations = []string{
 	migrationExpectedMCP, // #196
 	migrationManualProcess,
 	migrationCommandRequest,
+	// #219: the restart marker of a handoff's pending hire (never its task).
+	migrationHandoffHire,
 }
 
 // Fingerprint kinds.
