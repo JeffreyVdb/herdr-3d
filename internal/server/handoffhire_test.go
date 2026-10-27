@@ -373,7 +373,7 @@ func TestHandoffHireAcceptance(t *testing.T) {
 	origin.Hire.Origin = "no spaces allowed"
 	c.mustError(proto.CmdWorkerHandoff, origin, proto.ErrBadRequest)
 	c.mustError(proto.CmdWorkerHandoff, hhArgs(id, "op-d", 1, "x"), proto.ErrDeskTaken) // w2's
-	long := strings.Repeat("y", 32<<10-500) // fits a prompt, not with the path's room
+	long := strings.Repeat("y", 32<<10-500)                                             // fits a prompt, not with the path's room
 	c.mustError(proto.CmdWorkerHandoff, hhArgs(id, "op-t", 5, long), proto.ErrBadRequest)
 	if _, _, _, n := ab.requested("w1:p1"); n != 0 {
 		t.Fatal("a refused request was sent")
@@ -551,7 +551,9 @@ func TestHandoffHireLLM(t *testing.T) {
 	}
 
 	// The model fails: nobody hired, the handoff's reason.
-	lb.llm.llm.Func = func(context.Context, ai.Request) (string, error) { return "", &ai.Error{Kind: ai.KindTimeout, Msg: "slow"} }
+	lb.llm.llm.Func = func(context.Context, ai.Request) (string, error) {
+		return "", &ai.Error{Kind: ai.KindTimeout, Msg: "slow"}
+	}
 	c.mustAck(proto.CmdWorkerHandoff, llmHire("op-l3", 6))
 	rec = lb.handoffHire("op-l3", func(r proto.HandoffHire) bool { return r.Ended() })
 	if rec.State != proto.HandoffHireFailed || rec.Code != proto.HandoffHireTimeout || !strings.Contains(rec.Reason, "did not answer") {
