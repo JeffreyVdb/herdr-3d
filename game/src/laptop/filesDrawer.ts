@@ -22,8 +22,8 @@ export interface FilesDrawerDeps {
   list(query: string): Promise<WorkerFiles | null>;
   /** The worker's Changes as path → `M` (changed, tracked) or `U` (untracked); null while there are none to show. */
   changes(): ReadonlyMap<string, 'M' | 'U'> | null;
-  /** Puts an @ reference to `path` into the prompt box. */
-  insertRef(path: string, kind: 'file' | 'dir'): void;
+  /** Puts an @ reference to `path` into the prompt box; why not when the box cannot take it (the drawer says it). */
+  insertRef(path: string, kind: 'file' | 'dir'): string | null | void;
   /** After a close: the seat puts the keyboard back where it was. */
   closed(): void;
 }
@@ -106,6 +106,8 @@ export class FilesDrawer {
   private readonly tree: HTMLElement;
   private readonly msg: HTMLElement;
   private readonly partial: HTMLElement;
+  /** Why the last reference did not go in (the prompt box refused it). */
+  private readonly said: HTMLElement;
   private open_ = false;
   /** The query of the answer shown (the field may be newer). */
   private query = '';
@@ -131,11 +133,13 @@ export class FilesDrawer {
     this.tree = h('ul', { class: 'fdr-tree', role: 'tree', 'aria-label': `Files of ${deps.rootLabel}` });
     this.msg = h('p', { class: 'fdr-msg', role: 'status' });
     this.partial = h('p', { class: 'fdr-partial' });
+    this.said = h('p', { class: 'fdr-said', role: 'status' });
+    this.said.hidden = true;
     this.el = h('aside', { class: 'fdr', 'aria-label': 'Files', 'data-open': 'false', inert: true },
       h('header', { class: 'fdr-head' }, duotone('files', 'fdr-head-icon'), h('h2', { class: 'fdr-title', title: deps.rootLabel }, deps.rootLabel), close),
       h('label', { class: 'fdr-filter' }, duotone('search'), this.filter),
       h('div', { class: 'fdr-body' }, this.tree, this.msg),
-      h('footer', { class: 'fdr-foot' }, h('p', { class: 'fdr-keys' }, 'Enter inserts an @ reference · Esc closes'), this.partial));
+      h('footer', { class: 'fdr-foot' }, this.said, h('p', { class: 'fdr-keys' }, 'Enter inserts an @ reference · Esc closes'), this.partial));
     this.el.addEventListener('keydown', (e) => this.onKey(e));
     this.filter.addEventListener('input', () => this.schedule());
     this.tree.addEventListener('click', (e) => this.onClick(e));
@@ -166,6 +170,7 @@ export class FilesDrawer {
     this.el.dataset.open = 'false';
     this.el.toggleAttribute('inert', true);
     this.cancelTimer();
+    this.say(null);
     this.deps.closed();
   }
 
@@ -356,7 +361,12 @@ export class FilesDrawer {
   }
 
   private insert(n: TreeNode): void {
-    this.deps.insertRef(n.path, n.kind);
+    this.say(this.deps.insertRef(n.path, n.kind) || null);
+  }
+
+  private say(text: string | null): void {
+    this.said.textContent = text ?? '';
+    this.said.hidden = !text;
   }
 
   private onKey(e: KeyboardEvent): void {

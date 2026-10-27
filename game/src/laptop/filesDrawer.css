@@ -213,3 +213,11 @@
 .fdr-partial[hidden] {
   display: none;
 }
+/* #216: why the prompt box did not take the reference (a question waits, a prompt is on its way). */
+.fdr-said {
+  color: var(--text);
+  font-weight: 600;
+}
+.fdr-said[hidden] {
+  display: none;
+}

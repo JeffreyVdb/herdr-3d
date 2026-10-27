@@ -81,6 +81,26 @@ describe('FilesDrawer', () => {
     expect([...d.el.querySelectorAll('svg')].every((s) => s.classList.contains('dt'))).toBe(true);
   });
 
+  it('a reference the prompt box refuses: the drawer says why (a status), until one goes in or it closes', async () => {
+    const d = await make();
+    const said = d.el.querySelector<HTMLElement>('.fdr-said')!;
+    expect(said.getAttribute('role')).toBe('status');
+    expect(said.hidden).toBe(true);
+    deps.insertRef.mockReturnValueOnce('Ada is waiting for your answer: answer the questions first.');
+    key('ArrowDown');
+    key('Enter');
+    expect(said.hidden).toBe(false);
+    expect(said.textContent).toBe('Ada is waiting for your answer: answer the questions first.');
+    expect(document.activeElement).toBe(rows(d)[0]); // the keyboard stays in the tree
+    key('Enter'); // it went in this time
+    expect(said.hidden).toBe(true);
+    deps.insertRef.mockReturnValueOnce('Not now.');
+    key('Enter');
+    expect(said.hidden).toBe(false);
+    d.close();
+    expect(said.hidden).toBe(true);
+  });
+
   it('says the list is partial at the cap or with a reason, never a total; changed files outside the cap still show', async () => {
     changes = new Map([['zzz/outside.ts', 'M'], ['f000', 'M'], ['new.txt', 'U']]);
     const many = Array.from({ length: FILES_CAP }, (_, i) => f(`f${String(i).padStart(3, '0')}`));

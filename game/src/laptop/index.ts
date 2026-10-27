@@ -905,16 +905,19 @@ export class Laptops {
     else this.focusSeat();
   }
 
-  /** The drawer's Enter: a file chip in the seated worker's prompt box (the conversation shows it; the drawer stays). */
-  private insertRef(id: string, path: string, kind: 'file' | 'dir'): void {
+  /**
+   * The drawer's Enter: a file chip in the seated worker's prompt box (the conversation shows it; the drawer stays). Why
+   * not, for the drawer to say, when the box cannot take it: nothing changed then (no draft edit, no view swap).
+   */
+  private insertRef(id: string, path: string, kind: 'file' | 'dir'): string | null {
     const s = this.seat;
-    if (s?.id !== id) return;
+    if (s?.id !== id) return null;
     const why = this.whyNoTranscript() ?? (hasTranscript(this.host.store.workerView(id)?.harness) ? null : `${s.name} has no conversation here, so no prompt box to put a reference in.`);
-    if (why) return this.host.seat.status('error', why);
-    const refused = this.transcript.insertFileRef(path, kind === 'dir', false);
-    if (refused) return this.host.seat.status('error', refused);
+    const refused = why ?? this.transcript.insertFileRef(path, kind === 'dir', false);
+    if (refused) return refused;
     this.drawerMode = null;
     this.host.seat.status('ok', `Added @${path} to the prompt box`);
+    return null;
   }
 
   /** The worker's Changes, for the drawer's M and U marks (asked each time it opens; the old ones meanwhile). */
@@ -992,9 +995,11 @@ export class Laptops {
     if (this.seat?.id !== id) return;
     const name = this.seat.name;
     if (code === 'unknown_command') {
+      // #216: Runs reads no conversation: it stays up, and says nothing (Chat says why when you pick it).
+      if (this.transcript.mode === 'runs') return;
       this.transcript.stop(id);
       this.host.seat.status('error', failureText('transcript.watch', code, message));
-    } else if (this.transcript.mode !== 'terminal') {
+    } else if (this.transcript.mode !== 'terminal' && this.transcript.mode !== 'runs') {
       this.host.seat.status('error', code === 'capacity' ? 'herdr-world is reading as many conversations as it allows. Trying again in a moment.' : failureText('transcript.watch', code, message, { worker: name }));
     }
   }

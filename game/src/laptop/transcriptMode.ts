@@ -1153,12 +1153,14 @@ export class TranscriptMode {
    * #216: the files drawer's Enter: a file chip for `path` (a folder's with `dir`) into the seated worker's prompt box, at
    * its remembered caret (in place of a selection), and a space after it, as the box's own `@` completion inserts one;
    * then the conversation (its worker's: a child's has no box), the box's keyboard with `focus` (else the keyboard stays
-   * where it is: the drawer, for the next one). Null when it went in, else why not (a prompt on its way: the box is read only).
+   * where it is: the drawer, for the next one). Null when it went in, else why not, the draft untouched: a prompt on its
+   * way (or being checked) leaves the box read only, and an ask or the screen's question disables it (as the view does).
    */
   insertFileRef(path: string, dir: boolean, focus = true): string | null {
     const s = this.s;
     if (!s) return 'You are not at a laptop.';
-    if (this.drafts.sending(s.id).busy || s.pending.some((p) => p.state === 'sending')) return 'A prompt is on its way: the prompt box takes the reference once it is sent.';
+    if (this.drafts.sending(s.id).busy || s.pending.some((p) => p.state === 'sending') || this.prompting.has(s.id) || this.checking || this.reviewing) return 'A prompt is on its way: the prompt box takes the reference once it is sent.';
+    if (s.ask || s.question) return `${s.name} is waiting for your answer: answer the questions first (in Chat, or in the terminal), then add the reference.`;
     const draft = this.drafts.get(s.id, s.name);
     const sel = draft.selection;
     draft.insertParts(sel.anchor, sel.focus, [{ kind: 'file', path, dir }, ' ']);
@@ -1532,11 +1534,14 @@ export class TranscriptMode {
     return this.s?.pending ?? [];
   }
 
-  /** The watch ended for good (`worker_removed`, `asleep`, the connection): the overlay goes back to the terminal. */
+  /**
+   * The watch ended for good (`worker_removed`, `asleep`, the connection): the overlay goes back to the terminal.
+   * #216: not from Runs, which reads no conversation (an older bridge's `unknown_command` leaves it up).
+   */
   stop(id: string): void {
     const s = this.s;
     if (s?.id !== id) return;
-    if (s.mode !== 'terminal') this.setMode('terminal', false);
+    if (s.mode !== 'terminal' && s.mode !== 'runs') this.setMode('terminal', false);
   }
 
   /** The worker's blocked question (from the store; null when it is not blocked). */
