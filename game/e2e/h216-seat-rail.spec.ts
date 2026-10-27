@@ -292,3 +292,85 @@ test('the files drawer: the worker’s tree, the filter, Enter puts a file chip 
   await expect(drawer).toHaveAttribute('data-open', 'false');
   clean();
 });
+
+/** The contrast of an element's text (or `prop`) on the first opaque background behind it (WCAG 2 relative luminance). */
+async function contrast(page: Page, selector: string): Promise<number> {
+  return page.locator(selector).first().evaluate((el) => {
+    const rgb = (c: string) => {
+      const srgb = c.match(/color\(srgb ([^)]+)\)/);
+      const parts = (srgb ? srgb[1]! : c.match(/rgba?\(([^)]+)\)/)![1]!).split(/[ ,/]+/).filter(Boolean).map(Number);
+      const [r, g, b] = srgb ? parts.slice(0, 3).map((v) => v * 255) : parts;
+      return [r!, g!, b!, parts[3] ?? 1] as const;
+    };
+    const lum = ([r, g, b]: readonly number[]) => { const f = (v: number) => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r!) + 0.7152 * f(g!) + 0.0722 * f(b!); };
+    let bg: readonly number[] | null = null;
+    for (let e: Element | null = el; e && !bg; e = e.parentElement) { const c = rgb(getComputedStyle(e).backgroundColor); if (c[3] >= 0.99) bg = c; }
+    const fg = rgb(getComputedStyle(el).color);
+    const blend = fg[3] < 1 && bg ? [0, 1, 2].map((i) => fg[i]! * fg[3] + bg![i]! * (1 - fg[3])) : fg;
+    const [a, b] = [lum(blend), lum(bg ?? [0, 0, 0])].sort((x, y) => y - x);
+    return (a! + 0.05) / (b! + 0.05);
+  });
+}
+
+for (const ui of ['quiet', 'ubuntu'] as const) {
+  test(`${ui}: every view with and without the needs-you line, the drawer, a phone's Runs; text contrast of the new surfaces`, async ({ page }) => {
+    test.setTimeout(240_000);
+    const clean = watchErrors(page);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await boot(page, `shots-${ui}-${Date.now()}`, { ui, request: 'sudo', terminal: [zippy.id] });
+    await sit(page, zippy.id);
+    const asking = await start(page, zippy.id, 's-1', 'sudo -A tailscale serve --https=8443 http://127.0.0.1:39525');
+    await start(page, zippy.id, 's-2', 'pnpm vitest run src/laptop');
+    const ended = await start(page, zippy.id, 's-3', 'make lint');
+    await page.evaluate((id) => window.__h3d.simManual('sim.manual_finish', { id, exit_code: 0 }), ended);
+    const views = [['1', 'terminal'], ['2', 'chat'], ['3', 'images'], ['4', 'runs']] as const;
+    for (const size of [{ width: 1280, height: 800 }, { width: 900, height: 700 }]) {
+      await page.setViewportSize(size);
+      await frames(page, 6);
+      for (const needs of [true, false]) {
+        await attention(page, asking, needs ? 'confirmed' : 'clear');
+        await expect(page.locator('.seat-needs')).toBeVisible({ visible: needs });
+        // The episode's toast would cover the line in the shots.
+        await expect.poll(() => page.evaluate(() => window.__h3d.toastState()?.shown ?? false), { timeout: 15_000 }).toBe(false);
+        for (const [d, name] of views) {
+          await page.keyboard.press(`Control+Shift+Digit${d}`);
+          await frames(page, 4);
+          await page.waitForTimeout(250);
+          await snap(page, `${name}${needs ? '-needs' : ''}-${ui}-${size.width}`);
+        }
+      }
+      await page.keyboard.press('Control+Shift+Digit1');
+      await page.keyboard.press('Control+Shift+KeyE');
+      await expect(page.locator('.fdr[data-open="true"] [role="treeitem"]').first()).toBeVisible();
+      await page.waitForTimeout(250);
+      await snap(page, `drawer-${ui}-${size.width}`);
+      await page.keyboard.press('Escape');
+    }
+    // Text contrast on the new surfaces, measured (≥ 4.5:1).
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await attention(page, asking, 'confirmed');
+    await page.keyboard.press('Control+Shift+Digit4');
+    await expect(page.locator('.seat-runs .seat-run')).toHaveCount(3);
+    const texts = ['.seat-rail-view[aria-selected="true"] .seat-rail-word', '.seat-rail-view:not([aria-selected="true"]) .seat-rail-word', '.seat-rail-host .seat-rail-word', '.seat-rail-view[data-mode="runs"] .seat-rail-badge', '.seat-needs-who', '.seat-needs-cmd', '.seat-needs-more', '.seat-runs .seat-strip-name', '.seat-runs .seat-strip-sub', '.seat-run-cmd', '.seat-run-state', '.seat-run-state[data-attn]', '.seat-run-time', '.seat-runs-head-cmd', '.seat-runs-head-meta', '.seat-runs-new'];
+    const low: string[] = [];
+    for (const t of texts) {
+      if (!(await page.locator(t).count())) continue;
+      const r = await contrast(page, t);
+      if (r < 4.5) low.push(`${t}: ${r.toFixed(2)}`);
+    }
+    await page.keyboard.press('Control+Shift+Digit1');
+    for (const t of ['.seat-term-strip .seat-strip-name', '.seat-term-strip .seat-strip-sub']) {
+      const r = await contrast(page, t);
+      if (r < 4.5) low.push(`${t}: ${r.toFixed(2)}`);
+    }
+    expect(low, `${ui}: text under 4.5:1`).toEqual([]);
+    // A phone: the Runs view stacks and scrolls, nothing off the page.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.keyboard.press('Control+Shift+Digit4');
+    await frames(page, 6);
+    await page.waitForTimeout(250);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await snap(page, `runs-needs-${ui}-390`);
+    clean();
+  });
+}

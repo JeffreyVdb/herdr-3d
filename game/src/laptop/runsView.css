@@ -84,14 +84,13 @@
   background: var(--raised);
   box-shadow: inset 0 0 0 1px var(--line);
 }
-.seat-run--on {
-  box-shadow: inset 0 0 0 1px var(--border-chip), inset 3px 0 0 var(--action);
-}
 .seat-run[data-tone='attn'] {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 60%, transparent);
 }
+/* The picked run: a ring all round (its terminal is the panel under the rows). */
+.seat-run--on,
 .seat-run--on[data-tone='attn'] {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 60%, transparent), inset 3px 0 0 var(--action);
+  box-shadow: inset 0 0 0 2px var(--accent-text);
 }
 .seat-run-pick {
   flex: 1 1 0;
