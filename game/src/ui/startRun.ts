@@ -612,7 +612,7 @@ export class StartRunDialog {
     );
 
     const busy = this.state === 'starting' || this.state === 'preparing' || this.state === 'failed';
-    const nodes: Node[] = [this.ticketField()];
+    const nodes: Node[] = [h('div', { class: 'run-writing' }, this.ticketField(), this.extraEl)];
     const notices: Node[] = [];
     const options = this.options();
 
@@ -627,7 +627,7 @@ export class StartRunDialog {
     preset.addEventListener('change', () => this.pickPreset(preset.value));
     const edit = h('button', { class: 'btn btn--sm', 'data-key': 'presets', title: 'Create, edit and delete team presets', onclick: (e: Event) => this.host.openPresets(e.currentTarget as HTMLElement) }, icon(ICON.pencil), h('span', {}, 'Presets'));
     const last = this.f.preset && fv?.floor.last_preset === this.f.preset ? 'Last run here' : null;
-    nodes.push(
+    const setup: Node[] = [
       h(
         'div',
         { class: 'dd-grid dd-grid--run' },
@@ -640,7 +640,7 @@ export class StartRunDialog {
           h('p', { class: 'field-hint', id: 'run-preset-hint' }, 'Who it hires for coding, reviews, UX and research.'),
         ),
       ),
-    );
+    ];
 
     // The orchestrator itself.
     if (this.f.orch) {
@@ -648,7 +648,7 @@ export class StartRunDialog {
       const p = this.preset()?.roles.orch;
       const same = !!p && p.harness === o.harness && p.model === o.model && p.effort === o.effort;
       const note = same ? h('span', { class: 'tape tape--note', title: 'The orchestrator of the chosen preset' }, 'Preset') : null;
-      nodes.push(
+      setup.push(
         h(
           'div',
           { class: 'dd-agent', role: 'group', 'aria-label': 'Orchestrator' },
@@ -663,7 +663,8 @@ export class StartRunDialog {
           ...this.profileNodes(),
         ),
       );
-    } else nodes.push(h('div', { class: 'dd-skeleton', 'aria-hidden': 'true' }, h('i'), h('i')));
+    } else setup.push(h('div', { class: 'dd-skeleton', 'aria-hidden': 'true' }, h('i'), h('i')));
+    nodes.push(h('div', { class: 'run-setup' }, ...setup));
 
     const label = h('input', { id: 'run-label', 'data-key': 'label', autocomplete: 'off', spellcheck: 'false', maxlength: 64, placeholder: this.prep?.label || 'ORCH|…' });
     label.value = this.f.label;
@@ -672,7 +673,6 @@ export class StartRunDialog {
       this.renderActions();
     });
     nodes.push(
-      this.extraEl,
       h(
         'div',
         { class: 'dd-grid' },

@@ -68,6 +68,32 @@ const prompt = (page: Page) => page.locator('#run-prompt');
 /** What the First prompt composer shows (a contenteditable has no value): its text, line breaks kept. */
 const promptShown = (page: Page) => prompt(page).evaluate((e) => (e as HTMLElement).innerText.replace(/\u200B/g, '').replace(/\n$/, ''));
 
+test('orchestrator layout uses wide screens and keeps selects usable on narrow screens', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await openGame(page, 'demo-m4', '', SIM);
+  await enter(page, 'herdr-3d');
+  await page.keyboard.press('Shift+R');
+  await runDialog(page);
+  const ticket = page.locator('#run-ticket');
+  const extra = page.locator('#run-extra');
+  const desk = page.locator('#run-desk');
+  const agent = page.getByRole('group', { name: 'Orchestrator' });
+  const t = (await ticket.boundingBox())!;
+  const e = (await extra.boundingBox())!;
+  const d = (await desk.boundingBox())!;
+  const a = (await agent.boundingBox())!;
+  expect(e.x).toBeGreaterThan(t.x + t.width);
+  expect(a.x).toBeGreaterThan(d.x + d.width);
+  expect(d.width).toBeLessThanOrEqual(160);
+  await expect(desk).toHaveCSS('appearance', 'none');
+
+  await page.setViewportSize({ width: 500, height: 900 });
+  const narrowTicket = (await ticket.boundingBox())!;
+  const narrowExtra = (await extra.boundingBox())!;
+  expect(narrowExtra.y).toBeGreaterThan(narrowTicket.y + narrowTicket.height);
+  await desk.selectOption({ index: 0 });
+});
+
 test('E on an empty desk: Hire orchestrator from the keyboard, an issue number, Ctrl+Enter starts the run and you face the orchestrator', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);

@@ -6,6 +6,7 @@ import './ui/hud.css';
 import './ui/panels.css';
 import './ui/hire.css';
 import './ui/m5.css';
+import './ui/select.css';
 import * as THREE from 'three/webgpu';
 import { App, type LookAt, type Pose } from './app';
 import { backendName, forceWebGLFromSearch, type BackendName } from './backend';
