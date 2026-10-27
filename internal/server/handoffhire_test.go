@@ -560,5 +560,48 @@ func TestHandoffHireLLM(t *testing.T) {
 	if n := hhCreates(lb.fl); n != 1 {
 		t.Fatalf("%d hires", n)
 	}
+
+	// The source leaves while the model writes: nobody hired.
+	out, release = blockLLM(lb)
+	defer release()
+	c.mustAck(proto.CmdWorkerHandoff, llmHire("op-l4", 6))
+	<-out
+	lb.fl.close("w1")
+	rec = lb.handoffHire("op-l4", func(r proto.HandoffHire) bool { return r.Ended() })
+	if rec.State != proto.HandoffHireFailed || rec.Code != proto.HandoffHireSourceGone || rec.WorkerName == "" {
+		t.Fatalf("record %+v", rec)
+	}
+	if n := hhCreates(lb.fl); n != 1 {
+		t.Fatalf("%d hires", n)
+	}
 	lb.noLeak(t, c)
+}
+
+// A schedule's fire takes the first free desk that no pending handoff
+// hire holds.
+func TestHandoffHireScheduleSkipsHeldDesk(t *testing.T) {
+	t.Parallel()
+	ab := startAgentBridge(t, "", "", "", nil)
+	ab.publish(world.Listed{Sessions: []string{"s"}})
+	waitFor(t, "the runner's list", func() bool { return ab.hub.FloorsKnown(context.Background()) })
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdWorkerHandoff, hhArgs(ab.ids["w1"], "op-q", 3, hhTask)) // desks 0-2 are taken: 3 is the first free one
+	sp := spec(time.Now().Add(time.Hour))
+	_, m := c.command(proto.CmdScheduleCreate, "create", sp)
+	s := ackData[proto.Schedule](t, m)
+	c.mustAck(proto.CmdScheduleRunNow, proto.ScheduleArgs{ID: s.ID})
+	var hired *proto.Worker
+	for {
+		ev := c.event()
+		if ev.T == proto.EvWorkerUpsert && ev.Worker.HiredAt != 0 {
+			hired = ev.Worker
+		}
+		if ev.T == proto.EvScheduleUpsert && ev.Schedule.ID == s.ID && ev.Schedule.State == proto.ScheduleDone {
+			break
+		}
+	}
+	if hired == nil || hired.DeskIndex != 4 {
+		t.Fatalf("the schedule hired %+v", hired)
+	}
 }
