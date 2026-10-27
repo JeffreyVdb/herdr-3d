@@ -105,7 +105,10 @@ export class HandoffHireAnnouncer {
 
   /** The review that sent `op` keeps its task here until the op ends. */
   session(op: string, s: HandoffHireSession): void {
+    // A resend of the same op (its first send got no answer): the newer press holds the task now.
+    const was = this.sessions.get(op);
     this.sessions.set(op, s);
+    if (was && was !== s) was.done();
   }
 
   /** The review said how `op` ended (it was open on it): nobody says it again. */
