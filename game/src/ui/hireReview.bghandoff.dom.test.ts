@@ -7,6 +7,7 @@ import { HandoffHireBook } from '../world/handoffHire';
 import { fromHandoff } from '../world/hireReview';
 import { CAT } from '../world/hireReviewFixtures';
 import type { HandoffPlan } from './handoffFiling';
+import type { Draft as PromptDraft } from './composer/draft';
 import { HandoffHireAnnouncer, ORPHAN_WAIT_MS } from './handoffHires';
 import type { HireHost } from './hire';
 import { SPAWNED_TEXT } from './hireCoordinator';
@@ -24,13 +25,13 @@ const PATH = '/home/u/handoff/floor/20261027-1600-pixel-loader.md';
 const TASK = 'Fix the issue\n\n- keep the tests green';
 const INTERP: HireInterpretation = { sources: [], harness: { provenance: 'missing' }, model: { provenance: 'missing' }, effort: { provenance: 'missing' }, task: { provenance: 'missing' }, questions: [], ready_for_review: true };
 
-const prep = (): HirePrepare => ({
+const prep = (capacity: HirePrepare['capacity'] = { floor: { count: 1, soft: 10, hard: 20 }, host: { count: 1, soft: 10, hard: 20 } }): HirePrepare => ({
   cwd: '/w/pixel',
   label: 'Nibble',
   git: null,
   choice: { harness: 'codex', model: 'gpt-6-luna', effort: 'high' },
   choice_source: 'floor_default',
-  capacity: { floor: { count: 1, soft: 10, hard: 20 }, host: { count: 1, soft: 10, hard: 20 } },
+  capacity,
 });
 
 const flush = async () => {
@@ -45,12 +46,13 @@ interface Pending {
   done?: boolean;
 }
 
-function setup(o: { background?: boolean; secrets?: PromptSecretsFlow; known?: boolean } = {}) {
+function setup(o: { background?: boolean; secrets?: PromptSecretsFlow; known?: boolean; capacity?: HirePrepare['capacity'] } = {}) {
   const seats: Array<{ name: string } | null> = Array(6).fill(null);
   seats[0] = { name: 'Pixel' };
   const held = new Set<number>();
   const sent: Pending[] = [];
   const toasts: Array<{ text: string; kind: string }> = [];
+  const uploads: Array<{ label: string; answer(r: CommandResult): void }> = [];
   const goTos: string[] = [];
   const holds: Array<[string, string]> = [];
   let beeps = 0;
@@ -83,9 +85,10 @@ function setup(o: { background?: boolean; secrets?: PromptSecretsFlow; known?: b
   const host = {
     store,
     send: (t: string, args: Record<string, unknown>) => {
-      if (t === 'hire.prepare') return Promise.resolve({ ok: true, data: prep() } as CommandResult);
+      if (t === 'hire.prepare') return Promise.resolve({ ok: true, data: prep(o.capacity) } as CommandResult);
       return new Promise<CommandResult>((answer) => sent.push({ t, args, answer }));
     },
+    upload: (_file: Blob, hint: { label: string }) => new Promise<CommandResult>((answer) => uploads.push({ label: hint.label, answer })),
     unsupported: () => false,
     reserve: (_s: string, d: number) => {
       held.add(d);
@@ -102,6 +105,7 @@ function setup(o: { background?: boolean; secrets?: PromptSecretsFlow; known?: b
     ...(o.secrets ? { secrets: o.secrets } : {}),
   } as unknown as HireHost;
   const rv = new HireReviewDialog(document.body, host);
+  const draft = () => (rv as unknown as { composer: { getDraft(): PromptDraft } }).composer.getDraft();
   const of = (t: string) => sent.filter((s) => s.t === t);
   const last = (t: string) => of(t).at(-1)!;
   const answer = async (t: string, r: CommandResult) => {
@@ -141,10 +145,13 @@ function setup(o: { background?: boolean; secrets?: PromptSecretsFlow; known?: b
   const flushTimers = () => {
     while (timers.length) timers.shift()?.();
   };
-  return { rv, sent, of, last, answer, record, open, submit, accept, toasts, goTos, holds, beeps: () => beeps, announcer, book, held, flushTimers };
+  return { rv, sent, of, last, answer, record, open, submit, accept, toasts, goTos, holds, beeps: () => beeps, announcer, book, held, flushTimers, uploads, draft, workers };
 }
 
 const q = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel);
+const png = () => new File([new Uint8Array([137, 80, 78, 71])], 'shot.png', { type: 'image/png' });
+/** The floor at its hard cap (20 of 20), the host not. */
+const FULL_FLOOR: HirePrepare['capacity'] = { floor: { count: 20, soft: 10, hard: 20 }, host: { count: 20, soft: 30, hard: 40 } };
 
 describe('HireReviewDialog: hire with handoff in the background (#219)', () => {
   beforeEach(() => {
@@ -397,5 +404,57 @@ describe('HireReviewDialog: hire with handoff in the background (#219)', () => {
     expect(e.rv.isOpen).toBe(false);
     expect(ORPHAN_WAIT_MS).toBeGreaterThan(0);
     expect(e.sent).toEqual([]);
+  });
+  it('B-R2: not prompted while open: their Prompt note gets the task as it was sent (the image’s Drop Zone path), not the editor’s placeholder', async () => {
+    const e = setup();
+    await e.open();
+    q<HTMLInputElement>('[data-key="effort:high"]')!.click();
+    e.draft().addImages([png()]);
+    expect(e.rv.summary()!.form.prompt).toBe(`${TASK}[Image #1]`);
+    q<HTMLButtonElement>('[data-key="hire"]')!.click();
+    await flush();
+    e.uploads[0]!.answer({ ok: true, data: { path: '/drop/h3d-Nibble-1.png' } } as CommandResult);
+    await flush();
+    await flush();
+    const ask = e.last('worker.handoff');
+    const sentTask = String((ask.args.hire as Record<string, unknown>).prompt);
+    expect(sentTask).toContain('/drop/h3d-Nibble-1.png');
+    expect(sentTask).not.toContain('[Image #1]');
+    const op = String(ask.args.op);
+    await e.accept(op);
+    await e.record({ op, state: 'hired', path: PATH, hired: 'N', prompted: false, prompt_error: 'the pane was busy' });
+    expect(e.rv.isOpen).toBe(false);
+    expect(e.holds).toEqual([['N', hireWithHandoffTask(PATH, sentTask)]]);
+    expect(e.toasts.at(-1)?.text).toContain('the task is in their prompt');
+  });
+
+  it('B-R1: with Send home after filing, the source leaving frees its place: a full floor does not block the bridge’s hire', async () => {
+    const e = setup({ capacity: FULL_FLOOR });
+    await e.open({ sendHome: true });
+    q<HTMLInputElement>('[data-key="effort:high"]')!.click();
+    expect(e.rv.summary()!.blocker).toBeNull();
+    q<HTMLButtonElement>('[data-key="hire"]')!.click();
+    await flush();
+    expect(e.last('worker.handoff').args).toMatchObject({ send_home: true, hire: { desk_index: 1 } });
+  });
+
+  it('B-R1: the source on another floor frees a host place only; without send home, or without the bridge’s hire (#198), the cap blocks', async () => {
+    const other = setup({ capacity: FULL_FLOOR });
+    other.workers.set('A', { ...other.workers.get('A')!, session: 'elsewhere' } as Worker);
+    await other.open({ sendHome: true });
+    q<HTMLInputElement>('[data-key="effort:high"]')!.click();
+    expect(other.rv.summary()!.blocker).toBe('Over the hard cap: send someone home first.');
+    other.rv.close();
+    document.body.replaceChildren();
+    const stays = setup({ capacity: FULL_FLOOR });
+    await stays.open({ sendHome: false });
+    q<HTMLInputElement>('[data-key="effort:high"]')!.click();
+    expect(stays.rv.summary()!.blocker).toBe('Over the hard cap: send someone home first.');
+    stays.rv.close();
+    document.body.replaceChildren();
+    const old = setup({ capacity: FULL_FLOOR, known: false });
+    await old.open({ sendHome: true });
+    q<HTMLInputElement>('[data-key="effort:high"]')!.click();
+    expect(old.rv.summary()!.blocker).toBe('Over the hard cap: send someone home first.');
   });
 });

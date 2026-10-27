@@ -2,6 +2,7 @@ import type { CommandArgs, HandoffEntry, HandoffHire, HireGit, HireInterpretatio
 import { HANDOFF_PATH_RESERVE, hireWithHandoffTask, newOp } from '../world/handoff';
 import { pendingHire } from '../world/handoffHire';
 import type { WorldStore } from '../world/store';
+import { floorOf } from '../world/floorName';
 import { capacityView, capBlocker, firstFreeDesk, formFromPrepare, hireArgs, hireBlocker, HARNESS_LABEL, modelsFor, newerGit, offeredOptions, OriginFetches, optionsBlocker, promptBlocker, resolveHireDesk, worktreeUsable, type CapacityView, type HireForm } from '../world/hire';
 import {
   agentQuestion,
@@ -182,6 +183,8 @@ interface BridgeHire {
   floor: string;
   desk: number;
   who: string;
+  /** The task as it was sent (images as their Drop Zone paths), without the line that points to the handoff. */
+  task: string;
   /** The bridge took it (its ack, or its record seen): Cancel request can name the op. */
   accepted: boolean;
 }
@@ -664,7 +667,13 @@ export class HireReviewDialog {
   }
 
   private capacity(): CapacityView | null {
-    return this.prep ? capacityView(this.prep.capacity, this.floorName()) : null;
+    if (!this.prep) return null;
+    const c = this.prep.capacity;
+    // #219: the bridge hires, then sends the source home: it does not count toward the caps (as on the bridge).
+    const src = this.plan?.sendHome && this.bridgeHires(this.plan) ? this.host.store.workers.get(this.plan.worker) : undefined;
+    if (!src) return capacityView(c, this.floorName());
+    const floor = floorOf(src) === this.floor ? { ...c.floor, count: Math.max(0, c.floor.count - 1) } : c.floor;
+    return capacityView({ ...c, floor, host: { ...c.host, count: Math.max(0, c.host.count - 1) } }, this.floorName());
   }
 
   /** #108 round 4: the bridge's directory of protected files (null: not known, the references' shape alone). */
@@ -1509,7 +1518,7 @@ export class HireReviewDialog {
         this.drop(reviewed.draft);
       },
     });
-    const bg: BridgeHire = { op, plan, floor, desk, who, accepted: false };
+    const bg: BridgeHire = { op, plan, floor, desk, who, task, accepted: false };
     const f = new HandoffFiling(
       {
         send: (t, a) => this.host.send(t, a),
@@ -1586,9 +1595,8 @@ export class HireReviewDialog {
       const w = r.hired ? this.host.store.workerView(r.hired) : null;
       const name = w?.name ?? bg.who;
       const at = `Desk ${(w?.desk ?? bg.desk) + 1}`;
-      // The review closes, so a task that did not reach the agent goes to their Prompt (P) note.
-      const task = this.choice.task;
-      const held = r.prompted === false && r.delivery !== 'unknown' && !!r.hired && !!r.path && this.host.holdTask?.(r.hired, hireWithHandoffTask(r.path, task), null) === true;
+      // The review closes, so a task that did not reach the agent goes to their Prompt (P) note, as it was sent.
+      const held = r.prompted === false && r.delivery !== 'unknown' && !!r.hired && !!r.path && this.host.holdTask?.(r.hired, hireWithHandoffTask(r.path, bg.task), null) === true;
       const notSent = r.prompted === false ? notPromptedBackgroundText(promptAckOf(r), held) : '';
       const home = r.send_home_result === 'skipped' ? ` ${r.worker_name} was not sent home: ${(r.send_home_reason ?? '').trim() || 'it could not go then.'}` : '';
       this.close();
