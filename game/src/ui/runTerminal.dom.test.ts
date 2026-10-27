@@ -2,14 +2,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConnMessage, ManualProcess } from '../net/protocol';
 
-const terms = vi.hoisted(() => [] as Array<{ resolve: () => void; frames: unknown[]; disposed: boolean }>);
+const terms = vi.hoisted(() => [] as Array<{ resolve: () => void; frames: unknown[]; disposed: boolean; disposes: number }>);
 vi.mock('../laptop/seatTerm', () => ({ SeatTerminal: class {
   grid = { cols: 80, rows: 24, cell: { width: 8, height: 16 } };
-  rec = { resolve: () => {}, frames: [] as unknown[], disposed: false };
+  rec = { resolve: () => {}, frames: [] as unknown[], disposed: false, disposes: 0 };
   private ready: Promise<void>;
   constructor() { this.ready = new Promise<void>((resolve) => { this.rec.resolve = resolve; }); terms.push(this.rec); }
   mount() { return this.ready; }
-  dispose() { this.rec.disposed = true; }
+  dispose() { this.rec.disposed = true; this.rec.disposes++; }
   frame(f: unknown) { this.rec.frames.push(f); return true; }
 } }));
 import { mountRunTerminal, RunTerminalBroker, runStateText, type RunTerminalHost } from './runTerminal';
@@ -102,6 +102,24 @@ describe('mountRunTerminal', () => {
     // Disposed while mounting: nothing is watched for it either.
     dialog.dispose(); seat.dispose();
     expect(watches()).toEqual(['terminal.watch mp:p', 'terminal.unwatch mp:p']);
+  });
+
+  it('a dispose while its terminal is still mounting disposes it again once the mount completes; a loss keeps it', async () => {
+    const { host, watches } = setup();
+    const t = mountRunTerminal(host, p, { surface: 'seat', releaseFocus: vi.fn() });
+    t.dispose();
+    expect(terms[0]!.disposes).toBe(1);
+    // The real SeatTerminal builds its xterm and ResizeObserver after the font loads, even past a dispose.
+    terms[0]!.resolve(); await flush();
+    expect(terms[0]!.disposes).toBe(2);
+    expect(watches()).not.toContain('terminal.watch mp:p');
+    const seat = mountRunTerminal(host, p, { surface: 'seat', releaseFocus: vi.fn() });
+    const dialog = mountRunTerminal(host, p, { surface: 'dialog', releaseFocus: vi.fn(), onStatus: vi.fn() });
+    expect(seat.holding).toBe(false);
+    terms[1]!.resolve(); terms[2]!.resolve(); await flush();
+    // The seat only lost the run: it may hold again, so its terminal stays.
+    expect(terms[1]!.disposes).toBe(0);
+    dialog.dispose(); seat.dispose();
   });
 
   it('a watch answer that comes after the run was taken is ignored (no resize, no status)', async () => {
