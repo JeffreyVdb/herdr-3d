@@ -770,18 +770,27 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 		if json.Unmarshal(cmd.Args, &a) != nil {
 			return redacted(cmd.Args)
 		}
+		var hire json.RawMessage // #219: the hire's task by its length, as worker.hire's
+		if a.Hire != nil {
+			var raw struct {
+				Hire json.RawMessage `json:"hire"`
+			}
+			_ = json.Unmarshal(cmd.Args, &raw)
+			hire = auditTexts(raw.Hire, "prompt")
+		}
 		return mustJSON(struct {
-			Worker           string        `json:"worker"`
-			Mode             string        `json:"mode"`
-			Session          string        `json:"session,omitempty"`
-			Candidate        string        `json:"candidate,omitempty"`
-			Revision         string        `json:"revision,omitempty"`
-			InstructionBytes int           `json:"instruction_bytes,omitempty"`
-			SendHome         bool          `json:"send_home,omitempty"`
-			Op               string        `json:"op"`
-			Secrets          *secretsAudit `json:"secrets,omitempty"` // #108 round 2
+			Worker           string          `json:"worker"`
+			Mode             string          `json:"mode"`
+			Session          string          `json:"session,omitempty"`
+			Candidate        string          `json:"candidate,omitempty"`
+			Revision         string          `json:"revision,omitempty"`
+			InstructionBytes int             `json:"instruction_bytes,omitempty"`
+			SendHome         bool            `json:"send_home,omitempty"`
+			Op               string          `json:"op"`
+			Secrets          *secretsAudit   `json:"secrets,omitempty"` // #108 round 2
+			Hire             json.RawMessage `json:"hire,omitempty"`
 		}{clip(a.Worker), clip(a.Mode), clip(a.Session), clip(a.Candidate), clip(a.Revision), len(a.Instruction), a.SendHome, clip(a.Op),
-			auditReviews(a.Secrets)})
+			auditReviews(a.Secrets), hire})
 	case proto.CmdManualProcessCredential:
 		var a proto.ManualProcessCredentialArgs
 		if json.Unmarshal(cmd.Args, &a) != nil {

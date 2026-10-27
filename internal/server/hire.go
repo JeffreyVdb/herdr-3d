@@ -248,13 +248,28 @@ type hireLaunched func(ctx context.Context, res proto.HireResult, rep *hireRepor
 type firstPrompt func(tr func(string) string) string
 
 // hireWatch is how a hire the bridge started itself (#62: a schedule's
-// fire, which no client waits for) follows it, on the hub goroutine: begun
-// once its desk, name and worker id are taken, before anything reaches
-// herdr (an error refuses the hire); settled once it ended, with its result
-// or its error.
+// fire, which no client waits for; #219: a handoff's hire) follows it, on
+// the hub goroutine: begun once its desk, name and worker id are taken,
+// before anything reaches herdr (an error refuses the hire); settled once
+// it ended, with its result or its error and how far its first prompt got
+// (HireResult.Delivery's values). leaving (#219, "": none) is a worker that
+// goes home right after the hire: the caps do not count it.
 type hireWatch struct {
 	begun   func(ctx context.Context, id string) error
-	settled func(ctx context.Context, id string, res *proto.HireResult, err error)
+	settled func(ctx context.Context, id string, res *proto.HireResult, delivery string, err error)
+	leaving string
+}
+
+// startInternalHire begins a hire the bridge starts itself (#62: a
+// schedule's fire; #219: a handoff's hire): worker.hire's checks and audit
+// row, under by, followed by watch, answered to nobody. a.Prompt is the
+// task; the herdr hiring instructions go after it when asked, the task
+// alone translated (hireLines). An error refuses it before anything began;
+// sec is then the caller's to undo.
+func (h *Hub) startInternalHire(ctx context.Context, by string, cmd proto.Command, a proto.WorkerHireArgs, watch *hireWatch,
+	sec *hireSecrets) error {
+	a, compose := hireLines(a)
+	return h.beginHire(ctx, &Client{name: by, kick: func(error) {}}, cmd, a, nil, compose, watch, sec)
 }
 
 func (op *hireOp) signal() {
@@ -658,26 +673,14 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 		return errors.New("worktree hires are not configured")
 	}
 	desk := *a.DeskIndex
-	// A form can outlive the spare desks it was opened on (workers leave
-	// while its prompt is written). Grow back to that desk within the cap.
-	if n := max(h.opts.MaxDesks, h.deskCount(a.Floor, f)); desk < 0 || desk >= n {
-		return fmt.Errorf("%w: desk %d is not on the floor (0-%d)", errDeskTaken, desk, n-1)
+	if err := h.hireRoom(a.Floor, f, desk); err != nil {
+		return err
 	}
-	for id, d := range h.desks[a.Floor] {
-		if d == desk {
-			name := id
-			if w := h.workers[id]; w != nil {
-				name = w.Name
-			}
-			return fmt.Errorf("%w: desk %d is %s's", errDeskTaken, desk, name)
-		}
+	leaving := ""
+	if watch != nil {
+		leaving = watch.leaving
 	}
-	for _, op := range f.hires {
-		if op.floor == a.Floor && op.desk == desk {
-			return fmt.Errorf("%w: desk %d is being hired into", errDeskTaken, desk)
-		}
-	}
-	if err := h.checkCaps(a.Floor, 1); err != nil {
+	if err := h.checkCapsWith(a.Floor, leaving, false); err != nil {
 		return err
 	}
 	if h.opts.Hire == nil {
@@ -732,10 +735,66 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 	return nil
 }
 
+// hireRoom refuses a desk of floor (f its state) a hire cannot take: off
+// the floor, a worker's, being hired into, or (#219) held for a handoff's
+// hire.
+func (h *Hub) hireRoom(floor string, f *floorState, desk int) error {
+	// A form can outlive the spare desks it was opened on (workers leave
+	// while its prompt is written). Grow back to that desk within the cap.
+	if n := max(h.opts.MaxDesks, h.deskCount(floor, f)); desk < 0 || desk >= n {
+		return fmt.Errorf("%w: desk %d is not on the floor (0-%d)", errDeskTaken, desk, n-1)
+	}
+	for id, d := range h.desks[floor] {
+		if d == desk {
+			name := id
+			if w := h.workers[id]; w != nil {
+				name = w.Name
+			}
+			return fmt.Errorf("%w: desk %d is %s's", errDeskTaken, desk, name)
+		}
+	}
+	for _, op := range f.hires {
+		if op.floor == floor && op.desk == desk {
+			return fmt.Errorf("%w: desk %d is being hired into", errDeskTaken, desk)
+		}
+	}
+	return h.deskHeld(floor, desk)
+}
+
+// checkCapsWith is checkCaps for one hire, (#219) not counting leaving
+// ("": none), a worker that goes home right after it, and with holds the
+// desks the handoffs' pending hires hold.
+func (h *Hub) checkCapsWith(floor, leaving string, holds bool) error {
+	floorN, hostN := h.counts(floor)
+	if holds {
+		for _, r := range h.hh.byOp {
+			if r.holds() {
+				hostN++
+				if r.rec.Floor == floor {
+					floorN++
+				}
+			}
+		}
+	}
+	if w := h.workers[leaving]; leaving != "" && w != nil {
+		hostN--
+		if workerFloor(w) == floor {
+			floorN--
+		}
+	}
+	return h.capsRefuse(floorN, hostN, 1)
+}
+
 // checkCaps refuses a hire that would put the floor or the host above its
 // hard cap with need more workers (hires in flight already count).
 func (h *Hub) checkCaps(session string, need int) error {
 	floorN, hostN := h.counts(session)
+	return h.capsRefuse(floorN, hostN, need)
+}
+
+// capsRefuse refuses need more workers on a floor and host of floorN and
+// hostN.
+func (h *Hub) capsRefuse(floorN, hostN, need int) error {
 	caps := h.opts.Caps
 	switch {
 	case floorN+need > caps.FloorHard:
@@ -1460,7 +1519,7 @@ func (h *Hub) finishHire(ctx context.Context, op *hireOp, res *proto.HireResult,
 		}
 		h.reply(op.client, op.cmd, data, opErr)
 		if op.watch != nil && op.watch.settled != nil {
-			op.watch.settled(ctx, op.id, res, opErr)
+			op.watch.settled(ctx, op.id, res, op.delivery, opErr)
 		}
 	})
 	if err != nil {
