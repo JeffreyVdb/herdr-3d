@@ -463,6 +463,10 @@ class TaskEditor {
     // The editor takes the textarea's hooks: the label, the tests and the focus keys all know `#hire-task`.
     this.composer.editor.id = 'hire-task';
     this.composer.editor.dataset.key = 'task';
+    const stopReveal = () => this.composer.editor.classList.remove('dd-preset-reveal');
+    this.composer.editor.addEventListener('animationend', stopReveal);
+    this.composer.editor.addEventListener('beforeinput', stopReveal);
+    this.composer.editor.addEventListener('pointerdown', stopReveal);
     this.el = h(
       'div',
       { class: 'dd-field dd-task' },
@@ -478,7 +482,16 @@ class TaskEditor {
 
   /** Shows a desk's draft (its uploads go on wherever they are). */
   show(d: PromptDraft): void {
+    this.composer.editor.classList.remove('dd-preset-reveal');
     if (this.composer.getDraft() !== d) this.composer.setDraft(d);
+  }
+
+  /** Reveal preset text without changing the draft or delaying edits and submission. */
+  revealPreset(): void {
+    const editor = this.composer.editor;
+    editor.classList.remove('dd-preset-reveal');
+    void editor.offsetWidth;
+    editor.classList.add('dd-preset-reveal');
   }
 
   get text(): string {
@@ -578,6 +591,7 @@ export class HireDialog {
   private opening = 0;
   private hireBtn: HTMLButtonElement | null = null;
   private renderedKey = '';
+  private revealPresetChoice = false;
   private refetching = false;
   /**
    * #51: what was typed and not hired yet, per desk of a floor (memory, and localStorage where allowed): the text and
@@ -763,6 +777,8 @@ export class HireDialog {
     this.uploadFailed = false;
     // The desk's composer draft (images too) if it is still in memory, else the text storage kept; a first task handed in starts a draft of its own.
     this.editor.show(prefill.prompt !== undefined ? this.newDoc(prefill.prompt) : this.deskDoc(this.draftKey(), draft?.text ?? ''));
+    this.revealPresetChoice = !!prefill.preset;
+    if (prefill.preset && prefill.prompt) this.editor.revealPreset();
     if (prefill.replaceDraft && prefill.prompt !== undefined) {
       // #93: the player chose to replace the desk's unsent task: the preset's text owns the desk now (its images go).
       const old = this.docs.get(this.draftKey());
@@ -1271,6 +1287,12 @@ export class HireDialog {
       );
     }
     this.optionsPane.replaceChildren(...nodes);
+    if (ready && this.revealPresetChoice) {
+      this.revealPresetChoice = false;
+      for (const name of ['harness', 'model', 'effort']) {
+        this.optionsPane.querySelector<HTMLElement>(`[data-pick="${name}"] input:checked + span`)?.classList.add('dd-preset-choice');
+      }
+    }
     this.notices.replaceChildren(...notices);
     for (const el of this.optionsPane.querySelectorAll<HTMLInputElement>('input')) if (busy || this.refetching) el.disabled = true;
     this.renderActions();
