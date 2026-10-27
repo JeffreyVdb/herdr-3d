@@ -962,7 +962,7 @@ func (h *Hub) Run(ctx context.Context) error {
 	if h.ps.files != nil { // #108 prompt secrets
 		h.wg.Add(2)
 		go h.runSecretsJanitor(ctx)
-		go h.runSecretCounts(ctx) // round 5
+		go h.runSecretCounts(ctx)        // round 5
 		h.releaseInterruptedSecrets(ctx) // #219
 	}
 	if h.opts.AI != nil { // #92 AI integration
