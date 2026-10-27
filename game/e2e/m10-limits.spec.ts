@@ -235,6 +235,7 @@ test('the hire dialog has no warning below 85 %, and the start-run dialog shows 
   await page.evaluate(() => window.__h3d.openStartRun({ floor: 'herdr-3d', desk: 5 }));
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.dialog()))?.kind === 'start-run' && (await page.evaluate(() => window.__h3d.dialog()))!.state).toBe('ready');
   const run = page.locator('dialog.desk-dlg--run [data-hook="plan-limits"]');
+  await expect(run.locator('xpath=preceding-sibling::*[1]')).toHaveAttribute('data-pick', 'orch-harness');
   await expect(run.locator('.lm-line')).toHaveCount(2);
   await expect(run.locator('.lm-line').nth(0)).toContainText('Claude');
   await expect(run.locator('.lm-line').nth(1)).toContainText('Codex');

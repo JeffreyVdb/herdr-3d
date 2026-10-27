@@ -648,12 +648,18 @@ export class StartRunDialog {
       const p = this.preset()?.roles.orch;
       const same = !!p && p.harness === o.harness && p.model === o.model && p.effort === o.effort;
       const note = same ? h('span', { class: 'tape tape--note', title: 'The orchestrator of the chosen preset' }, 'Preset') : null;
+      // The run uses both the orchestrator's and the team preset's harnesses.
+      const roles = this.preset()?.roles;
+      const inline = planLimits(this.host.store.limits, [o, ...(roles ? Object.values(roles) : [])].map((r) => ({ harness: r.harness, model: r.model })), this.host.now());
+      const limits = h('div', { class: 'dd-plan-limits', 'data-hook': 'plan-limits' }, inline);
+      limits.hidden = !inline;
       setup.push(
         h(
           'div',
           { class: 'dd-agent', role: 'group', 'aria-label': 'Orchestrator' },
           h('p', { class: 'dd-agent-title' }, 'Orchestrator'),
           chips('orch-harness', 'Harness', Object.keys(options), o.harness, (v) => this.pickOrch({ harness: v }), note),
+          limits,
           ...(o.model
             ? [
                 chips('orch-model', 'Model', modelsFor(options, o.harness), o.model, (v) => this.pickOrch({ model: v }), null, modelEntries(o.harness, modelsFor(options, o.harness), labelsOf(options, o.harness))),
@@ -714,13 +720,6 @@ export class StartRunDialog {
             h('button', { class: 'btn btn--sm', 'data-key': 'refetch', disabled: this.state !== 'ready', onclick: () => void this.prepare(true) }, 'Fetch again'),
           ),
         );
-    }
-    // M10: the plan limits of every harness the run uses: the orchestrator's and the team preset's.
-    if (this.f.orch) {
-      const roles = this.preset()?.roles;
-      const inline = planLimits(this.host.store.limits, [this.f.orch, ...(roles ? Object.values(roles) : [])].map((r) => ({ harness: r.harness, model: r.model })), this.host.now());
-      nodes.push(h('div', { class: 'dd-plan-limits', 'data-hook': 'plan-limits' }, inline));
-      if (!inline) (nodes[nodes.length - 1] as HTMLElement).hidden = true;
     }
     nodes.push(this.promptField());
     if (this.prep) notices.push(this.capacityBlock());
