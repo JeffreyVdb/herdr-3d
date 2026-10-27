@@ -35,9 +35,11 @@
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { AgentHandoff, CacheState, HandoffCandidate, HandoffEntry, HandoffLLMProvenance, LLMHandoff, TranscriptItem, Worker } from '../src/net/protocol.ts';
 import type { AiSim } from './fixture-ai.ts';
+import type { HandoffHireSim } from './fixture-handoffhire.ts';
 
 type Obj = Record<string, unknown>;
 type Send = (m: Obj) => void;
+const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 export interface HandoffHost {
   readonly workers: Worker[];
@@ -54,6 +56,8 @@ export interface HandoffHost {
   fireBlocked(id: string): string;
   /** #9: the AI integration (absent: a bridge without it). */
   readonly ai?: AiSim;
+  /** #219: pending handoff hires (tools/fixture-handoffhire.ts; absent or off: a bridge without them). */
+  readonly hires?: HandoffHireSim;
 }
 
 /** #9: the LLM handoffs' knobs (`simhandoffllm`, `simhandoffllmout`). */
@@ -197,6 +201,11 @@ export class HandoffSim {
   private readonly h: HandoffHost;
   readonly enabled: boolean;
 
+  /** #219: pending handoff hires (null: a bridge without them). */
+  private get hires(): HandoffHireSim | null {
+    return this.h.hires?.enabled ? this.h.hires : null;
+  }
+
   constructor(h: HandoffHost, enabled: boolean, seed = 0, llm: HandoffLLMKnobs = {}) {
     this.h = h;
     this.enabled = enabled;
@@ -218,6 +227,7 @@ export class HandoffSim {
     const counts: Record<string, number> = {};
     for (const f of this.filed) counts[f.e.floor] = (counts[f.e.floor] ?? 0) + 1;
     world.handoffs = { counts };
+    this.h.hires?.decorate(world); // #219
     if (this.llmPresent()) world.handoff_llm = this.llmView();
   }
 
@@ -315,7 +325,10 @@ export class HandoffSim {
     const j = [...this.jobs.values()].find((x) => x.worker === id && x.state === 'running');
     if (!w || !j) return;
     if (outcome !== 'success' || body === null) {
-      this.settleJob(w, j, { state: 'failed', code: outcome, message: LLM_FAIL[outcome] ?? `${outcome.replace(/_/g, ' ')}; nothing was filed` }, send);
+      const message = LLM_FAIL[outcome] ?? `${outcome.replace(/_/g, ' ')}; nothing was filed`;
+      this.settleJob(w, j, { state: 'failed', code: outcome, message }, send);
+      // #219: nobody is hired from it.
+      this.hires?.failed(j.op, outcome === 'timeout' ? 'timeout' : 'handoff_failed', `The LLM handoff was not filed: ${message}.`, send);
       return;
     }
     const c = this.cands.get(w.id);
@@ -333,6 +346,12 @@ export class HandoffSim {
     if (f) f.llm = { model: r.model, host: r.host, prompt_version: LLM_PROMPT_VERSION, snapshot: `${c?.c.id ?? 'cand'}@4096`, coverage: '9 of 24 messages kept; 1 coverage gap', redactions: { github_token: 1 } };
     this.h.emit(send, { t: 'handoff.added', session: e.floor, handoff: e, handoff_count: this.count(e.floor) });
     const done: Partial<LLMHandoff> = { state: 'filed', handoff: e.id };
+    // #219: a handoff hire hires first, then sends the source home (when asked and the new agent has its task).
+    if (this.hires?.get(j.op)?.state === 'waiting') {
+      this.settleJob(w, j, done, send);
+      void this.hires.filed(j.op, e, send).then((home) => home && this.homeAfter(w.id, j, home, send));
+      return;
+    }
     if (j.sendHome) {
       const why = this.canGo(w);
       if (why) Object.assign(done, { send_home_result: 'skipped', send_home_reason: why });
@@ -396,14 +415,17 @@ export class HandoffSim {
     const args = JSON.stringify([a.worker, a.session, a.candidate, a.revision, a.send_home === true, focus]);
     const known = this.jobs.get(a.op);
     if (known) {
-      if (known.worker !== a.worker || known.args !== args) throw this.h.error('bad_request', `op "${a.op}" was used for another handoff`);
-      ack({ job: this.jobView(known), existing: true });
+      if (known.worker !== a.worker || known.args !== args) throw this.h.error(this.hires?.enabled ? 'bad_args' : 'bad_request', this.hires?.enabled ? 'bad args: This request was already sent with other settings.' : `op "${a.op}" was used for another handoff`);
+      const rec = this.hires?.enabled ? this.hires.replay(a.op, this.hireOf(a), this.sealed(a)) : null;
+      ack({ job: this.jobView(known), existing: true, ...(rec ? { handoff_hire: rec } : {}) });
       return;
     }
     const why = this.llmUnready();
     if (why) throw this.h.error('handoff_llm_unavailable', `${why}; nothing was sent`);
     if (this.llmRunning || this.llmOutcome === 'busy') throw this.h.error('busy', 'busy: another LLM handoff is being written: one at a time');
     const { w, c } = this.current(a);
+    const hire = this.hireOf(a);
+    if (hire) this.hires?.check(hire, a.op, a.send_home === true ? w.id : null);
     const r = this.llmRecipient();
     const now = this.h.now();
     const j = { op: a.op, state: 'running' as LLMHandoff['state'], started_at: now, updated_at: now, model: r.model, host: r.host, ...(a.send_home === true ? { send_home: true } : {}), worker: w.id, args, focus, sendHome: a.send_home === true };
@@ -411,7 +433,8 @@ export class HandoffSim {
     this.llmRunning = a.op;
     w.llm_handoff = this.jobView(j);
     this.h.upsert(send, w);
-    ack({ job: this.jobView(j) });
+    const rec = hire ? this.hires?.create(w, 'llm', a.op, hire, a.send_home === true, this.sealed(a), send) : undefined;
+    ack({ job: this.jobView(j), ...(rec ? { handoff_hire: rec } : {}) });
     if (this.llmState) {
       // No endpoint: the knob's outcome, after a beat (`slow`: until sim.llm_finish).
       if (this.llmOutcome !== 'slow') setTimeout(() => this.finishJob(w.id, this.llmOutcome, llmDoc(w, focus), send), 900);
@@ -483,7 +506,7 @@ export class HandoffSim {
 
   handle(t: unknown, a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void = () => undefined): boolean {
     const ours = ['sim.final', 'sim.prompt_turn', 'sim.handoff_fail', 'worker.handoff_preview', 'worker.handoff', 'handoff.list', 'handoff.get', 'handoff.delete', 'worker.handoff_cancel', 'sim.agent_turn', 'sim.agent_skill', 'sim.cache',
-      'handoff_llm.get', 'handoff_llm.set', 'handoff_llm.test', 'sim.handoff_llm', 'sim.llm_finish'];
+      'handoff_llm.get', 'handoff_llm.set', 'handoff_llm.test', 'sim.handoff_llm', 'sim.llm_finish', 'sim.handoff_hire'];
     // #224: an exact top-level "/handoff [instruction]" from the composer is a request; any other prompt is not ours.
     if (t === 'worker.prompt' && this.enabled && typeof a.text === 'string') {
       const m = /^\s*\/handoff(?:\s+([\s\S]*?))?\s*$/.exec(a.text);
@@ -502,6 +525,11 @@ export class HandoffSim {
         if (typeof a.outcome === 'string') this.llmOutcome = a.outcome || 'success';
         this.llmChanged(send);
         ack(this.llmPresent() ? this.llmView() : null);
+        return true;
+      // #219: the next handoff hire's launch is refused (`fail`: its code; default `desk_taken`).
+      case 'sim.handoff_hire':
+        this.h.hires?.failNextLaunch(typeof a.fail === 'string' ? a.fail : undefined);
+        ack();
         return true;
       case 'sim.llm_finish':
         this.finishJob(String(a.id), typeof a.outcome === 'string' ? a.outcome : 'success', llmDoc(this.worker(a), ''), send);
@@ -618,6 +646,7 @@ export class HandoffSim {
         if (!r) throw this.h.error('invalid_state', `${w.name ?? w.id} has no handoff request running`);
         if (typeof a.fail === 'string') {
           this.settle(w, r, { state: 'failed', reason: a.fail }, send);
+          this.hires?.failed(r.op, /timed? ?out/.test(a.fail) ? 'timeout' : 'handoff_failed', `${w.name ?? w.id}’s agent handoff was not filed: ${a.fail}.`, send);
           ack({ request: this.view(r) });
           return true;
         }
@@ -633,6 +662,13 @@ export class HandoffSim {
         );
         this.h.emit(send, { t: 'handoff.added', session: e.floor, handoff: e, handoff_count: this.count(e.floor) });
         const done: Partial<AgentHandoff> = { state: 'filed', handoff: e.id };
+        // #219: a handoff hire hires first, then sends the source home (when asked and the new agent has its task).
+        if (this.hires?.get(r.op)?.state === 'waiting') {
+          this.settle(w, r, done, send);
+          ack({ request: this.view(r), handoff: e });
+          void this.hires.filed(r.op, e, send).then((home) => home && this.homeAfter(w.id, r, home, send));
+          return true;
+        }
         if (r.send_home) {
           const why = this.canGo(w);
           if (why) Object.assign(done, { send_home_result: 'skipped', send_home_reason: why });
@@ -653,8 +689,10 @@ export class HandoffSim {
         const w = this.worker(a, 'worker');
         const j = this.jobs.get(String(a.op));
         if (j && j.worker === w.id && w.llm_handoff?.op === j.op) {
-          if (j.state === 'running') this.settleJob(w, j, { state: 'cancelled', code: 'cancelled', message: 'cancelled; nothing was filed' }, send);
-          else {
+          if (j.state === 'running') {
+            this.settleJob(w, j, { state: 'cancelled', code: 'cancelled', message: 'cancelled; nothing was filed' }, send);
+            this.hires?.failed(j.op, 'cancelled', 'Cancelled: nothing was filed and nobody was hired.', send); // #219: both, at once
+          } else {
             delete w.llm_handoff;
             this.h.upsert(send, w);
           }
@@ -663,8 +701,10 @@ export class HandoffSim {
         }
         const r = this.reqs.get(String(a.op));
         if (!r || r.worker !== w.id || w.agent_handoff?.op !== r.op) throw this.h.error('invalid_state', `${w.name ?? w.id} has no handoff request "${String(a.op)}"`);
-        if (r.state === 'pending') this.settle(w, r, { state: 'failed', reason: 'cancelled' }, send);
-        else {
+        if (r.state === 'pending') {
+          this.settle(w, r, { state: 'failed', reason: 'cancelled' }, send);
+          this.hires?.failed(r.op, 'cancelled', 'Cancelled: nothing was filed and nobody was hired.', send); // #219: both, at once
+        } else {
           delete w.agent_handoff;
           this.h.upsert(send, w);
         }
@@ -730,11 +770,27 @@ export class HandoffSim {
         return true;
       }
       case 'worker.handoff': {
-        for (const k of Object.keys(a)) if (!['worker', 'mode', 'session', 'candidate', 'revision', 'send_home', 'op', 'instruction'].includes(k)) throw this.h.error('bad_request', `bad args: json: unknown field "${k}"`);
+        for (const k of Object.keys(a)) if (!['worker', 'mode', 'session', 'candidate', 'revision', 'send_home', 'op', 'instruction', ...(this.hires?.enabled ? ['hire'] : [])].includes(k)) throw this.h.error('bad_request', `bad args: json: unknown field "${k}"`);
+        // #219: the hire follows an agent's or an LLM's handoff only (a literal one is filed at once: the game hires).
+        if (a.hire !== undefined && (a.mode !== 'agent' && a.mode !== 'llm')) throw this.h.error('bad_args', 'bad args: hire is for an agent or an LLM handoff');
+        if (a.hire !== undefined && !isObj(a.hire)) throw this.h.error('bad_args', 'bad args: hire must be an object');
         if (a.mode === 'agent') {
           if (typeof a.op !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(a.op)) throw this.h.error('bad_request', 'bad args: op must be 1–64 characters of A-Z, a-z, 0-9, _ and -');
-          const r = this.ask(this.worker(a, 'worker'), a.op, typeof a.instruction === 'string' ? a.instruction : '', a.send_home === true, send, false);
-          ack({ request: r.request, ...(r.existing ? { existing: true } : {}) });
+          const w = this.worker(a, 'worker');
+          const instruction = typeof a.instruction === 'string' ? a.instruction : '';
+          const hire = this.hireOf(a);
+          const known = this.reqs.get(a.op);
+          // #219: a replay answers the request and its record when its args are the same.
+          if (known && this.hires?.enabled) {
+            if (known.worker !== w.id || (known.instruction ?? '') !== (instruction.trim() || 'summarize the conversation') || (known.send_home === true) !== (a.send_home === true)) throw this.h.error('bad_args', 'bad args: This request was already sent with other settings.');
+            const rec = this.hires.replay(a.op, hire, this.sealed(a));
+            ack({ request: this.view(known), existing: true, ...(rec ? { handoff_hire: rec } : {}) });
+            return true;
+          }
+          if (hire && !known) this.hires?.check(hire, a.op, a.send_home === true ? w.id : null);
+          const r = this.ask(w, a.op, instruction, a.send_home === true, send, false);
+          const rec = hire && !r.existing ? this.hires?.create(w, 'agent', a.op, hire, a.send_home === true, this.sealed(a), send) : undefined;
+          ack({ request: r.request, ...(r.existing ? { existing: true } : {}), ...(rec ? { handoff_hire: rec } : {}) });
           return true;
         }
         if (a.mode === 'llm') {
@@ -889,9 +945,31 @@ export class HandoffSim {
     return this.items.get(id) ?? [];
   }
 
-  /** A worker that left: its candidate goes. */
-  forget(id: string): void {
+  /** A worker that left: its candidate goes (#219: and its waiting handoff hires fail). */
+  forget(id: string, send?: Send): void {
     this.cands.delete(id);
+    if (send) this.hires?.sourceGone(id, send);
+  }
+
+  /** #219: `worker.handoff`'s `hire` (with the feature on). */
+  private hireOf(a: Obj): Obj | undefined {
+    return this.hires?.enabled && isObj(a.hire) ? a.hire : undefined;
+  }
+
+  /** #219: whether the gate put any of the hire's task in files (then a replay's task is not compared as typed). */
+  private sealed(a: Obj): boolean {
+    return isObj(a.hire) && typeof a.hire.prompt === 'string' && a.hire.prompt.includes('[secret in file ');
+  }
+
+  /** #219: the send home after a handoff hire, on the request or job as the worker shows it. */
+  private homeAfter(id: string, q: { op: string; send_home_result?: 'started' | 'skipped'; send_home_reason?: string }, home: { send_home_result: 'started' | 'skipped'; send_home_reason?: string }, send: Send): void {
+    Object.assign(q, home);
+    const w = this.h.workers.find((x) => x.id === id);
+    if (!w) return;
+    if (w.agent_handoff?.op === q.op) w.agent_handoff = { ...w.agent_handoff, ...home };
+    else if (w.llm_handoff?.op === q.op) w.llm_handoff = { ...w.llm_handoff, ...home };
+    else return;
+    this.h.upsert(send, w);
   }
 }
 

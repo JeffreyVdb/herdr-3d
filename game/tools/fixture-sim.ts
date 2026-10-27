@@ -79,6 +79,8 @@ import { HostSim } from './fixture-host.ts';
 import { McpSim } from './fixture-mcp.ts';
 // #223: literal handoffs and the filing cabinet (`worker.handoff*`, `handoff.*`, `sim.final`, `simhandoffs=<n>`, `simfail=no_handoff`).
 import { HandoffSim } from './fixture-handoff.ts';
+// #219: "Hire with handoff" in the background (`simhandoffhires=1`).
+import { HandoffHireSim, type HireResult } from './fixture-handoffhire.ts';
 // #64 schedules: scheduled agents (`schedule.*`, `sim.schedule_fire`, `sim.schedule_fail`, `simschedules=<n>`, `simfail=no_schedules`; #127 `simfail=no_schedule_instructions`).
 import { ScheduleSim } from './fixture-schedule.ts';
 // #66: schedule suggestions (`schedule_suggestions.*`, `worker.dismiss_schedule_suggestion`, `sim.suggest`, `simschedsuggest=`, `simsuggest=<key>`).
@@ -151,6 +153,8 @@ export interface SimOptions {
   /** #9: the LLM handoffs' state and outcome with no endpoint (`simhandoffllm=`, `simhandoffllmout=`; tools/fixture-handoff.ts). */
   handoffLlm?: string;
   handoffLlmOut?: string;
+  /** #219: the bridge hires after an agent or LLM handoff itself (`simhandoffhires=1`; tools/fixture-handoffhire.ts). */
+  handoffHires?: boolean;
   /** #64 schedules: this many schedules across the first two floors to start with (`simschedules=<n>`; tools/fixture-schedule.ts). */
   schedules?: number;
   /** #66: the schedule suggestions' state with no models (`simschedsuggest=on|off|incomplete|env|env-off|none`), and Zippy's seeded suggestion, remembered by the key (`simsuggest=<key>`; tools/fixture-schedsuggest.ts). */
@@ -334,6 +338,7 @@ export class SimWorld {
     this.manualPreset = o.manual;
     this.commandRequestPreset = o.commandRequest;
     this.handoffLlm = { ...(o.handoffLlm ? { state: o.handoffLlm } : {}), ...(o.handoffLlmOut ? { outcome: o.handoffLlmOut } : {}) }; // #9
+    this.handoffHireMode = o.handoffHires === true && this.handoffMode === 'on'; // #219
     this.now = o.now ?? (() => Date.now());
     this.setT = o.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearT = o.clearTimeout ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
@@ -599,6 +604,7 @@ export class SimWorld {
   private readonly manualPreset: string | undefined;
   private readonly commandRequestPreset: string | undefined;
   private readonly handoffLlm: { state?: string; outcome?: string };
+  private readonly handoffHireMode: boolean;
   /** #98: the agents' activities (tools/fixture-activity.ts). */
   private readonly activity: ActivitySim;
 
@@ -781,6 +787,8 @@ export class SimWorld {
       x.session = this.baseOf(x.session);
     }
     send({ ...x, seq: ++this.seq });
+    // #219: a source worker that leaves takes its waiting handoff hires with it.
+    if (m.t === 'worker.removed' && typeof m.id === 'string') this.handoffHireSim?.sourceGone(m.id, send);
   }
 
   private floorEvent(send: Send, f: Floor): void {
@@ -1165,6 +1173,7 @@ export class SimWorld {
     if (from !== null) this.floorsOf(from).forEach((s, i) => ((this.floors.get(s) as Floor).index = i));
     this.emit(send, { t: 'floor.removed', session: f.session });
     this.hirePresets.dropFloor(f.session, send); // #93: its own presets go with it
+    this.handoffHireSim?.floorGone(f.session, send); // #219: and the handoff hires waiting for it
     for (const w of ws) {
       // The real floor seats them at its lowest free desks.
       const taken = new Set(this.workers.filter((x) => x.session === base).map((x) => x.desk_index));
@@ -1528,12 +1537,88 @@ export class SimWorld {
             () => undefined,
           ),
         ai: this.ai, // #9
+        hires: this.handoffHires, // #219
       },
       this.handoffMode !== 'off',
       this.handoffSeed,
       this.handoffLlm,
     );
     return this.handoffSim;
+  }
+
+  // ---- #219: pending handoff hires (tools/fixture-handoffhire.ts) ------
+
+  private handoffHireSim: HandoffHireSim | null = null;
+
+  private get handoffHires(): HandoffHireSim {
+    this.handoffHireSim ??= new HandoffHireSim(
+      {
+        emit: (send, m) => this.emit(send, m),
+        error: (code, message) => new CmdError(code, message),
+        now: () => this.now(),
+        check: (hire, op, source) => this.handoffHireCheck(hire, op, source),
+        hire: (args, op, send) =>
+          new Promise<HireResult>((resolve) => {
+            const no = (e: unknown) => resolve({ ok: false, code: e instanceof CmdError ? e.code : 'hire_failed', message: e instanceof Error ? e.message : String(e) });
+            try {
+              // The wire's `floor` is the simulator's `session` (see the top).
+              const { floor, ...rest } = args;
+              this.hireWorker({ ...rest, session: floor ?? rest.session }, send, (d) => resolve({ ok: true, data: (d ?? {}) as Obj }), no, op);
+            } catch (e) {
+              no(e);
+            }
+          }),
+        sendHome: (id, send) => {
+          const w = this.workers.find((x) => x.id === id);
+          if (!w) return 'it left already';
+          const why = this.firePrepare({ id }).can_fire === false ? String(this.firePrepare({ id }).fire_blocked ?? 'it cannot be sent home') : w.status === 'working' ? `${w.name ?? w.id} is working` : w.status === 'blocked' ? `${w.name ?? w.id} is blocked: it waits on you` : '';
+          if (why) return why;
+          try {
+            this.fireWorker({ id }, send, () => undefined, () => undefined);
+            return '';
+          } catch (e) {
+            return e instanceof Error ? e.message : String(e);
+          }
+        },
+        claim: (hire, worker) => this.secrets.claimHandoffHire(hire, worker),
+        release: (hire) => this.secrets.releaseHandoffHire(hire),
+        floorName: (id) => this.floors.get(id)?.name ?? id,
+      },
+      this.handoffHireMode,
+    );
+    return this.handoffHireSim;
+  }
+
+  /** #219: `worker.handoff`'s `hire` checked as `worker.hire` checks its args before anything is made (the bridge's accept). */
+  private handoffHireCheck(a: Obj, op: string, source: string | null): void {
+    const f = this.runningFloor({ session: a.floor ?? a.session });
+    const desk = a.desk_index;
+    if (typeof desk !== 'number' || !Number.isInteger(desk) || desk < 0) throw new CmdError('bad_args', 'bad args: hire.desk_index must be an int >= 0');
+    const o = this.hire[str(a, 'harness')];
+    const model = str(a, 'model');
+    const effort = str(a, 'effort');
+    if (!o) throw new CmdError('bad_args', `bad args: unknown harness ${String(a.harness)}`);
+    if (!o.models.includes(model)) throw new CmdError('bad_args', `bad args: ${String(a.harness)} has no model ${model}`);
+    if (![...o.efforts, ...(o.extra_efforts?.[model] ?? [])].includes(effort)) throw new CmdError('bad_args', `bad args: ${model} has no effort ${effort}`);
+    if (a.label !== undefined && (typeof a.label !== 'string' || !a.label.trim() || bytes(a.label) > 64 || a.label.startsWith('-'))) throw new CmdError('bad_args', 'bad args: label must be 1-64 bytes, not starting with -');
+    if (a.cwd !== undefined && (typeof a.cwd !== 'string' || !a.cwd.startsWith('/'))) throw new CmdError('bad_args', 'bad args: cwd must be an absolute path');
+    const prompt = String(a.prompt ?? '');
+    if (prompt.startsWith('--')) throw new CmdError('bad_args', 'bad args: prompt must not start with --');
+    // The task, the line that points to the handoff (a 1024-byte path allowance) and the herdr instructions: one prompt.
+    const extra = bytes(`First read the handoff here: ${'x'.repeat(1024)} and then follow these instructions:\n\n`) + (a.herdr_instructions === true ? 2 + bytes(herdrInstructions(f.session)) : 0);
+    if (bytes(prompt) + extra > 32 * 1024) throw new CmdError('too_long', 'too long: the task with the line that points to the handoff must fit in 32 KiB');
+    const held = this.handoffHires.holder(f.session, desk, op);
+    if (desk >= (f.desks ?? 0) || this.hiring.has(`${f.session}:${desk}`) || held || this.workers.some((w) => w.session === f.session && w.desk_index === desk)) {
+      throw new CmdError('desk_taken', held ? `Desk ${desk + 1} is held for ${held.worker_name}’s handoff hire.` : `desk_taken: desk ${desk} of ${f.session} is ${desk >= (f.desks ?? 0) ? 'out of range' : 'occupied'}`);
+    }
+    // The caps count the other waiting holds, and not the source when it goes home right after.
+    const leaving = source && this.workers.some((w) => w.id === source && w.session === f.session) ? 1 : 0;
+    const cap = this.floorCap(f);
+    const count = cap.count + this.handoffHires.waiting(f.session, op) - leaving;
+    if (count >= cap.hard) throw new CmdError('capacity', `capacity: ${f.session} has ${count} workers (hard cap ${cap.hard})`);
+    const host = this.hostCap();
+    const hostCount = host.count + this.handoffHires.waiting(null, op) - (source ? 1 : 0);
+    if (hostCount >= host.hard) throw new CmdError('capacity', `capacity: the host has ${hostCount} workers (hard cap ${host.hard})`);
   }
 
   // ---- #64 schedules: scheduled agents (tools/fixture-schedule.ts) ------
@@ -1566,7 +1651,7 @@ export class SimWorld {
         freeDesk: (id) => {
           const f = this.floors.get(id);
           const n = f?.desks ?? 0;
-          for (let d = 0; d < n; d++) if (!this.hiring.has(`${id}:${d}`) && !this.workers.some((w) => w.session === id && w.desk_index === d)) return d;
+          for (let d = 0; d < n; d++) if (!this.hiring.has(`${id}:${d}`) && !this.handoffHireSim?.holder(id, d) && !this.workers.some((w) => w.session === id && w.desk_index === d)) return d;
           return null;
         },
         hireWorker: (a, send, ack, fail) => this.hireWorker(a, send, ack, fail),
@@ -1903,7 +1988,8 @@ export class SimWorld {
     this.floorEvent(send, f);
   }
 
-  private hireWorker(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): void {
+  /** `own` (#219): the handoff hire whose hold this hire takes over. */
+  private hireWorker(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void, own?: string): void {
     onlyKeys(a, ['session', 'desk_index', 'harness', 'model', 'effort', 'label', 'cwd', 'worktree', 'prompt', ...(this.hirePresets.instructions ? ['herdr_instructions'] : []), ...(this.codexProfiles ? ['codex_profile'] : [])]);
     const f = this.runningFloor(a);
     const desk = a.desk_index;
@@ -1933,6 +2019,9 @@ export class SimWorld {
     if (desk >= (f.desks ?? 0) || this.hiring.has(`${f.session}:${desk}`) || this.workers.some((w) => w.session === f.session && w.desk_index === desk)) {
       throw new CmdError('desk_taken', `desk_taken: desk ${desk} of ${f.session} is ${desk >= (f.desks ?? 0) ? 'out of range' : 'occupied'}`);
     }
+    // #219: a desk held for a handoff hire is nobody else's.
+    const holder = this.handoffHireSim?.holder(f.session, desk, own);
+    if (holder) throw new CmdError('desk_taken', `Desk ${desk + 1} is held for ${holder.worker_name}’s handoff hire.`);
     const cap = this.floorCap(f);
     if (cap.count >= cap.hard) throw new CmdError('capacity', `capacity: ${f.session} has ${cap.count} workers (hard cap ${cap.hard})`);
     const host = this.hostCap();
@@ -2051,7 +2140,7 @@ export class SimWorld {
   private mainCheckout(send: Send, f: Floor, root: string): void {
     const taken = new Set(this.workers.filter((x) => x.session === f.session).map((x) => x.desk_index));
     let desk = 0;
-    while (taken.has(desk) || this.hiring.has(`${f.session}:${desk}`)) desk++;
+    while (taken.has(desk) || this.hiring.has(`${f.session}:${desk}`) || this.handoffHireSim?.holder(f.session, desk)) desk++;
     const n = ++this.nextId;
     const ws = `wm${n.toString(36)}`;
     const repo = root.split('/').pop() ?? root;

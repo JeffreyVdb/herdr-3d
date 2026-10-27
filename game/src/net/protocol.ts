@@ -659,6 +659,8 @@ export interface World {
   kaneo?: KaneoState;
   /** #223 the filing cabinet: each floor's handoff count (absent from an older bridge, or one without a handoff directory). */
   handoffs?: HandoffCabinet;
+  /** #219: the pending handoff hires and their outcomes (absent from a bridge without them: the client hires after filing, as #198). */
+  handoff_hires?: HandoffHire[];
   /** #62 scheduled agents: the upcoming, the failed and skipped not dismissed, each floor's last 50 done (absent from a bridge before #62: none). */
   schedules?: Schedule[];
   /** #93 hire presets: every floor's and the global ones, by name ignoring case (absent from a bridge before #93: unavailable; `[]` when none). */
@@ -813,6 +815,9 @@ export type WorldEvent =
   // #62 scheduled agents
   | ManualProcessUpsert
   | ManualProcessRemoved
+  // #219 pending handoff hires
+  | HandoffHireUpsert
+  | HandoffHireRemoved
   | ScheduleUpsert
   | ScheduleRemoved
   // #93 hire presets
@@ -1284,9 +1289,9 @@ export interface CommandArgs {
   'worker.handoff':
     | { worker: string; mode: 'literal'; session: string; candidate: string; revision: string; send_home?: boolean; op: string }
     /** #224: asks the worker's agent (acks `AgentHandoffAck`); the outcome follows on `Worker.agent_handoff`. */
-    | { worker: string; mode: 'agent'; instruction?: string; send_home?: boolean; op: string; /** #108 round 2: the review of `instruction`. */ secrets?: SecretsReview }
+    | { worker: string; mode: 'agent'; instruction?: string; send_home?: boolean; op: string; /** #108 round 2: the review of `instruction`. */ secrets?: SecretsReview; /** #219: hire once filed (only to a bridge whose snapshot has `handoff_hires`). */ hire?: WorkerHandoffHire }
     /** #9: the configured LLM writes it from the snapshot up to the candidate (acks `LLMHandoffAck`); the job follows on `Worker.llm_handoff`. */
-    | { worker: string; mode: 'llm'; session: string; candidate: string; revision: string; instruction?: string; send_home?: boolean; op: string; secrets?: SecretsReview };
+    | { worker: string; mode: 'llm'; session: string; candidate: string; revision: string; instruction?: string; send_home?: boolean; op: string; secrets?: SecretsReview; hire?: WorkerHandoffHire };
   /** #224: cancels a running agent handoff request, or dismisses a settled one (acks `AgentHandoff`; #9: an LLM job's op acks `LLMHandoff`). */
   'worker.handoff_cancel': { worker: string; op: string };
   /** A floor's handoffs, newest first, or with `q` the matches (acks `HandoffListAck`). */
@@ -1593,6 +1598,8 @@ const EVENT_TYPES = new Set([
   'kaneo.update', // #184 the Kaneo connection
   'manual_process.upsert',
   'manual_process.removed',
+  'handoff_hire.upsert', // #219 pending handoff hires
+  'handoff_hire.removed',
   'schedule.upsert', // #62 scheduled agents
   'schedule.removed',
   'hire_preset.upsert', // #93 hire presets
@@ -1721,6 +1728,11 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
       return isObj(o.process) && isStr(o.process.id) && isStr(o.process.worker) && isStr(o.process.state);
     case 'manual_process.removed':
       return isStr(o.id);
+    // #219: a pending handoff hire created or moved on; one that left the view.
+    case 'handoff_hire.upsert':
+      return isObj(o.handoff_hire) && isStr(o.handoff_hire.op) && isStr(o.handoff_hire.state);
+    case 'handoff_hire.removed':
+      return isStr(o.op);
     case 'schedule.upsert':
       return isObj(o.schedule) && isStr(o.schedule.id) && isStr(o.schedule.floor) && isStr(o.schedule.state) && isInt(o.schedule.due_at);
     case 'schedule.removed':
@@ -3629,6 +3641,8 @@ export interface LLMHandoff {
 export interface LLMHandoffAck {
   job: LLMHandoff;
   existing?: boolean;
+  /** #219: the pending hire, when the request carried `hire` (also on an `existing` answer). */
+  handoff_hire?: HandoffHire;
 }
 
 /** #9: an LLM handoff's provenance, from its front matter (`HandoffGetAck.llm`). */
@@ -3648,7 +3662,60 @@ export interface AgentHandoffAck {
   existing?: boolean;
   /** #108 round 2: how many ranges of the instruction went to files (absent: none, or `existing`). */
   protected?: number;
+  /** #219: the pending hire, when the request carried `hire` (also on an `existing` answer). */
+  handoff_hire?: HandoffHire;
 }
+
+// #219 (docs/protocol.md "Handoffs"): "Hire with handoff" in the background. `worker.handoff` (agent, llm) carries the
+// hire; the bridge holds the desk, hires once the handoff is filed, and publishes the record in `World.handoff_hires`.
+
+/** `worker.handoff`'s `hire`: `worker.hire`'s args (the task without the line that points to the handoff), and who asked. */
+export type WorkerHandoffHire = CommandArgs['worker.hire'] & {
+  /** The asking browser's id (≤ 80 of `[A-Za-z0-9_-]`): only it announces the outcome and gives the task back. */
+  origin?: string;
+};
+
+export type HandoffHireState = 'waiting' | 'hiring' | 'hired' | 'failed' | 'cancelled';
+
+/** One pending handoff hire, by the handoff's op. Never the task, the instruction, secrets or review data. */
+export interface HandoffHire {
+  op: string;
+  /** The source worker's id and name (kept after it leaves). */
+  worker: string;
+  worker_name: string;
+  mode: 'agent' | 'llm';
+  /** The target floor id and desk (0-based). */
+  floor: string;
+  desk_index: number;
+  /** The requested label (absent: the bridge's default name). */
+  label?: string;
+  harness: string;
+  model: string;
+  effort: string;
+  origin?: string;
+  state: HandoffHireState;
+  /** failed / cancelled: a stable code (`handoff_failed`, `timeout`, `cancelled`, `source_gone`, `floor_gone`, `desk_taken`, `capacity`, `too_long`, `secrets_stale`, `hire_failed`, `interrupted`). */
+  code?: string;
+  /** failed / cancelled: one sentence, shown as is. */
+  reason?: string;
+  /** The filed handoff's id and final path, once filed (`failed` with a path: filed, not hired). */
+  handoff?: number;
+  path?: string;
+  /** hired: the new worker, and whether its first task reached it (as `HireAck`). */
+  hired?: string;
+  prompted?: boolean;
+  delivery?: string;
+  prompt_error?: string;
+  send_home?: boolean;
+  send_home_result?: 'started' | 'skipped';
+  send_home_reason?: string;
+  /** Unix ms. */
+  started_at: number;
+  ended_at?: number;
+}
+
+export interface HandoffHireUpsert { t: 'handoff_hire.upsert'; seq: number; handoff_hire: HandoffHire }
+export interface HandoffHireRemoved { t: 'handoff_hire.removed'; seq: number; op: string }
 
 export type CacheState = 'warm' | 'expired' | 'unknown';
 export type CachePolicy = 'observed_1h' | 'observed_5m' | 'observed_mixed' | 'documented' | 'assumed' | 'unknown';
