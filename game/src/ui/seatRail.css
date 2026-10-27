@@ -23,6 +23,8 @@
   box-shadow: none;
   outline: 1px solid var(--line);
   outline-offset: -1px;
+  /* Its overlay's z-index stays inside it: the files drawer (filesDrawer.css) lies over the whole stage. */
+  isolation: isolate;
 }
 
 /* ---- the rail ------------------------------------------------------------------------------------------------ */
@@ -317,6 +319,7 @@
 /* A phone: a narrower rail, words under the icons kept short; the terminal's strip keeps its controls. */
 @media (max-width: 560px) {
   .seat-main {
+    --fdr-left: 52px;
     grid-template-columns: 52px minmax(0, 1fr);
   }
   .seat-rail-item {

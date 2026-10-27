@@ -39,6 +39,7 @@ import { terminalPx } from './seatTermLogic';
 import type { Display } from '../world/derive';
 import { childEndText, hasTranscript, loadImagesTab, loadRenderer, TranscriptMode, type ChildInfo, type OverlayRect, type SeatMode } from './transcriptMode';
 import { RunsView, type RunTerminalLike } from './runsView';
+import type { FilesDrawer, FilesDrawerDeps } from './filesDrawer';
 import { duotone } from '../ui/duotone';
 import type { RailCounts } from '../ui/seat';
 import { TranscriptWatches, WATCH_LIMIT } from './transcriptWatches';
@@ -114,25 +115,8 @@ export interface LaptopHost {
   filesDrawer?(deps: FilesDrawerDeps): FilesDrawerLike;
 }
 
-/** #216: what the files drawer needs from the seat (`laptop/filesDrawer.ts`). */
-export interface FilesDrawerDeps {
-  rootLabel: string;
-  list(query: string): Promise<WorkerFiles | null>;
-  changes(): ReadonlyMap<string, 'M' | 'U'> | null;
-  insertRef(path: string, kind: 'file' | 'dir'): void;
-  closed(): void;
-}
-
-/** #216: the files drawer as the seat drives it. */
-export interface FilesDrawerLike {
-  readonly el: HTMLElement;
-  readonly isOpen: boolean;
-  open(): void;
-  close(): void;
-  toggle(): void;
-  refreshChanges(): void;
-  dispose(): void;
-}
+/** #216: the files drawer as the seat drives it (`FilesDrawer`; tests pass a fake). */
+export type FilesDrawerLike = Pick<FilesDrawer, 'el' | 'isOpen' | 'open' | 'close' | 'toggle' | 'refreshChanges' | 'dispose'>;
 
 /** #216: the drawer's badges from a worker's Changes: `U` untracked, `M` any other change (a rename, a deletion too). */
 export function changeMarks(c: Pick<Changes, 'files'> | null): Map<string, 'M' | 'U'> {
@@ -862,11 +846,6 @@ export class Laptops {
       runCommand: () => this.host.manualEntry?.(id, '', store.workers.get(id)?.cwd ?? ''),
       ...(terminal ? { terminal: (p: ManualProcess, release: () => void) => terminal(p, { release, onKey: (e) => this.chord(e) }) } : {}),
     });
-  }
-
-  /** The connection is back: the Runs view's terminal watches again. */
-  reconnectRuns(): void {
-    this.runsView?.reconnect();
   }
 
   /** The seated worker's files drawer, over the stage at the rail's edge (none: the host has no drawer). */

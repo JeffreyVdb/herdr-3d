@@ -270,11 +270,6 @@ export class RunsView {
     }
   }
 
-  /** The connection is back: the run's terminal watches again. */
-  reconnect(): void {
-    this.term?.reconnect();
-  }
-
   private tick(): void {
     const now = this.now();
     for (const t of this.el.querySelectorAll<HTMLElement>('.seat-run-time')) {

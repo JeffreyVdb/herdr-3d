@@ -1,0 +1,215 @@
+/*
+ * #216: the Files drawer (filesDrawer.ts). Placed by the seat inside the stage's positioned box, from the rail's edge
+ * (--fdr-left, 64 px), over the stage: never in the grid flow, never a transform. It opens by clip-path and opacity;
+ * closed it is invisible (visibility, after the slide) and inert.
+ */
+.fdr {
+  --fdr-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--fdr-left, 64px);
+  z-index: 3;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  width: 300px;
+  max-width: calc(100% - var(--fdr-left, 64px));
+  box-sizing: border-box;
+  border-right: 1px solid var(--border);
+  background: var(--raised);
+  color: var(--text);
+  box-shadow: 12px 0 28px -10px rgb(0 0 0 / 50%);
+  font: 13px/1.3 var(--font);
+  clip-path: inset(0 0 0 0);
+  opacity: 1;
+  visibility: visible;
+  transition: clip-path 180ms var(--fdr-ease), opacity 140ms var(--fdr-ease), visibility 0s linear 0s;
+}
+.fdr[data-open='false'] {
+  clip-path: inset(0 100% 0 0);
+  opacity: 0;
+  visibility: hidden;
+  transition: clip-path 140ms ease-in, opacity 140ms ease-in, visibility 0s linear 140ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fdr,
+  .fdr[data-open='false'] {
+    transition: none;
+  }
+}
+.fdr-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 8px 6px 12px;
+}
+.fdr-head-icon {
+  width: 18px;
+  height: 18px;
+}
+.fdr-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 800;
+}
+.fdr .fdr-close {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+.fdr-close svg {
+  width: 16px;
+  height: 16px;
+}
+.fdr-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 10px 8px;
+  padding: 0 8px;
+  height: 32px;
+  border: 1px solid var(--border-mark);
+  border-radius: var(--radius-ctl, 8px);
+  background: var(--well);
+  color: var(--text-2);
+}
+.fdr-filter:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.fdr-filter svg {
+  width: 15px;
+  height: 15px;
+}
+.fdr-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+.fdr-input::placeholder {
+  color: var(--text-3);
+}
+.fdr-input::-webkit-search-cancel-button {
+  display: none;
+}
+.fdr-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 0 6px 6px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb-thin, var(--line)) transparent;
+}
+.fdr-tree {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fdr-tree[hidden] {
+  display: none;
+}
+.fdr-tree.is-stale {
+  opacity: 0.6;
+}
+.fdr-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px 0 calc(6px + var(--lvl, 0) * 14px);
+  border-radius: 6px;
+  color: var(--text-2);
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+}
+.fdr-row:hover {
+  background: var(--raised-hover);
+  color: var(--text);
+}
+.fdr-row[aria-selected='true'] {
+  background: var(--hover);
+  color: var(--text);
+}
+.fdr-row:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.fdr-row--dir {
+  color: var(--text);
+  font-weight: 650;
+}
+.fdr-tw {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+.fdr-ic {
+  width: 15px;
+  height: 15px;
+  color: var(--text-2);
+}
+.fdr-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fdr-badge {
+  margin-left: auto;
+  padding-left: 6px;
+  font: 700 11px/1 var(--font-mono);
+}
+.fdr-badge--m {
+  color: var(--warn);
+}
+.fdr-badge--u {
+  color: var(--ok-text);
+}
+.fdr-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.fdr-msg {
+  margin: 8px 8px 0;
+  color: var(--text-2);
+}
+.fdr-msg[hidden] {
+  display: none;
+}
+.fdr-retry {
+  height: 26px;
+  padding: 0 8px;
+}
+.fdr-foot {
+  display: grid;
+  gap: 4px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: 12px;
+}
+.fdr-foot p {
+  margin: 0;
+}
+.fdr-partial[hidden] {
+  display: none;
+}

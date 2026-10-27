@@ -270,6 +270,20 @@
   font-size: 13px;
 }
 
+/* While the processes dialog holds the run (it takes precedence), its place here says so. */
+.seat-runs-held {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 16px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+.seat-runs-held p {
+  margin: 0;
+}
+
 @media (max-width: 560px) {
   .seat-runs-body {
     padding: 10px 8px;
