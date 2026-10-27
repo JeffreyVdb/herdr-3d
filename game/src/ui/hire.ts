@@ -162,7 +162,7 @@ export interface HirePrefill {
  */
 export function presetPrefill(p: HirePreset, replace = false): HirePrefill {
   return {
-    prompt: p.prompt,
+    prompt: p.prompt ? `${p.prompt}\n\n` : '',
     choice: { harness: p.harness, model: p.model, effort: p.effort },
     preset: { id: p.id, name: p.name, scope: p.floor ? 'floor' : 'global', ...(p.herdr_instructions ? { instructions: true } : {}), profile: p.codex_profile ?? '' },
     ...(replace ? { replaceDraft: true as const } : {}),
@@ -1699,7 +1699,8 @@ export class HireDialog {
         this.render();
         return;
       }
-      const req = { key: `hire:${floor}:${desk}`, text: res.text, target: `${who} at Desk ${desk + 1}`, manual };
+      const text = res.text.trimEnd();
+      const req = { key: `hire:${floor}:${desk}`, text, target: `${who} at Desk ${desk + 1}`, manual };
       // (Closed meanwhile: no review opens for it. The coordinator's copy has no `live`: a background hire closes this.)
       const out = await flow.review({ ...req, live: still });
       if (this.reviewing === gen) this.reviewing = -1;
@@ -1712,7 +1713,7 @@ export class HireDialog {
         this.editor.focus();
         return;
       }
-      reviewed = { text: res.text, revision: res.revision, secrets: { flow, req, go: out } };
+      reviewed = { text, revision: res.revision, secrets: { flow, req, go: out } };
     }
     // #117: a plain form with the box off: does the first task start other agents? Only a "yes" in time stops the hire, to ask.
     if (args.prompt && this.askWanted()) {

@@ -154,7 +154,7 @@ test('a preset saved from the hire form survives a reload, shows on another clie
   await presetsDlg(page).locator(`[data-key="replace:${id}"]`).click();
   await expect.poll(async () => ((await dialog(page)) as Hire | null)?.state).toBe('ready');
   let form = (await dialog(page)) as Hire;
-  expect(form.form).toMatchObject({ prompt: 'Deploy the release to A, B and C.', harness: 'codex', model: 'gpt-6-luna', effort: 'low' });
+  expect(form.form).toMatchObject({ prompt: 'Deploy the release to A, B and C.\n\n', harness: 'codex', model: 'gpt-6-luna', effort: 'low' });
   expect(form.preset).toMatchObject({ id, name: 'Deploy release', problem: null });
   await expect(hireDlg(page).locator('[data-hook="preset"]')).toContainText('Deploy release');
   await page.screenshot({ path: info.outputPath('hire-from-preset-desktop.png') });
@@ -170,7 +170,7 @@ test('a preset saved from the hire form survives a reload, shows on another clie
   await expect.poll(async () => ((await dialog(page)) as Hire | null)?.state).toBe('ready');
   await chip(page, '.desk-dlg--hire', 'effort:high').click();
   form = (await dialog(page)) as Hire;
-  expect(form.form).toMatchObject({ prompt: 'Deploy the release to A, B and C.', model: 'gpt-6-luna', effort: 'high' });
+  expect(form.form).toMatchObject({ prompt: 'Deploy the release to A, B and C.\n\n', model: 'gpt-6-luna', effort: 'high' });
   await hireDlg(page).locator('[data-key="hire"]').click();
   await expect(hireDlg(page)).toBeHidden({ timeout: 20_000 });
 
@@ -314,6 +314,29 @@ test('#95: a ticked global preset adds the herdr hiring instructions for the flo
   clean();
 });
 
+test('a pinned preset focuses the end of its prompt for typing and Enter hires', async ({ page }) => {
+  await boot(page, keyOf('preset-caret'), 'pastry');
+  await openPresets(page, 14);
+  await createPreset(page, 'Deploy', 'Deploy the release.', 'floor');
+  await createPreset(page, 'Audit', 'Audit the dependencies.', 'global');
+  const list = (await dialog(page)) as Presets;
+  const id = (name: string) => [...list.groups.floor, ...list.groups.global].find((r) => r.name === name)!.id;
+  for (const name of ['Deploy', 'Audit']) await presetsDlg(page).locator(`[data-key="pin:${id(name)}"]`).click();
+  await presetsDlg(page).locator('[data-key="tab:worker"]').click();
+  for (const [name, prompt] of [['Deploy', 'Deploy the release.'], ['Audit', 'Audit the dependencies.']] as const) {
+    await hireDlg(page).locator(`[data-key="tab:pin:${id(name)}"]`).click();
+    await expect.poll(async () => ((await dialog(page)) as Hire | null)?.state).toBe('ready');
+    await expect(page.locator('#hire-task')).toBeFocused();
+    expect(((await dialog(page)) as Hire).form.prompt).toBe(`${prompt}\n\n`);
+  }
+  await page.keyboard.type('Check the lockfile.');
+  await page.keyboard.press('Enter');
+  await expect(hireDlg(page)).toBeHidden();
+  const hires = await sentOf(page, 'worker.hire');
+  expect(hires).toHaveLength(1);
+  expect(hires[0]!.args).toMatchObject({ prompt: 'Audit the dependencies.\n\nCheck the lockfile.' });
+});
+
 test('switching hire tabs and pinned presets does not animate the dialog', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await boot(page, keyOf('no-flash'), 'pastry');
@@ -339,12 +362,12 @@ test('switching hire tabs and pinned presets does not animate the dialog', async
   await expect.poll(async () => ((await dialog(page)) as Hire)?.preset?.name).toBe('Deploy');
   await hireDlg(page).locator(`[data-key="tab:pin:${id('Audit')}"]`).click();
   await noAnimation('dialog.desk-dlg--hire');
-  await expect.poll(async () => ((await dialog(page)) as Hire)?.form.prompt).toBe('Audit the dependencies.');
+  await expect.poll(async () => ((await dialog(page)) as Hire)?.form.prompt).toBe('Audit the dependencies.\n\n');
   await expect.poll(() => page.evaluate(() => (window as unknown as { hireAnimations: string[] }).hireAnimations)).toEqual(expect.arrayContaining(['dd-preset-text', 'dd-preset-choice']));
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.evaluate(() => { (window as unknown as { hireAnimations: string[] }).hireAnimations.length = 0; });
   await hireDlg(page).locator(`[data-key="tab:pin:${id('Deploy')}"]`).click();
-  await expect.poll(async () => ((await dialog(page)) as Hire)?.form.prompt).toBe('Deploy the release.');
+  await expect.poll(async () => ((await dialog(page)) as Hire)?.form.prompt).toBe('Deploy the release.\n\n');
   await frames(page, 2);
   expect(await page.evaluate(() => (window as unknown as { hireAnimations: string[] }).hireAnimations)).not.toContain('dd-preset-text');
   expect(await page.evaluate(() => (window as unknown as { hireAnimations: string[] }).hireAnimations)).not.toContain('dd-preset-choice');
@@ -379,12 +402,13 @@ test('pinned presets sit in the desk tabs, hire in one click, move by drag or Sh
   await expect.poll(async () => {
     const d = (await dialog(page)) as Hire | null;
     return d?.kind === 'hire' && d.state === 'ready' ? [d.preset?.name, d.form.prompt] : null;
-  }, { timeout: 15_000 }).toEqual(['Audit', 'Audit the dependencies.']);
+  }, { timeout: 15_000 }).toEqual(['Audit', 'Audit the dependencies.\n\n']);
   const auditTab = hireDlg(page).locator(`[data-key="tab:pin:${audit}"]`);
   await expect(auditTab).toHaveAttribute('aria-selected', 'true');
-  await expect(auditTab).toBeFocused();
+  await expect(page.locator('#hire-task')).toBeFocused();
 
   // Shift+← moves it before Deploy; a drag puts Triage first.
+  await auditTab.focus();
   await page.keyboard.press('Shift+ArrowLeft');
   await expect.poll(() => pinKeys(hireDlg(page))).toEqual([`tab:pin:${audit}`, `tab:pin:${deploy}`, `tab:pin:${triage}`]);
   await expect(hireDlg(page).locator(`[data-key="tab:pin:${audit}"]`)).toBeFocused();
