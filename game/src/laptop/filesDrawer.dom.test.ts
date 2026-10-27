@@ -81,6 +81,41 @@ describe('FilesDrawer', () => {
     expect([...d.el.querySelectorAll('svg')].every((s) => s.classList.contains('dt'))).toBe(true);
   });
 
+  it('a filter not answered yet: ↓ and Enter wait for its answer (never a row of the old tree), then go into it', async () => {
+    const d = await make();
+    let done: (r: WorkerFiles) => void = () => {};
+    deps.list.mockImplementation(() => new Promise<WorkerFiles>((r) => (done = r)));
+    const input = d.el.querySelector<HTMLInputElement>('.fdr-input')!;
+    key('ArrowDown');
+    const old = document.activeElement as HTMLElement; // a row of the unfiltered tree
+    expect(old.dataset.path).toBe('src');
+    key('r'); // typing in the tree types into the filter (debounced)
+    expect(document.activeElement).toBe(input);
+    input.value = 'readme';
+    input.dispatchEvent(new Event('input'));
+    expect(d.el.querySelector('.fdr-tree')!.classList.contains('is-stale')).toBe(true);
+    // Before the debounce: ↓ asks at once and the keyboard stays in the filter; Enter puts nothing in.
+    key('ArrowDown');
+    expect(deps.list.mock.calls.at(-1)).toEqual(['readme']);
+    expect(document.activeElement).toBe(input);
+    key('Enter');
+    expect(document.activeElement).toBe(input);
+    // A key on a row of the old tree does nothing either.
+    key('Enter', old);
+    key('ArrowDown', old);
+    expect(deps.insertRef).not.toHaveBeenCalled();
+    expect(deps.list).toHaveBeenCalledTimes(2); // no second ask for the same text
+    done(answer([f('README.md'), f('docs/readme-old.md')]));
+    await flush();
+    // The answer: into its first row, and Enter inserts that one.
+    expect(d.el.querySelector('.fdr-tree')!.classList.contains('is-stale')).toBe(false);
+    expect((document.activeElement as HTMLElement).dataset.path).toBe('docs');
+    key('End');
+    expect((document.activeElement as HTMLElement).dataset.path).toBe('README.md');
+    key('Enter');
+    expect(deps.insertRef).toHaveBeenCalledExactlyOnceWith('README.md', 'file');
+  });
+
   it('a reference the prompt box refuses: the drawer says why (a status), until one goes in or it closes', async () => {
     const d = await make();
     const said = d.el.querySelector<HTMLElement>('.fdr-said')!;

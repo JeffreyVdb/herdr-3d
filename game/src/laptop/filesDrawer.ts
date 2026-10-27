@@ -125,6 +125,8 @@ export class FilesDrawer {
   private readonly collapsedInFilter = new Set<string>();
   private active = '';
   private rows: Row[] = [];
+  /** ↓ or Enter in the filter before its answer came: the keyboard goes into the tree once it does. */
+  private enterTree = false;
   private disposed = false;
 
   constructor(private readonly deps: FilesDrawerDeps) {
@@ -170,6 +172,7 @@ export class FilesDrawer {
     this.el.dataset.open = 'false';
     this.el.toggleAttribute('inert', true);
     this.cancelTimer();
+    this.enterTree = false;
     this.say(null);
     this.deps.closed();
   }
@@ -197,7 +200,15 @@ export class FilesDrawer {
     this.timer = null;
   }
 
+  /** The tree is not the answer to the filter's text yet (typed, or asked and not answered): its rows are not to act on. */
+  private get stale(): boolean {
+    return this.loading || this.filter.value.trim() !== this.query;
+  }
+
   private schedule(): void {
+    // Typed on: an earlier ↓ no longer stands (its answer will not take the keyboard).
+    this.enterTree = false;
+    this.tree.classList.toggle('is-stale', this.result !== undefined && this.stale);
     this.cancelTimer();
     this.timer = setTimeout(() => {
       this.timer = null;
@@ -226,6 +237,10 @@ export class FilesDrawer {
     this.query = q;
     this.result = r;
     this.rebuild();
+    if (this.enterTree && !this.stale) {
+      this.enterTree = false;
+      if (this.rows.length) this.setActive(this.rows[0]!.node.path);
+    }
   }
 
   private rebuild(): void {
@@ -275,7 +290,7 @@ export class FilesDrawer {
     const hadFocus = this.tree.contains(document.activeElement);
     this.tree.replaceChildren(...this.rows.map((row) => this.item(row)));
     this.tree.hidden = !this.rows.length;
-    this.tree.classList.toggle('is-stale', this.loading && r !== undefined);
+    this.tree.classList.toggle('is-stale', r !== undefined && this.stale);
     if (hadFocus) this.focusActive();
     this.msg.replaceChildren();
     let text = '';
@@ -364,6 +379,15 @@ export class FilesDrawer {
     this.say(this.deps.insertRef(n.path, n.kind) || null);
   }
 
+  /** Asks for the filter's text now (unless that is already out) and goes into the tree with its answer. */
+  private waitForAnswer(): void {
+    this.enterTree = true;
+    if (this.timer || this.filter.value.trim() !== this.asked) {
+      this.cancelTimer();
+      this.ask();
+    }
+  }
+
   private say(text: string | null): void {
     this.said.textContent = text ?? '';
     this.said.hidden = !text;
@@ -378,19 +402,20 @@ export class FilesDrawer {
       return;
     }
     if (e.target === this.filter) {
-      if ((e.key === 'ArrowDown' || e.key === 'Enter') && this.rows.length) {
+      if ((e.key === 'ArrowDown' || e.key === 'Enter') && (this.rows.length || this.stale)) {
         e.preventDefault();
-        if (this.timer || this.filter.value.trim() !== this.asked) {
-          // The newest text first, then into its answer.
-          this.cancelTimer();
-          this.ask();
-        }
+        // The newest text first, then into its answer (never a row of the tree before it: Enter would insert that).
+        if (this.stale) return this.waitForAnswer();
         this.setActive(this.active || this.rows[0]!.node.path);
       }
       return;
     }
     const row = this.rowOf(e.target);
     if (!row || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (this.stale && ['ArrowDown', 'ArrowUp', 'Home', 'End', 'ArrowRight', 'ArrowLeft', 'Enter', ' '].includes(e.key)) {
+      e.preventDefault();
+      return this.waitForAnswer();
+    }
     const i = this.rows.indexOf(row);
     const go = (j: number) => {
       const r = this.rows[Math.max(0, Math.min(this.rows.length - 1, j))];
