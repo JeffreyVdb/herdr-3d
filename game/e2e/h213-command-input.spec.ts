@@ -372,6 +372,22 @@ test('other machine: copy and dismiss only', async ({ page }) => {
   await snap(page, 'card-other-host');
 });
 
+// #220: "as your user" is an account, not a machine: the bridge's request runs its exact `! sudo …` bytes, sudo asking in the terminal.
+test('an account reply runs on the bridge: exact bytes, no warning, no dialog option', async ({ page }) => {
+  await boot(page, `account-${Date.now()}`, 'account-host');
+  await sit(page, zippy.id);
+  const card = page.locator('.mp-request');
+  const command = '! sudo tailscale serve --bg --https=8216 http://127.0.0.1:45215';
+  await expect(card.locator('.mp-well pre').first()).toHaveText(command);
+  await expect(card.locator('.mp-warning')).toHaveCount(0);
+  await expect(card.locator('.mp-askpass')).toHaveCount(0);
+  await expect(card).toContainText('Machine:fixture-bridge');
+  await expect(card.getByRole('button', { name: 'Edit and run…' })).toBeEnabled();
+  await card.getByRole('button', { name: 'Run', exact: true }).click();
+  await expect(card).toBeHidden();
+  expect((await starts(page)).map((x) => x.args)).toMatchObject([{ command, askpass: false, source: { kind: 'suggestion', key: 'fixture-account-host', index: 0 } }]);
+});
+
 test('a long line scrolls sideways and takes the keyboard; a short one is no tab stop', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await boot(page, `long-${Date.now()}`, 'tailscale-bg');
