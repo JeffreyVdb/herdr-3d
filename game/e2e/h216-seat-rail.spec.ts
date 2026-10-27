@@ -52,7 +52,7 @@ async function box(page: Page): Promise<{ cols: number; rows: number; px: number
   return { cols: t!.cols, rows: t!.rows, px: t!.font!.px, w: Math.round(r.width), h: Math.round(r.height) };
 }
 
-test('the rail and every chord swap the four views from the terminal, keeping its box, font, keys and focus', async ({ page }) => {
+test('the rail and every chord swap the four views from the terminal, keeping its box, font, keys and focus', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -107,11 +107,29 @@ test('the rail and every chord swap the four views from the terminal, keeping it
   await expect(page.locator('.seat-rail').getByRole('button', { name: 'Files' })).toHaveAttribute('aria-pressed', 'true');
   expect(await box(page)).toEqual(before);
   await snap(page, 'drawer-quiet-1280');
-  await page.keyboard.press('Escape');
+  const files = page.locator('.seat-rail').getByRole('button', { name: 'Files' });
+  await page.keyboard.press('Escape'); // the drawer's own Esc (its filter has the keyboard)
   await expect(drawer).toHaveAttribute('data-open', 'false');
+  await expect(files).toHaveAttribute('aria-pressed', 'false');
   expect(await page.evaluate(() => window.__h3d.seated())).toBe(zippy.id);
   expect(await page.evaluate(focused)).toContain('seat-input');
+  // The seat's Esc closes it first too, with the keyboard back on the terminal; the chord toggles it shut.
+  await page.keyboard.press('Control+Shift+KeyE');
+  await expect(drawer).toHaveAttribute('data-open', 'true');
+  await page.locator('.seat-input').focus();
+  await page.keyboard.press('Escape');
+  await expect(drawer).toHaveAttribute('data-open', 'false');
+  await expect(files).toHaveAttribute('aria-pressed', 'false');
+  expect(await page.evaluate(() => window.__h3d.seated())).toBe(zippy.id);
+  await page.keyboard.press('Control+Shift+KeyE');
+  await expect(drawer).toHaveAttribute('data-open', 'true');
+  await page.keyboard.press('Control+Shift+KeyE');
+  await expect(drawer).toHaveAttribute('data-open', 'false');
+  await expect(files).toHaveAttribute('aria-pressed', 'false');
+  expect(await page.evaluate(focused)).toContain('seat-input');
   expect(await box(page)).toEqual(before);
+  // AC2: not one resize command for the swaps, the rail and the drawer.
+  expect(await resizes(page), 'resize commands from view swaps or the drawer').toBe(sent);
   // The needs-you line: rows only (the debounced fit), never the columns, the font or the focus.
   const run = await start(page, zippy.id, 'n-1', 'read -p "Name? " name');
   await attention(page, run, 'confirmed');
@@ -122,7 +140,7 @@ test('the rail and every chord swap the four views from the terminal, keeping it
   await attention(page, run, 'clear');
   await expect(page.locator('.seat-needs')).toBeHidden();
   expect(await box(page)).toEqual(before);
-  // No resize command for any of it but the line's rows (at most one each way).
+  // The line's rows only: at most one resize as it came and one as it went.
   expect((await resizes(page)) - sent).toBeLessThanOrEqual(2);
   await page.keyboard.press('Escape');
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
@@ -315,7 +333,7 @@ async function contrast(page: Page, selector: string): Promise<number> {
 }
 
 for (const ui of ['quiet', 'ubuntu'] as const) {
-  test(`${ui}: every view with and without the needs-you line, the drawer, a phone's Runs; text contrast of the new surfaces`, async ({ page }) => {
+  test(`${ui}: every view with and without the needs-you line, the drawer, a phone's Runs; text contrast of the new surfaces`, { tag: '@visual' }, async ({ page }) => {
     test.setTimeout(240_000);
     const clean = watchErrors(page);
     await page.setViewportSize({ width: 1280, height: 800 });
