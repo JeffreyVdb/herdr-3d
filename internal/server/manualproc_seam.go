@@ -29,13 +29,8 @@ func (h *Hub) setManualCredential(id string, c *proto.ManualCredential) {
 		return
 	}
 	p.Credential = c
-	if c != nil {
-		p.State = "waiting"
-	}
-	if c == nil && p.State == "waiting" {
-		p.State = "running"
-	}
 	if h.st == nil {
+		h.deriveManualAttention(&p)
 		h.manualProcesses[id] = p
 		h.emit(proto.Event{T: proto.EvManualProcessUpsert, Process: &p})
 		return

@@ -1,0 +1,232 @@
+[
+  {
+    "command": "sudo -k python3 tools/hello_world_server.py 80\n",
+    "eligible": true,
+    "launched": "sudo -A -k python3 tools/hello_world_server.py 80\n"
+  },
+  {
+    "command": "sudo -k python3 tools/hello_world_server.py 80",
+    "eligible": true,
+    "launched": "sudo -A -k python3 tools/hello_world_server.py 80"
+  },
+  {
+    "command": "sudo -k python3 tools/hello_world_server.py 80\r\n",
+    "eligible": true,
+    "launched": "sudo -A -k python3 tools/hello_world_server.py 80\r\n"
+  },
+  {
+    "command": "sudo -k python3 tools/hello_world_server.py 80 \t\n\n",
+    "eligible": true,
+    "launched": "sudo -A -k python3 tools/hello_world_server.py 80 \t\n\n"
+  },
+  {
+    "command": "sudo systemctl restart nginx",
+    "eligible": true,
+    "launched": "sudo -A systemctl restart nginx"
+  },
+  {
+    "command": "sudo cmd",
+    "eligible": true,
+    "launched": "sudo -A cmd"
+  },
+  {
+    "command": "sudo\tcmd",
+    "eligible": true,
+    "launched": "sudo -A\tcmd"
+  },
+  {
+    "command": " \tsudo cmd",
+    "eligible": true,
+    "launched": " \tsudo -A cmd"
+  },
+  {
+    "command": "sudo -u root cmd",
+    "eligible": true,
+    "launched": "sudo -A -u root cmd"
+  },
+  {
+    "command": "sudo -u postgres psql",
+    "eligible": true,
+    "launched": "sudo -A -u postgres psql"
+  },
+  {
+    "command": "sudo --user=alice cmd",
+    "eligible": true,
+    "launched": "sudo -A --user=alice cmd"
+  },
+  {
+    "command": "sudo -E cmd",
+    "eligible": true,
+    "launched": "sudo -A -E cmd"
+  },
+  {
+    "command": "sudo -kE cmd",
+    "eligible": true,
+    "launched": "sudo -A -kE cmd"
+  },
+  {
+    "command": "sudo -- cmd",
+    "eligible": true,
+    "launched": "sudo -A -- cmd"
+  },
+  {
+    "command": "sudo -u 'root' echo \"hello world\"",
+    "eligible": true,
+    "launched": "sudo -A -u 'root' echo \"hello world\""
+  },
+  {
+    "command": "sudo echo 'literal | pipe'",
+    "eligible": true,
+    "launched": "sudo -A echo 'literal | pipe'"
+  },
+  {
+    "command": "sudo -p prompt cmd",
+    "eligible": true,
+    "launched": "sudo -A -p prompt cmd"
+  },
+  {
+    "command": "sudo",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo ",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo\n",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo -k",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo -k\n",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo --",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo -A cmd",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo -S cmd",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo -n cmd",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo -En cmd",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo --askpass cmd",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo --stdin cmd",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo --non cmd",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo --non-interactive cmd",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo cmd\ncat",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo cmd\n\ncat\n",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo cmd | cat",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo cmd \u0026\u0026 cat",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo cmd; cat",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo cmd \u003e out",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo echo \"$(whoami)\"",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo echo `whoami`",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo echo $HOME",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudo -u",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "sudoedit file",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "bash -c sudo",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "FOO=1 sudo cmd",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "echo sudo cmd",
+    "eligible": false,
+    "launched": null
+  },
+  {
+    "command": "\nsudo cmd",
+    "eligible": false,
+    "launched": null
+  }
+]

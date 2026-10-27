@@ -6540,7 +6540,28 @@ For supported top-level sudo commands, the reviewed command remains unchanged in
 `-A` inserted. The helper authenticates to the bridge over a 0600 local socket with the process's 0600 nonce and a
 same-UID peer check. A credential is sent only over the WebSocket and that local helper connection, then written to
 sudo's askpass pipe; it is not placed in process arguments, environment, files, logs, audit rows, or world messages.
-Nested sudo and other password prompts use terminal input instead.
+Nested sudo and other password prompts use terminal input instead. A command whose only trailing bytes are spaces,
+tabs or newlines is eligible as if they were absent; the launched form keeps them and differs only by ` -A`
+(`internal/manual/askpass/testdata/eligibility.json` lists the bridge's verdicts).
+
+### Manual process attention
+
+A run that asks for the user carries `attention: {id, kind, confidence, reason, since, expires_at?}` (#213). `kind`
+`credential` (confidence `authenticated`, reason `askpass`) is present exactly while `credential` is: its `id` is the
+request, `expires_at` the request's expiry; it takes precedence. `kind` `input` comes only from observing the run's own
+terminal foreground processes: confidence `confirmed` (reason `tty_read`: a task is blocked reading the run's tty) or
+`uncertain` (`tty_wait`: a tty wait seen without syscall access; `sudo_terminal`: a foreground sudo prompting on the
+terminal). Reasons are short codes, never terminal text; clients render an unknown code generically. The `id` is stable
+for one continuous episode, also in a reconnect's snapshot; a new episode has a new id. `since` is when it started, in
+Unix milliseconds. An input episode starts after two consecutive positive samples (about 1 s), ends after two
+negatives, at once when input is sent to the run's terminal, and when the run stops, exits, fails or loses its tab.
+`state` is `waiting` while a credential or a `confirmed` episode is open; `uncertain` keeps `running`. Attention is
+never stored; after a bridge restart it is observed again.
+
+`input_detection` is what the bridge can observe of the run on its host: `full` (blocked reads can be confirmed),
+`hints` (only uncertain input attention, for instance under Yama `ptrace_scope=1`), or `none` (no terminal or no
+`/proc`). Absent means not known yet (or an older bridge). Programs in raw mode and known pagers, editors and terminal
+clients never raise input attention; the run's terminal stays the way to answer any prompt.
 
 ## Flow control and closing
 
@@ -6591,13 +6612,13 @@ herdr-world cmd run.start '{"session":"h3d-scratch","desk_index":1,"issue":3,"pr
 
 A manual process is a user-authorized command in an unfocused, labelled sibling tab of a worker's Herdr workspace. It does not change the worker's `pane_id`. The snapshot contains `host` (the bridge hostname) and `manual_processes`; updates are `manual_process.upsert {process}` and `manual_process.removed {id}`. The snapshot retains every nonterminal process and every process with cleanup `needed` or `failed`, plus the newest 20 terminal processes per current worker and 20 terminal processes overall for departed workers.
 
-A process carries `id`, the start's `op`, `worker`, `worker_name`, `floor`, `session`, `workspace_id`, `tab_id`, `pane_id`, `host`, `cwd`, the exact reviewed `command`, optional `launched` form, `title`, `source`, `state`, optional `exit_code` and `error`, `cleanup`, optional `cleanup_note`, `effects`, optional `credential`, and `created_at`, `started_at`, and `ended_at` in Unix milliseconds. `source.kind` is `manual` or `suggestion`; the latter includes the request `key` and entry `index`. The bridge reserves each `op` durably, including after dismissal, so a retry returns the original record and does not launch a second command.
+A process carries `id`, the start's `op`, `worker`, `worker_name`, `floor`, `session`, `workspace_id`, `tab_id`, `pane_id`, `host`, `cwd`, the exact reviewed `command`, optional `launched` form, `title`, `source`, `state`, optional `exit_code` and `error`, `cleanup`, optional `cleanup_note`, `effects`, optional `credential`, optional `attention` and `input_detection` (#213, below), and `created_at`, `started_at`, and `ended_at` in Unix milliseconds. `source.kind` is `manual` or `suggestion`; the latter includes the request `key` and entry `index`. The bridge reserves each `op` durably, including after dismissal, so a retry returns the original record and does not launch a second command.
 
 `manual_process.start {op, worker, command, cwd?, source?, askpass?}` acknowledges `{process}`. An operation key is 1–64 ASCII letters, digits, underscores or hyphens. A command is nonempty valid UTF-8 of at most 8 KiB, with no NUL; cwd is an existing absolute directory, defaulting to the worker's cwd. A suggestion start must still match the worker's current request, bridge host, key, index, and exact command or variant; otherwise it fails with `stale`. The password dialog is available only for a supported rewrite; an unsupported `askpass` request fails with `bad_args`.
 
 `manual_process.stop {id}` acknowledges `{process}` after the stop attempt. It can be retried for cleanup `needed` or `failed`. `manual_process.dismiss {id}` acknowledges `{}` and removes a terminal record from the view only when cleanup is `none` or `done`; the operation key remains reserved. Command audit entries store the command's byte length and a SHA-256 prefix, not the command text.
 
-States are `starting`, `running`, `waiting`, `stopping`, `exited`, `stopped`, `failed`, and `unknown`; only `exited`, `stopped`, and `failed` are terminal. `waiting` indicates an active credential request. Cleanup is `none`, `pending`, `done`, `needed`, or `failed`. An unknown process or a cleanup-needed record remains actionable after its worker leaves. Process identity combines PID and Linux start ticks; a PID alone is never sufficient to signal or establish that an earlier process still runs.
+States are `starting`, `running`, `waiting`, `stopping`, `exited`, `stopped`, `failed`, and `unknown`; only `exited`, `stopped`, and `failed` are terminal. `waiting` indicates an active credential request or a confirmed input request (#213). Cleanup is `none`, `pending`, `done`, `needed`, or `failed`. An unknown process or a cleanup-needed record remains actionable after its worker leaves. Process identity combines PID and Linux start ticks; a PID alone is never sufficient to signal or establish that an earlier process still runs.
 
 Stop, send-home, floor sleep, external closure, owner loss, and restart reconciliation use the same ownership boundary. A verified live foreground process group receives SIGINT, then SIGTERM, then SIGKILL with bounded waits. The bridge closes the manual tab and reports tagged surviving descendants as cleanup needed with their PIDs; a later Stop may signal those exact re-identified descendants. Send-home is refused before exiting the agent if a process cannot be verified stopped. Floor sleep stops manual processes before stopping the session. If the launcher is gone but a detached child remains, sleep proceeds and the record remains cleanup needed; wake closes restored `⚙ ` tabs in recorded workspaces and never relaunches commands. Restart reads status files and observes the existing tabs; it never reruns a command.
 

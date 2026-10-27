@@ -35,8 +35,13 @@ var manualOpRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // The store is a leaf package. Its persisted model is converted at the hub
 // boundary, and credential requests are deliberately excluded from storage.
+// #213: so is attention (the store has no field for it); a run waiting only
+// on an input observation is stored as running, which a restart recomputes.
 func manualToStore(p proto.ManualProcess) store.ManualProcess {
-	p.Credential = nil
+	if p.State == "waiting" && p.Credential == nil {
+		p.State = "running"
+	}
+	p.Credential, p.Attention, p.InputDetection = nil, nil, ""
 	var record store.ManualProcess
 	_ = json.Unmarshal(mustJSON(p), &record)
 	return record
@@ -116,14 +121,19 @@ func (h *Hub) manualProcessViews() []proto.ManualProcess {
 }
 
 func (h *Hub) saveManual(ctx context.Context, p proto.ManualProcess) error {
-	if current, ok := h.manualProcesses[p.ID]; ok && current.State != p.State && !manual.CanTransition(current.State, p.State) {
+	h.deriveManualAttention(&p) // #213
+	current, ok := h.manualProcesses[p.ID]
+	if ok && current.State != p.State && !manual.CanTransition(current.State, p.State) {
 		return fmt.Errorf("invalid manual process transition %s to %s", current.State, p.State)
 	}
-	if err := h.st.SaveManualProcess(ctx, manualToStore(p)); err != nil {
-		return err
+	if record := manualToStore(p); !ok || !reflect.DeepEqual(manualToStore(current), record) {
+		if err := h.st.SaveManualProcess(ctx, record); err != nil {
+			return err
+		}
 	}
 	h.manualProcesses[p.ID] = p
 	h.emit(proto.Event{T: proto.EvManualProcessUpsert, Process: &p})
+	h.syncManualInputTicker()
 	return nil
 }
 
@@ -1055,16 +1065,14 @@ func (h *Hub) pollManualProcesses(ctx context.Context) {
 					return current
 				}
 				next := observed
-				next.Credential = current.Credential
+				next.Credential, next.Attention = current.Credential, current.Attention
 				if manual.Terminal(next.State) {
 					next.Credential = nil
 				}
-				if next.Credential != nil && next.State == "running" {
-					next.State = "waiting"
-				}
-				if next.Credential == nil && next.State == "waiting" {
+				if next.State == "waiting" { // the attention decides (#213)
 					next.State = "running"
 				}
+				h.deriveManualAttention(&next)
 				if !reflect.DeepEqual(current, next) {
 					if err := h.saveManual(ctx, next); err != nil {
 						h.log.Error("saving manual process status", "err", err)

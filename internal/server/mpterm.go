@@ -73,6 +73,7 @@ func (h *Hub) startTerminalInput(ctx context.Context, c *Client, cmd proto.Comma
 	if err != nil {
 		return err
 	}
+	h.manualInputSent(ctx, strings.TrimPrefix(a.ID, "mp:")) // #213
 	h.audit(ctx, c, cmd, nil)
 	h.reply(c, cmd, nil, nil)
 	return nil

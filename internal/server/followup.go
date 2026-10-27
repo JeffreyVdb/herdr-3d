@@ -96,6 +96,13 @@ type followupCand struct {
 	// questions' and the schedule suggestion's): it waits in pending until
 	// the last.
 	left int
+	// #213: the command request's bounded retry after a transient model
+	// error: crAttempt counts its looks, crRetry asks turnPartDone to keep
+	// the candidate for another (only the command request's, crOnly) after
+	// notBefore.
+	crAttempt       int
+	crRetry, crOnly bool
+	notBefore       time.Time
 }
 
 // followupShown is a worker's open follow-up and the message it is of.
@@ -250,13 +257,18 @@ func (h *Hub) considerFollowup(ctx context.Context, id string, c *followupCand) 
 	if w == nil || strings.TrimSpace(c.turn.Text) == "" {
 		return false
 	}
-	fu, ss, cr := h.followupSkip(w) == "", h.suggestionSkip(w) == "", h.commandRequestSkip(w) == ""
+	crSkip := h.commandRequestSkip(w)
+	fu, ss, cr := h.followupSkip(w) == "", h.suggestionSkip(w) == "", crSkip == ""
+	if c.crOnly { // #213: a retry of the command request alone
+		fu, ss = false, false
+	}
 	if !fu && !ss && !cr {
+		h.logCommandRequestSkip(id, c, crSkip)
 		return false
 	}
 	now := h.opts.Now()
 	debounce := h.opts.FollowupDebounce
-	if w.Status == statusWorking || now.Sub(c.at) < debounce || now.UnixMilli()-w.StatusSince < debounce.Milliseconds() {
+	if w.Status == statusWorking || now.Sub(c.at) < debounce || now.UnixMilli()-w.StatusSince < debounce.Milliseconds() || now.Before(c.notBefore) {
 		return true
 	}
 	if fu {
@@ -266,7 +278,12 @@ func (h *Hub) considerFollowup(ctx context.Context, id string, c *followupCand) 
 		ss = h.suggestionUnseen(ctx, id, c)
 	}
 	if cr {
-		cr = h.commandRequestUnseen(ctx, id, c)
+		var why string
+		cr, why = h.commandRequestUnseen(ctx, id, c)
+		crSkip = why
+	}
+	if !cr {
+		h.logCommandRequestSkip(id, c, crSkip)
 	}
 	if !fu && !ss && !cr {
 		return false
