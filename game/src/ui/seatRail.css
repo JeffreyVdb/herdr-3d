@@ -298,16 +298,13 @@
   align-items: center;
 }
 
+/* Narrower: the host and the time give way first (the title has them), the command keeps what room is left. */
 @media (max-width: 1000px) {
-  .seat-needs-cmd {
-    display: none;
-  }
   .seat-needs-where {
-    margin-right: auto;
+    display: none;
   }
 }
 @media (max-width: 760px) {
-  .seat-needs-where,
   .seat-key-views {
     display: none;
   }
@@ -341,8 +338,16 @@
   .seat-term-strip .seat-strip-sub {
     display: none;
   }
+  /* A phone: two rows, who asks over the command and the actions. */
+  .seat-needs {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    height: auto;
+    min-height: 40px;
+    padding: 6px 6px 6px 10px;
+  }
   .seat-needs-who {
-    flex: 1 1 0;
+    flex: 1 1 calc(100% - 30px);
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;

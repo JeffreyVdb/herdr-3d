@@ -41,7 +41,7 @@ test('the lightbox fits a 390 x 844 screen: zoom, copy, jump and close are all i
   await seatMode(page, 'transcript');
   const box = page.locator('.seat-transcript');
   await expect.poll(async () => (await txState(page)).imageCount).toBeGreaterThan(0);
-  await box.locator('.tx-bar .seat-tab[data-mode="images"]').click();
+  await page.locator('.seat-rail').getByRole('tab', { name: /^Images/ }).click(); // #216: the rail
   await expect.poll(async () => (await txState(page)).mode).toBe('images');
   await expect.poll(async () => (await txState(page)).tabMounted, { message: 'the lazy Images view is mounted', timeout: 20_000 }).toBe(true);
   const tab = box.locator('.imgs');
@@ -83,22 +83,22 @@ test('the Images tab: Input and Agent, deduped, lightbox, jump to message, live,
   const worker = await sitAt(page, 'Tofu');
   await expect.poll(async () => (await txState(page)).items).toBeGreaterThan(10);
 
-  // The conversation (#98: up as you sit), with its Conversation | Images strip; the strip's Images tab opens the tab.
+  // The conversation (#98: up as you sit), its strip led by its icon; #216: the rail's Images (its count) opens the tab.
   await seatMode(page, 'transcript');
   const box = page.locator('.seat-transcript');
-  await expect(box.locator('.tx .tx-bar .seat-tabs')).toBeVisible();
-  await expect(box.locator('.tx-bar .seat-tab[aria-selected="true"]')).toHaveText('Conversation');
+  await expect(box.locator('.tx .tx-bar .seat-lead')).toBeVisible();
+  await expect(page.locator('.seat-rail').getByRole('tab', { selected: true })).toHaveText('Chat');
   await expect.poll(async () => (await txState(page)).imageCount).toBeGreaterThan(0);
-  await box.locator('.tx-bar .seat-tab[data-mode="images"]').click();
+  await expect(page.locator('.seat-rail').getByRole('tab', { name: /^Images, \d+ images?$/ })).toBeVisible();
+  await page.locator('.seat-rail').getByRole('tab', { name: /^Images/ }).click();
   await expect.poll(async () => (await txState(page)).mode).toBe('images');
   await expect.poll(async () => (await txState(page)).tabMounted, { message: 'the lazy Images view is mounted', timeout: 20_000 }).toBe(true);
   expect((await page.evaluate(() => window.__h3d.seat())).mode).toBe('images');
   const tab = box.locator('.imgs');
   await expect(tab).toBeVisible();
   await expect(box.locator('.tx')).toBeHidden();
-  await expect(tab.locator('.imgs-bar .seat-tabs')).toBeVisible();
-  await expect(tab.locator('.imgs-bar .seat-tab[aria-selected="true"]')).toContainText('Images');
-  await expect(page.locator('.seat-mode-opt[data-on]')).toHaveText('Images');
+  await expect(tab.locator('.imgs-bar .seat-lead')).toBeVisible();
+  await expect(page.locator('.seat-rail').getByRole('tab', { selected: true })).toContainText('Images');
   await expect(page.locator('.seat-keys')).toContainText('Conversation');
 
   // Two groups. Input: the screenshot (sent twice: x2), the phone-sized one and the path that is not available.

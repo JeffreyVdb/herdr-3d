@@ -952,10 +952,10 @@ test('states: inside the transcript the composer’s Send, the selected tab and 
     await page.keyboard.type('hello');
     const send = await pair(page, '.seat-transcript .tx-send');
     expect([rgbToHex(send.bg), rgbToHex(send.fg)], `transcript ${tx}: Send`).toEqual(['#e95420', '#2c001e']);
-    const tab = await pair(page, '.seat-transcript .tx-bar .seat-tab[aria-selected="true"]');
-    expect([rgbToHex(tab.bg), rgbToHex(tab.fg)], `transcript ${tx}: selected tab`).toEqual(['#e95420', '#2c001e']);
-    const count = await pair(page, '.seat-transcript .tx-bar .seat-tabs-n');
-    expect(count.ratio, `transcript ${tx}: count`).toBeGreaterThanOrEqual(4.5);
+    // #216: the view switch is the seat's rail (UI chrome: the UI theme's tokens whatever the transcript's).
+    const tab = await pair(page, '.seat-rail-view[aria-selected="true"] .seat-rail-word');
+    expect(tab.ratio, `transcript ${tx}: the rail's selected view`).toBeGreaterThanOrEqual(4.5);
+    expect(await page.locator('.seat-rail-view[aria-selected="true"]').evaluate((e) => getComputedStyle(e).boxShadow), `transcript ${tx}: the selected view's bar`).toContain('rgb(233, 84, 32)');
     // The transcript's own content kept its own tokens.
     const body = await page.locator('.seat-transcript .tx').evaluate((e) => getComputedStyle(e).backgroundColor);
     expect(body).toBe(tx === 'ubuntu' ? ANCHOR.surface : 'rgb(15, 21, 38)');
