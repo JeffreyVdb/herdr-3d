@@ -321,9 +321,12 @@
     grid-template-columns: 52px minmax(0, 1fr);
   }
   .seat-rail-item {
-    width: 48px;
-    height: 52px;
-    font-size: 9.5px;
+    width: 46px;
+    height: 46px;
+  }
+  /* Icons alone (each tab is named, its count too): the words do not fit 46 px. */
+  .seat-rail-word {
+    display: none;
   }
   .seat-rail-ic {
     width: 22px;

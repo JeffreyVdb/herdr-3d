@@ -310,6 +310,7 @@ export class SeatBar implements SeatView {
       b.setAttribute('role', 'tab');
       b.setAttribute('aria-controls', 'seat-stage');
       b.setAttribute('aria-keyshortcuts', `Control+Shift+${i + 1}`);
+      b.setAttribute('aria-label', v.word); // (a phone shows the icon alone)
       b.title = `${v.name} (Ctrl+Shift+${i + 1})`;
       const n = el('span', 'seat-rail-badge');
       n.hidden = true;
@@ -339,6 +340,7 @@ export class SeatBar implements SeatView {
       b.append(duotone(ic, 'seat-rail-ic'), el('span', 'seat-rail-word', word));
     };
     tool(this.filesBtn, 'files', 'Files');
+    this.filesBtn.setAttribute('aria-label', 'Files');
     this.filesBtn.setAttribute('aria-pressed', 'false');
     this.filesBtn.setAttribute('aria-keyshortcuts', FILES_KEY.aria);
     this.filesBtn.title = `The worker’s files: Enter puts an @ reference in the prompt box (${FILES_KEY.label.join('+')})`;
