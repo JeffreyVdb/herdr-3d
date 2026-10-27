@@ -3,6 +3,7 @@ package cmdrequest
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,7 +100,7 @@ func TestAccountHostNeverAMachine(t *testing.T) {
 func TestAccountHostIsTheBridge(t *testing.T) {
 	type row struct{ name, reply, answer, command string }
 	rows := []row{{"the ticket's reply", accountReply(t), `{"commands":[{"command":"! sudo tailscale serve --bg --https=8216 http://127.0.0.1:45215","host":"other","host_text":"your user"}]}`, accountCommand}}
-	for _, p := range []string{"as your user", "under your account", "your user account", "as your login", "as root", "root", "as yourself", "with sudo", "as an admin", "under your own user"} {
+	for _, p := range []string{"as your user", "under your account", "with your user account", "as your login", "as root", "as the root user", "as yourself", "with sudo", "as an admin", "under your own user"} {
 		rows = append(rows, row{p, "Run `sudo tailscale serve --bg --https=8216 http://127.0.0.1:45215` " + p + ".",
 			`{"commands":[{"command":"sudo tailscale serve --bg --https=8216 http://127.0.0.1:45215","host":"other","host_text":"` + p + `"}]}`,
 			"sudo tailscale serve --bg --https=8216 http://127.0.0.1:45215"})
@@ -126,6 +127,8 @@ func TestAccountHostKeepsMachines(t *testing.T) {
 	reply := accountReply(t)
 	for _, f := range []struct{ reply, answer, host, hostText string }{
 		{"On your Mac run `pwd` as your user", `{"commands":[{"command":"pwd","host":"other","host_text":"your Mac"}]}`, "other", "your Mac"},
+		{"On your Mac, run `pwd` as your user", `{"commands":[{"command":"pwd","host":"other","host_text":"your user"}]}`, "other", "your user"},
+		{"On root, run `pwd`.", `{"commands":[{"command":"pwd","host":"other","host_text":"root"}]}`, "other", "root"},
 		{"Run `pwd` as your user on the build server", `{"commands":[{"command":"pwd","host":"other","host_text":"your user on the build server"}]}`, "other", "your user on the build server"},
 		{"Run `pwd` as root@prod", `{"commands":[{"command":"pwd","host":"other","host_text":"root@prod"}]}`, "other", "root@prod"},
 		{"Run `pwd` on your user's Mac", `{"commands":[{"command":"pwd","host":"other","host_text":"your user's Mac"}]}`, "other", "your user's Mac"},
@@ -145,4 +148,151 @@ func TestAccountHostKeepsMachines(t *testing.T) {
 	if err != nil || len(res.Commands) != 0 || res.Rejections() != "host_text:1" {
 		t.Fatalf("%+v %v", res, err)
 	}
+}
+
+// leadPhrase is p after lead, or p when it already starts with one.
+func leadPhrase(lead, p string) string {
+	if _, led := accountPhrase(p); led {
+		return p
+	}
+	return lead + p
+}
+
+// expectHost parses reply with the model's answer for command and checks
+// the entry's host, host text and rejections.
+func expectHost(t *testing.T, reply, answer, command, host, hostText, rejections string) {
+	t.Helper()
+	res, err := ParseReport(reply, answer)
+	if err != nil || len(res.Commands) != 1 {
+		t.Fatalf("%q %s: %+v %v", reply, answer, res, err)
+	}
+	if c := res.Commands[0]; c.Command != command || c.Host != host || c.HostText != hostText || res.Rejections() != rejections {
+		t.Fatalf("%q %s: %+v rejected %v", reply, answer, c, res.Rejected)
+	}
+}
+
+func otherAnswer(command, hostText, cwd string) string {
+	m := map[string]string{"command": command, "host": "other", "host_text": hostText}
+	if cwd != "" {
+		m["cwd"] = cwd
+	}
+	b, _ := json.Marshal(map[string]any{"commands": []any{m}})
+	return string(b)
+}
+
+// R1: an account phrase never moves a command to the bridge when the reply
+// mentions another machine, before or after the command, in its own
+// sentence or at the start of one, whichever of the phrase's spans the
+// model quotes.
+func TestAccountHostMachineInReply(t *testing.T) {
+	expectHost(t, "On your Mac, run `pwd` as your user", `{"commands":[{"command":"pwd","host":"other","host_text":"your user"}]}`, "pwd", "other", "your user", "")
+	n := 0
+	for _, m := range machineMentions {
+		for _, p := range accountPhrases {
+			for _, lead := range []string{"as ", "under ", "with "} {
+				a := leadPhrase(lead, p)
+				for _, reply := range []string{
+					"Then, " + m + ", run `pwd` " + a + ".",
+					"Run `pwd` " + a + " " + m + ".",
+					"Run `pwd` " + a + ". Do it " + m + ".",
+					"Do it " + m + ". Run `pwd` " + a + ".",
+					strings.ToUpper(m[:1]) + m[1:] + ", run `pwd` " + a + ".",
+					"I couldn't do it " + a + ".\n\nTo do it " + m + ", run:\n\n```sh\npwd\n```\n",
+				} {
+					for _, ht := range []string{p, a} {
+						expectHost(t, reply, otherAnswer("pwd", ht, ""), "pwd", "other", ht, "")
+						n++
+					}
+				}
+			}
+		}
+	}
+	t.Logf("%d replies", n)
+}
+
+// R2: a bare account noun ("root", "sudo") can be a host's name; only a lead
+// in the reply ("as root", "with sudo") makes it an account, and every use
+// of it in the reply must have one.
+func TestAccountHostNeedsALead(t *testing.T) {
+	for _, f := range []struct{ reply, hostText, host string }{
+		{"On root, run `pwd`.", "root", "other"},
+		{"Use sudo: run `pwd` on root", "sudo", "other"},
+		{"Use sudo: run `pwd` on root", "root", "other"},
+		{"root: run `pwd`", "root", "other"},
+		{"Run `pwd` root.", "root", "other"},
+		{"Run `pwd`, superuser.", "superuser", "other"},
+		{"Run `pwd` yourself.", "yourself", "other"},
+		{"Run `pwd` your user account.", "your user account", "other"},
+		{"Run `pwd` on root as root.", "root", "other"},
+		{"On root, run `pwd` as root", "root", "other"},
+		{"On root, run `pwd` as root", "as root", "other"},
+		{"Run `pwd` as root, then tell root it is done.", "root", "other"},
+		{"Run `pwd` with sudo; sudo asks for your password.", "sudo", "other"},
+		{"Run `pwd` as the root user; the root user owns it.", "the root user", "other"},
+		{"Run `sudo pwd`.", "sudo", "other"},
+		{"Run `pwd`, it has root.", "as root", "other"},
+		{"Run `pwd` as rootfs.", "root", "other"},
+		{"Run `pwd` as root.", "root", "bridge"},
+		{"Run `pwd` AS ROOT.", "ROOT", "bridge"},
+		{"Run `pwd` as\n  root.", "root", "bridge"},
+		{"Run `pwd` with sudo.", "sudo", "bridge"},
+		{"Run `pwd` with sudo, as root.", "sudo", "bridge"},
+		{"Run `pwd` as root. As root, it can read the logs.", "root", "bridge"},
+		{"Run `pwd` as “root”.", "“root”", "bridge"},
+		{"Run `sudo pwd` with sudo.", "sudo", "bridge"},
+		{"Run `pwd` as superuser.", "superuser", "bridge"},
+		{"Run `pwd` under yourself.", "yourself", "bridge"},
+	} {
+		hostText, rejections := f.hostText, ""
+		if f.host == "bridge" {
+			hostText, rejections = "", "account_host:1"
+		}
+		cmd := "pwd"
+		if strings.Contains(f.reply, "`sudo pwd`") {
+			cmd = "sudo pwd"
+		}
+		expectHost(t, f.reply, otherAnswer(cmd, f.hostText, ""), cmd, f.host, hostText, rejections)
+	}
+	for _, p := range accountPhrases {
+		if _, led := accountPhrase(p); !led {
+			expectHost(t, "Run `pwd` "+p+".", otherAnswer("pwd", p, ""), "pwd", "other", p, "")
+		}
+	}
+}
+
+// Still runnable: an account phrase with a lead, in a reply that names no
+// machine, is the bridge, whichever of its spans the model quotes; a cwd
+// the reply gives is not prose.
+func TestAccountHostRunnableReplies(t *testing.T) {
+	expectHost(t, accountReply(t), otherAnswer(accountCommand, "your user", ""), accountCommand, "bridge", "", "account_host:1")
+	expectHost(t, accountReply(t), otherAnswer(accountCommand, "as your user", ""), accountCommand, "bridge", "", "account_host:1")
+	type tmpl struct{ reply, command, cwd string }
+	n := 0
+	for _, p := range accountPhrases {
+		for _, lead := range []string{"as ", "under ", "with "} {
+			a := leadPhrase(lead, p)
+			A := strings.ToUpper(a[:1]) + a[1:]
+			for _, f := range []tmpl{
+				{"Run `pwd` " + a + ".", "pwd", ""},
+				{"Please run `sudo systemctl restart foo` " + a + ".", "sudo systemctl restart foo", ""},
+				{A + ", run `ls -la` in /home/jeff/repo.", "ls -la", ""},
+				{A + ", run `ls -la` in /home/jeff/repo.", "ls -la", "/home/jeff/repo"},
+				{A + ", run `ls -la` in /root/build-server.", "ls -la", "/root/build-server"},
+				{"I couldn't do it " + a + ". To do it, run `" + accountCommand + "`, then open https://kiswe-omarchy.tail2d07d5.ts.net:8216/?a=1 with the same query string.", accountCommand, ""},
+				{"I couldn't do it " + a + ". To do it, run `" + accountCommand + "`, then open https://kiswe-omarchy.tail2d07d5.ts.net:8216/?x=1 with the same query string.", accountCommand, ""},
+				{"Run this " + a + ":\n\n```sh\nsudo tailscale serve --bg --https=8216 http://127.0.0.1:45215\n```\n", "sudo tailscale serve --bg --https=8216 http://127.0.0.1:45215", ""},
+				{"Run this " + a + ":\n\n```\nsudo systemctl restart foo\nsudo systemctl status foo\n```", "sudo systemctl restart foo\nsudo systemctl status foo", ""},
+			} {
+				hts := []string{p, a}
+				if strings.HasPrefix(f.reply, A) {
+					hts = []string{p, A}
+				}
+				for _, ht := range hts {
+					expectHost(t, f.reply, otherAnswer(f.command, ht, f.cwd), f.command, "bridge", "", "account_host:1")
+					n++
+				}
+			}
+		}
+	}
+	t.Logf("%d replies", n)
 }
