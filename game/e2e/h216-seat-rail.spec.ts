@@ -72,18 +72,18 @@ test('the rail and every chord swap the four views from the terminal, keeping it
   const k0 = await keys();
   await page.keyboard.type('ls');
   await expect.poll(keys).toBeGreaterThan(k0);
-  // The keys typed while the first was on its way go in one batch: settled once the count stops moving.
-  let seen = -1;
-  await expect.poll(async () => { const n = await keys(); const same = n === seen; seen = n; return same; }, { intervals: [400] }).toBe(true);
+  // Everything that reached the pane, as text and key names (the keys typed while the first was on its way go later,
+  // in one batch: so what went is compared, not how many sends).
+  const typed = () => page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.keys').flatMap((c) => (c.args as { input: Array<{ text?: string; key?: string }> }).input.map((i) => i.text ?? `<${i.key}>`)).join(''));
   // Each chord, from the terminal and from each view: by physical key (Ctrl+Shift+1 is Ctrl+! by `key`).
   for (const [digit, want] of [['2', 'transcript'], ['3', 'images'], ['4', 'runs'], ['1', 'terminal'], ['4', 'runs'], ['2', 'transcript'], ['1', 'terminal']] as const) {
-    const k1 = await keys();
     await page.keyboard.press(`Control+Shift+Digit${digit}`);
     await expect.poll(() => mode(page)).toBe(want);
     await expect(rail.getByRole('tab', { selected: true })).toHaveAttribute('data-mode', want);
-    expect(await keys(), `Ctrl+Shift+${digit} went to the pane`).toBe(k1);
     expect(await box(page), `the terminal's box after Ctrl+Shift+${digit}`).toEqual(before);
   }
+  // Nothing of the chords reached the pane: only the "ls" typed before them.
+  await expect.poll(typed).toBe('ls');
   expect(await page.evaluate(focused)).toContain('seat-input');
   // The rail, by click.
   for (const name of ['Runs', 'Images', 'Chat', 'Terminal'] as const) {
@@ -292,6 +292,8 @@ test('the files drawer: the worker’s tree, the filter, Enter puts a file chip 
   const filter = drawer.getByRole('searchbox').or(drawer.locator('input')).first();
   await filter.fill('readme');
   await expect(tree.getByRole('treeitem', { name: /README\.md/i }).first()).toBeVisible();
+  // The bridge's answer to the filter has replaced the tree (the unfiltered rows are gone) before a row takes the keyboard.
+  await expect(tree.getByRole('treeitem', { name: /^cmd\b/ })).toHaveCount(0);
   const keys = await page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.keys').length);
   await tree.getByRole('treeitem', { name: /README\.md/i }).first().focus();
   await page.keyboard.press('Enter');
