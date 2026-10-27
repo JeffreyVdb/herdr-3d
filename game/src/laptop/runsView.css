@@ -326,16 +326,34 @@
 :root[data-ui-theme='ubuntu'] .seat-runs-head-meta {
   font-size: 13.5px;
 }
+:root[data-ui-theme='ubuntu'] .seat-runs-list {
+  gap: 10px;
+  padding: 6px;
+}
 :root[data-ui-theme='ubuntu'] .seat-run-pick:focus-visible {
+  position: relative;
+  z-index: 1;
   outline: 3px solid var(--focus);
-  outline-offset: -3px;
+  outline-offset: 2px;
+}
+/* The request card's password option is a whole-label target here too: 32 px high. */
+:root[data-ui-theme='ubuntu'] .seat-runs .mp-askpass {
+  min-height: 32px;
+}
+:root[data-ui-theme='ubuntu'] .seat-runs-head {
+  min-height: 48px;
+  padding-right: 8px;
 }
 :root[data-ui-theme='ubuntu'] .seat-run-act:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
+/* Its strip a little taller (the 36 px button's ring stays inside the overlay); the terminal's strip is not this one. */
+:root[data-ui-theme='ubuntu'] .seat-runs > .seat-strip {
+  height: 48px;
+}
 :root[data-ui-theme='ubuntu'] .seat-runs-btn,
 :root[data-ui-theme='ubuntu'] .seat-runs-new {
-  min-height: 32px;
+  min-height: 36px;
 }
 /* ubuntu:end */

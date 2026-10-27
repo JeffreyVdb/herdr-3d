@@ -1309,8 +1309,8 @@ export const SURFACES: Surface[] = [
     root: '.seat-transcript .imgs',
   },
   {
-    // #216: the Runs view: this worker's runs (one waiting for input: the needs-you line too), the agent's request card,
-    // the rows and the picked run's terminal.
+    // #216: the Runs view: this worker's runs (one running, one ended), the agent's request card, the rows and the
+    // picked run's terminal.
     name: 'seat-runs',
     fixture: 'demo-m5',
     extra: '&prints=0',
@@ -1320,10 +1320,10 @@ export const SURFACES: Surface[] = [
     open: async (page) => {
       const id = await sitAtTofu(page, 'terminal', 'Zippy');
       const start = (op: string, command: string) => page.evaluate((a) => window.__h3d.simManual('manual_process.start', a), { op, worker: id, command, askpass: false });
-      const asking = ((await start('surface-1', 'read -p "Name? " name')).data as { process: { id: string } }).process.id;
+      // (No run asks for you here: its toast and the top bar's chip are other surfaces; h216 shoots the line.)
+      const done = ((await start('surface-1', 'make lint')).data as { process: { id: string } }).process.id;
       await start('surface-2', 'pnpm vitest run src/laptop');
-      await page.evaluate((a) => window.__h3d.simManual('sim.manual_attention', a), { id: asking, attention: 'confirmed' });
-      await expect(page.locator('.seat-needs')).toBeVisible();
+      await page.evaluate((id) => window.__h3d.simManual('sim.manual_finish', { id, exit_code: 0 }), done);
       await page.keyboard.press('Control+Shift+Digit4');
       await expect(page.locator('.seat-runs')).toBeVisible();
       await expect(page.locator('.seat-runs .seat-run')).toHaveCount(2);
