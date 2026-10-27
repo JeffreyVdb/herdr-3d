@@ -70,20 +70,32 @@ var (
 // lines before and after dropped (game/src/world/handoff.ts, the same test
 // vectors).
 func hireWithHandoffTask(path, task string) string {
-	body := trailBlank.ReplaceAllString(leadBlank.ReplaceAllString(task, ""), "")
-	return "First read the handoff here: " + path + " and then follow these instructions:\n\n" + body
+	return handoffPathLine(path) + handoffTaskBody(task)
+}
+
+// handoffPathLine is the first task's line with the path, and the blank
+// line after it.
+func handoffPathLine(path string) string {
+	return "First read the handoff here: " + path + " and then follow these instructions:\n\n"
+}
+
+// handoffTaskBody is the task without its blank lines before and after.
+func handoffTaskBody(task string) string {
+	return trailBlank.ReplaceAllString(leadBlank.ReplaceAllString(task, ""), "")
 }
 
 // handoffHire is a pending handoff hire (hub goroutine): the record clients
 // see, the identity of the request that made it (replays), the hire's args
 // (Prompt: the task after its review, without the path line; no review
-// fields), its review (nil: none), who asked, and whether the hire began
-// (launched: the desk is the hire's now, no longer the hold's).
+// fields), its review (nil: none) and the pending owners of its task's
+// files (its review's, a hand-over's), who asked, and whether the hire
+// began (launched: the desk is the hire's now, no longer the hold's).
 type handoffHire struct {
 	rec      proto.HandoffHire
 	hash     string
 	args     proto.WorkerHireArgs
 	sec      *hireSecrets
+	owners   []string
 	by       string
 	launched bool
 }
@@ -101,6 +113,8 @@ func (r *handoffHire) marker() *store.HandoffHireMarker {
 		StartedAt: r.rec.StartedAt}
 	if r.rec.Ended() {
 		m.State, m.Code, m.Reason = r.rec.State, r.rec.Code, r.rec.Reason
+	} else {
+		m.Owners = r.owners
 	}
 	return m
 }
@@ -131,9 +145,12 @@ func sameHire(rec proto.HandoffHire, a proto.WorkerHandoffArgs) bool {
 		rec.Effort == x.Effort && rec.Origin == x.Origin
 }
 
-// handoffHireState is the hub's part (hub goroutine).
+// handoffHireState is the hub's part (hub goroutine): the records, and the
+// pending owners of the task files of the hires a restart interrupted
+// (released once the files are open, Run).
 type handoffHireState struct {
-	byOp map[string]*handoffHire
+	byOp    map[string]*handoffHire
+	orphans []string
 }
 
 // deskHeldError refuses a hire into a desk a pending handoff hire holds,
@@ -202,16 +219,24 @@ func (h *Hub) publishHandoffHire(r *handoffHire) {
 }
 
 // handoffHireHash identifies a request with a hire (a replay must match it;
-// never stored).
+// never stored): its args, the reviews by their decisions (not the scan's
+// revision: a scan again decides the same), the hand-over by its token.
 func handoffHireHash(a proto.WorkerHandoffArgs) string {
+	decisions := func(r *proto.SecretsReview) []proto.SecretDecision {
+		if r == nil {
+			return nil
+		}
+		return r.Decisions
+	}
 	var hire any
 	if a.Hire != nil {
 		x := *a.Hire
 		x.Floor, x.Session = floorArg(x.Floor, x.Session), ""
-		x.Secrets, x.SecretsPending = nil, ""
-		hire = x
+		x.Secrets = nil
+		hire = []any{x, decisions(a.Hire.Secrets)}
 	}
-	b, _ := json.Marshal([]any{a.Worker, a.Mode, a.Session, a.Candidate, a.Revision, strings.TrimSpace(a.Instruction), a.SendHome, hire})
+	b, _ := json.Marshal([]any{a.Worker, a.Mode, a.Session, a.Candidate, a.Revision, strings.TrimSpace(a.Instruction), a.SendHome, hire,
+		decisions(a.Secrets)})
 	s := sha256.Sum256(b)
 	return hex.EncodeToString(s[:])
 }
@@ -498,7 +523,16 @@ func (h *Hub) newHandoffHire(c *Client, a proto.WorkerHandoffArgs, sec *hireSecr
 	if w := h.workers[a.Worker]; w != nil {
 		name = w.Name
 	}
-	return &handoffHire{hash: handoffHireHash(a), args: hire, sec: sec, by: c.name,
+	var owners []string
+	if sec != nil {
+		if sec.owner.Kind != "" && protectedCount(sec.ps) > 0 {
+			owners = append(owners, sec.owner.ID)
+		}
+		if o, ok := h.pendingOwner(sec.token); ok && sec.token != "" {
+			owners = append(owners, o.ID)
+		}
+	}
+	return &handoffHire{hash: handoffHireHash(a), args: hire, sec: sec, owners: owners, by: c.name,
 		rec: proto.HandoffHire{Op: a.Op, Worker: a.Worker, WorkerName: name, Mode: a.Mode, Floor: hire.Floor, DeskIndex: *hire.DeskIndex,
 			Label: hire.Label, Harness: hire.Harness, Model: hire.Model, Effort: hire.Effort, Origin: a.Hire.Origin,
 			State: proto.HandoffHireWaiting, SendHome: a.SendHome, StartedAt: h.opts.Now().UnixMilli()}}
@@ -522,8 +556,14 @@ func (h *Hub) endHandoffHire(ctx context.Context, r *handoffHire, state, code, r
 	}
 	held := r.holds()
 	r.rec.State, r.rec.Code, r.rec.Reason, r.rec.EndedAt = state, code, clipReason(reason), h.opts.Now().UnixMilli()
+	if state != proto.HandoffHireHired {
+		h.skipHandoffHome(r, nil) // asked for, nobody hired: the source stays
+	}
 	if !r.launched {
 		h.dropHireSecrets(ctx, r.sec)
+	}
+	if state != proto.HandoffHireHired && r.sec != nil && r.sec.token != "" {
+		h.dropPending(r.sec.token) // a hand-over goes with it (§1.3), not back to pending
 	}
 	r.sec = nil
 	r.args.Prompt = "" // the task is not kept past its end
@@ -630,7 +670,8 @@ func (h *Hub) handoffHireFiled(ctx context.Context, op string, marked bool, file
 	return true
 }
 
-// skipHandoffHome records the send home skipped (asked, no hire).
+// skipHandoffHome records the send home skipped (asked, no hire); sendHome
+// (nil: none yet, before the filing) tells the request or job.
 func (h *Hub) skipHandoffHome(r *handoffHire, sendHome func(result, why string)) {
 	if !r.rec.SendHome {
 		return
@@ -667,7 +708,12 @@ func (h *Hub) launchHandoffHire(ctx context.Context, r *handoffHire, sendHome fu
 			len(full.Prompt), herdr.MaxPrompt))
 		return
 	}
-	a.Prompt = hireWithHandoffTask(r.rec.Path, a.Prompt)
+	// The task alone is the user's (#39: translated for the harness); the
+	// path line and the herdr lines go as they are.
+	line, body := handoffPathLine(r.rec.Path), handoffTaskBody(a.Prompt)
+	a.Prompt = line + body
+	lines := strings.TrimPrefix(full.Prompt, a.Prompt)
+	compose := func(tr func(string) string) string { return line + tr(body) + lines }
 	leaving := ""
 	if r.rec.SendHome {
 		leaving = r.rec.Worker
@@ -684,7 +730,7 @@ func (h *Hub) launchHandoffHire(ctx context.Context, r *handoffHire, sendHome fu
 	watch := &hireWatch{leaving: leaving, settled: func(ctx context.Context, id string, res *proto.HireResult, delivery string, err error) {
 		h.handoffHireSettled(ctx, r, id, res, delivery, err, sendHome)
 	}}
-	if err := h.startInternalHire(ctx, r.by, cmd, a, watch, r.sec); err != nil {
+	if err := h.beginInternalHire(ctx, r.by, cmd, full, compose, watch, r.sec); err != nil {
 		r.launched = false
 		code := proto.HandoffHireHireFailed
 		switch {
@@ -748,6 +794,35 @@ func (h *Hub) handoffHireFloorGone(ctx context.Context, floors ...string) {
 				fmt.Sprintf("The floor of Desk %d is gone; nobody was hired.", r.rec.DeskIndex+1))
 		}
 	}
+}
+
+// handoffHireSourcesGone fails the waiting hires of the agent requests
+// whose source sits on floors (gone with their session): the request
+// cannot go on without its agent (an LLM job still files, and hires).
+func (h *Hub) handoffHireSourcesGone(ctx context.Context, floors ...string) {
+	for _, op := range h.sortedHandoffHires() {
+		r := h.hh.byOp[op]
+		if w := h.workers[r.rec.Worker]; w != nil && r.rec.Mode == proto.HandoffModeAgent && slices.Contains(floors, w.Floor) {
+			h.handoffHireFailed(ctx, op, proto.HandoffHireSourceGone, "")
+		}
+	}
+}
+
+// releaseInterruptedSecrets releases the task files of the hires a restart
+// interrupted (Run, the files open), off the hub goroutine.
+func (h *Hub) releaseInterruptedSecrets(ctx context.Context) {
+	owners := h.hh.orphans
+	h.hh.orphans = nil
+	if len(owners) == 0 {
+		return
+	}
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		for _, id := range owners {
+			h.releaseOwner(ctx, secretfiles.Owner{Kind: secretfiles.OwnerPending, ID: id})
+		}
+	}()
 }
 
 func (h *Hub) sortedHandoffHires() []string {
@@ -815,6 +890,7 @@ func (h *Hub) loadHandoffHires(ctx context.Context) error {
 		r := &handoffHire{by: handoffHireClient, rec: markedHire(row.Op, row.Mode, row.WorkerID, m)}
 		r.rec.EndedAt = now
 		if !m.Ended() {
+			h.hh.orphans = append(h.hh.orphans, m.Owners...)
 			r.rec.State, r.rec.Code = proto.HandoffHireFailed, proto.HandoffHireInterrupted
 			r.rec.Reason = "The bridge restarted while the handoff was being written; nobody was hired: hire again from the handoff once it is filed."
 			if row.HandoffID != 0 {

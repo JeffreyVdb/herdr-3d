@@ -269,6 +269,13 @@ type hireWatch struct {
 func (h *Hub) startInternalHire(ctx context.Context, by string, cmd proto.Command, a proto.WorkerHireArgs, watch *hireWatch,
 	sec *hireSecrets) error {
 	a, compose := hireLines(a)
+	return h.beginInternalHire(ctx, by, cmd, a, compose, watch, sec)
+}
+
+// beginInternalHire is startInternalHire with the first prompt as given
+// (a.Prompt whole) and its compose (nil: a.Prompt translated whole).
+func (h *Hub) beginInternalHire(ctx context.Context, by string, cmd proto.Command, a proto.WorkerHireArgs, compose firstPrompt,
+	watch *hireWatch, sec *hireSecrets) error {
 	return h.beginHire(ctx, &Client{name: by, kick: func(error) {}}, cmd, a, nil, compose, watch, sec)
 }
 

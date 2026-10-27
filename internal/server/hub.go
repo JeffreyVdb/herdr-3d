@@ -963,6 +963,7 @@ func (h *Hub) Run(ctx context.Context) error {
 		h.wg.Add(2)
 		go h.runSecretsJanitor(ctx)
 		go h.runSecretCounts(ctx) // round 5
+		h.releaseInterruptedSecrets(ctx) // #219
 	}
 	if h.opts.AI != nil { // #92 AI integration
 		h.wg.Add(1)
@@ -1625,7 +1626,8 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 	for _, g := range h.sessionFloors(u.Session) {
 		gone = append(gone, g.id)
 	}
-	h.handoffHireFloorGone(context.Background(), gone...) // #219: a later filing does not hire
+	h.handoffHireFloorGone(context.Background(), gone...)   // #219: a later filing does not hire
+	h.handoffHireSourcesGone(context.Background(), gone...) // #219: nor a request whose agent left with it
 	for _, g := range h.sessionFloors(u.Session) {
 		for _, id := range g.order {
 			w := h.workers[id]

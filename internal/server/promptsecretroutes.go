@@ -274,6 +274,36 @@ func (h *Hub) pendingHiring(token string, on bool) error {
 	return nil
 }
 
+// dropPending forgets token's hand-over and releases its files unless a
+// worker claimed them (#219: the pending hire that took it ended without
+// a hire). Any goroutine; the files go off it.
+func (h *Hub) dropPending(token string) {
+	h.ps.mu.Lock()
+	p := h.ps.pending[token]
+	delete(h.ps.pending, token)
+	h.ps.mu.Unlock()
+	if p == nil || !p.files || p.claimed != "" {
+		return
+	}
+	owner := p.owner
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		h.releaseOwner(context.Background(), owner)
+	}()
+}
+
+// pendingOwner is token's pending owner when it has files.
+func (h *Hub) pendingOwner(token string) (secretfiles.Owner, bool) {
+	h.ps.mu.Lock()
+	defer h.ps.mu.Unlock()
+	p := h.ps.pending[token]
+	if p == nil || !p.files || p.claimed != "" {
+		return secretfiles.Owner{}, false
+	}
+	return p.owner, true
+}
+
 // claimPending gives token's files to worker (off the hub goroutine),
 // before anything of what it reviewed goes to the worker (review B1): the
 // hand-over checked again as pendingFor does, as it may have expired or

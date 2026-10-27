@@ -23,22 +23,24 @@ const migrationHandoffHire = `ALTER TABLE handoff_request ADD COLUMN hire TEXT N
 // HandoffHireMarker is what a pending handoff hire keeps in the store: the
 // target floor and desk, the label, harness, model and effort asked for,
 // the client's origin, the source worker's name, whether the source goes
-// home after it, and when it was accepted (unix ms); once it ended, its
-// state, code and reason (the record's).
+// home after it, when it was accepted (unix ms), the pending owners of its
+// task's protected files (ids: a restart releases them); once it ended,
+// its state, code and reason (the record's), and no owner.
 type HandoffHireMarker struct {
-	Floor      string `json:"floor"`
-	Desk       int    `json:"desk"`
-	Label      string `json:"label,omitempty"`
-	Harness    string `json:"harness"`
-	Model      string `json:"model"`
-	Effort     string `json:"effort"`
-	Origin     string `json:"origin,omitempty"`
-	WorkerName string `json:"worker_name"`
-	SendHome   bool   `json:"send_home,omitempty"`
-	StartedAt  int64  `json:"started_at"`
-	State      string `json:"state,omitempty"`
-	Code       string `json:"code,omitempty"`
-	Reason     string `json:"reason,omitempty"`
+	Floor      string   `json:"floor"`
+	Desk       int      `json:"desk"`
+	Label      string   `json:"label,omitempty"`
+	Harness    string   `json:"harness"`
+	Model      string   `json:"model"`
+	Effort     string   `json:"effort"`
+	Origin     string   `json:"origin,omitempty"`
+	WorkerName string   `json:"worker_name"`
+	SendHome   bool     `json:"send_home,omitempty"`
+	StartedAt  int64    `json:"started_at"`
+	Owners     []string `json:"owners,omitempty"`
+	State      string   `json:"state,omitempty"`
+	Code       string   `json:"code,omitempty"`
+	Reason     string   `json:"reason,omitempty"`
 }
 
 // Ended reports whether the marker's hire ended.

@@ -26,7 +26,7 @@ func TestHandoffHireMarker(t *testing.T) {
 		}
 	}
 	ma := &store.HandoffHireMarker{Floor: "s", Desk: 2, Label: "Ada", Harness: "claude", Model: "opus", Effort: "high", Origin: "tab-1",
-		WorkerName: "Pixel", SendHome: true, StartedAt: 1790000000000}
+		WorkerName: "Pixel", SendHome: true, StartedAt: 1790000000000, Owners: []string{"OWNERA"}}
 	mb := &store.HandoffHireMarker{Floor: "v-x", Desk: 0, Harness: "codex", Model: "gpt", Effort: "low", WorkerName: "Mochi", StartedAt: 1790000002000}
 	ra := store.HandoffRequest{Op: "op-a", WorkerID: "a", Floor: "s", Harness: "claude", Offset: -1, Path: "/h/.pending/s/op-a.md",
 		Nonce: "5f3c9a1e7b2d4086", State: store.HandoffRequestPending, CreatedAt: 1790000000000, Hire: ma}
@@ -81,7 +81,7 @@ func TestHandoffHireMarker(t *testing.T) {
 	if rows, err := st.HandoffHireRows(ctx); err != nil || len(rows) != 0 {
 		t.Fatalf("after ending: %+v, %v", rows, err)
 	}
-	if got, _ := st.HandoffLLMJobByOp(ctx, "op-b"); got.Hire == nil || *got.Hire != eb || !got.Hire.Ended() {
+	if got, _ := st.HandoffLLMJobByOp(ctx, "op-b"); got.Hire == nil || !reflect.DeepEqual(*got.Hire, eb) || !got.Hire.Ended() {
 		t.Fatalf("op-b's marker: %+v", got.Hire)
 	}
 	if got, _ := st.HandoffRequestByOp(ctx, "op-n"); got.Hire != nil {
@@ -92,7 +92,7 @@ func TestHandoffHireMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows, err = st.HandoffHireRows(ctx)
-	if err != nil || len(rows) != 1 || rows[0].Op != "op-a" || rows[0].Marker != ea {
+	if err != nil || len(rows) != 1 || rows[0].Op != "op-a" || !reflect.DeepEqual(rows[0].Marker, ea) {
 		t.Fatalf("a pending request's ended hire: %+v, %v", rows, err)
 	}
 	// A marker that does not decode is listed (as an empty one), never an
