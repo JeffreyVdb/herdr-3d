@@ -324,6 +324,15 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
   Tailscale record), `simcmdreq=bridge|multi-line|sudo|other-host|tailscale-bg` puts a command request on Zippy's reply,
   and the fixture's password is `fixture-pass`. For a UX look: `make dev`, then
   `?ws=%2Ffixture%2Fdemo-m5%3Fplay%3Dnone%26sim%3D1%26simmanual%3Dlook%26simcmdreq%3Dsudo&floor=herdr-3d`, sit at Zippy.
+- #213 command input: the suggestion card is `laptop/commandRequestCard.ts` (+ `.css`), the askpass rewrite the game shares
+  with the fixture is `world/askpass.ts`, checked against the bridge's `internal/manual/askpass/testdata/eligibility.json`
+  by `world/askpass.test.ts`. A run asking for you is `attention` on `ManualProcess` (`world/manualProcess.ts`
+  `attentionOf`, the words by kind and certainty, `AttentionEpisodes` for one toast or notification per episode id) and
+  `ui/manualAttention.ts` (the chips: top bar, the seat's notices row). The fixture adds `simcmdreq=sudo-k` (the user's
+  `sudo -k …` launch with its trailing line break), `attention` on its password requests, `input_detection: 'hints'`
+  on every run and `sim.manual_attention {id, attention: confirmed|uncertain|sudo|odd|clear}` for input episodes. The
+  e2e is `e2e/h213-command-input.spec.ts` (`H3D_213_SHOTS=<dir>` keeps its screenshots: the card in the four theme
+  pairings at desktop and 390 px, the chips and the list).
 - `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
   in-process bridge.
 

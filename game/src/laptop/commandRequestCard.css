@@ -9,6 +9,7 @@
   --mp-k: var(--tx-zoom, 1);
   /* Ubuntu Mono draws small for its size: it gets the transcript's own step up (14px there too). */
   --mp-mono: 13px;
+  --mp-edge: color-mix(in srgb, var(--text) 45%, var(--raised));
   box-sizing: border-box;
   min-width: 0;
   max-width: min(100%, 880px);
@@ -228,18 +229,24 @@
   gap: 8px;
   margin-top: calc(3px * var(--mp-k));
 }
+/* A secondary action's edge is its boundary here (3:1 on the card): Quiet's --btn-border is a decorative 14% white. */
 .mp-request .btn {
+  border-color: var(--mp-edge);
   font: inherit;
   font-weight: 600;
   color: var(--text);
   height: auto;
   min-height: var(--ctl-h);
 }
+.mp-request .btn:not(.btn--primary):hover:not(:disabled, [aria-disabled='true']) {
+  border-color: var(--text-2);
+}
 .mp-request .btn svg {
   width: 16px;
   height: 16px;
 }
 .mp-request .btn--primary {
+  border-color: var(--action-border);
   color: var(--on-action);
   font-weight: 700;
 }
@@ -251,7 +258,7 @@
   cursor: default;
   opacity: 1;
   background: var(--disabled-bg);
-  border-color: var(--border);
+  border-color: var(--mp-edge);
   color: var(--disabled-text) !important;
 }
 .mp-request .btn:disabled svg,
@@ -302,6 +309,7 @@
 
 :root[data-ui-theme='ubuntu'] .mp-request {
   --mp-mono: 14.5px;
+  --mp-edge: var(--border);
 }
 
 @media (max-width: 520px) {
