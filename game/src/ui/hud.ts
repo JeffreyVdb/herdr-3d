@@ -352,6 +352,11 @@ export class Hud {
     if (span) span.textContent = chip.text;
   }
 
+  /** #213: the manual runs' attention chip, in the bar's actions before the AI chip: on every view, floor or city. */
+  mountAttention(el: HTMLElement): void {
+    this.aiChip.before(el);
+  }
+
   /** M13: the screen share control, in the top bar before Settings and About; shown everywhere (a share is the game's, not a floor's). */
   mountScreenShare(el: HTMLElement): void {
     // Starting a share is a command (the menu); the LIVE tape and Stop are state (the bar, where they cannot be missed).

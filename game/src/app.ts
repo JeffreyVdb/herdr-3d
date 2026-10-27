@@ -129,6 +129,8 @@ import { PromptSecretsFlow, type Go } from './ui/secretsFlow';
 import { RevokeSecretsDialog } from './ui/revokeSecrets';
 import { ManualCredentialDialog } from './ui/manualCredential';
 import { ManualProcessesDialog } from './ui/manualProcesses';
+import { AttentionChip, type AttentionChipHost } from './ui/manualAttention';
+import { AttentionEpisodes, attentionAction, attentionLabel, openAttention, shortCommand, type RunAttention } from './world/manualProcess';
 import { CommandCatalogs } from './laptop/commandCatalog';
 import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
@@ -270,6 +272,19 @@ export class App {
   readonly manualCredential: ManualCredentialDialog;
   readonly manualProcesses: ManualProcessesDialog;
   private manualCredentialLatest = '';
+  /** #213: the run whose password dialog Respond asked for (from anywhere), till its request goes. */
+  private manualRespond = '';
+  /** #213: a manual run asks for you: in the top bar (every run), and in the seat's bar (this worker's, the others'). */
+  private readonly attentionHost: AttentionChipHost = {
+    respond: (id) => this.respondManual(id),
+    terminal: (id, from) => this.manualProcesses.openRun(id, from),
+    list: (from) => this.manualProcesses.open(null, from),
+  };
+  private readonly attentionTop = new AttentionChip(this.attentionHost, { names: true, label: 'Manual runs asking for you', cls: 'mpa--top' });
+  private readonly attentionOwn = new AttentionChip({ ...this.attentionHost, list: (from) => { const id = this.laptops.seated; if (id) this.manualProcesses.open(id, from); } }, { names: false, label: 'This worker’s manual runs asking for you', cls: 'mpa--own' });
+  private readonly attentionOthers = new AttentionChip(this.attentionHost, { names: true, label: 'Other workers’ manual runs asking for you', cls: 'mpa--others' });
+  /** #213: the episodes announced once (a toast, a desktop notification), by id: a reconnect's snapshot repeats none. */
+  private readonly attentionEpisodes = new AttentionEpisodes();
   /** #223: the filing dialog and the floor's filing cabinet. */
   readonly handoffDialog: HandoffDialog;
   readonly cabinet: Cabinet;
@@ -703,6 +718,7 @@ export class App {
           // M5: a dropped connection took every watch with it; the next live one watches again.
           this.laptops.setConnected(s.phase === 'live');
           if (s.phase === 'live' && !wasLive) this.manualProcesses.reconnect();
+          if ((s.phase === 'live') !== wasLive) this.syncAttention(); // #213: no Respond without a connection
           this.screen.setConnected(s.phase === 'live'); // M13: a new connection is told whether this game shares
           this.hud.setConn(s, this.fixture, Date.now());
           // #57: a switch in another tab drops this connection: ask the helper which bridge is in use now.
@@ -879,7 +895,7 @@ export class App {
       send: (t, args) => this.send(t, args).finally(() => this.laptops.syncSecretFiles()),
     });
     this.manualCredential = new ManualCredentialDialog(o.host, (args) => this.client.request('manual_process.credential', args), (msg) => this.hud.toast(msg, 5200, 'error'));
-    this.manualProcesses = new ManualProcessesDialog(o.host, { store: this.store, send: (t, args) => this.send(t, args), input: (args) => this.client.request('terminal.input', args), watch: (t, args) => this.sendWatch(t, args), changed: () => this.syncManualProcesses(), external: (url) => this.external(url) });
+    this.manualProcesses = new ManualProcessesDialog(o.host, { store: this.store, send: (t, args) => this.send(t, args), input: (args) => this.client.request('terminal.input', args), watch: (t, args) => this.sendWatch(t, args), changed: () => this.syncManualProcesses(), external: (url) => this.external(url), respond: (id) => this.respondManual(id) });
     // #223: a literal handoff, and the cabinet it goes into.
     const copy = (text: string) => copyText(text);
     this.handoffDialog = new HandoffDialog(o.host, {
@@ -929,6 +945,7 @@ export class App {
       // #108 round 4: the seated worker's "protected files" chip: the confirmation that removes them.
       manualRun: (from) => { const id = this.laptops.seated; if (id) { this.manualProcesses.open(id, from); this.manualProcesses.entry(id); } },
       processes: (from) => { const id = this.laptops.seated; if (id) this.manualProcesses.open(id, from); },
+      review: () => this.laptops.revealCommandRequest(), // #213
       revoke: (from) => {
         const id = this.laptops.seated;
         if (id) this.revokeSecrets.open(id, from);
@@ -1038,6 +1055,8 @@ export class App {
     this.hud.on('overview.all', () => this.openCityOverview()); // #188
     addFloorButton(this.hud, (b) => this.openAddFloor(b)); // #58, before Presets
     this.scheduleButtons(); // #64 schedules
+    this.hud.mountAttention(this.attentionTop.el); // #213
+    this.seatBar.mountAttention(this.attentionOwn.el, this.attentionOthers.el);
     const manualAll = h('button', { class: 'btn', 'data-action': 'manual-processes.all', 'aria-haspopup': 'dialog', onclick: () => this.manualProcesses.open(null) }, 'All manual processes');
     this.hud.addTopbarButton(manualAll, 'buildings', () => true);
     this.m6Buttons = m6StartButtons(this.hud, { run: () => this.openStartRun(), presets: (b) => this.openPresets(b), off: () => runUnsupported(hireHost) });
@@ -1094,9 +1113,52 @@ export class App {
     this.laptops.syncSecretFiles();
     const scope = this.manualProcesses.scope;
     const seated = this.laptops.seated;
-    const candidates = this.store.manualProcesses.all().filter((p) => p.credential && (p.worker === seated || scope === null || (scope !== undefined && p.worker === scope)));
-    candidates.sort((a, b) => Number(`${b.id}:${b.credential?.request}` === this.manualCredentialLatest) - Number(`${a.id}:${a.credential?.request}` === this.manualCredentialLatest) || (b.credential?.attempt ?? 0) - (a.credential?.attempt ?? 0) || b.created_at - a.created_at);
+    // #213: Respond (the chips, a list row, a toast, a notification) asks for one run's dialog from anywhere.
+    if (this.manualRespond && !this.store.manualProcesses.get(this.manualRespond)?.credential) this.manualRespond = '';
+    const candidates = this.store.manualProcesses.all().filter((p) => p.credential && (p.id === this.manualRespond || p.worker === seated || scope === null || (scope !== undefined && p.worker === scope)));
+    candidates.sort((a, b) => Number(b.id === this.manualRespond) - Number(a.id === this.manualRespond) || Number(`${b.id}:${b.credential?.request}` === this.manualCredentialLatest) - Number(`${a.id}:${a.credential?.request}` === this.manualCredentialLatest) || (b.credential?.attempt ?? 0) - (a.credential?.attempt ?? 0) || b.created_at - a.created_at);
     this.manualCredential.refresh(candidates[0]);
+    this.syncAttention();
+  }
+
+  /** #213: Respond: that run's password dialog, wherever you are (the dialog names its host, user and command). */
+  private respondManual(id: string): void {
+    if (!this.store.manualProcesses.get(id)?.credential) return void this.hud.toast('That password request has ended.', 4200, 'info');
+    this.manualRespond = id;
+    this.syncManualProcesses();
+  }
+
+  /**
+   * #213: the runs asking for you, on the chips (top bar: all; seat: this worker's beside its process control, the
+   * others'), and a toast or a desktop notification for each new episode, once per page (a reconnect repeats none).
+   * Without a connection the chips go: their Respond could not answer anything.
+   */
+  private syncAttention(): void {
+    const list = this.conn.phase === 'live' ? openAttention(this.store.manualProcesses.all()) : [];
+    const seated = this.laptops.seated;
+    this.attentionTop.set(list);
+    this.attentionOwn.set(seated ? list.filter((r) => r.process.worker === seated) : []);
+    this.attentionOthers.set(seated ? list.filter((r) => r.process.worker !== seated) : []);
+    this.seatBar.attention(seated ? list.filter((r) => r.process.worker === seated).length : 0, seated ? list.filter((r) => r.process.worker !== seated).length : 0);
+    if (this.conn.phase !== 'live') return;
+    const { fresh, gone } = this.attentionEpisodes.update(list);
+    this.notify.close(gone.map((id) => `mp:${id}`));
+    if (fresh.length) this.announceAttention(fresh);
+  }
+
+  /** A new episode: a desktop notification with the game in the background, else a toast with the action. No terminal text, no secret. */
+  private announceAttention(fresh: readonly RunAttention[]): void {
+    const desktop = this.inboxPrefs.settings.desktop;
+    const act = (r: RunAttention, from?: HTMLElement | null) => (r.attention.kind === 'credential' ? this.respondManual(r.process.id) : this.manualProcesses.openRun(r.process.id, from ?? null));
+    let shown = false;
+    for (const r of fresh) {
+      const where = `${r.process.worker_name || r.process.worker} · ${shortCommand(r.process)} · ${r.process.host}`;
+      shown = this.notify.show({ title: attentionLabel(r.attention), body: where, tag: `mp:${r.attention.id}`, onClick: () => act(r) }, desktop) === 'shown' || shown;
+    }
+    if (shown) return;
+    const one = fresh.length === 1 ? fresh[0]! : null;
+    if (one) this.hud.toast(`${attentionLabel(one.attention)} · ${one.process.worker_name || one.process.worker} · ${shortCommand(one.process, 28)}`, 9000, 'info', false, { label: attentionAction(one.attention), run: () => act(one, document.activeElement instanceof HTMLElement ? document.activeElement : null) });
+    else this.hud.toast(`${fresh.length} manual runs ask for you`, 9000, 'info', false, { label: 'Show runs', run: () => this.manualProcesses.open(null) });
   }
 
   // ---- world -> views --------------------------------------------------------

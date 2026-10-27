@@ -149,6 +149,8 @@ export interface SeatView {
   /** #108 round 4: how many protected files the worker you sit at holds (0: none, or no way to remove them). */
   secretFiles?(n: number): void;
   manualProcesses?(count: number, hasRecords: boolean): void;
+  /** #213: the seated worker's suggested commands while their card is out of sight (0: hide the chip). */
+  commandRequest?(n: number): void;
 }
 
 /** Keys a focused control of the seat bar keeps (moving between its controls, pressing one). */
@@ -384,6 +386,7 @@ export class Laptops {
       ...(host.scheduleFollowup ? { scheduleFollowup: (id: string, c: HandoffCandidate, sug?: ScheduleSuggestion) => host.scheduleFollowup?.(id, c, sug) } : {}),
       manualHost: () => host.store.host,
       manualEntry: (id, command, cwd) => host.manualEntry?.(id, command, cwd),
+      commandCardView: () => this.syncCommandChip(), // #213
       repoRefs: host.store.repoRefs, // #247
       repoDiscovery: host.store.repoDiscovery, // #54
       floorName: (id: string) => host.store.floorName(id), // #58
@@ -746,8 +749,26 @@ export class Laptops {
     this.transcript.toggle();
   }
 
+  /**
+   * #213: the seat bar's "Command to review" chip: the seated worker's agent suggests a command and its card is not in
+   * view (the terminal or the images are up, a child's conversation, or the conversation scrolled away from it).
+   */
+  private syncCommandChip(): void {
+    const s = this.seat;
+    const r = s ? commandRequestOf(this.host.store.workers.get(s.id)) : null;
+    const out = !!r && !this.transcript.commandCardInView && this.whyNoTranscript() === null;
+    this.host.seat.commandRequest?.(out ? r.commands.length : 0);
+  }
+
+  /** #213: the chip's press: the conversation, the card scrolled into view and its first action focused. */
+  revealCommandRequest(): void {
+    if (!this.seat || this.whyNoTranscript() !== null) return;
+    this.transcript.revealCommandRequest();
+  }
+
   private onMode(mode: SeatMode): void {
     this.host.seat.setMode(mode);
+    this.syncCommandChip(); // #213
     // #187: the bar's setMode says "ok"; an away worker or a lost connection is still the case in the other view.
     if (this.seat && (this.seat.away || !this.connected)) this.restStatus(this.seat);
     if (this.seat) this.holdScreen(this.seat, mode);
@@ -1395,6 +1416,7 @@ export class Laptops {
           this.syncProfile(profileNotice(v.worker, this.host.store.codexProfiles.state)); // #139
           this.transcript.followedUp(followupOf(v.worker));
           this.transcript.commandRequestSeen(commandRequestOf(v.worker)); // #90
+          this.syncCommandChip(); // #213
           this.transcript.handoffSeen(candidateOf(v.worker)); // #223
           this.transcript.suggestionSeen(suggestionOf(v.worker)); // #66
           this.transcript.codexSeen(v.worker.codex ?? null, status === 'working'); // #157: its async questions

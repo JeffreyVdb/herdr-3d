@@ -250,7 +250,7 @@
   min-width: 0;
   padding: 0 14px 8px;
 }
-.seat:not([data-asking]):not([data-codex]):not([data-readonly]) .seat-notes {
+.seat:not([data-asking]):not([data-codex]):not([data-readonly]):not([data-attn]) .seat-notes {
   display: none;
 }
 .seat-readonly {
@@ -860,3 +860,54 @@
 }
 .seat .seat-processes[hidden],
 .seat .seat-manual-run[hidden] { display: none; }
+
+/* #213: the agent's command suggestion is out of sight (another view, or scrolled away): one press shows it. It wears
+   the accent's outline so it is noticed beside the plain process count, and the terminal icon the card carries. */
+.seat .seat-cmdreq {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 2px 9px 2px 7px;
+  border: 1px solid var(--accent-text);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--accent-text);
+  font: 700 12.5px var(--font);
+  white-space: nowrap;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.seat .seat-cmdreq:hover {
+  background: var(--hover);
+}
+.seat .seat-cmdreq[hidden] {
+  display: none;
+}
+.seat .seat-cmdreq svg {
+  width: 15px;
+  height: 15px;
+}
+/* #213: the runs asking for you, a notice line: this worker's first, then the other workers'. */
+.seat-attn {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+}
+.seat:not([data-attn]) .seat-attn {
+  display: none;
+}
+/* The manual-process control carries the mark while one of this worker's runs asks for you (the line says what). */
+.seat .seat-processes[data-attn] {
+  gap: 6px;
+  border-color: var(--warn);
+}
+.seat .seat-processes[data-attn]::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warn);
+}
