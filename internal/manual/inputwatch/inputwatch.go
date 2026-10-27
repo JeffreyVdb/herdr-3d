@@ -279,11 +279,11 @@ func (d *Detector) scan() map[int]stat {
 // group is one run's sample: its launcher and the foreground group of its
 // tty.
 type group struct {
-	d           *Detector
-	o           *Observation
-	launcherPID int
-	launcher    stat
-	termFD      int // the launcher's descriptor on the run's pts (-1: none, -2: not looked up)
+	d            *Detector
+	o            *Observation
+	launcherPID  int
+	launcher     stat
+	termFD       int // the launcher's descriptor on the run's pts (-1: none, -2: not looked up)
 	asked, isRaw bool
 	// childrenUnknown: processes whose children could not be listed (nil
 	// after a full scan, which sees every child).

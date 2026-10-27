@@ -29,11 +29,11 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/handoff"
 	"github.com/JeffreyVdb/herdr-3d/internal/handoffllm"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
-	"github.com/JeffreyVdb/herdr-3d/internal/manual/inputwatch"
 	"github.com/JeffreyVdb/herdr-3d/internal/hireintent"
 	"github.com/JeffreyVdb/herdr-3d/internal/hoststats"
 	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
+	"github.com/JeffreyVdb/herdr-3d/internal/manual/inputwatch"
 	"github.com/JeffreyVdb/herdr-3d/internal/notify"
 	"github.com/JeffreyVdb/herdr-3d/internal/packup"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -64,13 +64,13 @@ type Options struct {
 	// DefaultManualInputPoll).
 	ManualInputProc inputwatch.Proc
 	ManualInputPoll time.Duration
-	Ring               int           // events kept for since_seq replay (default 4096)
-	Queue              int           // per-client send queue, in messages (default 1024)
-	MaxDesks           int           // cap on the desks a floor renders beyond its occupied ones (default DefaultMaxDesks)
-	NameHold           time.Duration // how long a name stays held for a worker that left its floor, from when it left (default DefaultNameHold)
-	Server             string        // version banner sent in welcome
-	Log                *slog.Logger
-	Now                func() time.Time // bridge clock for status_since and the name hold (default time.Now)
+	Ring            int           // events kept for since_seq replay (default 4096)
+	Queue           int           // per-client send queue, in messages (default 1024)
+	MaxDesks        int           // cap on the desks a floor renders beyond its occupied ones (default DefaultMaxDesks)
+	NameHold        time.Duration // how long a name stays held for a worker that left its floor, from when it left (default DefaultNameHold)
+	Server          string        // version banner sent in welcome
+	Log             *slog.Logger
+	Now             func() time.Time // bridge clock for status_since and the name hold (default time.Now)
 
 	// Herdr wakes floors and puts them to sleep (nil: floor.wake and
 	// floor.sleep fail with internal).

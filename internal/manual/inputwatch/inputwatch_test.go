@@ -183,7 +183,9 @@ func (f *fakeProc) fg(pid int, comm string, state byte, syscall, wchan string, f
 	return p
 }
 
-func call(nr int, fd int) string { return fmt.Sprintf("%d 0x%x 0x7ffd1000 0x1 0x0 0x0 0x0 0x7ffd0ff8 0x7f00", nr, fd) }
+func call(nr int, fd int) string {
+	return fmt.Sprintf("%d 0x%x 0x7ffd1000 0x1 0x0 0x0 0x0 0x7ffd0ff8 0x7f00", nr, fd)
+}
 
 var stdio = map[int]uint64{0: pts5, 1: pts5, 2: pts5}
 
