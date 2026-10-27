@@ -116,6 +116,8 @@ export interface TranscriptModeHost {
   scheduleFollowup?(id: string, c: HandoffCandidate, s?: ScheduleSuggestion): void;
   manualHost?(): string;
   manualEntry?(id: string, command: string, cwd: string): void;
+  /** #213: the seated worker's command card came into, or went out of, the conversation's view. */
+  commandCardView?(inView: boolean): void;
   /** #247: the shared "Repositories from other buildings" switch, for the prompt box's `@r:` (none: as if off). */
   repoRefs?: RepoSearchHost['refs'];
   /** #54: repository discovery, for the prompt box's `@r:` (none: as if off). */
@@ -232,6 +234,9 @@ interface Sitting {
   followupKey: string;
   commandRequest: import('../net/protocol').CommandRequest | null;
   commandRequestKey: string;
+  /** #213: enough of its card is in the conversation's view to be seen; a reveal waiting for the view to mount. */
+  commandCardInView: boolean;
+  revealCard: boolean;
   /** #223: the worker's handoff candidate (the inline button's), and its id + revision. */
   handoff: HandoffCandidate | null;
   handoffKey: string;
@@ -411,7 +416,7 @@ export class TranscriptMode {
     // The way to read it last time (what the first Ctrl+Esc shows when it opens in the terminal).
     const last: ReadMode = canRead && this.host.imagesRenderer && readModes(this.host.storage, IMAGES_KEY).includes(id) ? 'images' : 'transcript';
     this.s = {
-      id, name, harness, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', commandRequest: null, commandRequestKey: '', handoff: null, handoffKey: '', suggestion: null, suggestionKey: '', codex: null, codexWorking: false, codexKey: '', usage: null, usageKey: '', box: null, view: null,
+      id, name, harness, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', commandRequest: null, commandRequestKey: '', commandCardInView: false, revealCard: false, handoff: null, handoffKey: '', suggestion: null, suggestionKey: '', codex: null, codexWorking: false, codexKey: '', usage: null, usageKey: '', box: null, view: null,
       viewPane: null, tabPane: null, tab: null, mounting: false, loader: null, acked: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
       revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false, status: null, since: 0, mark: null, sendMark: null,
       pending: [], taken: new Set(), timeline: null, cueKey: '', cueDirty: true, child: null,
@@ -720,6 +725,10 @@ export class TranscriptMode {
     if (s.ask) s.view.setAsk(s.ask);
     if (s.followup) s.view.setFollowup(s.followup);
     if (s.commandRequest) s.view.setCommandRequest?.(s.commandRequest);
+    if (s.revealCard) {
+      s.revealCard = false;
+      s.view.revealCommandRequest?.();
+    }
     if (s.handoff) s.view.setHandoff?.(s.handoff);
     if (s.suggestion) s.view.setScheduleSuggestion?.(s.suggestion);
     if (s.codex) s.view.setCodex(s.id, s.codex, s.codexWorking);
@@ -924,7 +933,11 @@ export class TranscriptMode {
         if (live() && r.code !== 'stale') this.host.status('error', message);
         return { ok: false, code: r.code, message };
       },
-      commandRequest: { worker: s.id, host: () => this.host.manualHost?.() ?? '', start: (args) => this.host.send('manual_process.start', args), dismiss: (key) => this.host.send('worker.dismiss_command_request', { id: s.id, key }), edit: (command, cwd) => this.host.manualEntry?.(s.id, command, cwd) },
+      onCommandCardView: (inView: boolean) => {
+        s.commandCardInView = inView;
+        if (live()) this.host.commandCardView?.(inView);
+      },
+      commandRequest: { worker: s.id, name: () => s.name, host: () => this.host.manualHost?.() ?? '', start: (args) => this.host.send('manual_process.start', args), dismiss: (key) => this.host.send('worker.dismiss_command_request', { id: s.id, key }), edit: (command, cwd) => this.host.manualEntry?.(s.id, command, cwd) },
       images: this.host.feed(s.id),
       upload: this.host.upload ?? null,
       label: s.name,
@@ -1512,6 +1525,22 @@ export class TranscriptMode {
     s.followupKey = key;
     s.followup = f;
     s.view?.setFollowup(f);
+  }
+
+  /** #213: the seated worker's command card is in the conversation's view (the conversation is the view, and it scrolled there). */
+  get commandCardInView(): boolean {
+    return this.s?.mode === 'transcript' && !this.s.child && this.s.commandCardInView;
+  }
+
+  /** #213: to the conversation, the card into view and its first action focused (asked for: never on its own). */
+  revealCommandRequest(): void {
+    const s = this.s;
+    if (!s?.commandRequest) return;
+    if (s.child) this.closeChild();
+    this.setMode('transcript');
+    // A view that mounts later (its module still loading) reveals it when it gets the request.
+    if (s.view) s.view.revealCommandRequest?.();
+    else s.revealCard = true;
   }
 
   commandRequestSeen(r: import('../net/protocol').CommandRequest | null): void {

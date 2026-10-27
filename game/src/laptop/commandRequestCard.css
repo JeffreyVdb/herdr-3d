@@ -1,0 +1,326 @@
+/*
+ * #213: the command preview under an agent's reply (commandRequestCard.ts). The screen's own chrome, in the UI theme's
+ * tokens like the question cards (it reads the same over either transcript preset), sized with the conversation's zoom:
+ * a heading row (the terminal icon, "Command Preview", whose request; the question in the action colour), the exact
+ * command in a deep mono well behind a drawn `$`, Machine and Folder as mono label lines, the reason, the password
+ * option and its launched form, and a row of icon buttons.
+ */
+.mp-request {
+  --mp-k: var(--tx-zoom, 1);
+  /* Ubuntu Mono draws small for its size: it gets the transcript's own step up (14px there too). */
+  --mp-mono: 13px;
+  --mp-edge: color-mix(in srgb, var(--text) 45%, var(--raised));
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: min(100%, 880px);
+  margin: 14px 0 6px;
+  padding: calc(14px * var(--mp-k)) calc(16px * var(--mp-k)) calc(12px * var(--mp-k));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--raised);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: calc(13px * var(--mp-k));
+  line-height: 1.45;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 22%), 0 10px 24px -14px rgb(0 0 0 / 55%);
+}
+.mp-request[hidden] {
+  display: none;
+}
+.mp-request:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.mp-request p,
+.mp-request dl,
+.mp-request dd {
+  margin: 0;
+}
+
+/* ---- heading row: what this is on the left, the question on the right (it wraps under on a narrow screen) ---- */
+.mp-request-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 16px;
+  margin-bottom: calc(10px * var(--mp-k));
+}
+.mp-request-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  margin: 0;
+  font-size: calc(15px * var(--mp-k));
+  font-weight: 700;
+  line-height: 1.25;
+}
+.mp-request-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: calc(28px * var(--mp-k));
+  height: calc(28px * var(--mp-k));
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--well-deep);
+  color: var(--text);
+}
+.mp-request-icon svg {
+  width: 62%;
+  height: 62%;
+}
+.mp-request-from {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-weight: 500;
+}
+.mp-request-ask {
+  color: var(--accent-text);
+  font-size: calc(15px * var(--mp-k));
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+/* ---- one command ---- */
+.mp-request-command {
+  display: grid;
+  gap: calc(9px * var(--mp-k));
+  min-width: 0;
+}
+.mp-request-command + .mp-request-command {
+  margin-top: calc(14px * var(--mp-k));
+  padding-top: calc(12px * var(--mp-k));
+  border-top: 1px solid var(--line);
+}
+.mp-request-n {
+  color: var(--text-2);
+  font-weight: 700;
+}
+
+/* The exact bytes: no wrapping, no ligatures, sideways scroll for a long line. The `$` is drawn by CSS. */
+.mp-well {
+  display: flex;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--well-deep);
+  font-family: var(--font-mono);
+  font-size: calc(var(--mp-mono) * var(--mp-k));
+  line-height: 1.5;
+}
+.mp-well--prompt::before {
+  /* Decorative: no text for assistive technology (the alternative text after the slash is empty). */
+  content: '$' / '';
+  flex: none;
+  padding: calc(9px * var(--mp-k)) 0 calc(9px * var(--mp-k)) calc(12px * var(--mp-k));
+  color: var(--accent-text);
+  font-weight: 700;
+  user-select: none;
+}
+.mp-well pre {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: calc(9px * var(--mp-k)) calc(12px * var(--mp-k));
+  overflow-x: auto;
+  white-space: pre;
+  font: inherit;
+  color: var(--text);
+  font-variant-ligatures: none;
+  tab-size: 4;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+.mp-well pre::selection {
+  background: color-mix(in srgb, var(--accent-text) 38%, transparent);
+  color: var(--text);
+}
+.mp-well pre:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+  border-radius: 7px;
+}
+
+/* Where it runs: label and value in mono, the folder's source after it. */
+.mp-meta {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 12px;
+  font-family: var(--font-mono);
+  font-size: calc((var(--mp-mono) - 0.5px) * var(--mp-k));
+}
+.mp-meta dt {
+  color: var(--text-2);
+}
+.mp-meta dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.mp-meta-note {
+  color: var(--text-2);
+}
+.mp-why {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.mp-warning {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  color: var(--warn);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.mp-warning svg,
+.mp-alert svg {
+  flex: none;
+  width: 1.15em;
+  height: 1.15em;
+  margin-top: 0.12em;
+}
+
+/* The password option, and the launched form while it is on. */
+.mp-option {
+  display: grid;
+  gap: calc(7px * var(--mp-k));
+  min-width: 0;
+}
+.mp-request .mp-askpass {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 8px;
+  justify-self: start;
+  cursor: pointer;
+}
+.mp-request .mp-askpass input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--action);
+}
+.mp-launched {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 12px;
+}
+.mp-launched[hidden] {
+  display: none;
+}
+.mp-launched-label {
+  color: var(--text-2);
+  font-size: calc(12.5px * var(--mp-k));
+}
+.mp-launched .mp-well {
+  font-size: calc((var(--mp-mono) - 0.5px) * var(--mp-k));
+}
+.mp-launched .mp-well pre {
+  padding-block: calc(6px * var(--mp-k));
+}
+
+/* ---- actions: Run, Edit and run…, Copy (and Dismiss when it is the only command) ---- */
+.mp-request .mp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: calc(3px * var(--mp-k));
+}
+/* A secondary action's edge is its boundary here (3:1 on the card): Quiet's --btn-border is a decorative 14% white. */
+.mp-request .btn {
+  border-color: var(--mp-edge);
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  height: auto;
+  min-height: var(--ctl-h);
+}
+.mp-request .btn:not(.btn--primary):hover:not(:disabled, [aria-disabled='true']) {
+  border-color: var(--text-2);
+}
+.mp-request .btn svg {
+  width: 16px;
+  height: 16px;
+}
+.mp-request .btn--primary {
+  border-color: var(--action-border);
+  color: var(--on-action);
+  font-weight: 700;
+}
+.mp-request .btn--primary svg {
+  fill: currentColor;
+}
+.mp-request .btn:disabled,
+.mp-request .btn[aria-disabled='true'] {
+  cursor: default;
+  opacity: 1;
+  background: var(--disabled-bg);
+  border-color: var(--mp-edge);
+  color: var(--disabled-text) !important;
+}
+.mp-request .btn:disabled svg,
+.mp-request .btn[aria-disabled='true'] svg {
+  fill: none;
+}
+.mp-request .mp-dismiss {
+  margin-left: auto;
+}
+
+/* A variant (Tailscale's foreground form): its own note, well, option and Run. */
+.mp-variant {
+  display: grid;
+  gap: calc(8px * var(--mp-k));
+  min-width: 0;
+  margin-top: calc(6px * var(--mp-k));
+  padding-top: calc(12px * var(--mp-k));
+  border-top: 1px solid var(--line);
+}
+.mp-variant-note {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.mp-variant-note b {
+  color: var(--text);
+}
+.mp-request-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: calc(12px * var(--mp-k));
+  padding-top: calc(10px * var(--mp-k));
+  border-top: 1px solid var(--line);
+}
+.mp-request-foot .mp-dismiss {
+  margin-left: 0;
+}
+.mp-alert {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  color: var(--error-text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.mp-alert:not(:empty) {
+  margin-top: calc(10px * var(--mp-k));
+}
+
+:root[data-ui-theme='ubuntu'] .mp-request {
+  --mp-mono: 14.5px;
+  --mp-edge: var(--border);
+}
+
+@media (max-width: 520px) {
+  .mp-request {
+    padding: 12px;
+  }
+  .mp-request .mp-dismiss {
+    margin-left: 0;
+  }
+  .mp-launched {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

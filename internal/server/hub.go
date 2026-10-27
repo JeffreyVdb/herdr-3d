@@ -33,6 +33,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/hoststats"
 	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
+	"github.com/JeffreyVdb/herdr-3d/internal/manual/inputwatch"
 	"github.com/JeffreyVdb/herdr-3d/internal/notify"
 	"github.com/JeffreyVdb/herdr-3d/internal/packup"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -65,6 +66,12 @@ type Options struct {
 	Server             string        // version banner sent in welcome
 	Log                *slog.Logger
 	Now                func() time.Time // bridge clock for status_since and the name hold (default time.Now)
+
+	// #213: what the input detection reads (nil: inputwatch.System()) and
+	// how often a running manual run is sampled (default
+	// DefaultManualInputPoll).
+	ManualInputProc inputwatch.Proc
+	ManualInputPoll time.Duration
 
 	// Herdr wakes floors and puts them to sleep (nil: floor.wake and
 	// floor.sleep fail with internal).
@@ -314,6 +321,10 @@ type Options struct {
 	CommandRequestsEnabled     *bool
 	ScheduleSuggestionsEnabled *bool
 	ScheduleSuggestRoles       schedsuggest.Roles
+	// CommandRequestRetry is the wait before a command request's first
+	// retry after a transient model error (#213; default
+	// DefaultCommandRequestRetry, doubled for the second).
+	CommandRequestRetry time.Duration
 	// #110 pack up on request: PackupEnabled is the environment's toggle
 	// (HERDR_WORLD_PACKUP_ENABLED; nil: not set), PackupTimeout bounds a
 	// packup.detect's models (default packup.DetectTimeout), PackupRoles the models
@@ -439,6 +450,7 @@ type Hub struct {
 	manualStopBusy  map[string]bool
 	manualPolling   bool
 	manualCleanups  map[string]manualCleanupLink
+	mi              manualInput // #213
 	opts            Options
 	log             *slog.Logger
 	st              *store.Store
@@ -711,6 +723,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if opts.AgentHandoffGrace <= 0 {
 		opts.AgentHandoffGrace = DefaultAgentHandoffGrace
 	}
+	if opts.CommandRequestRetry <= 0 { // #213
+		opts.CommandRequestRetry = DefaultCommandRequestRetry
+	}
 	if opts.FollowupDebounce <= 0 {
 		opts.FollowupDebounce = DefaultFollowupDebounce
 	}
@@ -777,6 +792,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		dg:              map[string]*transcript.Digest{},
 		mcp:             mcpState{obs: map[string]*mcpObs{}},
 	}
+	h.initManualInput() // #213
 	if err := h.initManualProcesses(ctx); err != nil {
 		return nil, err
 	}
@@ -969,6 +985,12 @@ func (h *Hub) Run(ctx context.Context) error {
 	}
 	manualC := time.NewTicker(time.Second)
 	defer manualC.Stop()
+	h.syncManualInputTicker()
+	defer func() {
+		if h.mi.ticker != nil {
+			h.mi.ticker.Stop()
+		}
+	}()
 	h.reconcileCredentials()
 	credentialTick := time.NewTicker(time.Second)
 	defer credentialTick.Stop()
@@ -983,6 +1005,9 @@ func (h *Hub) Run(ctx context.Context) error {
 			return nil
 		case <-manualC.C:
 			h.pollManualProcesses(ctx)
+			h.syncManualInputTicker()
+		case <-h.manualInputTick(): // #213
+			h.sampleManualInput(ctx)
 		case <-credentialTick.C:
 			h.reconcileCredentials()
 		case <-schedC.C:

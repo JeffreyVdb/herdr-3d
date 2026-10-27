@@ -291,7 +291,7 @@ export interface H3DDebug {
   openSchedules(o?: SchedulesOpen): void;
   toastState(): { shown: boolean; text: string; kind: string; action: string | null } | null;
   /** #64 schedules: the fixture bridge's schedule plays (`sim=1`, tools/fixture-schedule.ts). */
-  simManual(t: 'sim.manual_list' | 'sim.manual_finish', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  simManual(t: 'sim.manual_list' | 'sim.manual_finish' | 'sim.manual_attention' | 'manual_process.start', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   simSchedule(t: 'sim.schedule_fire' | 'sim.schedule_fail', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #108: the files the fixture bridge wrote for protected prompt secrets (`sim.secret_files`; the simulator's own). */
   simSecretFiles(): Promise<Array<{ path: string; owner: string; text: string }>>;

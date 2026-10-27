@@ -285,3 +285,42 @@ describe('the seated workspace (#176)', () => {
     expect(copy()).toEqual({ prevented: false, text: null });
   });
 });
+
+describe('seat bar: #213 command suggestion and runs asking for you', () => {
+  it('"Command to review" shows while the card is out of sight; one press reveals it', () => {
+    const hud = document.createElement('div');
+    const asked: HTMLElement[] = [];
+    const bar = new SeatBar(hud, { ...noop, review: (from) => void asked.push(from) });
+    const b = hud.querySelector<HTMLButtonElement>('.seat-cmdreq')!;
+    expect(b.hidden).toBe(true);
+    bar.commandRequest(1);
+    expect([b.hidden, b.textContent]).toEqual([false, 'Command to review']);
+    expect(b.getAttribute('aria-label')).toBe('Command to review: the agent suggests a command to run. Show the suggestion');
+    expect(b.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+    b.click();
+    expect(asked).toEqual([b]);
+    bar.commandRequest(2);
+    expect(b.textContent).toBe('2 commands to review');
+    bar.commandRequest(0);
+    expect(b.hidden).toBe(true);
+  });
+  it('the notices row holds the chips while a run asks; the process control carries the mark and says so', () => {
+    const hud = document.createElement('div');
+    const bar = new SeatBar(hud, { ...noop, processes: () => {} });
+    const own = document.createElement('div'); const others = document.createElement('div');
+    bar.mountAttention(own, others);
+    bar.manualProcesses(2, true);
+    const seat = hud.querySelector<HTMLElement>('.seat')!;
+    const proc = hud.querySelector<HTMLButtonElement>('.seat-processes')!;
+    expect(hud.querySelector('.seat-notes .seat-attn')!.children).toEqual(expect.objectContaining({ length: 2 }));
+    expect(seat.hasAttribute('data-attn')).toBe(false);
+    bar.attention(1, 0);
+    expect([seat.hasAttribute('data-attn'), proc.hasAttribute('data-attn')]).toEqual([true, true]);
+    expect(proc.getAttribute('aria-label')).toBe('2 manual processes, 1 asking for you: open list');
+    bar.attention(0, 2);
+    expect([seat.hasAttribute('data-attn'), proc.hasAttribute('data-attn')]).toEqual([true, false]);
+    expect(proc.getAttribute('aria-label')).toBe('2 manual processes: open list');
+    bar.attention(0, 0);
+    expect(seat.hasAttribute('data-attn')).toBe(false);
+  });
+});

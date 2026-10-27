@@ -3961,6 +3961,12 @@ export function decodeChild(v: unknown): Child | null {
 // #207 manual processes and command requests.
 export interface ManualProcessSource { kind: 'suggestion' | 'manual'; key?: string; index?: number }
 export interface ManualCredential { request: string; prompt: string; user: string; attempt: number; expires_at: number }
+/**
+ * #213: one episode of a run asking for you. `credential` is the askpass request (the `credential`
+ * field is still the only way to answer it); `input` is an observation of the run's own terminal, confirmed or
+ * uncertain, never a password request. `reason` is a short code (unknown codes are shown generically), never terminal text.
+ */
+export interface ManualAttention { id: string; kind: 'credential' | 'input'; confidence: 'authenticated' | 'confirmed' | 'uncertain'; reason: string; since: number; expires_at?: number }
 export interface ManualProcessEffect { kind: string; endpoint: string; cleanup_command: string; state: 'active' | 'removed' | 'conflict' | 'unknown' }
 export interface ManualProcess {
   id: string; op: string; worker: string; worker_name: string; floor: string; session: string;
@@ -3969,6 +3975,8 @@ export interface ManualProcess {
   state: 'starting' | 'running' | 'waiting' | 'stopping' | 'exited' | 'stopped' | 'failed' | 'unknown';
   exit_code?: number; error?: string; cleanup: 'none' | 'pending' | 'done' | 'needed' | 'failed';
   cleanup_note?: string; effects?: ManualProcessEffect[]; credential?: ManualCredential;
+  /** #213: live only; absent `input_detection`: an older bridge (unknown). */
+  attention?: ManualAttention; input_detection?: 'full' | 'hints' | 'none';
   created_at: number; started_at: number; ended_at: number;
 }
 export interface ManualProcessUpsert { t: 'manual_process.upsert'; seq: number; process: ManualProcess }

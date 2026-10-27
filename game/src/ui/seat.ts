@@ -85,6 +85,14 @@ export class SeatBar implements SeatView {
   /** #108 round 4: the seated worker's protected files (hidden while it holds none): a press asks to remove them. */
   private readonly manualRunBtn = el('button', 'secret-chip seat-manual-run', 'Run a command…');
   private readonly processesBtn = el('button', 'secret-chip seat-processes');
+  /** #213: the agent's command suggestion waits out of sight (another view, scrolled away): a press shows it. */
+  private readonly commandBtn = el('button', 'seat-cmdreq');
+  private commandCount = 0;
+  /** #213: the manual runs asking for you (a notice line), and what it last showed. */
+  private readonly attnLine = el('div', 'seat-attn');
+  private attnKey = '0 0';
+  private ownAttention = 0;
+  private processesCount = 0;
   private readonly secretsBtn = el('button', 'secret-chip seat-secrets');
   private readonly secretsCount = el('span', 'seat-secrets-n');
   /** The count's words: a phone's bar keeps the count alone (its name says the rest). */
@@ -107,6 +115,8 @@ export class SeatBar implements SeatView {
       revoke?(from: HTMLElement): void;
       processes?(from: HTMLElement): void;
       manualRun?(from: HTMLElement): void;
+      /** #213: the command suggestion's chip: the conversation, scrolled to the card, its first action focused. */
+      review?(from: HTMLElement): void;
       /** #176: a view picked on the switch. */
       mode?(m: SeatMode): void;
       /** #176: "Back to live": the terminal's view to the live bottom of herdr's history. */
@@ -137,6 +147,12 @@ export class SeatBar implements SeatView {
       this.secretsBtn.append(tape);
       this.secretsBtn.addEventListener('click', () => revoke(this.secretsBtn));
       line.append(this.secretsBtn);
+    }
+    if (handlers.review) {
+      this.commandBtn.type = 'button';
+      this.commandBtn.hidden = true;
+      this.commandBtn.addEventListener('click', () => handlers.review?.(this.commandBtn));
+      line.append(this.commandBtn);
     }
     if (handlers.processes) {
       this.processesBtn.type = 'button';
@@ -214,7 +230,7 @@ export class SeatBar implements SeatView {
       handlers.live?.();
       this.backToPane();
     });
-    this.notes.append(this.askLine, this.codexBox, this.roLine);
+    this.notes.append(this.askLine, this.codexBox, this.roLine, this.attnLine);
     this.content.append(this.termHost, this.historyBtn);
     this.head.append(line, this.modeBtn, this.standBtn);
     this.el.append(this.head, this.notes, this.content, this.keys, this.input);
@@ -335,8 +351,50 @@ export class SeatBar implements SeatView {
   manualProcesses(count: number, hasRecords: boolean): void {
     this.processesBtn.hidden = !hasRecords;
     this.manualRunBtn.hidden = hasRecords;
+    this.processesCount = count;
     this.processesBtn.textContent = `${count} manual process${count === 1 ? '' : 'es'}`;
-    this.processesBtn.setAttribute('aria-label', `${count} manual processes: open list`);
+    this.nameProcesses();
+  }
+
+  /**
+   * #213: how many commands the seated worker's agent suggests while its card is out of sight (0: hidden: none, or the
+   * card is in view). Shown, it is the one click to the card; it never scrolls the conversation by itself.
+   */
+  commandRequest(n: number): void {
+    if (n === this.commandCount) return;
+    this.commandCount = n;
+    this.commandBtn.hidden = n === 0;
+    if (!n) return;
+    const text = n === 1 ? 'Command to review' : `${n} commands to review`;
+    this.commandBtn.replaceChildren(icon(ICON.terminal), document.createTextNode(text));
+    this.commandBtn.setAttribute('aria-label', `${text}: the agent suggests ${n === 1 ? 'a command' : 'commands'} to run. Show the suggestion`);
+    this.commandBtn.title = 'The agent’s reply suggests a command to run. Show it in the conversation.';
+  }
+
+  /** #213: the attention chips, in the notices' row under the header: `own` (this worker's runs) first, then `others`. */
+  mountAttention(own: HTMLElement, others: HTMLElement): void {
+    this.attnLine.append(own, others);
+  }
+
+  /**
+   * #213: how many of the seated worker's runs ask for you, and of the other workers': the notices' row shows their chips,
+   * and the manual-process control carries the mark (its name says it too).
+   */
+  attention(own: number, others: number): void {
+    const key = `${own} ${others}`;
+    if (key === this.attnKey) return;
+    this.attnKey = key;
+    if (own || others) this.el.dataset.attn = '';
+    else delete this.el.dataset.attn;
+    this.ownAttention = own;
+    if (own) this.processesBtn.dataset.attn = '';
+    else delete this.processesBtn.dataset.attn;
+    this.nameProcesses();
+  }
+
+  private nameProcesses(): void {
+    const own = this.ownAttention;
+    this.processesBtn.setAttribute('aria-label', `${this.processesCount} manual processes${own ? `, ${own} asking for you` : ''}: open list`);
   }
 
   secretFiles(n: number): void {

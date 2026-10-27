@@ -1,4 +1,5 @@
 import type { CommandRequest, ManualProcess, Worker } from '../src/net/protocol.ts';
+import { askpassEligible, askpassForm } from '../src/world/askpass.ts';
 
 type Obj = Record<string, unknown>;
 type Send = (m: Obj) => void;
@@ -7,8 +8,9 @@ interface State { records: Map<string, ManualProcess>; retired: Map<string, Manu
 const shared = new Map<string, State>();
 const state = (): State => ({ records: new Map(), retired: new Map(), ops: new Map(), next: 0, closed: false });
 const hostName = 'fixture-bridge';
-const withoutCredential = (p: ManualProcess): ManualProcess => { const copy = { ...p }; delete copy.credential; return copy; };
-const sudo = (s: string) => /^sudo [ \t]*[^\s-]/.test(s);
+const withoutCredential = (p: ManualProcess): ManualProcess => { const copy = { ...p }; delete copy.credential; delete copy.attention; return copy; };
+/** #213: input episodes the e2e plays: `sim.manual_attention {id, attention}` (no terminal is read; ids are stable per episode). */
+const inputEpisodes: Record<string, Pick<NonNullable<ManualProcess['attention']>, 'confidence' | 'reason'>> = { confirmed: { confidence: 'confirmed', reason: 'tty_read' }, uncertain: { confidence: 'uncertain', reason: 'tty_wait' }, sudo: { confidence: 'uncertain', reason: 'sudo_terminal' }, odd: { confidence: 'confirmed', reason: 'fixture_new_code' } };
 
 /** Deterministic process simulator. No shell or external effects are run. */
 export class ManualProcessSim {
@@ -29,7 +31,8 @@ export class ManualProcessSim {
     }
     if (!this.requestPreset) return;
     const isBg = this.requestPreset === 'tailscale-bg';
-    const cmd = this.requestPreset === 'sudo' ? 'sudo id' : this.requestPreset === 'multi-line' ? 'printf "first\\n"\nprintf "second\\n"' : isBg ? 'sudo tailscale serve --bg --https=8443 http://127.0.0.1:39525' : 'printf "hello from the fixture\\n"';
+    // #213: `sudo-k` is the user's real launch shape, with the form's trailing line break.
+    const cmd = this.requestPreset === 'sudo' ? 'sudo id' : this.requestPreset === 'sudo-k' ? 'sudo -k python3 tools/hello_world_server.py 80\n' : this.requestPreset === 'multi-line' ? 'printf "first\\n"\nprintf "second\\n"' : isBg ? 'sudo tailscale serve --bg --https=8443 http://127.0.0.1:39525' : 'printf "hello from the fixture\\n"';
     this.h.final(w.id, `Please run this command on the bridge:\n\n\`\`\`sh\n${cmd}\n\`\`\``);
     if (this.data.closed) return;
     w.command_request = { key: `fixture-${this.requestPreset}`, at: this.h.now(), commands: [{ command: cmd, cwd: w.cwd ?? '/', cwd_named: false, host: this.requestPreset === 'other-host' ? 'other' : 'bridge', host_text: this.requestPreset === 'other-host' ? 'the build machine' : '', why: 'The agent needs this command run.', ...(isBg ? { variants: [{ label: 'temporary (foreground)', command: 'sudo tailscale serve --https=8443 http://127.0.0.1:39525', note: 'Ends when the process stops; --bg would keep serving after restarts.' }] } : {}) }] };
@@ -37,12 +40,25 @@ export class ManualProcessSim {
   decorate(world: Obj): void { world.host = hostName; world.manual_processes = [...this.data.records.values()]; }
   has(id: string): boolean { return this.data.records.has(id); }
   private update(send: Send, p: ManualProcess): void { this.data.records.set(p.id, p); this.h.emit(send, { t: 'manual_process.upsert', process: p }); }
-  private request(p: ManualProcess, attempt: number): ManualProcess { return { ...p, state: 'waiting', credential: { request: `cr_${p.id}_${attempt}`, prompt: '[sudo] password for fixture:', user: 'root', attempt, expires_at: this.h.now() + 120_000 } }; }
+  private request(p: ManualProcess, attempt: number): ManualProcess {
+    const request = `cr_${p.id}_${attempt}`; const expires = this.h.now() + 120_000;
+    return { ...p, state: 'waiting', credential: { request, prompt: '[sudo] password for fixture:', user: 'root', attempt, expires_at: expires }, attention: { id: request, kind: 'credential', confidence: 'authenticated', reason: 'askpass', since: this.h.now(), expires_at: expires } };
+  }
   handle(t: unknown, a: Obj, send: Send, ack: (v?: unknown) => void, fail: (e: unknown) => void): boolean {
     if (typeof t !== 'string' || !(t.startsWith('manual_process.') || t === 'worker.dismiss_command_request' || t.startsWith('sim.manual_'))) return false;
     const error = (code: string, message: string) => fail(Object.assign(new Error(message), { code }));
     const id = String(a.id ?? '');
     if (t === 'sim.manual_list') { ack({ processes: [...this.data.records.values()] }); return true; }
+    if (t === 'sim.manual_attention') {
+      const p = this.data.records.get(id); const kind = String(a.attention ?? '');
+      if (!p) { error('not_found', 'process not found'); return true; }
+      if (kind === 'clear') { const copy = { ...p, state: p.credential ? p.state : 'running' as const }; if (!p.credential) delete copy.attention; this.update(send, copy); ack(); return true; }
+      const e = inputEpisodes[kind];
+      if (!e) { error('bad_args', 'unknown attention'); return true; }
+      const episode = `in_${id}_${++this.data.next}`;
+      this.update(send, { ...p, state: e.confidence === 'confirmed' ? 'waiting' : 'running', attention: { id: episode, kind: 'input', ...e, since: this.h.now() } });
+      ack({ id: episode }); return true;
+    }
     if (t === 'sim.manual_finish') { const p = this.data.records.get(id); if (!p) error('not_found', 'process not found'); else { this.update(send, { ...withoutCredential(p), state: 'exited', exit_code: Number(a.exit_code ?? 0), ended_at: this.h.now() }); ack(); } return true; }
     if (t === 'worker.dismiss_command_request') {
       const w = this.h.workers.find((x) => x.id === id);
@@ -56,7 +72,7 @@ export class ManualProcessSim {
       if (old) { ack({ process: this.data.records.get(old) ?? this.data.retired.get(old) }); return true; }
       const w = this.h.workers.find((x) => x.id === worker);
       if (!w || !op || !command.trim()) { error('bad_args', 'worker, op and command are required'); return true; }
-      if (a.askpass === true && !sudo(command)) { error('bad_args', 'This command cannot use the password dialog.'); return true; }
+      if (a.askpass === true && !askpassEligible(command)) { error('bad_args', 'This command cannot use the password dialog.'); return true; }
       const source = (a.source ?? { kind: 'manual' }) as ManualProcess['source'];
       if (source.kind === 'suggestion') {
         const request: CommandRequest | undefined = w.command_request; const entry = request?.commands[source.index ?? -1];
@@ -65,7 +81,7 @@ export class ManualProcessSim {
       }
       const now = this.h.now(); const pid = `mp_${(++this.data.next).toString(16).padStart(8, '0')}`;
       const bg = /tailscale\s+serve\s+.*--bg/.test(command);
-      let p: ManualProcess = { id: pid, op, worker, worker_name: w.name ?? worker, floor: w.floor ?? w.session, session: w.session, workspace_id: 'fixture:w', tab_id: 'fixture:t', pane_id: `fixture:${pid}`, host: hostName, cwd: String(a.cwd || w.cwd || '/'), command, ...(a.askpass === true ? { launched: command.replace(/^sudo/, 'sudo -A') } : {}), title: command.split('\n')[0]!.slice(0, 60), source, state: 'starting', cleanup: bg ? 'needed' : 'none', ...(bg ? { cleanup_note: 'Tailscale Serve https:8443 stays on until cleaned up', effects: [{ kind: 'tailscale_serve', endpoint: 'https:8443', cleanup_command: 'sudo tailscale serve --bg --https=8443 off', state: 'active' as const }] } : {}), created_at: now, started_at: now, ended_at: 0 };
+      let p: ManualProcess = { id: pid, op, worker, worker_name: w.name ?? worker, floor: w.floor ?? w.session, session: w.session, workspace_id: 'fixture:w', tab_id: 'fixture:t', pane_id: `fixture:${pid}`, host: hostName, cwd: String(a.cwd || w.cwd || '/'), command, ...(a.askpass === true ? { launched: askpassForm(command) } : {}), title: command.split('\n')[0]!.slice(0, 60), source, state: 'starting', input_detection: 'hints', cleanup: bg ? 'needed' : 'none', ...(bg ? { cleanup_note: 'Tailscale Serve https:8443 stays on until cleaned up', effects: [{ kind: 'tailscale_serve', endpoint: 'https:8443', cleanup_command: 'sudo tailscale serve --bg --https=8443 off', state: 'active' as const }] } : {}), created_at: now, started_at: now, ended_at: 0 };
       this.data.ops.set(op, pid); this.update(send, p); ack({ process: p });
       this.h.later(() => { const current = this.data.records.get(pid); if (!current || current.state !== 'starting') return; p = a.askpass === true ? this.request(current, 1) : { ...current, state: 'running' }; this.update(send, p); }, 100);
       return true;

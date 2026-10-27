@@ -38,6 +38,7 @@ import (
 const (
 	gateFollowup = "followup"
 	gateSchedule = "schedule"
+	gateCommand  = "command_request"
 )
 
 // suggestionShown is a worker's open suggestion and the message it is of.
@@ -203,7 +204,7 @@ func (h *Hub) suggestionUnseen(ctx context.Context, id string, c *followupCand) 
 // follow-up questions look at it, ss: the schedule suggestions). Each result
 // goes to the hub as it comes; c stays pending until the last.
 func (h *Hub) runTurn(ctx context.Context, id string, c *followupCand, fu, ss, cr bool) {
-	fsvc, ssvc, roles := h.fu.svc, h.ss.svc, h.ss.roles
+	fsvc, ssvc, roles, crReady := h.fu.svc, h.ss.svc, h.ss.roles, h.commandRequestReady()
 	text, turnID := c.turn.Text, c.turn.ID
 	c.left = 0
 	if fu {
@@ -229,8 +230,8 @@ func (h *Hub) runTurn(ctx context.Context, id string, c *followupCand, fu, ss, c
 	ssDone := func(res *schedsuggest.Result, err error) {
 		_ = h.do(ctx, func(ctx context.Context) { h.suggestionDone(ctx, id, c, res, err) })
 	}
-	crDone := func(res []cmdrequest.Command, err error) {
-		_ = h.do(ctx, func(ctx context.Context) { h.commandRequestDone(ctx, id, c, res, err) })
+	crDone := func(res crResult) {
+		_ = h.do(ctx, func(ctx context.Context) { h.commandRequestDone(ctx, id, c, res) })
 	}
 	h.wg.Add(1)
 	go func() {
@@ -253,7 +254,7 @@ func (h *Hub) runTurn(ctx context.Context, id string, c *followupCand, fu, ss, c
 			questions[gateSchedule] = schedsuggest.GateQuestion
 		}
 		if cr {
-			questions["command_request"] = cmdrequest.GateQuestion
+			questions[gateCommand] = cmdrequest.GateQuestion
 		}
 		scores, err := roles.Classifier().ClassifyMany(ctx, schedsuggest.State(text), questions)
 		if err != nil {
@@ -264,7 +265,7 @@ func (h *Hub) runTurn(ctx context.Context, id string, c *followupCand, fu, ss, c
 				ssDone(nil, err)
 			}
 			if cr {
-				crDone(nil, err)
+				crDone(crResult{stage: "classifier", err: err})
 			}
 			return
 		}
@@ -277,27 +278,37 @@ func (h *Hub) runTurn(ctx context.Context, id string, c *followupCand, fu, ss, c
 			ssDone(r, e)
 		}
 		if cr {
-			var commands []cmdrequest.Command
-			var e error
-			if scores["command_request"] >= cmdrequest.Threshold {
-				if !h.commandRequestReady() {
-					e = ai.ErrNotReady
+			// #213: a reply below the threshold still reaches extraction in
+			// the lower band when it holds a shell command it asks for.
+			res := crResult{score: scores[gateCommand], decision: cmdrequest.Gate(scores[gateCommand], text)}
+			if res.decision.Extract {
+				res.extracted = true
+				if !crReady {
+					res.stage, res.err = "extraction", ai.ErrNotReady
+				} else if r, e := cmdrequest.ExtractReport(ctx, roles.LLM(), text); e != nil {
+					res.stage, res.err = "extraction", e
 				} else {
-					commands, e = cmdrequest.Extract(ctx, roles.LLM(), text)
+					res.commands, res.rejected = r.Commands, r
 				}
 			}
-			crDone(commands, e)
+			crDone(res)
 		}
 	}()
 }
 
 // turnPartDone takes one of c's results (hub goroutine): it reports whether
-// c is still the worker's pending turn, and drops it once the last came.
+// c is still the worker's pending turn, and drops it once the last came;
+// #213: unless the command request asked for a retry, which keeps it
+// waiting for that alone.
 func (h *Hub) turnPartDone(id string, c *followupCand) bool {
 	current := h.fu.pending[id] == c
 	c.left--
 	if current && c.left <= 0 {
-		delete(h.fu.pending, id)
+		if c.crRetry {
+			c.crRetry, c.crOnly, c.inflight = false, true, false
+		} else {
+			delete(h.fu.pending, id)
+		}
 	}
 	return current
 }

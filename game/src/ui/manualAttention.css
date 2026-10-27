@@ -1,0 +1,157 @@
+/*
+ * #213: a manual run asks for you (ui/manualAttention.ts). A plate like the AI chip's (hud.css `.ai-chip`) carrying the
+ * game's warning tape (the status chips' material, secretChips.css): filled when the bridge is sure (a password request,
+ * a confirmed read of the terminal), an outline when it only may be; then whose run and which command, and the direct
+ * action as a small filled button.
+ */
+.mpa {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 3px 0 8px;
+  border: 1px solid var(--btn-border);
+  border-radius: 15px;
+  background: var(--raised);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12.5px;
+  white-space: nowrap;
+  pointer-events: auto;
+}
+.mpa[hidden] {
+  display: none;
+}
+.mpa[data-kind='sure'] {
+  border-color: color-mix(in srgb, var(--warn) 55%, var(--btn-border));
+}
+.mpa-tape {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px 0 6px;
+  border: 1px solid var(--warn);
+  border-radius: 2px;
+  background: var(--warn);
+  color: var(--ink);
+  font: 700 10.5px/1.6 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  box-shadow: var(--tape-bevel);
+  transform: rotate(-1.5deg);
+}
+.mpa-tape svg {
+  width: 12px;
+  height: 12px;
+}
+.mpa-tape--maybe {
+  border-style: dashed;
+  background: transparent;
+  color: var(--warn);
+  box-shadow: none;
+}
+.mpa-what {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.mpa-act {
+  flex: none;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--action-border);
+  border-radius: 12px;
+  background: var(--action);
+  color: var(--on-action);
+  font: 700 12.5px var(--font);
+  cursor: pointer;
+}
+.mpa-act:hover {
+  background: var(--action-hover);
+}
+.mpa-act:focus-visible,
+.mpa-count:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.mpa:has(.mpa-count) {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.mpa-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px 0 8px;
+  border: 1px solid var(--btn-border);
+  border-radius: 15px;
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.mpa-count:hover {
+  border-color: var(--border-hover);
+}
+.mpa-count > svg {
+  width: 14px;
+  height: 14px;
+  transform: rotate(-90deg);
+}
+
+/*
+ * A narrow screen: one run's chip takes two lines, the tape on the first, then whose run and which command beside the
+ * action, so the worker and the command stay readable however long the tape's words are (an ellipsis cuts the command
+ * first). In the wrapped top bar only the chip gives way: the connection and the menu beside it stay whole.
+ */
+@media (max-width: 760px) {
+  .mpa:not([hidden]):not(:has(.mpa-count)) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: 'tape tape' 'what act';
+    align-items: center;
+    gap: 4px 8px;
+    height: auto;
+    padding: 5px 3px 3px 8px;
+    border-radius: 12px;
+  }
+  .mpa:not(:has(.mpa-count)) .mpa-tape {
+    grid-area: tape;
+    justify-self: start;
+    max-width: 100%;
+    min-width: 0;
+  }
+  .mpa:not(:has(.mpa-count)) .mpa-tape > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mpa:not(:has(.mpa-count)) .mpa-what {
+    grid-area: what;
+  }
+  .mpa:not(:has(.mpa-count)) .mpa-act {
+    grid-area: act;
+  }
+}
+@media (max-width: 900px) {
+  .topbar-actions:has(> .mpa--top:not([hidden])) {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+  .topbar-actions > .mpa--top {
+    flex: 0 1 auto;
+  }
+  .topbar-actions > .mpa--top ~ * {
+    flex-shrink: 0;
+  }
+}

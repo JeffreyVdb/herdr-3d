@@ -85,6 +85,8 @@ export interface TranscriptRenderHost {
   /** #60: what you picked and wrote for the follow-up, kept by the host across views (none: the card's own). */
   followupDrafts?: { get(turn: string): FollowupDraft | null; set(turn: string, d: FollowupDraft): void; clear(turn: string): void };
   commandRequest?: CommandRequestCardHost;
+  /** #213: whether enough of the command card is in the conversation's view to be seen (it changed). */
+  onCommandCardView?(inView: boolean): void;
   /** #223: the inline Handoff button on the worker's latest completed reply was pressed (none: no button). */
   onHandoff?(c: HandoffCandidate): void;
   /** #198: "Hire with handoff" beside it: a handoff, then a new agent with it (none: no button). */
@@ -168,6 +170,8 @@ export interface TranscriptView {
   /** #90: the open questions of the agent's final message (null: none): the sheet's calm lane; the prompt box stays on. */
   setFollowup(f: Followup | null): void;
   setCommandRequest?(r: CommandRequest | null): void;
+  /** #213: the command card into view, its first action focused (now, or once its reply's row is drawn). */
+  revealCommandRequest?(): void;
   /**
    * #223: the worker's latest completed reply a literal handoff can file (null: none). Its row, when the timeline has
    * it, gets the inline Handoff button; no other row ever does.
@@ -445,7 +449,7 @@ function setMarkdown(el: HTMLElement, md: string): void {
 // Icons (24×24 strokes, the HUD's family)
 
 const TX_ICON = {
-  terminal: '<rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M7.5 10l2.5 2-2.5 2M12.5 14.5h4"/>',
+  terminal: ICON.terminal,
   edit: '<path d="M5 19l1-4.2L15.8 5a1.8 1.8 0 0 1 2.6 0l.6.6a1.8 1.8 0 0 1 0 2.6L9.2 18z"/><path d="M13.8 7l3.2 3.2"/>',
   file: '<path d="M7 3.5h7l4 4v13H7z"/><path d="M14 3.5v4h4M9.5 12h6M9.5 15.5h6"/>',
   search: '<circle cx="10.5" cy="10.5" r="5.5"/><path d="M14.5 14.5l5 5"/>',
@@ -1417,6 +1421,10 @@ class Transcript implements TranscriptView {
   private handoff: HandoffCandidate | null = null;
   private handoffEl: HTMLElement | null = null;
   private commandCard: CommandRequestCard | null = null;
+  /** #213: the card's share of the scroller, and a reveal asked for before the card had its row. */
+  private commandCardIO: IntersectionObserver | null = null;
+  private commandCardSeen = false;
+  private revealCard = false;
   /** #66: the worker's schedule suggestion, the × in flight, and the minute tick that keeps the chip's day words true. */
   private suggestion: ScheduleSuggestion | null = null;
   private dismissing = false;
@@ -1531,6 +1539,17 @@ class Transcript implements TranscriptView {
       toTerminal: () => host.onSwitchToTerminal(),
     });
     this.commandCard = host.commandRequest ? new CommandRequestCard(host.commandRequest) : null;
+    if (this.commandCard && host.onCommandCardView && typeof IntersectionObserver === 'function') {
+      const card = this.commandCard.el;
+      const seen = host.onCommandCardView;
+      this.commandCardIO = new IntersectionObserver((entries) => {
+        const e = entries[entries.length - 1]!;
+        // Seen: 80 px of it (or all of a shorter one) in the scroller, so its heading and command show.
+        const now = e.isIntersecting && !card.hidden && e.intersectionRect.height >= Math.min(80, e.boundingClientRect.height - 1);
+        if (now !== this.commandCardSeen) seen((this.commandCardSeen = now));
+      }, { root: this.scroller, threshold: [0, 0.1, 0.25, 0.5, 0.75, 1] });
+      this.commandCardIO.observe(card);
+    }
     const noFollowup = (): Promise<FollowupResult> => Promise.resolve({ ok: false, code: 'unsupported', message: 'Not available here.' });
     this.followup = new FollowupCard({
       answer: (args, o) => (host.onAnswerFollowup ? host.onAnswerFollowup(args, o) : noFollowup()),
@@ -1724,12 +1743,25 @@ class Transcript implements TranscriptView {
     this.syncCommandRequest();
   }
 
+  revealCommandRequest(): void {
+    this.revealCard = true;
+    this.syncCommandRequest();
+  }
+
   private syncCommandRequest(): void {
     const card = this.commandCard;
-    if (!card || card.el.hidden) { card?.el.remove(); return; }
+    if (!card || card.el.hidden) {
+      card?.el.remove();
+      if (this.commandCardSeen) this.host.onCommandCardView?.((this.commandCardSeen = false));
+      return;
+    }
     const last = [...this.timeline.values()].filter((item) => item.kind === 'assistant').sort((a, b) => b.seq - a.seq)[0];
     const row = last ? this.timeline.row(last.id) : undefined;
     if (row && card.el.parentElement !== row) row.append(card.el);
+    if (this.revealCard && card.el.isConnected) {
+      this.revealCard = false;
+      card.reveal();
+    }
   }
 
   setHandoff(c: HandoffCandidate | null): void {
@@ -2005,6 +2037,7 @@ class Transcript implements TranscriptView {
     if (this.destroyed) return;
     if (this.suggestionTick) clearInterval(this.suggestionTick); // #66
     this.destroyed = true;
+    this.commandCardIO?.disconnect(); // #213
     this.timeline.stop(); // #126
     this.lazyIO?.disconnect();
     this.lazyDraw.clear();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ManualProcess, Worker } from '../net/protocol';
-import { commandRequestOf, ManualProcessBook, needsAttention } from './manualProcess';
+import type { ManualAttention, ManualProcess, Worker } from '../net/protocol';
+import { attentionCount, attentionDetail, attentionLabel, AttentionEpisodes, attentionOf, commandRequestOf, detectionNote, ManualProcessBook, needsAttention, openAttention, shortCommand } from './manualProcess';
 
 const worker = (request: unknown) => ({ command_request: request }) as Pick<Worker, 'command_request'>;
 const cmd = { command: 'printf "hello\\n"\ntrue', cwd: '/tmp', cwd_named: false, host: 'bridge' };
@@ -42,4 +42,96 @@ it('routes snapshot and live process events into the world book', async () => {
   store.applyEvent(removed);
   expect(store.manualProcesses.get('a')).toBeUndefined();
   expect(isWorldEvent({ t: 'manual_process.upsert', seq: 4, process: {} } as never)).toBe(false);
+});
+
+describe('#213 attention', () => {
+  const run = (o: Partial<ManualProcess> = {}) => ({ id: 'p', worker: 'w', state: 'running', cleanup: 'none', command: 'sudo -k id\nprintf done', title: 'sudo -k id', created_at: 1, ...o }) as ManualProcess;
+  const input = (confidence: string, reason = 'tty_read', id = 'ep1') => ({ id, kind: 'input', confidence, reason, since: 10 }) as unknown as ManualAttention;
+  const credential = { request: 'cr_1', prompt: '[sudo] password for fixture:', user: 'root', attempt: 1, expires_at: 99 };
+
+  it('words each kind by its certainty; an input episode is never a password request', () => {
+    const confirmed = attentionOf(run({ attention: input('confirmed') }))!;
+    const uncertain = attentionOf(run({ attention: input('uncertain', 'tty_wait') }))!;
+    const sudoTerm = attentionOf(run({ attention: input('uncertain', 'sudo_terminal') }))!;
+    expect([attentionLabel(confirmed), attentionLabel(uncertain)]).toEqual(['Waiting for input', 'May be waiting for input']);
+    for (const a of [confirmed, uncertain, sudoTerm]) expect(`${attentionLabel(a)} ${attentionDetail(a)}`).not.toMatch(/password request|Password requested/);
+    const c = attentionOf(run({ state: 'waiting', credential, attention: { id: 'cr_1', kind: 'credential', confidence: 'authenticated', reason: 'askpass', since: 7, expires_at: 99 } }))!;
+    expect(c).toEqual({ id: 'cr_1', kind: 'credential', confidence: 'authenticated', reason: 'askpass', since: 7, expires_at: 99 });
+    expect(attentionLabel(c)).toBe('Password requested');
+  });
+  it('renders an unknown reason generically and ignores malformed attention', () => {
+    const odd = attentionOf(run({ attention: input('confirmed', 'some_new_code') }))!;
+    expect(attentionLabel(odd)).toBe('Waiting for input');
+    expect(attentionDetail(odd)).toBe('');
+    // Object.prototype's names are unknown codes too.
+    for (const reason of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) expect(attentionDetail(attentionOf(run({ attention: input('confirmed', reason) }))!)).toBe('');
+    for (const bad of [null, 'x', {}, { ...input('confirmed'), id: '' }, { ...input('confirmed'), since: 'now' }, { ...input('confirmed'), kind: 'password' }, input('authenticated'), { id: 'x', kind: 'credential', confidence: 'authenticated', reason: 'askpass', since: 1 }, { ...input('confirmed'), expires_at: 'soon' }])
+      expect(attentionOf(run({ attention: bad as never }))).toBeNull();
+  });
+  it('takes the credential field as the episode (an older bridge sends no attention), and nothing once a run ended', () => {
+    expect(attentionOf(run({ credential }))?.kind).toBe('credential');
+    expect(attentionOf(run({ credential, attention: input('confirmed') }))).toMatchObject({ id: 'cr_1', kind: 'credential' });
+    for (const state of ['exited', 'stopped', 'failed'] as const) expect(attentionOf(run({ state, attention: input('confirmed') }))).toBeNull();
+  });
+  it('orders several runs, counts them and says what detection cannot see', () => {
+    const list = openAttention([run({ id: 'b', attention: { ...input('uncertain', 'tty_wait', 'e2'), since: 20 } }), run({ id: 'a', attention: input('uncertain') }), run({ id: 'c' })]);
+    expect(list.map((r) => r.process.id)).toEqual(['a', 'b']);
+    expect(attentionCount(list)).toBe('2 runs may be waiting for input');
+    expect(attentionCount([...list, { process: run(), attention: attentionOf(run({ credential }))! }])).toBe('3 runs need you');
+    expect(shortCommand(run())).toBe('sudo -k id');
+    expect(shortCommand(run({ command: 'x'.repeat(60) }), 10)).toBe(`${'x'.repeat(9)}…`);
+    expect(detectionNote(run({ input_detection: 'hints' }))).toMatch(/may not be detected/);
+    expect(detectionNote(run({ input_detection: 'none' }))).toMatch(/not detected/);
+    expect(detectionNote(run({ input_detection: 'full' }))).toBeNull();
+    expect(detectionNote(run())).toBeNull();
+  });
+  it('announces an episode once for the page, also across a reconnect snapshot, and reports the ones that closed', () => {
+    const e = new AttentionEpisodes();
+    const one = openAttention([run({ attention: input('confirmed') })]);
+    expect(e.update(one).fresh).toHaveLength(1);
+    expect(e.update(one).fresh).toHaveLength(0);
+    expect(e.update(one).fresh).toHaveLength(0); // the same episode in a reconnect's snapshot (nothing is updated while down)
+    expect(e.update(openAttention([run({ attention: input('confirmed', 'tty_read', 'ep2') })]))).toMatchObject({ fresh: [{ attention: { id: 'ep2' } }], gone: ['ep1'] });
+    expect(e.update([])).toEqual({ fresh: [], gone: ['ep2'] });
+  });
+  // A Storage-like map that can be made to throw.
+  const store = (init: Record<string, string> = {}) => {
+    const m = new Map(Object.entries(init));
+    const s = { broken: false, getItem: (k: string) => { if (s.broken) throw new Error('blocked'); return m.get(k) ?? null; }, setItem: (k: string, v: string) => { if (s.broken) throw new Error('quota'); m.set(k, v); }, m };
+    return s;
+  };
+  const episode = (id: string) => openAttention([run({ id, attention: input('confirmed', 'tty_read', id) })]);
+  it('remembers announced episodes in the tab (a reload announces none of them again); a new tab announces once', () => {
+    const tab = store();
+    expect(new AttentionEpisodes(tab).update(episode('ep1')).fresh).toHaveLength(1);
+    // The reload: a new page, the same tab's storage. Its first list may still be empty (before the snapshot).
+    const reloaded = new AttentionEpisodes(tab);
+    expect(reloaded.update([])).toEqual({ fresh: [], gone: [] });
+    expect(reloaded.update(episode('ep1')).fresh).toHaveLength(0);
+    expect(new AttentionEpisodes(store()).update(episode('ep1')).fresh).toHaveLength(1); // a new tab
+    // An episode seen and then ended is forgotten, from the storage too.
+    expect(reloaded.update([]).gone).toEqual(['ep1']);
+    expect(JSON.parse(tab.m.get('h3d.manual.attention.seen')!)).toEqual([]);
+  });
+  it('keeps the remembered ids bounded and survives storage that is malformed or throws', () => {
+    // A reload brings back ids that ended meanwhile (never seen open again, so never gone): the oldest go.
+    const ended = Array.from({ length: 250 }, (_, i) => `old${i}`);
+    const tab = store({ 'h3d.manual.attention.seen': JSON.stringify([...ended, 'live']) });
+    const e = new AttentionEpisodes(tab);
+    expect(e.update([...episode('live'), ...episode('new')]).fresh.map((r) => r.attention.id)).toEqual(['new']);
+    const kept = JSON.parse(tab.m.get('h3d.manual.attention.seen')!) as string[];
+    expect(kept).toHaveLength(200);
+    expect(kept.slice(-2)).toEqual(['live', 'new']);
+    expect(kept).not.toContain('old0');
+    // Open episodes are never dropped for the bound, however many.
+    const many = ended.flatMap((id) => episode(id));
+    const m = new AttentionEpisodes(store());
+    expect(m.update(many).fresh).toHaveLength(250);
+    expect(m.update(many).fresh).toHaveLength(0);
+    for (const bad of ['{', '{"a":1}', '[1,null,""]', 'null']) expect(new AttentionEpisodes(store({ 'h3d.manual.attention.seen': bad })).update(episode('x')).fresh).toHaveLength(1);
+    const broken = store(); broken.broken = true;
+    const b = new AttentionEpisodes(broken);
+    expect(b.update(episode('x')).fresh).toHaveLength(1);
+    expect(b.update(episode('x')).fresh).toHaveLength(0); // this page still remembers
+  });
 });

@@ -3,10 +3,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/cmdrequest"
@@ -63,31 +66,36 @@ func (h *Hub) commandRequestSeen(ctx context.Context, u followupUpdate) {
 		h.closeCommandRequest(u.id, s.request.Key, "moved")
 	}
 }
-func (h *Hub) commandRequestUnseen(ctx context.Context, id string, c *followupCand) bool {
+
+// commandRequestUnseen reports whether c's reply was never looked at, or
+// why not to look ("in flight", "already looked at", a read error).
+func (h *Hub) commandRequestUnseen(ctx context.Context, id string, c *followupCand) (bool, string) {
 	if h.cr.running[id][c.turn.Hash] {
-		return false
+		return false, "in flight"
 	}
 	v, ok, err := h.st.CommandRequestSeenOf(ctx, id, c.turn.Hash)
 	if err != nil {
 		h.log.Error("reading command request", "err", err)
-		return false
+		return false, "read error"
 	}
 	if !ok {
-		return true
+		return true, ""
 	}
 	if v.Request != "" && v.Outcome == "" {
 		if v.Turn != c.turn.ID {
 			_ = h.st.CloseCommandRequestSeen(ctx, id, c.turn.Hash, "moved")
-			return false
+			h.logCommandRequestClosed(id, c.turn.Hash, "moved", "restored for an older turn")
+			return false, "already looked at"
 		}
 		var saved storedCommandRequest
 		if json.Unmarshal([]byte(v.Request), &saved) == nil && saved.Request != nil && saved.Source == c.source && h.commandRequestSourceCurrent(id, c.source) {
 			h.setCommandRequest(id, saved.Request, v.Turn, c.source)
-		} else {
-			_ = h.st.CloseCommandRequestSeen(ctx, id, c.turn.Hash, "moved")
+			return false, "already looked at (request restored)"
 		}
+		_ = h.st.CloseCommandRequestSeen(ctx, id, c.turn.Hash, "moved")
+		h.logCommandRequestClosed(id, c.turn.Hash, "moved", "restored for another agent session")
 	}
-	return false
+	return false, "already looked at"
 }
 func (h *Hub) setCommandRequest(id string, req *proto.CommandRequest, turn string, source commandRequestSource) {
 	w := h.workers[id]
@@ -113,6 +121,7 @@ func (h *Hub) dropCommandRequest(ctx context.Context, id, outcome string) bool {
 	if err := h.st.CloseCommandRequestSeen(ctx, id, s.request.Key, outcome); err != nil {
 		h.log.Error("closing command request", "err", err)
 	}
+	h.logCommandRequestClosed(id, s.request.Key, outcome, "")
 	return true
 }
 func (h *Hub) closeCommandRequest(worker, key, outcome string) {
@@ -142,15 +151,107 @@ func (h *Hub) commandRequestEntry(worker, key string, index int) (cmd string, va
 	}
 	return c.Command, variants, c.Host, true
 }
-func (h *Hub) commandRequestDone(ctx context.Context, id string, c *followupCand, commands []cmdrequest.Command, err error) {
-	h.turnPartDone(id, c)
-	delete(h.cr.running[id], c.turn.Hash)
-	if err != nil {
-		h.log.Warn("command request classification failed", "worker", id, "err", err)
-		return
+
+// crResult is one look of the command request pipeline at a reply.
+type crResult struct {
+	score     float64
+	decision  cmdrequest.Decision
+	extracted bool // the gate let it through to extraction
+	commands  []cmdrequest.Command
+	rejected  cmdrequest.Result
+	stage     string // where err came from: classifier or extraction
+	err       error
+}
+
+// commandRequestRetries bounds the retries of a reply after a transient
+// model error; DefaultCommandRequestRetry is the first one's wait (doubled
+// for the next).
+const (
+	commandRequestRetries      = 2
+	DefaultCommandRequestRetry = 30 * time.Second
+)
+
+// crTransient reports whether a failed look may succeed when asked again.
+func crTransient(err error) bool {
+	if errors.Is(err, cmdrequest.ErrMalformed) {
+		return true
 	}
+	switch ai.KindOf(err) {
+	case ai.KindTimeout, ai.KindUnreachable, ai.KindRateLimited, ai.KindFailed, ai.KindBadResponse, ai.KindTruncated, ai.KindEmpty:
+		return true
+	}
+	return false
+}
+
+// crErrorKind is a failed look's kind for the log (never its message).
+func crErrorKind(err error) string {
+	if errors.Is(err, cmdrequest.ErrMalformed) {
+		return "malformed"
+	}
+	if k := ai.KindOf(err); k != "" {
+		return string(k)
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "canceled"
+	}
+	return "error"
+}
+
+func hashPrefix(h string) string { return h[:min(12, len(h))] }
+
+// logCommandRequestSkip is the diagnostic line of a settled turn the
+// command requests do not look at (#213).
+func (h *Hub) logCommandRequestSkip(id string, c *followupCand, why string) {
+	h.log.Info("command request turn", "worker", id, "turn", c.turn.ID, "hash", hashPrefix(c.turn.Hash), "skip", why)
+}
+
+// logCommandRequestClosed is the diagnostic line of a request closing.
+func (h *Hub) logCommandRequestClosed(id, hash, outcome, note string) {
+	h.log.Info("command request closed", "worker", id, "hash", hashPrefix(hash), "outcome", outcome, "note", note)
+}
+
+// commandRequestDone takes one look's result (hub goroutine) and logs it in
+// one line (#213): the gate, the extraction and what became of it, never
+// the reply's text, a command or a working directory.
+func (h *Hub) commandRequestDone(ctx context.Context, id string, c *followupCand, res crResult) {
+	c.crAttempt++
+	delete(h.cr.running[id], c.turn.Hash)
 	w := h.workers[id]
 	stale := h.cr.latest[id] != c.turn.ID || !h.commandRequestSourceCurrent(id, c.source) || w == nil || w.Status == statusWorking || h.commandRequestSkip(w) != ""
+	extract := "skipped"
+	if res.extracted {
+		extract = "ok"
+	}
+	attrs := []any{"worker", id, "turn", c.turn.ID, "hash", hashPrefix(c.turn.Hash), "attempt", c.crAttempt,
+		"score", math.Round(res.score*1000) / 1000, "threshold", cmdrequest.Threshold, "band", cmdrequest.Band,
+		"gate", res.decision.Gate, "rule", res.decision.Rule}
+	if res.err != nil {
+		// A transient failure is retried (twice, after 30 s and 60 s), only
+		// the command request; a reply still failing after that is
+		// recorded as failed, so a restart does not ask again.
+		transient := crTransient(res.err) && ctx.Err() == nil
+		var retryIn time.Duration
+		persisted := false
+		if transient && !stale && c.crAttempt <= commandRequestRetries {
+			retryIn = h.opts.CommandRequestRetry << (c.crAttempt - 1)
+			c.crRetry, c.notBefore = true, h.opts.Now().Add(retryIn)
+		} else if transient && !stale {
+			if err := h.st.RecordCommandRequestSeen(ctx, id, c.turn.Hash, c.turn.ID, "", "failed"); err != nil {
+				h.log.Error("recording command request", "err", err)
+			} else {
+				persisted = true
+			}
+		}
+		if res.extracted {
+			extract = "error"
+		}
+		h.turnPartDone(id, c)
+		h.log.Info("command request turn", append(attrs, "extract", extract, "error_stage", res.stage, "error_kind", crErrorKind(res.err),
+			"retry_in", retryIn.String(), "persisted", persisted, "published", false, "stale", stale)...)
+		return
+	}
+	h.turnPartDone(id, c)
+	commands := res.commands
 	var raw, outcome string
 	var req *proto.CommandRequest
 	if len(commands) > 0 {
@@ -176,13 +277,17 @@ func (h *Hub) commandRequestDone(ctx context.Context, id string, c *followupCand
 			outcome = "stale"
 		}
 	}
+	persisted := true
 	if err := h.st.RecordCommandRequestSeen(ctx, id, c.turn.Hash, c.turn.ID, raw, outcome); err != nil {
 		h.log.Error("recording command request", "err", err)
-		return
+		persisted = false
 	}
-	if req != nil && !stale {
+	published := persisted && req != nil && !stale
+	if published {
 		h.setCommandRequest(id, req, c.turn.ID, c.source)
 	}
+	h.log.Info("command request turn", append(attrs, "extract", extract, "commands", len(commands), "rejected", res.rejected.Rejections(),
+		"persisted", persisted, "published", published, "stale", stale)...)
 }
 
 func (h *Hub) commandRequestSourceCurrent(id string, source commandRequestSource) bool {
