@@ -23,7 +23,7 @@ function demoWorker(name: string): Worker {
 }
 
 const sim = (page: Page, t: 'sim.agent_turn' | 'sim.llm_finish' | 'sim.handoff_hire' | 'sim.final', args: Record<string, unknown>) => page.evaluate((a) => window.__h3d.simHandoff(a.t, a.args), { t, args });
-const sent = (page: Page, t: string) => page.evaluate((x) => window.__h3d.sent().filter((c) => c.t === x), t) as Promise<Array<{ args: Record<string, unknown> }>>;
+const sent = (page: Page, t: string) => page.evaluate((x) => window.__h3d.sent().filter((c) => c.t === x), t) as Promise<Array<{ args: Record<string, unknown>; result?: { ok: boolean; code?: string } }>>;
 /** The hire's own toasts (others, the filing's "Filed …" note among them, are not counted). */
 const said = async (page: Page) => (await toasts(page)).filter((t) => t === SPAWNED || t.startsWith('Writing ') || t.includes('nobody was hired') || t.startsWith('Hired '));
 const records = (page: Page) => page.evaluate(() => window.__h3d.handoffHires().records) as Promise<HandoffHire[]>;
@@ -238,5 +238,72 @@ test('reload while it is written: the hold and the card line come back; filed, t
   expect(await beeps(page)).toBe(0);
   expect(await sent(page, 'worker.hire')).toHaveLength(0);
   expect(await page.evaluate(() => window.__h3d.simFirstPrompts())).toHaveLength(1);
+  clean();
+});
+
+// B-R6: the bridge reviews a request's secrets off its hub before it starts it (`sim.handoff_hire {hold}` keeps the
+// fixture's request there), so an answer lost meanwhile says nothing: a snapshot without the op, or Cancel request's
+// `invalid_state`, is not "never taken". The review asks the bridge the same request again until it answers.
+const UNANSWERED = (desk: number) => `No answer from herdr-world yet: it may have taken the request. Asking it again until it says… then Nibble is hired at Desk ${desk + 1}.`;
+
+/** Hire pressed while the fixture's gate holds the request, then the connection drops: its answer never comes. */
+async function lostAnswer(page: Page, mode: 'agent' | 'llm', task: string) {
+  const { w, review, desk: d } = await toReview(page, mode, task, `&simkeep=${unique()}`);
+  expect((await sim(page, 'sim.handoff_hire', { hold: true })).ok).toBe(true);
+  await review.getByRole('button', { name: 'File handoff and hire' }).click();
+  await expect.poll(async () => (await sent(page, 'worker.handoff')).length).toBe(1);
+  await page.evaluate(() => window.__h3d.reconnect());
+  await expect.poll(async () => (await reviewState(page))?.status).toBe(UNANSWERED(d));
+  await expect.poll(() => page.evaluate(() => window.__h3d.connection().phase), { timeout: 20_000 }).toBe('live');
+  // Connected again: the same request goes again (it waits behind the gate too); the world has no record of it.
+  await expect.poll(async () => (await sent(page, 'worker.handoff')).length).toBe(2);
+  const [first, again] = await sent(page, 'worker.handoff');
+  expect(again?.args).toEqual(first?.args);
+  expect(await records(page)).toEqual([]);
+  expect(await reviewState(page)).toMatchObject({ state: 'filing', status: UNANSWERED(d) });
+  await expect(review.getByRole('button', { name: 'Cancel request' })).toBeEnabled();
+  return { w, review, desk: d, op: String(first?.args.op) };
+}
+
+test('B-R6: the answer is lost while the gate runs, the snapshot has no record: asked again, the review follows it; hired once', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await probe(page, { background: false });
+  const { w, review, desk: d, op } = await lostAnswer(page, 'agent', 'Fix the issue');
+  await forgetToasts(page);
+  // The gate lets it through: the request starts, and the same request asked again is answered with it.
+  expect((await sim(page, 'sim.handoff_hire', { release: true })).ok).toBe(true);
+  await expect.poll(async () => (await records(page)).map((r) => [r.op, r.state])).toEqual([[op, 'waiting']]);
+  await expect.poll(async () => (await reviewState(page))?.status).toBe(`Asking Pebble’s agent… it is filed once its turn ends with the handoff written; then Nibble is hired at Desk ${d + 1}.`);
+  await shot(page, 'h219-b-r6-asked-again');
+  expect((await sim(page, 'sim.agent_turn', { id: w.id, text: '# Review follow-ups\n\nTwo comments left.\n' })).ok).toBe(true);
+  await expect(review).toBeHidden({ timeout: 20_000 });
+  await expectHiredOnce(page, d, 'Fix the issue');
+  // Said once, by the review (the bridge's name for the new agent).
+  const hired = new RegExp(`^Hired \\S+ at Desk ${d + 1}\\. Here they come\\.$`);
+  await expect.poll(async () => (await said(page)).filter((t) => hired.test(t)).length).toBe(1);
+  await page.waitForTimeout(6000);
+  expect(await said(page)).toEqual([expect.stringMatching(hired)]);
+  expect(new Set((await sent(page, 'worker.handoff')).map((s) => s.args.op))).toEqual(new Set([op]));
+  clean();
+});
+
+test('B-R6: Cancel request answered invalid_state while the gate runs: still unknown; once the bridge has it, it is cancelled', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await probe(page, { background: false });
+  const { review, op } = await lostAnswer(page, 'agent', 'Fix the issue');
+  await review.getByRole('button', { name: 'Cancel request' }).click();
+  await expect.poll(async () => (await reviewState(page))?.status).toBe('herdr-world has not started Pebble’s handoff request (yet): asking it again whether it has it, to cancel it then…');
+  expect((await sent(page, 'worker.handoff_cancel')).at(-1)?.result).toMatchObject({ ok: false, code: 'invalid_state' });
+  expect((await reviewState(page))?.state).toBe('filing');
+  expect((await sim(page, 'sim.handoff_hire', { release: true })).ok).toBe(true);
+  await expect.poll(async () => (await records(page)).map((r) => [r.op, r.state])).toEqual([[op, 'cancelled']]);
+  await expect.poll(async () => (await reviewState(page))?.state).toBe('ready');
+  const s = await reviewState(page);
+  expect(s?.status).toContain('The handoff request was cancelled; nobody was hired.');
+  expect(s?.form?.prompt).toBe('Fix the issue');
+  expect(await sent(page, 'worker.handoff_cancel')).toHaveLength(2);
+  expect(await sent(page, 'worker.hire')).toHaveLength(0);
   clean();
 });

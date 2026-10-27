@@ -830,6 +830,9 @@ export class SimWorld {
         a.session = a.floor;
         delete a.floor;
       }
+      // #219 B-R6 `sim.handoff_hire {hold}`: a request with a hire waits as behind herdr-world's secrets gate until
+      // `{release}`; then it runs, answered where it was asked, its events to the connection there is now.
+      if (m.t === 'worker.handoff' && this.handoffHireMode && isObj(a.hire) && this.handoffHires.held(() => this.handle(m, (x) => (x.req_id === reqId ? send(x) : (this.out ?? send)(x))))) return;
       // M5: laptop screens and seated input (tools/fixture-screen.ts); world events close the watches they end.
       const screens = screensOf(this, () => ({
         worker: (id: string) => this.workers.find((w) => w.id === id),

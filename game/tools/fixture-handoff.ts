@@ -529,7 +529,10 @@ export class HandoffSim {
         return true;
       // #219: the next handoff hire's launch is refused (`fail`: its code; default `desk_taken`).
       case 'sim.handoff_hire':
-        this.h.hires?.failNextLaunch(typeof a.fail === 'string' ? a.fail : undefined);
+        // B-R6 `{hold}` / `{release}`: requests with a hire wait as behind the secrets gate, then run.
+        if (a.hold === true) this.h.hires?.hold();
+        else if (a.release === true) this.h.hires?.openGate();
+        else this.h.hires?.failNextLaunch(typeof a.fail === 'string' ? a.fail : undefined);
         ack();
         return true;
       case 'sim.llm_finish':

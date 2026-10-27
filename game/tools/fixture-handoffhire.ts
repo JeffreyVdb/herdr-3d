@@ -13,6 +13,11 @@
 //   (its worker id, `prompted`, `delivery`) and only then the send home when asked (`skipped` unless the task reached
 //   the new agent), or `failed` with the path set (`desk_taken`, `capacity`, `too_long`, `hire_failed`). `sim.handoff_hire
 //   {fail?: code}` makes the next launch fail with that code (default `desk_taken`: someone sat down meanwhile).
+// - `sim.handoff_hire {hold: true}`: requests with a hire wait as behind herdr-world's secrets gate, which runs off its
+//   hub before the request starts (no answer, no request, no record; Cancel request is `invalid_state`; the same request
+//   sent again waits too) until `sim.handoff_hire {release: true}`: then each runs in order (the first starts it, the
+//   next are its replays), its answer to the connection that asked (gone after a reconnect: an ack that never came),
+//   its events to the connection there is now.
 // - The handoff failed or timed out: `failed` (`handoff_failed`, `timeout`); `worker.handoff_cancel`: `cancelled`; the
 //   source worker gone: `failed` (`source_gone`); the target floor deleted: `failed` (`floor_gone`). Nothing hires
 //   then, and the task's protected files go.
@@ -100,6 +105,9 @@ export class HandoffHireSim {
   /** The ops whose record left, and what is kept of them (the bridge's marker). */
   private readonly gone = new Map<string, string>();
   private failNext: string | null = null;
+  /** B-R6 `sim.handoff_hire {hold}`: requests with a hire wait here, as behind the bridge's secrets gate. */
+  private holding = false;
+  private readonly gate: Array<() => void> = [];
 
   constructor(h: HandoffHireHost, enabled: boolean) {
     this.h = h;
@@ -182,6 +190,23 @@ export class HandoffHireSim {
     this.recs.set(op, { r, hire, key: this.keyOf(hire) });
     this.changed(r, send);
     return { ...r };
+  }
+
+  /** `sim.handoff_hire {hold}`: requests with a hire wait (`held`) until `release`. */
+  hold(): void {
+    this.holding = true;
+  }
+
+  /** A request with a hire while held: `run` answers it on `release` (true: it waits). */
+  held(run: () => void): boolean {
+    if (this.holding) this.gate.push(run);
+    return this.holding;
+  }
+
+  /** `sim.handoff_hire {release}`: the gate is through: what waited runs, in order. */
+  openGate(): void {
+    this.holding = false;
+    for (const run of this.gate.splice(0)) run();
   }
 
   /** `sim.handoff_hire {fail?}`: the next launch is refused with `fail` (default `desk_taken`). */

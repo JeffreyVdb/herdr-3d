@@ -136,6 +136,33 @@ describe('fixture handoff hires', () => {
     expect(listed()).toEqual([]);
   });
 
+  it('B-R6: `sim.handoff_hire {hold}`: a request with a hire waits as behind the secrets gate (no answer, request or record; the same request again waits too) until `{release}`', () => {
+    const r = rig({ handoffHires: true, manualClock: true });
+    r.ack('sim.handoff_hire', { hold: true });
+    const args = { worker: 'A', mode: 'agent', op: 'op-1', instruction: 'focus', hire: hire() };
+    const gone: Record<string, unknown>[] = [];
+    r.sim.handle({ t: 'worker.handoff', req_id: 'g1', args: structuredClone(args) }, (m) => gone.push(m));
+    expect(gone).toEqual([]);
+    // While the gate runs: no record in the world, and Cancel request finds no request.
+    const listed = () => (r.sim.snapshot() as { world: { handoff_hires: HandoffHire[] } }).world.handoff_hires.map((x) => x.op);
+    expect(listed()).toEqual([]);
+    expect(r.cmd('worker.handoff_cancel', { worker: 'A', op: 'op-1' }).at(-1)).toMatchObject({ t: 'error', code: 'invalid_state' });
+    // A new connection (the first one dropped), and the same request again: it waits too.
+    const now: Record<string, unknown>[] = [];
+    r.sim.start((m) => now.push(m));
+    r.sim.handle({ t: 'worker.handoff', req_id: 'g2', args: structuredClone(args) }, (m) => now.push(m));
+    expect(now.filter((m) => m.req_id === 'g2')).toEqual([]);
+    r.ack('sim.handoff_hire', { release: true });
+    // The first is answered where it was asked (a connection that is gone); its events go to the one there is now.
+    expect(gone).toEqual([expect.objectContaining({ t: 'ack', req_id: 'g1', data: expect.objectContaining({ handoff_hire: expect.objectContaining({ op: 'op-1', state: 'waiting' }) }) })]);
+    expect(now.filter((m) => m.t === 'handoff_hire.upsert').map((m) => (m.handoff_hire as HandoffHire).op)).toEqual(['op-1']);
+    // The same request again is answered with it: one request, one record.
+    expect(now.find((m) => m.req_id === 'g2')).toMatchObject({ t: 'ack', data: { existing: true, handoff_hire: { op: 'op-1', state: 'waiting' } } });
+    expect(listed()).toEqual(['op-1']);
+    // Released: the next request is not held.
+    expect(r.ack('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1', instruction: 'focus', hire: hire() }).data).toMatchObject({ existing: true });
+  });
+
   it('B-R5: beyond the newest 50 terminal records, the oldest leaves with handoff_hire.removed', () => {
     let t = 1_000;
     const r = rig({ handoffHires: true, now: () => ++t });
