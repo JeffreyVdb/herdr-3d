@@ -5,7 +5,6 @@
  * here: a work-order slip, torn off a perforated pad, that it takes to its desk.
  */
 
-.desk-dlg--run,
 .desk-dlg--presets {
   width: min(640px, calc(100vw - 32px));
 }

@@ -681,7 +681,9 @@
  * has to shrink says min-width / min-height 0.
  */
 
-.desk-dlg--hire {
+.desk-dlg--hire,
+.desk-dlg--run,
+.desk-dlg--hire-presets {
   --gap: 12px;
   width: calc(100vw - 2 * var(--gap) - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
   height: calc(100vh - 2 * var(--gap) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
@@ -811,7 +813,9 @@
 
 /* Under it, on a phone: one column, the whole body scrolls, the footer stays. */
 @media (max-width: 759px) {
-  .desk-dlg--hire {
+  .desk-dlg--hire,
+  .desk-dlg--run,
+  .desk-dlg--hire-presets {
     --gap: 0px;
     border-radius: 0;
   }

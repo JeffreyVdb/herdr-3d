@@ -70,6 +70,37 @@ async function createPreset(page: Page, name: string, prompt: string, scope: 'fl
 
 const names = (d: Presets) => ({ floor: d.groups.floor.map((r) => r.name), global: d.groups.global.map((r) => r.name) });
 
+test('hire tabs use the same screen space and presets can be searched', async ({ page }, info) => {
+  await boot(page, keyOf('search-size'), 'pastry');
+  for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await openHire(page, 14);
+    const worker = await hireDlg(page).boundingBox();
+    await hireDlg(page).locator('[data-key="tab:orch"]').click();
+    const orchestrator = page.locator('dialog.desk-dlg--run');
+    await expect(orchestrator).toBeVisible();
+    expect(await orchestrator.boundingBox()).toEqual(worker);
+    await orchestrator.locator('[data-key="tab:preset"]').click();
+    await expect(presetsDlg(page)).toBeVisible();
+    expect(await presetsDlg(page).boundingBox()).toEqual(worker);
+    if (viewport.width === 1280) {
+      await createPreset(page, 'Deploy release', 'Ship it.', 'floor');
+      await createPreset(page, 'Daily report', 'Report it.', 'global');
+      const search = presetsDlg(page).locator('#hp-search');
+      await search.fill('dpr');
+      await expect(presetsDlg(page).locator('.hp-row h4')).toHaveText(['Deploy release', 'Daily report']);
+      await search.fill('zzzz');
+      await expect(presetsDlg(page).locator('[data-hook="hp-no-matches"]')).toBeVisible();
+      await search.press('Escape');
+      await expect(search).toHaveValue('');
+      await page.screenshot({ path: info.outputPath('hire-presets-desktop.png') });
+    } else {
+      await page.screenshot({ path: info.outputPath('hire-presets-phone.png') });
+    }
+    await presetsDlg(page).locator('[data-key="done"]').click();
+  }
+});
+
 test('a preset saved from the hire form survives a reload, shows on another client, and hires its exact prompt and model again and again', async ({ page, browser }, info) => {
   test.setTimeout(240_000);
   const key = keyOf('repeat');
