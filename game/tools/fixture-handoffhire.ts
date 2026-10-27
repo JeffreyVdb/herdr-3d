@@ -17,7 +17,8 @@
 //   source worker gone: `failed` (`source_gone`); the target floor deleted: `failed` (`floor_gone`). Nothing hires
 //   then, and the task's protected files go.
 // - `handoff_hire.upsert {handoff_hire}` on every change, `handoff_hire.removed {op}` when a terminal record leaves
-//   (10 minutes after it ended, at most 50 kept; pruned on the next change or snapshot). Never the task.
+//   (10 minutes after it ended, on a timer, so an idle world prunes too; at most 50 kept, the oldest leaving on the
+//   next change). A snapshot lists what is kept: nothing leaves without its event. Never the task.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { HandoffHire, Worker } from '../src/net/protocol.ts';
@@ -50,6 +51,10 @@ export interface HandoffHireHost {
   typed(hire: object): string | undefined;
   /** A floor's name for the messages. */
   floorName(id: string): string;
+  /** A timer of the simulator (`simclock=manual`: released by `sim.advance`), cleared when it is disposed. */
+  later(fn: () => void, ms: number): void;
+  /** The connection that hears what no command asked for (null: none yet). */
+  out(): Send | null;
 }
 
 interface Rec {
@@ -81,7 +86,6 @@ export class HandoffHireSim {
 
   decorate(world: Obj): void {
     if (!this.enabled) return;
-    this.prune(null);
     world.handoff_hires = [...this.recs.values()].map((x) => ({ ...x.r }));
   }
 
@@ -225,6 +229,16 @@ export class HandoffHireSim {
   private end(x: Rec, done: Partial<HandoffHire>, send: Send): void {
     Object.assign(x.r, done, { ended_at: this.h.now() });
     this.changed(x.r, send);
+    // The bridge prunes on a timer too: in a world where nothing else happens, the record still leaves.
+    this.h.later(() => this.expire(x), KEEP_MS);
+  }
+
+  /** `x`'s 10 minutes are over: it leaves (unless it left already), and the connection hears it. */
+  private expire(x: Rec): void {
+    if (this.recs.get(x.r.op) !== x) return;
+    this.recs.delete(x.r.op);
+    const out = this.h.out();
+    if (out) this.h.emit(out, { t: 'handoff_hire.removed', op: x.r.op });
   }
 
   private changed(r: HandoffHire, send: Send): void {
@@ -232,14 +246,15 @@ export class HandoffHireSim {
     this.prune(send);
   }
 
-  /** Terminal records leave 10 minutes after they ended, and beyond the newest 50. */
-  private prune(send: Send | null): void {
+  /** Terminal records leave 10 minutes after they ended, and beyond the newest 50 (the last ended first), each with its event. */
+  private prune(send: Send): void {
     const now = this.h.now();
-    const ended = [...this.recs.values()].filter((x) => terminal(x.r)).sort((a, b) => (b.r.ended_at ?? 0) - (a.r.ended_at ?? 0));
+    const ended = [...this.recs.values()].filter((x) => terminal(x.r)).reverse();
+    ended.sort((a, b) => (b.r.ended_at ?? 0) - (a.r.ended_at ?? 0));
     ended.forEach((x, i) => {
       if (i < KEEP_MAX && now - (x.r.ended_at ?? now) < KEEP_MS) return;
       this.recs.delete(x.r.op);
-      if (send) this.h.emit(send, { t: 'handoff_hire.removed', op: x.r.op });
+      this.h.emit(send, { t: 'handoff_hire.removed', op: x.r.op });
     });
   }
 }

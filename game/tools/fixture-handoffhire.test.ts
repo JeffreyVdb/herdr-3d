@@ -117,4 +117,35 @@ describe('fixture handoff hires', () => {
     r.ack('sim.llm_finish', { id: 'A' });
     await r.until(() => r.last('op-1')?.state === 'hired');
   });
+  it('B-R5: a terminal record leaves 10 minutes after it ended with handoff_hire.removed, in an idle world; a snapshot never drops one silently', () => {
+    let t = 1_000;
+    const r = rig({ handoffHires: true, manualClock: true, now: () => t });
+    const heard: Record<string, unknown>[] = [];
+    r.sim.start((m) => heard.push(m));
+    r.ack('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1', hire: hire() });
+    r.ack('worker.handoff_cancel', { worker: 'A', op: 'op-1' });
+    expect(r.last('op-1')).toMatchObject({ state: 'cancelled' });
+    const listed = () => (r.sim.snapshot() as { world: { handoff_hires: HandoffHire[] } }).world.handoff_hires.map((x) => x.op);
+    // The clock is past the 10 minutes, the timer not yet: a snapshot still lists it (no removal without its event).
+    t += 11 * 60_000;
+    for (let i = 0; i < 9; i++) r.ack('sim.advance', { ms: 60_000 });
+    expect(listed()).toEqual(['op-1']);
+    expect([...r.out, ...heard].some((m) => m.t === 'handoff_hire.removed')).toBe(false);
+    r.ack('sim.advance', { ms: 60_000 });
+    expect(heard.filter((m) => m.t === 'handoff_hire.removed')).toEqual([expect.objectContaining({ t: 'handoff_hire.removed', op: 'op-1' })]);
+    expect(listed()).toEqual([]);
+  });
+
+  it('B-R5: beyond the newest 50 terminal records, the oldest leaves with handoff_hire.removed', () => {
+    let t = 1_000;
+    const r = rig({ handoffHires: true, now: () => ++t });
+    for (let i = 1; i <= 51; i++) {
+      r.ack('worker.handoff', { worker: 'A', mode: 'agent', op: `op-${i}`, hire: hire() });
+      r.ack('worker.handoff_cancel', { worker: 'A', op: `op-${i}` });
+    }
+    expect(r.out.filter((m) => m.t === 'handoff_hire.removed').map((m) => m.op)).toEqual(['op-1']);
+    const snap = (r.sim.snapshot() as { world: { handoff_hires: HandoffHire[] } }).world.handoff_hires;
+    expect(snap).toHaveLength(50);
+    expect(snap.some((x) => x.op === 'op-1')).toBe(false);
+  });
 });
