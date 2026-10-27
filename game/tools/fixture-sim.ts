@@ -863,6 +863,8 @@ export class SimWorld {
       // #108: prompt secrets' commands (a revoke changes a worker's `secret_files`); every route that carries typed
       // text passes their gate first, and is from here on its texts with their references (round 2).
       if (this.secrets.handle(m.t, a, send, (d) => (this.syncSecretFiles(send), ack(d)))) return;
+      // #219: a request with a hire is known by its args as sent, before the gate puts any of its texts in files.
+      if (m.t === 'worker.handoff' && this.handoffHireMode) this.handoffHires.note(a);
       const g = this.secrets.gate(m.t, a, send, { packupLooks: (id) => this.packup.looksAt(id), schedulePrompt: (id) => this.schedules.promptOf(id) });
       if (g) {
         const [plainAck, plainFail] = [ack, fail];
@@ -1582,7 +1584,6 @@ export class SimWorld {
         },
         claim: (hire, worker) => this.secrets.claimHandoffHire(hire, worker),
         release: (hire) => this.secrets.releaseHandoffHire(hire),
-        typed: (hire) => this.secrets.typedHandoffTask(hire),
         floorName: (id) => this.floors.get(id)?.name ?? id,
         later: (fn, ms) => {
           const h = this.setT(() => {

@@ -461,8 +461,6 @@ export class SecretsSim {
 
   /** #219: a handoff hire's pending owner and hand-over, by the `hire` object the gate rewrote. */
   private readonly handoffHires = new WeakMap<object, { owner: string; tok: Handover | null }>();
-  /** #219: a handoff hire's task as typed, before the gate put any of it in files (a replay is compared on it). */
-  private readonly typedTasks = new WeakMap<object, string>();
 
   /**
    * #219: `worker.handoff`'s `hire.prompt` through the gate as `worker.hire`'s prompt is (its review, or the
@@ -476,7 +474,6 @@ export class SecretsSim {
     const named = (e: unknown) => (e instanceof Error && typeof (e as Error & { code?: unknown }).code === 'string' ? this.h.error((e as Error & { code: string }).code, `hire.prompt: ${e.message}`) : e);
     try {
       const prompt = typeof hire.prompt === 'string' ? hire.prompt : '';
-      this.typedTasks.set(hire, prompt);
       const tok = pending !== undefined ? this.pendingFor(pending, null) : null;
       if (tok?.claimed) throw this.h.error('secrets_review_stale', 'secrets_pending: another hire claimed it: review it again');
       const own = this.newOwner();
@@ -488,11 +485,6 @@ export class SecretsSim {
     } catch (e) {
       throw named(e);
     }
-  }
-
-  /** #219: `hire`'s task as it was sent, before the gate (undefined: the gate did not see it). */
-  typedHandoffTask(hire: object): string | undefined {
-    return this.typedTasks.get(hire);
   }
 
   /** #219: the hire made from `hire` took its task's files (and its hand-over). */

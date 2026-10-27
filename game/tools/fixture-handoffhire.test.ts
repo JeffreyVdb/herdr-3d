@@ -148,4 +148,18 @@ describe('fixture handoff hires', () => {
     expect(snap).toHaveLength(50);
     expect(snap.some((x) => x.op === 'op-1')).toBe(false);
   });
+  it('A r2: a replay after the record left is compared on what is kept (no handoff_hire then); every end without a hire skips the send home', () => {
+    let t = 1_000;
+    const r = rig({ handoffHires: true, manualClock: true, now: () => t });
+    r.sim.start(() => undefined);
+    r.ack('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1', send_home: true, hire: hire() });
+    r.ack('worker.handoff_cancel', { worker: 'A', op: 'op-1' });
+    expect(r.last('op-1')).toMatchObject({ state: 'cancelled', send_home_result: 'skipped', send_home_reason: 'The new agent was not hired; Pixel stays.' });
+    t += 11 * 60_000;
+    for (let i = 0; i < 10; i++) r.ack('sim.advance', { ms: 60_000 });
+    const again = r.ack('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1', send_home: true, hire: hire() }).data;
+    expect(again).toMatchObject({ existing: true });
+    expect(again).not.toHaveProperty('handoff_hire');
+    expect(r.cmd('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1', send_home: true, hire: hire({ desk_index: 4 }) }).at(-1)).toMatchObject({ code: 'bad_request', message: 'bad args: This request was already sent with other settings.' });
+  });
 });

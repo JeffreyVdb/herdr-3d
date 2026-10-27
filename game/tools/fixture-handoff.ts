@@ -415,7 +415,8 @@ export class HandoffSim {
     const args = JSON.stringify([a.worker, a.session, a.candidate, a.revision, a.send_home === true, focus]);
     const known = this.jobs.get(a.op);
     if (known) {
-      if (known.worker !== a.worker || known.args !== args) throw this.h.error('bad_request', this.hires?.enabled ? 'bad args: This request was already sent with other settings.' : `op "${a.op}" was used for another handoff`);
+      // #219: with a hire, the request's identity (its args as sent, before the secrets gate) decides.
+      if (known.worker !== a.worker || (known.args !== args && !this.hireOf(a))) throw this.h.error('bad_request', this.hires?.enabled ? 'bad args: This request was already sent with other settings.' : `op "${a.op}" was used for another handoff`);
       const rec = this.hires?.enabled ? this.hires.replay(a.op, this.hireOf(a)) : null;
       ack({ job: this.jobView(known), existing: true, ...(rec ? { handoff_hire: rec } : {}) });
       return;
@@ -782,7 +783,7 @@ export class HandoffSim {
           const known = this.reqs.get(a.op);
           // #219: a replay answers the request and its record when its args are the same.
           if (known && this.hires?.enabled) {
-            if (known.worker !== w.id || (known.instruction ?? '') !== (instruction.trim() || 'summarize the conversation') || (known.send_home === true) !== (a.send_home === true)) throw this.h.error('bad_request', 'bad args: This request was already sent with other settings.');
+            if (known.worker !== w.id || (!hire && (known.instruction ?? '') !== (instruction.trim() || 'summarize the conversation')) || (known.send_home === true) !== (a.send_home === true)) throw this.h.error('bad_request', 'bad args: This request was already sent with other settings.');
             const rec = this.hires.replay(a.op, hire);
             ack({ request: this.view(known), existing: true, ...(rec ? { handoff_hire: rec } : {}) });
             return true;

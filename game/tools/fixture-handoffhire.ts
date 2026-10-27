@@ -16,6 +16,10 @@
 // - The handoff failed or timed out: `failed` (`handoff_failed`, `timeout`); `worker.handoff_cancel`: `cancelled`; the
 //   source worker gone: `failed` (`source_gone`); the target floor deleted: `failed` (`floor_gone`). Nothing hires
 //   then, and the task's protected files go.
+// - A replay's identity is the bridge's (`handoffHireHash`): the request's args as sent, before the secrets gate (the
+//   task and instruction as typed, the reviews' decisions, the hand-over), never stored; once the record left, a
+//   replay is compared on what is kept (floor, desk, label, harness, model, effort, origin) and its ack has no
+//   `handoff_hire`. Every end without a hire skips the send home ("The new agent was not hired; <name> stays.").
 // - `handoff_hire.upsert {handoff_hire}` on every change, `handoff_hire.removed {op}` when a terminal record leaves
 //   (10 minutes after it ended, on a timer, so an idle world prunes too; at most 50 kept, the oldest leaving on the
 //   next change). A snapshot lists what is kept: nothing leaves without its event. Never the task.
@@ -47,8 +51,6 @@ export interface HandoffHireHost {
   /** #108: the task's protected files: the new worker's, or gone. */
   claim(hire: object, worker: string): void;
   release(hire: object): void;
-  /** #108: `hire`'s task as typed, before the secrets gate put any of it in files (undefined: as it is). */
-  typed(hire: object): string | undefined;
   /** A floor's name for the messages. */
   floorName(id: string): string;
   /** A timer of the simulator (`simclock=manual`: released by `sim.advance`), cleared when it is disposed. */
@@ -73,10 +75,30 @@ const because = (why: string) => `: ${why.trim().replace(/\.+$/, '')}.`;
 
 const terminal = (r: HandoffHire) => r.state !== 'waiting' && r.state !== 'hiring';
 
+const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
+const decisions = (v: unknown) => (isObj(v) && Array.isArray(v.decisions) ? v.decisions : null);
+
+/**
+ * The bridge's identity of a request with a hire (internal/server `handoffHireHash`): the request's args and its hire
+ * as sent (the floor as named, the task as typed, the hand-over), their reviews' decisions (not their revisions).
+ */
+export function handoffIdentity(a: Obj): string {
+  const h = isObj(a.hire) ? a.hire : null;
+  const hire = h ? (({ secrets: _s, session, floor, ...rest }) => [Object.entries({ ...rest, floor: floor ?? session }).sort(([x], [y]) => x.localeCompare(y)), decisions(h.secrets)])(h) : null;
+  return JSON.stringify([a.worker, a.mode, a.session, a.candidate, a.revision, typeof a.instruction === 'string' ? a.instruction.trim() : '', a.send_home === true, hire, decisions(a.secrets)]);
+}
+
+/** What the bridge keeps of a hire once its record left (its marker), and a replay must repeat. */
+const kept = (r: Pick<HandoffHire, 'floor' | 'desk_index' | 'label' | 'harness' | 'model' | 'effort' | 'origin'>) => JSON.stringify([r.floor, r.desk_index, r.label ?? '', r.harness, r.model, r.effort, r.origin ?? '']);
+
 export class HandoffHireSim {
   readonly enabled: boolean;
   private readonly h: HandoffHireHost;
   private readonly recs = new Map<string, Rec>();
+  /** The requests' identities, by their `hire` (noted before the secrets gate rewrites it). */
+  private readonly ids = new WeakMap<object, string>();
+  /** The ops whose record left, and what is kept of them (the bridge's marker). */
+  private readonly gone = new Map<string, string>();
   private failNext: string | null = null;
 
   constructor(h: HandoffHireHost, enabled: boolean) {
@@ -106,10 +128,13 @@ export class HandoffHireSim {
     return this.recs.get(op)?.r;
   }
 
-  /** The args a replay must repeat: the task as typed (its secrets' files are named anew each time), not its review. */
+  /** `worker.handoff`'s args as they came, before the secrets gate: what a replay of the request must repeat. */
+  note(a: Obj): void {
+    if (isObj(a.hire)) this.ids.set(a.hire, handoffIdentity(a));
+  }
+
   private keyOf(hire: Obj): string {
-    const { secrets: _s, secrets_pending: _p, prompt, ...rest } = hire;
-    return JSON.stringify([Object.entries(rest).sort(([a], [b]) => a.localeCompare(b)), this.h.typed(hire) ?? prompt]);
+    return this.ids.get(hire) ?? handoffIdentity({ hire });
   }
 
   /** `hire` before the request starts: its shape, then the hire's checks (a refusal is thrown). */
@@ -124,6 +149,12 @@ export class HandoffHireSim {
   replay(op: string, hire: Obj | undefined): HandoffHire | null {
     const x = this.recs.get(op);
     if (!x && !hire) return null;
+    // The record left: what is kept of it (the request is answered without one).
+    const was = this.gone.get(op);
+    if (!x && was !== undefined && hire && was === kept({ floor: String(hire.floor ?? hire.session ?? ''), desk_index: hire.desk_index as number, label: typeof hire.label === 'string' ? hire.label.trim() : '', harness: String(hire.harness), model: String(hire.model), effort: String(hire.effort), origin: typeof hire.origin === 'string' ? hire.origin : '' })) {
+      this.h.release(hire);
+      return null;
+    }
     if (!x || !hire || x.key !== this.keyOf(hire)) throw this.h.error('bad_request', 'bad args: This request was already sent with other settings.');
     // The replay's own files are not used (the first request's are).
     this.h.release(hire);
@@ -227,6 +258,7 @@ export class HandoffHireSim {
   }
 
   private end(x: Rec, done: Partial<HandoffHire>, send: Send): void {
+    if (x.r.send_home && done.state !== 'hired' && !done.send_home_result) Object.assign(done, { send_home_result: 'skipped', send_home_reason: `The new agent was not hired; ${x.r.worker_name} stays.` });
     Object.assign(x.r, done, { ended_at: this.h.now() });
     this.changed(x.r, send);
     // The bridge prunes on a timer too: in a world where nothing else happens, the record still leaves.
@@ -237,6 +269,7 @@ export class HandoffHireSim {
   private expire(x: Rec): void {
     if (this.recs.get(x.r.op) !== x) return;
     this.recs.delete(x.r.op);
+    this.gone.set(x.r.op, kept(x.r));
     const out = this.h.out();
     if (out) this.h.emit(out, { t: 'handoff_hire.removed', op: x.r.op });
   }
@@ -254,6 +287,7 @@ export class HandoffHireSim {
     ended.forEach((x, i) => {
       if (i < KEEP_MAX && now - (x.r.ended_at ?? now) < KEEP_MS) return;
       this.recs.delete(x.r.op);
+      this.gone.set(x.r.op, kept(x.r));
       this.h.emit(send, { t: 'handoff_hire.removed', op: x.r.op });
     });
   }
