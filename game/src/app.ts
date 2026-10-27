@@ -278,6 +278,12 @@ export class App {
   private manualCredentialLatest = '';
   /** #213: the run whose password dialog Respond asked for (from anywhere), till its request goes. */
   private manualRespond = '';
+  /**
+   * #216: the runs started from this tab with the password dialog (a Run you just pressed): their requests open the
+   * dialog by themselves, as before. Any other request of the seated worker's runs waits on the needs-you line's Respond
+   * instead of covering the seat (the line says it in every view).
+   */
+  private readonly manualStarted = new Set<string>();
   /** #213: a manual run asks for you: in the top bar (every run), and in the seat's bar (this worker's, the others'). */
   private readonly attentionHost: AttentionChipHost = {
     respond: (id) => this.respondManual(id),
@@ -1136,10 +1142,13 @@ export class App {
     this.manualProcesses.refresh();
     this.laptops.syncSecretFiles();
     const scope = this.manualProcesses.scope;
-    const seated = this.laptops.seated;
     // #213: Respond (the chips, a list row, a toast, a notification) asks for one run's dialog from anywhere.
     if (this.manualRespond && !this.store.manualProcesses.get(this.manualRespond)?.credential) this.manualRespond = '';
-    const candidates = this.store.manualProcesses.all().filter((p) => p.credential && (p.id === this.manualRespond || p.worker === seated || scope === null || (scope !== undefined && p.worker === scope)));
+    for (const id of this.manualStarted) {
+      const p = this.store.manualProcesses.get(id);
+      if (this.store.manualProcesses.known && (!p || ['exited', 'stopped', 'failed'].includes(p.state))) this.manualStarted.delete(id);
+    }
+    const candidates = this.store.manualProcesses.all().filter((p) => p.credential && (p.id === this.manualRespond || this.manualStarted.has(p.id) || scope === null || (scope !== undefined && p.worker === scope)));
     candidates.sort((a, b) => Number(b.id === this.manualRespond) - Number(a.id === this.manualRespond) || Number(`${b.id}:${b.credential?.request}` === this.manualCredentialLatest) - Number(`${a.id}:${a.credential?.request}` === this.manualCredentialLatest) || (b.credential?.attempt ?? 0) - (a.credential?.attempt ?? 0) || b.created_at - a.created_at);
     this.manualCredential.refresh(candidates[0]);
     this.syncAttention();
@@ -2130,6 +2139,14 @@ export class App {
     this.sent.push(entry);
     const r = await this.client.request(t, args);
     entry.result = r;
+    // #216: a run started here with the password dialog: its request opens the dialog by itself (see `manualStarted`).
+    if (t === 'manual_process.start' && r.ok && (args as CommandArgs['manual_process.start']).askpass) {
+      const id = (r.data as { process?: { id?: unknown } } | null)?.process?.id;
+      if (typeof id === 'string' && id) {
+        this.manualStarted.add(id);
+        this.syncManualProcesses();
+      }
+    }
     if (!r.ok && r.code === 'unknown_command') this.unsupported.add(t);
     if (!r.ok && r.code === 'unknown_command') this.m6Buttons.sync();
     return r;

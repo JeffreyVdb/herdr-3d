@@ -32,7 +32,7 @@ import { repoSource, type RepoSearchHost } from './repoSearch';
 import { atSource } from './atSource';
 import type { Source } from '../ui/composer/complete';
 import { SendGate } from './transcriptDrafts';
-import { zoomKey } from './keys';
+import { seatChord, zoomKey } from './keys';
 import { fileRefPath } from './fileRef';
 import { clipboardCopy, FILE_REF, FileRefPopover, markFileRefs } from './fileRefPopover';
 import { chipSecretRefs } from '../ui/secretChips';
@@ -3236,7 +3236,8 @@ class Transcript implements TranscriptView {
   private onInputKey(e: KeyboardEvent): void {
     // Esc is the shell's as everywhere in the seated view (a bare one stands you up, Ctrl/Cmd+Esc goes back to the
     // terminal), and the text zoom (#59) works from here too; every other key typed here is the prompt's.
-    if (e.key === 'Escape' || zoomKey(e)) return;
+    // #216: the seat's chords (a view, the files drawer) too.
+    if (e.key === 'Escape' || zoomKey(e) || seatChord(e)) return;
     e.stopPropagation();
     // #108: the review of the prompt's secrets, now.
     if (reviewKey(e) && this.host.secrets?.on) {

@@ -86,6 +86,8 @@ export class RunsView {
   private visible = false;
   private timer: ReturnType<typeof setInterval> | null = null;
   private disposed = false;
+  /** Open terminal asked for the keyboard in the run's terminal before the view could take it (not placed yet). */
+  private termFocus = false;
 
   constructor(private readonly host: RunsViewHost) {
     this.card = new CommandRequestCard(host.card);
@@ -232,7 +234,18 @@ export class RunsView {
       this.selected = id;
       this.render();
     }
-    if (focus) this.term?.focus();
+    if (focus) {
+      this.termFocus = true;
+      this.focusTerm();
+    }
+  }
+
+  /** The keyboard into the picked run's terminal; false while it cannot have it yet (the view is not on the screen). */
+  private focusTerm(): boolean {
+    this.term?.focus();
+    const done = !!this.term && document.activeElement instanceof Node && this.el.contains(document.activeElement) && document.activeElement !== this.el;
+    if (done) this.termFocus = false;
+    return done;
   }
 
   get selectedId(): string | null {
@@ -241,6 +254,7 @@ export class RunsView {
 
   /** The keyboard to the view: its picked row (or the view itself). */
   focus(): void {
+    if (this.termFocus && this.focusTerm()) return;
     if (!this.focusRow()) this.el.focus({ preventScroll: true });
   }
 

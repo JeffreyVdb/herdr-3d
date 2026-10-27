@@ -169,10 +169,12 @@ export interface H3DDebug {
   screenText(workerId: string): string[] | null;
   /** #176: the seated workspace's terminal: its grid, font, text, and what the seat's watch says of the pane (null: not seated). */
   seatTerminal(): ReturnType<import('./laptop').Laptops['seatTerminalState']>;
+  /** #216: the Runs view (its rows, the picked run, its terminal, the card) and the files drawer. */
+  seatViews(): ReturnType<import('./laptop').Laptops['seatViewsState']> | null;
   /** M5: how much of a worker's frozen laptop screen is not black (0–1), null when it is not frozen. */
   frozenInk(workerId: string): number | null;
   /** M5: the seat bar (shown, its tape, its note, ok / busy / error / offline); M16: which mode it shows. */
-  seat(): { shown: boolean; tape: string; note: string; state: string; mode?: string; ask?: string | null; fullscreen?: { label: string; pressed: boolean; unavailable: boolean } | null };
+  seat(): { shown: boolean; tape: string; note: string; state: string; mode?: string; ask?: string | null; fullscreen?: { label: string; pressed: boolean; unavailable: boolean } | null; needs?: string | null; files?: boolean; rail?: string[] };
   /** #74: plays the human unzooming the watched pane's tab, in the fixture simulator (`simzoom=`): a `terminal.state` follows. */
   simUnzoom(workerId: string): Promise<boolean>;
   /**
@@ -517,6 +519,7 @@ const h3d: H3DDebug = {
   sitAt: (id) => app?.sitAt(id) ?? false,
   screenText: (id) => app?.laptops.text(id) ?? null,
   seatTerminal: () => app?.laptops.seatTerminalState() ?? null,
+  seatViews: () => app?.laptops.seatViewsState() ?? null,
   frozenInk: (id) => app?.laptops.frozenInk(id) ?? null,
   seat: () => app?.seatBar.summary() ?? { shown: false, tape: '', note: '', state: '' },
   theme: () => {
