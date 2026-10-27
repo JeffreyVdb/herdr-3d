@@ -44,7 +44,7 @@ describe('command request card', () => {
     const edit = vi.fn(); const start = vi.fn().mockResolvedValue({ ok: true, data: {} });
     const c = card({ edit, start });
     const command = '! sudo tailscale serve --bg --https=8216 http://127.0.0.1:45215';
-    c.set({ key: 'k220', at: 1, commands: [{ command, cwd: '', cwd_named: false, host: 'bridge', host_text: '' }] });
+    c.set({ key: 'k220', at: 1, commands: [{ command, cwd: '', cwd_named: false, host: 'bridge', host_text: '', why: '' }] });
     expect(button(c.el, 'Run').disabled).toBe(false);
     expect(c.el.querySelector('.mp-warning')).toBeNull();
     expect(c.el.textContent).toContain('Machine:host');
@@ -55,7 +55,7 @@ describe('command request card', () => {
     button(c.el, 'Run').click(); await flush();
     expect(start.mock.calls[0]![0]).toMatchObject({ command, askpass: false, source: { kind: 'suggestion', key: 'k220', index: 0 } });
     const plain = card();
-    plain.set({ key: 'k220b', at: 1, commands: [{ command: command.slice(2), cwd: '', cwd_named: false, host: 'bridge', host_text: '' }] });
+    plain.set({ key: 'k220b', at: 1, commands: [{ command: command.slice(2), cwd: '', cwd_named: false, host: 'bridge', host_text: '', why: '' }] });
     expect(button(plain.el, 'Run').disabled).toBe(false);
     expect(plain.el.querySelector('.mp-warning')).toBeNull();
     expect(plain.el.querySelector<HTMLInputElement>('.mp-askpass input')!.checked).toBe(true);
