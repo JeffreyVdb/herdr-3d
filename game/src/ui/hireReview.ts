@@ -1,4 +1,5 @@
-import type { CommandArgs, HandoffEntry, HandoffHire, HireGit, HireInterpretation, HirePrepare, WorkerHandoffHire } from '../net/protocol';
+import type { CommandResult } from '../net/client';
+import type { AgentHandoffAck, CommandArgs, HandoffEntry, LLMHandoffAck, HandoffHire, HireGit, HireInterpretation, HirePrepare, WorkerHandoffHire } from '../net/protocol';
 import { HANDOFF_PATH_RESERVE, hireWithHandoffTask, newOp } from '../world/handoff';
 import { pendingHire } from '../world/handoffHire';
 import type { WorldStore } from '../world/store';
@@ -87,7 +88,15 @@ import { onReviewKey, reviewButton, type Go, type PromptSecretsFlow } from './se
  * While it is open it follows the op's record and says how it ended (hired: it closes; failed or cancelled: the task
  * stays here, with the path when it was filed: Hire then hires only). Closed, the announcer says it and gives the task
  * back here. Cancel request cancels the request and the hire together. This review never sends `worker.hire` for it.
+ * A request that got no answer (B-R6) may still be taken: the bridge reviews its secrets off its hub before it starts it,
+ * so a world without its record, or Cancel request's `invalid_state`, says nothing. It is asked again, the very same
+ * request (same op, same args), on the next connection and after a while, until the bridge answers it (`Unknown`).
  */
+
+/** #219 B-R6: a request that got no answer is asked again after this long (and on every new connection). */
+export const RESEND_MS = 5_000;
+/** #219 B-R6: answers that say nothing about the request: it is asked again. */
+const NO_ANSWER = new Set(['timeout', 'disconnected', 'offline']);
 
 /** #198: the filed handoff a hire follows (its final path). */
 type Filed = Pick<HandoffEntry, 'path'>;
@@ -187,8 +196,26 @@ interface BridgeHire {
   task: string;
   /** The bridge took it (its ack, or its record seen): Cancel request can name the op. */
   accepted: boolean;
-  /** Its send got no answer and no record has come yet: it may have been taken (its record, or the next snapshot, says). */
+  /** Its send got no answer and no record has come yet: it may have been taken (its record, or the bridge asked again, says). */
   unanswered: boolean;
+}
+
+/**
+ * #219 B-R6: a handoff hire whose `worker.handoff` got no answer, kept (open or closed) until the bridge says: its record
+ * comes, or the same request asked again is answered (taken, or refused: never taken).
+ */
+interface Unknown {
+  bg: BridgeHire;
+  /** The request exactly as it went (its reviews' decisions, the hand-over): the bridge knows it as the same only so. */
+  args: CommandArgs['worker.handoff'];
+  /** What was reviewed: a refusal gives it back. */
+  reviewed: Reviewed;
+  /** Hire in background, as read at the press: taken, the review closes. */
+  background: boolean;
+  /** Asked again now (one at a time). */
+  asking: boolean;
+  /** Cancel request was pressed and the bridge did not have it yet: cancelled again once it does. */
+  cancel: boolean;
 }
 
 type GivenBack = Extract<HireOutcome, { kind: 'failed' | 'unknown' }>;
@@ -292,6 +319,8 @@ export class HireReviewDialog {
   private filed: Filed | null = null;
   /** #219: the handoff hire the bridge makes for this review, while it waits on it here (null: none). */
   private bg: BridgeHire | null = null;
+  /** #219 B-R6: handoff hires whose request got no answer, by op, until the bridge says (asked again meanwhile). */
+  private readonly unknown = new Map<string, Unknown>();
   /** #219: drafts of handoff hires the bridge makes: a give-back needs them (a reload loses them; the hire goes on). */
   private readonly bgDrafts = new Set<PromptDraft>();
   /** #198: the handoff being made now (Cancel, the close, the source worker's updates). */
@@ -620,6 +649,8 @@ export class HireReviewDialog {
 
   /** The world changed: the desk may have been taken, the floor gone or asleep, a model left the catalog. */
   refresh(): void {
+    // #219 B-R6: a record of a request that got no answer says the bridge took it (open or closed).
+    const cancel = this.recordsCame();
     if (!this.dialog.open) return;
     // #58 decision 3: the hire on an asleep virtual floor wakes its session first: the status follows the wake.
     if (this.state === 'hiring') {
@@ -630,6 +661,7 @@ export class HireReviewDialog {
     // #219: the bridge's handoff hire: its record says how far it is, and how it ended.
     if (this.state === 'filing' && this.bg) {
       this.followRecord();
+      if (cancel) void this.cancelHandoffHire();
       return;
     }
     // #198: the handoff being made follows its op on the source worker; nothing else changes meanwhile.
@@ -1468,9 +1500,9 @@ export class HireReviewDialog {
     return `herdr-world did not answer about ${bg.plan.name}’s handoff request. If it took it, ${bg.who} is hired at Desk ${bg.desk + 1} once it is filed; if not, your task comes back.`;
   }
 
-  /** A request that got no answer, and the bridge does not have it: nothing came of it. */
-  private notTakenText(plan: HandoffPlan): string {
-    return `herdr-world does not have ${plan.name}’s handoff request: nothing was filed and nobody was hired. Hire again sends it again.`;
+  /** B-R6: a request that got no answer, asked again and refused: nothing came of it (the bridge's reason). */
+  private notTakenText(plan: HandoffPlan, r: CommandResult & { ok: false }): string {
+    return `${failureText('worker.handoff', r.code, r.message, { worker: plan.name, floor: plan.floorName })} Nothing was filed and nobody was hired.`;
   }
 
   /** The status line while the bridge's handoff hire runs (`r`: its record now). */
@@ -1478,7 +1510,7 @@ export class HireReviewDialog {
     if (r?.state === 'hiring') return `Filed${r.path ? ` ${r.path}` : ''}. Hiring ${bg.who} at Desk ${bg.desk + 1}…`;
     const p = bg.plan;
     const then = `then ${bg.who} is hired at Desk ${bg.desk + 1}.`;
-    if (!bg.accepted) return bg.unanswered ? `No answer from herdr-world yet: it may have taken the request. Waiting to see it… ${then}` : `Sending the request to herdr-world… ${then}`;
+    if (!bg.accepted) return bg.unanswered ? `No answer from herdr-world yet: it may have taken the request. Asking it again until it says… ${then}` : `Sending the request to herdr-world… ${then}`;
     return p.mode === 'agent' ? `Asking ${p.name}’s agent… it is filed once its turn ends with the handoff written; ${then}` : `The LLM${p.llmModel ? ` (${p.llmModel})` : ''} is writing the handoff… ${then}`;
   }
 
@@ -1530,16 +1562,16 @@ export class HireReviewDialog {
         this.bgDrafts.delete(reviewed.draft);
         this.drop(reviewed.draft);
       },
-      // Closed while its send went unanswered, and the bridge never took it: the task comes back, for the same op.
-      notTaken: () => {
-        const why = this.notTakenText(plan);
-        this.giveBack({ ...reviewed, planOp: op }, { kind: 'failed', code: 'handoff', message: why }, why, why);
-      },
     });
     const bg: BridgeHire = { op, plan, floor, desk, who, task, accepted: false, unanswered: false };
+    // B-R6: the request as it went (after its reviews): asked again as it is when its answer never comes.
+    let went: CommandArgs['worker.handoff'] | null = null;
     const f = new HandoffFiling(
       {
-        send: (t, a) => this.host.send(t, a),
+        send: (t, a) => {
+          if (t === 'worker.handoff') went = a as CommandArgs['worker.handoff'];
+          return this.host.send(t, a);
+        },
         worker: (id) => this.host.store.workers.get(id),
         secrets: this.host.secrets,
       },
@@ -1555,12 +1587,14 @@ export class HireReviewDialog {
     this.render();
     const o = await f.run();
     if (this.filing === f) this.filing = null;
-    // An answer that never came may still have been taken: the world's record for the op says so (now, or once it
-    // comes); a snapshot without it, that it was not. Until then the op is followed, and no other request is sent.
-    const unanswered = o.kind === 'failed' && o.retry;
+    // An answer that never came may still have been taken (B-R6: the bridge's gate may start it later): its record
+    // says so, now or once it comes, or the bridge asked the same request again. Until then the op is followed, and no
+    // other request is sent.
+    const unanswered = o.kind === 'failed' && o.retry && went !== null;
     if (unanswered && !this.host.store.handoffHires.get(op)) {
       bg.unanswered = true;
-      announcer.unanswered(op);
+      this.unknown.set(op, { bg, args: went as unknown as CommandArgs['worker.handoff'], reviewed, background, asking: false, cancel: false });
+      this.askLater(op);
       if (this.bg !== bg || !live()) {
         if (this.bg === bg) this.bg = null;
         this.host.toast(this.unansweredText(bg), 'warn');
@@ -1612,9 +1646,6 @@ export class HireReviewDialog {
     if (r) {
       bg.accepted = true;
       bg.unanswered = false;
-    } else if (bg.unanswered && this.host.handoffHires?.lost(bg.op)) {
-      this.notTaken(bg);
-      return;
     }
     if (!r || pendingHire(r)) {
       this.setStatus(this.bgProgress(bg, r));
@@ -1654,19 +1685,119 @@ export class HireReviewDialog {
     this.focusFirst();
   }
 
-  /** #219: the request got no answer, and the bridge does not have it: the review is as it was, for the same op. */
-  private notTaken(bg: BridgeHire): void {
+  /** #219 B-R6: the request got no answer, and asked again the bridge refused it: the review is as it was, for the same op. */
+  private notTaken(bg: BridgeHire, why: string): void {
     this.bg = null;
     this.host.handoffHires?.release(bg.op);
     this.state = 'ready';
-    this.setStatus(`${this.notTakenText(bg.plan)} Your task and settings are still here.`, true);
+    this.setStatus(`${why} Your task and settings are still here.`, true);
     this.render();
     this.focusFirst();
   }
 
+  /** B-R6: the bridge (a reconnect) can be asked again: every request that got no answer is, now. */
+  online(): void {
+    for (const op of this.unknown.keys()) this.ask(op);
+  }
+
+  /** B-R6: `op`'s request is asked again after a while (once its answer is still not known then). */
+  private askLater(op: string): void {
+    (this.host.later ?? ((fn, ms) => void setTimeout(fn, ms)))(() => this.ask(op), RESEND_MS);
+  }
+
+  /** B-R6: the records that came for requests that got no answer: taken. True when this review should cancel its own now. */
+  private recordsCame(): boolean {
+    let cancel = false;
+    for (const [op, u] of this.unknown) {
+      if (!this.host.store.handoffHires.get(op)) continue;
+      this.unknown.delete(op);
+      u.bg.accepted = true;
+      u.bg.unanswered = false;
+      if (u.cancel && this.bg === u.bg) cancel = true;
+    }
+    return cancel;
+  }
+
+  /**
+   * B-R6: the same request again (same op, the very args that went), never a new one: the bridge answers it with its
+   * request and record when it took it (also while its gate still runs), else it refuses it or starts it now. One at a
+   * time; no answer again: asked again later.
+   */
+  private ask(op: string): void {
+    const u = this.unknown.get(op);
+    // Its record is here: the next world change says it (`recordsCame`).
+    if (!u || u.asking || this.host.store.handoffHires.get(op)) return;
+    u.asking = true;
+    void this.host.send('worker.handoff', u.args).then((r) => this.asked(u, r));
+  }
+
+  private asked(u: Unknown, r: CommandResult): void {
+    u.asking = false;
+    const op = u.bg.op;
+    // Its record came meanwhile: that says it.
+    if (this.unknown.get(op) !== u) return;
+    if (!r.ok && NO_ANSWER.has(r.code)) {
+      this.askLater(op);
+      return;
+    }
+    this.unknown.delete(op);
+    const announcer = this.host.handoffHires;
+    const here = this.dialog.open && this.bg === u.bg && this.state === 'filing';
+    // The same request with other args: the bridge has the op (it never says that of one it does not have).
+    const taken = r.ok || (r.code === 'bad_request' && /already sent with other settings/.test(r.message));
+    if (!taken) {
+      const why = this.notTakenText(u.bg.plan, r);
+      if (here) {
+        this.notTaken(u.bg, why);
+        return;
+      }
+      // Closed: the task comes back first (the session's end lets go of the draft), for the same op.
+      try {
+        this.giveBack({ ...u.reviewed, planOp: op }, { kind: 'failed', code: r.code, message: why }, why, `${why} Your task and settings are still here.`);
+      } finally {
+        announcer?.release(op);
+      }
+      return;
+    }
+    u.bg.accepted = true;
+    u.bg.unanswered = false;
+    const ack = r.ok ? (r.data as AgentHandoffAck | LLMHandoffAck | undefined) : undefined;
+    if (r.ok && !ack?.handoff_hire && !this.host.store.handoffHires.get(op)) {
+      // It had it, and its record left already (it ended a while ago): how it ended is not known here any more.
+      const why = `herdr-world had ${u.bg.plan.name}’s handoff request already, and it has ended; how is no longer known. Look for ${u.bg.who} at Desk ${u.bg.desk + 1}, and for the handoff in the cabinet.`;
+      announcer?.claim(op);
+      if (!here) {
+        this.host.toast(why, 'warn');
+        return;
+      }
+      this.bg = null;
+      this.planOp = newOp();
+      this.state = 'ready';
+      this.setStatus(why, true);
+      this.render();
+      this.focusFirst();
+      return;
+    }
+    if (!here) {
+      announcer?.sync();
+      return;
+    }
+    if (u.cancel) {
+      this.followRecord();
+      void this.cancelHandoffHire();
+      return;
+    }
+    if (u.background) {
+      this.close();
+      return;
+    }
+    this.followRecord();
+  }
+
   /**
    * #219: Cancel request: the request and its hire, cancelled together by the bridge; its record then says how it ended.
-   * A request that got no answer can be cancelled too: a bridge that does not know its op says so (`invalid_state`).
+   * A request that got no answer can be cancelled too. A bridge that does not know its op (`invalid_state`) may still
+   * be reviewing it before it starts it (B-R6): it is asked again, and cancelled once it has it.
    */
   private async cancelHandoffHire(): Promise<void> {
     const bg = this.bg;
@@ -1675,8 +1806,12 @@ export class HireReviewDialog {
     this.render();
     const r = await this.host.send('worker.handoff_cancel', { worker: bg.plan.worker, op: bg.op });
     if (this.bg !== bg) return;
-    if (!r.ok && !bg.accepted && r.code === 'invalid_state' && !this.host.store.handoffHires.get(bg.op)) {
-      this.notTaken(bg);
+    const u = this.unknown.get(bg.op);
+    if (!r.ok && r.code === 'invalid_state' && u && !bg.accepted) {
+      u.cancel = true;
+      this.setStatus(`herdr-world has not started ${bg.plan.name}’s handoff request (yet): asking it again whether it has it, to cancel it then…`);
+      this.render();
+      this.ask(bg.op);
       return;
     }
     if (!r.ok && r.code === 'busy') bg.accepted = true;

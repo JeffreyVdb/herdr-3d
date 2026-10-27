@@ -23,6 +23,8 @@ import type { PromptSecretsFlow } from './secretsFlow';
 const CAND: HandoffCandidate = { id: 'cand-1', session: 'sess', revision: 'rev-1', harness: 'claude', message: 'msg_1', source: 'message', bytes: 300 };
 const PATH = '/home/u/handoff/floor/20261027-1600-pixel-loader.md';
 const TASK = 'Fix the issue\n\n- keep the tests green';
+/** B-R6: the status line of a request that got no answer (it is asked again until the bridge says). */
+const UNANSWERED = 'No answer from herdr-world yet: it may have taken the request. Asking it again until it says… then Nibble is hired at Desk 2.';
 const INTERP: HireInterpretation = { sources: [], harness: { provenance: 'missing' }, model: { provenance: 'missing' }, effort: { provenance: 'missing' }, task: { provenance: 'missing' }, questions: [], ready_for_review: true };
 
 const prep = (capacity: HirePrepare['capacity'] = { floor: { count: 1, soft: 10, hard: 20 }, host: { count: 1, soft: 10, hard: 20 } }): HirePrepare => ({
@@ -72,6 +74,8 @@ function setup(o: { background?: boolean; secrets?: PromptSecretsFlow; known?: b
     handoffHires: book,
   };
   const timers: Array<() => void> = [];
+  /** The review's own timers (B-R6: the replay of a request that got no answer, after a while). */
+  const retries: Array<() => void> = [];
   const announcer = new HandoffHireAnnouncer({
     records: () => book.all(),
     toast: (text, kind) => void toasts.push({ text, kind }),
@@ -81,7 +85,6 @@ function setup(o: { background?: boolean; secrets?: PromptSecretsFlow; known?: b
     holdTask: (id, text) => (holds.push([id, text]), true),
     storage: localStorage,
     later: (fn) => void timers.push(fn),
-    snapshots: () => book.snapshots,
   });
   const host = {
     store,
@@ -102,6 +105,7 @@ function setup(o: { background?: boolean; secrets?: PromptSecretsFlow; known?: b
     holdTask: (id: string, text: string) => (holds.push([id, text]), true),
     hirePrefs: prefs,
     handoffHires: announcer,
+    later: (fn: () => void) => void retries.push(fn),
     now: () => Date.now(),
     ...(o.secrets ? { secrets: o.secrets } : {}),
   } as unknown as HireHost;
@@ -153,7 +157,12 @@ function setup(o: { background?: boolean; secrets?: PromptSecretsFlow; known?: b
   const flushTimers = () => {
     while (timers.length) timers.shift()?.();
   };
-  return { rv, sent, of, last, answer, record, open, submit, accept, toasts, goTos, holds, beeps: () => beeps, announcer, book, held, flushTimers, uploads, draft, workers, snapshot };
+  /** The review's waits run out (a replay of a request that got no answer goes). */
+  const retry = async () => {
+    while (retries.length) retries.shift()?.();
+    await flush();
+  };
+  return { retry, retries, rv, sent, of, last, answer, record, open, submit, accept, toasts, goTos, holds, beeps: () => beeps, announcer, book, held, flushTimers, uploads, draft, workers, snapshot };
 }
 
 const q = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel);
@@ -471,7 +480,7 @@ describe('HireReviewDialog: hire with handoff in the background (#219)', () => {
     await e.answer('worker.handoff', { ok: false, code: 'timeout', message: 'herdr-world did not answer worker.handoff within 30 s' });
     const s = e.rv.summary()!;
     expect(s).toMatchObject({ state: 'filing', error: false, handoff: { op, bridge: { op, accepted: false } } });
-    expect(s.status).toBe('No answer from herdr-world yet: it may have taken the request. Waiting to see it… then Nibble is hired at Desk 2.');
+    expect(s.status).toBe(UNANSWERED);
     expect(s.status).not.toMatch(/nobody was hired|not hired/i);
     expect(q<HTMLButtonElement>('[data-key="cancel-request"]')!.disabled).toBe(false);
     q<HTMLButtonElement>('[data-key="hire"]')!.click();
@@ -489,24 +498,111 @@ describe('HireReviewDialog: hire with handoff in the background (#219)', () => {
     expect(e.of('worker.hire')).toHaveLength(0);
   });
 
-  it('B-R3: no answer, and the next snapshot does not have it: nobody was hired; Hire again sends the same op', async () => {
+  // B-R6: the bridge reviews a request's secrets off its hub before it starts it, so neither a snapshot without the op
+  // nor Cancel request's `invalid_state` says it was never taken. Only the bridge's answer to the same request does.
+  it('B-R6: no answer, a snapshot without the op, then its waiting record: the review follows it', async () => {
     const e = setup();
     const { op } = await e.submit();
     await e.answer('worker.handoff', { ok: false, code: 'disconnected', message: 'the connection to herdr-world closed' });
-    expect(e.rv.summary()?.state).toBe('filing');
-    // A world update without the record says nothing yet; a snapshot without it does.
-    e.rv.refresh();
-    expect(e.rv.summary()?.state).toBe('filing');
     await e.snapshot([]);
-    expect(e.rv.summary()).toMatchObject({ state: 'ready', error: true, status: 'herdr-world does not have Pixel’s handoff request: nothing was filed and nobody was hired. Hire again sends it again. Your task and settings are still here.' });
-    expect(e.rv.summary()?.form.prompt).toBe(TASK);
+    expect(e.rv.summary()).toMatchObject({ state: 'filing', error: false, handoff: { op, bridge: { op, accepted: false } } });
+    expect(e.rv.summary()?.status).toBe(UNANSWERED);
+    expect(q<HTMLButtonElement>('[data-key="cancel-request"]')!.disabled).toBe(false);
+    // The gate let it through: its record comes, and the review follows it to the end.
+    await e.record({ op });
+    expect(e.rv.summary()).toMatchObject({ state: 'filing', handoff: { bridge: { op, accepted: true } } });
+    await e.record({ op, state: 'hired', path: PATH, hired: 'N', prompted: true });
+    expect(e.rv.isOpen).toBe(false);
+    expect(e.toasts).toEqual([{ text: 'Hired Nibble at Desk 2. Here they come.', kind: 'info' }]);
+    // Known now: nothing is asked again.
+    await e.retry();
+    expect(e.of('worker.handoff')).toHaveLength(1);
+    expect(e.of('worker.hire')).toHaveLength(0);
+  });
+
+  it('B-R6: the request is asked again with the same op and the very args that went (its reviews’ decisions too), never reviewed again', async () => {
+    const texts: string[] = [];
+    let n = 0;
+    const flow = {
+      on: true,
+      onChange: () => {},
+      review: async (r: { text: string }) => (texts.push(r.text), { kind: 'send', protects: 1, shown: r.text, review: null, secrets: { revision: `rev-${++n}`, decisions: [] } }),
+      deliver: async (req: { text: string }, go: { secrets?: unknown }, send: (g: unknown) => Promise<CommandResult>) => {
+        let g = go;
+        for (;;) {
+          const r = await send(g);
+          if (r.ok || r.code !== 'secrets_review_stale') return { kind: 'answered', result: r, go: g };
+          texts.push(`again:${req.text}`);
+          g = { ...g, secrets: { revision: `rev-${++n}`, decisions: [] } };
+        }
+      },
+    } as unknown as PromptSecretsFlow;
+    const e = setup({ secrets: flow });
+    const { op } = await e.submit();
+    await e.answer('worker.handoff', { ok: false, code: 'secrets_review_stale', message: 'hire.prompt: secrets review: review it again' });
+    const went = e.last('worker.handoff').args;
+    await e.answer('worker.handoff', { ok: false, code: 'timeout', message: 'timeout' });
+    expect(e.of('worker.handoff')).toHaveLength(2);
+    await e.retry();
+    expect(e.of('worker.handoff')).toHaveLength(3);
+    expect(e.last('worker.handoff').args).toEqual(went);
+    expect(e.last('worker.handoff').args.op).toBe(op);
+    expect(texts).toEqual([TASK, 'focus on the tests', `again:${TASK}`]);
+    // The bridge has it (it answers the same request with its request and record): followed.
+    await e.accept(op);
+    expect(e.rv.summary()).toMatchObject({ state: 'filing', error: false, handoff: { bridge: { op, accepted: true } } });
+    expect(e.rv.summary()?.status).toBe('Asking Pixel’s agent… it is filed once its turn ends with the handoff written; then Nibble is hired at Desk 2.');
+    await e.record({ op, state: 'hired', path: PATH, hired: 'N', prompted: true });
+    expect(e.rv.isOpen).toBe(false);
+    await e.retry();
+    expect(e.of('worker.handoff')).toHaveLength(3);
+  });
+
+  it('B-R6: asked again and refused: nothing was taken, said with the bridge’s reason; the task stays', async () => {
+    const e = setup();
+    const { op } = await e.submit();
+    await e.answer('worker.handoff', { ok: false, code: 'timeout', message: 'timeout' });
+    await e.snapshot([]);
+    await e.retry();
+    expect(e.of('worker.handoff')).toHaveLength(2);
+    await e.answer('worker.handoff', { ok: false, code: 'capacity', message: 'the floor is full' });
+    const s = e.rv.summary()!;
+    expect(s).toMatchObject({ state: 'ready', error: true });
+    expect(s.status).toBe('Over the hard cap: the floor is full. Send someone home first. Nothing was filed and nobody was hired. Your task and settings are still here.');
+    expect(s.form.prompt).toBe(TASK);
+    await e.retry();
+    expect(e.of('worker.handoff')).toHaveLength(2);
+    // Hire sends it again, with the same op (the bridge never had it).
     q<HTMLButtonElement>('[data-key="hire"]')!.click();
     await flush();
-    expect(e.of('worker.handoff')).toHaveLength(2);
+    expect(e.of('worker.handoff')).toHaveLength(3);
     expect(e.last('worker.handoff').args.op).toBe(op);
   });
 
-  it('B-R3: no answer, Cancel request: the bridge that does not know the op says so; busy means it has it', async () => {
+  it('B-R6: asked again without an answer: asked once more on the next connection or after a while, one at a time, same op', async () => {
+    const e = setup();
+    const { op } = await e.submit();
+    await e.answer('worker.handoff', { ok: false, code: 'disconnected', message: 'closed' });
+    // Still connecting: not sent.
+    await e.retry();
+    await e.answer('worker.handoff', { ok: false, code: 'offline', message: 'not connected to herdr-world' });
+    expect(e.rv.summary()).toMatchObject({ state: 'filing', error: false });
+    expect(e.rv.summary()?.status).toBe(UNANSWERED);
+    // Connected again: asked at once; a second connection meanwhile asks nothing more while one is on its way.
+    e.rv.online();
+    e.rv.online();
+    await flush();
+    expect(e.of('worker.handoff')).toHaveLength(3);
+    await e.answer('worker.handoff', { ok: false, code: 'timeout', message: 'timeout' });
+    expect(e.rv.summary()).toMatchObject({ state: 'filing', error: false });
+    await e.retry();
+    expect(e.of('worker.handoff')).toHaveLength(4);
+    expect(new Set(e.of('worker.handoff').map((s) => s.args.op))).toEqual(new Set([op]));
+    await e.accept(op);
+    expect(e.rv.summary()).toMatchObject({ state: 'filing', handoff: { bridge: { op, accepted: true } } });
+  });
+
+  it('B-R6: Cancel request answered invalid_state: still unknown; asked again, and cancelled once the bridge has it', async () => {
     const e = setup();
     const { op } = await e.submit();
     await e.answer('worker.handoff', { ok: false, code: 'timeout', message: 'timeout' });
@@ -514,45 +610,116 @@ describe('HireReviewDialog: hire with handoff in the background (#219)', () => {
     await flush();
     expect(e.last('worker.handoff_cancel').args).toEqual({ worker: 'A', op });
     await e.answer('worker.handoff_cancel', { ok: false, code: 'invalid_state', message: `invalid state: Pixel has no handoff request "${op}"` });
+    expect(e.rv.summary()).toMatchObject({ state: 'filing', error: false, handoff: { bridge: { op, accepted: false } } });
+    expect(e.rv.summary()?.status).toBe('herdr-world has not started Pixel’s handoff request (yet): asking it again whether it has it, to cancel it then…');
+    // Asked again at once, the same request.
+    expect(e.of('worker.handoff')).toHaveLength(2);
+    expect(e.last('worker.handoff').args).toEqual(e.of('worker.handoff')[0]!.args);
+    await e.accept(op);
+    // It has it: the cancel goes again, now for a request it has.
+    expect(e.of('worker.handoff_cancel')).toHaveLength(2);
+    await e.answer('worker.handoff_cancel', { ok: true, data: { op, state: 'failed', reason: 'cancelled', started_at: 0 } } as CommandResult);
+    await e.record({ op, state: 'cancelled', code: 'cancelled', reason: 'The handoff request was cancelled; nobody was hired.' });
     expect(e.rv.summary()).toMatchObject({ state: 'ready', error: true });
-    expect(e.rv.summary()?.status).toContain('herdr-world does not have Pixel’s handoff request');
-    const b = setup();
-    document.querySelectorAll('dialog').forEach((d, i) => i === 0 && d.remove());
-    const { op: op2 } = await b.submit();
-    await b.answer('worker.handoff', { ok: false, code: 'timeout', message: 'timeout' });
-    q<HTMLButtonElement>('[data-key="cancel-request"]')!.click();
-    await flush();
-    await b.answer('worker.handoff_cancel', { ok: false, code: 'busy', message: 'busy: the handoff is being filed' });
-    expect(b.rv.summary()).toMatchObject({ state: 'filing', handoff: { bridge: { op: op2, accepted: true } } });
+    expect(e.rv.summary()?.status).toContain('The handoff request was cancelled; nobody was hired.');
   });
 
-  it('B-R3: no answer, then closed: a record that comes is said as usual; none in the next snapshot gives the task back', async () => {
+  it('B-R6: Cancel request answered invalid_state, then the op’s waiting record comes: followed (the reviewer’s case), the cancel goes again; busy means it has it', async () => {
+    const e = setup();
+    const { op } = await e.submit();
+    await e.answer('worker.handoff', { ok: false, code: 'timeout', message: 'timeout' });
+    q<HTMLButtonElement>('[data-key="cancel-request"]')!.click();
+    await flush();
+    await e.answer('worker.handoff_cancel', { ok: false, code: 'invalid_state', message: `invalid state: Pixel has no handoff request "${op}"` });
+    await e.record({ op });
+    expect(e.rv.summary()).toMatchObject({ state: 'filing', handoff: { bridge: { op, accepted: true } } });
+    expect(e.of('worker.handoff_cancel')).toHaveLength(2);
+    // The replay's answer that comes after the record changes nothing.
+    await e.answer('worker.handoff', { ok: false, code: 'timeout', message: 'timeout' });
+    await e.retry();
+    expect(e.of('worker.handoff')).toHaveLength(2);
+    await e.answer('worker.handoff_cancel', { ok: false, code: 'busy', message: 'busy: the handoff is being filed' });
+    expect(e.rv.summary()).toMatchObject({ state: 'filing', handoff: { bridge: { op, accepted: true } } });
+    expect(e.rv.summary()?.status).toContain('It is being filed already; Nibble is hired at Desk 2 once it is.');
+    await e.record({ op, state: 'hired', path: PATH, hired: 'N', prompted: true });
+    expect(e.rv.isOpen).toBe(false);
+  });
+
+  it('B-R6: asked again, and the record already left (the ack has none): it ended a while ago; said once, never a hire', async () => {
+    const e = setup();
+    const { op } = await e.submit();
+    await e.answer('worker.handoff', { ok: false, code: 'timeout', message: 'timeout' });
+    await e.retry();
+    await e.answer('worker.handoff', { ok: true, data: { request: { op, state: 'filed', handoff: 7, started_at: 0 }, existing: true } } as CommandResult);
+    expect(e.rv.summary()).toMatchObject({ state: 'ready', error: true });
+    expect(e.rv.summary()?.status).toBe('herdr-world had Pixel’s handoff request already, and it has ended; how is no longer known. Look for Nibble at Desk 2, and for the handoff in the cabinet.');
+    q<HTMLButtonElement>('[data-key="hire"]')!.click();
+    await flush();
+    expect(e.last('worker.handoff').args.op).not.toBe(op);
+    expect(e.of('worker.hire')).toHaveLength(0);
+  });
+
+  it('B-R6: no answer, then closed: the session (and the task) stays until the bridge says; refused, the task comes back once', async () => {
     const e = setup();
     const { op } = await e.submit();
     await e.answer('worker.handoff', { ok: false, code: 'timeout', message: 'timeout' });
     q<HTMLButtonElement>('[data-key="background"]')!.click();
     expect(e.rv.isOpen).toBe(false);
     expect(e.toasts).toEqual([{ text: 'herdr-world did not answer about Pixel’s handoff request. If it took it, Nibble is hired at Desk 2 once it is filed; if not, your task comes back.', kind: 'warn' }]);
-    await e.record({ op });
-    await e.record({ op, state: 'hired', path: PATH, hired: 'N', prompted: true });
-    expect(e.toasts.at(-1)).toEqual({ text: SPAWNED_TEXT, kind: 'info' });
+    // A snapshot without it says nothing, and gives nothing back.
+    await e.snapshot([]);
+    e.flushTimers();
+    expect(e.rv.isOpen).toBe(false);
+    expect(e.toasts).toHaveLength(1);
+    await e.retry();
+    expect(e.last('worker.handoff').args).toEqual(e.of('worker.handoff')[0]!.args);
+    await e.answer('worker.handoff', { ok: false, code: 'capacity', message: 'the floor is full' });
+    expect(e.rv.isOpen).toBe(true);
+    const s = e.rv.summary()!;
+    expect(s.form.prompt).toBe(TASK);
+    expect(s.handoff?.op).toBe(op);
+    expect(s.status).toContain('Over the hard cap: the floor is full. Send someone home first. Nothing was filed and nobody was hired.');
+    // Once: nothing more is asked, said or given back.
+    e.rv.close();
+    await e.retry();
+    await e.snapshot([]);
+    e.flushTimers();
+    expect(e.rv.isOpen).toBe(false);
+    expect(e.of('worker.handoff')).toHaveLength(2);
+  });
+
+  it('B-R6: no answer, then closed: asked again and taken; its outcome is said once by the announcer, a failure gives the task back', async () => {
+    const e = setup();
+    const { op } = await e.submit();
+    await e.answer('worker.handoff', { ok: false, code: 'disconnected', message: 'closed' });
+    q<HTMLButtonElement>('[data-key="background"]')!.click();
+    await e.snapshot([]);
+    e.rv.online();
+    await flush();
+    await e.accept(op);
+    expect(e.rv.isOpen).toBe(false);
+    await e.record({ op, state: 'failed', code: 'handoff_failed', reason: 'Nobody was hired, the handoff was not filed: the agent stopped.' });
+    expect(e.rv.isOpen).toBe(true);
+    expect(e.rv.summary()?.form.prompt).toBe(TASK);
+    expect(e.rv.summary()?.status).toContain('Nobody was hired, the handoff was not filed: the agent stopped.');
+    e.rv.close();
+    await e.record({ op, state: 'failed', code: 'handoff_failed', reason: 'Nobody was hired, the handoff was not filed: the agent stopped.' });
+    e.flushTimers();
+    await e.retry();
+    expect(e.rv.isOpen).toBe(false);
+    expect(e.of('worker.handoff')).toHaveLength(2);
 
     document.body.replaceChildren();
     localStorage.clear();
     const b = setup();
     const { op: op2 } = await b.submit();
-    await b.answer('worker.handoff', { ok: false, code: 'disconnected', message: 'closed' });
+    await b.answer('worker.handoff', { ok: false, code: 'timeout', message: 'timeout' });
     q<HTMLButtonElement>('[data-key="background"]')!.click();
-    await b.snapshot([]);
-    expect(b.rv.isOpen).toBe(true);
-    const s = b.rv.summary()!;
-    expect(s.form.prompt).toBe(TASK);
-    expect(s.handoff?.op).toBe(op2);
-    expect(s.status).toContain('herdr-world does not have Pixel’s handoff request: nothing was filed and nobody was hired.');
-    // Said once: a later snapshot gives nothing back again.
-    b.rv.close();
-    await b.snapshot([]);
-    b.flushTimers();
-    expect(b.rv.isOpen).toBe(false);
+    await b.retry();
+    await b.accept(op2);
+    await b.record({ op: op2, state: 'hired', path: PATH, hired: 'N', prompted: true });
+    expect(b.toasts.at(-1)).toEqual({ text: SPAWNED_TEXT, kind: 'info' });
+    expect(b.toasts.filter((t) => t.text === SPAWNED_TEXT)).toHaveLength(1);
+    expect(b.of('worker.hire')).toHaveLength(0);
   });
 });

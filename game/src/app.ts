@@ -736,6 +736,7 @@ export class App {
           // M5: a dropped connection took every watch with it; the next live one watches again.
           this.laptops.setConnected(s.phase === 'live');
           if (s.phase === 'live' && !wasLive) this.runTerminals.reconnect(); // #216: the dialog's and the Runs view's run terminals
+          if (s.phase === 'live' && !wasLive) this.hireReview.online(); // #219 B-R6: handoff requests that got no answer are asked again
           if ((s.phase === 'live') !== wasLive) this.syncAttention(); // #213: no Respond without a connection
           this.screen.setConnected(s.phase === 'live'); // M13: a new connection is told whether this game shares
           this.hud.setConn(s, this.fixture, Date.now());
@@ -840,7 +841,6 @@ export class App {
       floorName: (id) => this.store.floorName(id),
       workerView: (id) => this.store.workerView(id),
       holdTask: (id, text) => this.prompt.holdTask(id, text),
-      snapshots: () => this.store.handoffHires.snapshots,
     });
     // #93: the desk dialogs' third tab; "Save as preset…" opens its editor over the hire form.
     const presetsAt = (s: string, d: number) => {

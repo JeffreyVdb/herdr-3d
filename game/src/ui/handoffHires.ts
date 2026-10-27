@@ -39,8 +39,6 @@ export interface HandoffHireSession {
   giveBack(r: HandoffHire): void;
   /** The op ended (any way, said by anyone): what it held can go. */
   done(): void;
-  /** Its request got no answer and the next snapshot does not have it (the bridge never took it): the task comes back. */
-  notTaken?(): void;
 }
 
 export interface HandoffHireHost {
@@ -54,8 +52,6 @@ export interface HandoffHireHost {
   /** Absent: `window.localStorage` (when it can be read). */
   storage?: Storage | null;
   later?(fn: () => void, ms: number): void;
-  /** How many world snapshots this page has had (`HandoffHireBook.snapshots`). */
-  snapshots?(): number;
 }
 
 const ORIGIN_RE = /^[A-Za-z0-9_-]{1,80}$/;
@@ -86,8 +82,6 @@ export class HandoffHireAnnouncer {
   /** This page's copy of the said ops (all of them when there is no storage). */
   private readonly said = new Set<string>();
   private readonly waiting = new Set<string>();
-  /** Ops whose request got no answer, and the snapshots seen then: a later one without the op says it was never taken. */
-  private readonly unknown = new Map<string, number>();
   private readonly store: Storage | null;
 
   constructor(private readonly host: HandoffHireHost) {
@@ -123,18 +117,7 @@ export class HandoffHireAnnouncer {
     this.end(op);
   }
 
-  /** `op`'s request got no answer: it may have been taken; its record, or the next snapshot without it, says. */
-  unanswered(op: string): void {
-    this.unknown.set(op, this.host.snapshots?.() ?? 0);
-  }
-
-  /** `op`'s request got no answer, and a snapshot since does not have it: the bridge never took it. */
-  lost(op: string): boolean {
-    const at = this.unknown.get(op);
-    return at !== undefined && (this.host.snapshots?.() ?? 0) > at && !this.host.records().some((r) => r.op === op);
-  }
-
-  /** The bridge never took `op`: its session ends, and nothing is said (a resend of the op is a new request). */
+  /** The bridge never took `op` (its request, asked again, was refused): its session ends, and nothing is said. */
   release(op: string): void {
     this.end(op);
   }
@@ -146,21 +129,6 @@ export class HandoffHireAnnouncer {
 
   /** The records as the world has them now: each of this browser's that ended is said, once. */
   sync(): void {
-    // A request that got no answer: its record came (it is said as any other), or the bridge never took it.
-    for (const op of [...this.unknown.keys()]) {
-      if (this.host.records().some((r) => r.op === op)) this.unknown.delete(op);
-      else if (this.lost(op)) {
-        const s = this.sessions.get(op);
-        if (s?.watching()) continue;
-        // The task comes back first: the session's end lets go of what it held.
-        this.unknown.delete(op);
-        try {
-          s?.notTaken?.();
-        } finally {
-          this.end(op);
-        }
-      }
-    }
     for (const r of this.host.records()) {
       if (r.origin !== this.origin || pendingHire(r) || this.announced(r.op)) continue;
       const s = this.sessions.get(r.op);
@@ -208,7 +176,6 @@ export class HandoffHireAnnouncer {
   private end(op: string): void {
     const s = this.sessions.get(op);
     this.sessions.delete(op);
-    this.unknown.delete(op);
     s?.done();
   }
 
