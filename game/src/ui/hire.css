@@ -722,6 +722,28 @@
   left: 14px;
   right: 14px;
 }
+@media (prefers-reduced-motion: no-preference) {
+  /* The draft is already complete; a brief sweep suggests typing without changing its contents. */
+  .desk-dlg--hire .cmp-editor.dd-preset-reveal::after {
+    content: '';
+    position: absolute;
+    inset: 1px;
+    background: var(--cmp-well);
+    pointer-events: none;
+    animation: dd-preset-text 260ms steps(18, end) both;
+  }
+  .desk-dlg--hire .dd-preset-choice {
+    animation: dd-preset-choice 220ms ease-out;
+  }
+  @keyframes dd-preset-text {
+    from { clip-path: inset(0 0 0 0); }
+    to { clip-path: inset(0 0 0 100%); }
+  }
+  @keyframes dd-preset-choice {
+    from { filter: brightness(1.45); }
+    to { filter: brightness(1); }
+  }
+}
 .hire-options-pane {
   display: grid;
   align-content: start;

@@ -298,12 +298,25 @@ test('switching hire tabs and pinned presets does not animate the dialog', async
   };
   await presetsDlg(page).locator('[data-key="tab:worker"]').click();
   await noAnimation('dialog.desk-dlg--hire');
+  await page.evaluate(() => {
+    const recorded: string[] = [];
+    (window as unknown as { hireAnimations: string[] }).hireAnimations = recorded;
+    document.addEventListener('animationstart', (e) => recorded.push(e.animationName));
+  });
   await hireDlg(page).locator(`[data-key="tab:pin:${id('Deploy')}"]`).click();
   await noAnimation('dialog.desk-dlg--hire');
   await expect.poll(async () => ((await dialog(page)) as Hire)?.preset?.name).toBe('Deploy');
   await hireDlg(page).locator(`[data-key="tab:pin:${id('Audit')}"]`).click();
   await noAnimation('dialog.desk-dlg--hire');
   await expect.poll(async () => ((await dialog(page)) as Hire)?.form.prompt).toBe('Audit the dependencies.');
+  await expect.poll(() => page.evaluate(() => (window as unknown as { hireAnimations: string[] }).hireAnimations)).toEqual(expect.arrayContaining(['dd-preset-text', 'dd-preset-choice']));
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.evaluate(() => { (window as unknown as { hireAnimations: string[] }).hireAnimations.length = 0; });
+  await hireDlg(page).locator(`[data-key="tab:pin:${id('Deploy')}"]`).click();
+  await expect.poll(async () => ((await dialog(page)) as Hire)?.form.prompt).toBe('Deploy the release.');
+  await frames(page, 2);
+  expect(await page.evaluate(() => (window as unknown as { hireAnimations: string[] }).hireAnimations)).not.toContain('dd-preset-text');
+  expect(await page.evaluate(() => (window as unknown as { hireAnimations: string[] }).hireAnimations)).not.toContain('dd-preset-choice');
   await hireDlg(page).locator('[data-key="tab:orch"]').click();
   await noAnimation('dialog.desk-dlg--run');
   await page.locator('dialog.desk-dlg--run [data-key="tab:preset"]').click();
