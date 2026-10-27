@@ -659,13 +659,13 @@ export class StartRunDialog {
           { class: 'dd-agent', role: 'group', 'aria-label': 'Orchestrator' },
           h('p', { class: 'dd-agent-title' }, 'Orchestrator'),
           chips('orch-harness', 'Harness', Object.keys(options), o.harness, (v) => this.pickOrch({ harness: v }), note),
-          limits,
           ...(o.model
             ? [
                 chips('orch-model', 'Model', modelsFor(options, o.harness), o.model, (v) => this.pickOrch({ model: v }), null, modelEntries(o.harness, modelsFor(options, o.harness), labelsOf(options, o.harness))),
                 chips('orch-effort', 'Effort', effortsFor(options, o.harness, o.model), o.effort, (v) => this.pickOrch({ effort: v })),
               ]
             : [this.noModels(o.harness)]),
+          limits,
           ...this.profileNodes(),
         ),
       );
