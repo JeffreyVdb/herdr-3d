@@ -393,20 +393,25 @@ func TestCommandRequestPipelineAccountHost(t *testing.T) {
 	pb.assertQuietLog(t, *w, command, "tailscale serve", "your user")
 
 	// A named machine: shown, never run on the bridge, even when the model
-	// quotes the account phrase as the host.
-	for _, hostText := range []string{"your Mac", "your user"} {
+	// quotes the account phrase as the host or the machine is named like
+	// the command.
+	for _, c := range []struct{ reply, command, hostText string }{
+		{"On your Mac, run `pwd` as your user and tell me what it prints.", "pwd", "your Mac"},
+		{"On your Mac, run `pwd` as your user and tell me what it prints.", "pwd", "your user"},
+		{"On prod, run `prod` as your user.", "prod", "your user"},
+	} {
 		other := startPipelineBridge(t)
 		other.models.score.Store(0.9)
-		other.models.answer.Store(`{"commands":[{"command":"pwd","host":"other","host_text":"` + hostText + `"}]}`)
-		other.say(t, "mac", "On your Mac, run `pwd` as your user and tell me what it prints.")
+		other.models.answer.Store(`{"commands":[{"command":"` + c.command + `","host":"other","host_text":"` + c.hostText + `"}]}`)
+		other.say(t, "mac", c.reply)
 		req = upsertFor(other.c, other.id, func(w *proto.Worker) bool { return w.CommandRequest != nil }).CommandRequest
-		if got := req.Commands[0]; got.Host != "other" || got.HostText != hostText {
-			t.Fatalf("%s: request: %+v", hostText, req)
+		if got := req.Commands[0]; got.Host != "other" || got.HostText != c.hostText || got.Command != c.command {
+			t.Fatalf("%q: request: %+v", c.reply, req)
 		}
 		if lines := other.settle(t, 1); !hasAll(lines[0], "commands=1", `rejected=""`) {
-			t.Fatalf("%s: diagnostics: %s", hostText, lines[0])
+			t.Fatalf("%q: diagnostics: %s", c.reply, lines[0])
 		}
-		other.c.mustError(proto.CmdManualProcessStart, proto.ManualProcessStartArgs{Op: "mac-220", Worker: other.id, Cwd: other.dir, Command: "pwd",
+		other.c.mustError(proto.CmdManualProcessStart, proto.ManualProcessStartArgs{Op: "mac-220", Worker: other.id, Cwd: other.dir, Command: c.command,
 			Source: &proto.ManualSource{Kind: "suggestion", Key: req.Key, Index: 0}}, proto.ErrStale)
 	}
 }
