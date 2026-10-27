@@ -1,0 +1,75 @@
+/*
+ * #216: a manual run's terminal (runTerminal.ts). In the processes dialog its parts sit in the dialog body's own grid
+ * as before (the wrapper takes no box). In the seat it fills its container: the state lines, then the screen taking the
+ * rest; the input field is the keyboard's (IME, paste) and is not drawn, the screen shows its focus instead.
+ */
+.mp-run[data-surface='dialog'] {
+  display: contents;
+}
+.mp-run[data-surface='seat'] {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+.mp-run[data-surface='seat'][data-held] {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+.mp-run[data-surface='seat'] .mp-run-state,
+.mp-run[data-surface='seat'] .mp-detect,
+.mp-run[data-surface='seat'] .mp-run-note {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+.mp-run[data-surface='seat'] .mp-run-note {
+  color: var(--error-text);
+}
+.mp-run[data-surface='seat'] .mp-terminal {
+  height: auto;
+  min-height: 0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.mp-run[data-surface='seat'] .mp-terminal[hidden] {
+  display: none;
+}
+.mp-run[data-surface='seat'] .mp-terminal-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+  clip-path: inset(50%);
+}
+.mp-run[data-surface='seat']:has(.mp-terminal-input:focus-visible) .mp-terminal {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.mp-run-held[hidden] {
+  display: none;
+}
+.mp-run[data-surface='seat'] .mp-run-held {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--text-2);
+}
+.mp-run-held-body {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 16px;
+  text-align: center;
+}
+.mp-run-held-body p {
+  margin: 0;
+}

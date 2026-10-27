@@ -129,6 +129,7 @@ import { PromptSecretsFlow, type Go } from './ui/secretsFlow';
 import { RevokeSecretsDialog } from './ui/revokeSecrets';
 import { ManualCredentialDialog } from './ui/manualCredential';
 import { ManualProcessesDialog } from './ui/manualProcesses';
+import { RunTerminalBroker } from './ui/runTerminal';
 import { AttentionChip, type AttentionChipHost } from './ui/manualAttention';
 import { AttentionEpisodes, attentionAction, attentionLabel, openAttention, shortCommand, type RunAttention } from './world/manualProcess';
 import { CommandCatalogs } from './laptop/commandCatalog';
@@ -271,6 +272,8 @@ export class App {
   readonly revokeSecrets: RevokeSecretsDialog;
   readonly manualCredential: ManualCredentialDialog;
   readonly manualProcesses: ManualProcessesDialog;
+  /** #216: which surface (the processes dialog, the seat's Runs view) holds a manual run's terminal. */
+  readonly runTerminals: RunTerminalBroker;
   private manualCredentialLatest = '';
   /** #213: the run whose password dialog Respond asked for (from anywhere), till its request goes. */
   private manualRespond = '';
@@ -699,7 +702,7 @@ export class App {
           this.sendZone(); // #66
         },
         onEvent: (e) => this.onWorldEvent(e),
-        onConn: (m) => { if (!this.manualProcesses.onConn(m)) this.laptops.onConn(m); },
+        onConn: (m) => { if (!this.runTerminals.onConn(m)) this.laptops.onConn(m); },
         onBoard: (m) => this.onBoard(m),
         onScreen: (m) => this.screen.onMessage(m), // M13 screen
         onHost: (m) => this.rack.onMessage(m), // #74 server rack
@@ -720,7 +723,7 @@ export class App {
           }
           // M5: a dropped connection took every watch with it; the next live one watches again.
           this.laptops.setConnected(s.phase === 'live');
-          if (s.phase === 'live' && !wasLive) this.manualProcesses.reconnect();
+          if (s.phase === 'live' && !wasLive) this.runTerminals.reconnect();
           if ((s.phase === 'live') !== wasLive) this.syncAttention(); // #213: no Respond without a connection
           this.screen.setConnected(s.phase === 'live'); // M13: a new connection is told whether this game shares
           this.hud.setConn(s, this.fixture, Date.now());
@@ -898,7 +901,8 @@ export class App {
       send: (t, args) => this.send(t, args).finally(() => this.laptops.syncSecretFiles()),
     });
     this.manualCredential = new ManualCredentialDialog(o.host, (args) => this.client.request('manual_process.credential', args), (msg) => this.hud.toast(msg, 5200, 'error'));
-    this.manualProcesses = new ManualProcessesDialog(o.host, { store: this.store, send: (t, args) => this.send(t, args), input: (args) => this.client.request('terminal.input', args), watch: (t, args) => this.sendWatch(t, args), changed: () => this.syncManualProcesses(), external: (url) => this.external(url), respond: (id) => this.respondManual(id) });
+    this.runTerminals = new RunTerminalBroker((t, args) => this.sendWatch(t, args));
+    this.manualProcesses = new ManualProcessesDialog(o.host, { runs: this.runTerminals, store: this.store, send: (t, args) => this.send(t, args), input: (args) => this.client.request('terminal.input', args), watch: (t, args) => this.sendWatch(t, args), changed: () => this.syncManualProcesses(), external: (url) => this.external(url), respond: (id) => this.respondManual(id) });
     // #223: a literal handoff, and the cabinet it goes into.
     const copy = (text: string) => copyText(text);
     this.handoffDialog = new HandoffDialog(o.host, {
