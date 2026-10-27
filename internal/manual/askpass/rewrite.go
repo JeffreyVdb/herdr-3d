@@ -4,7 +4,12 @@ package askpass
 import "strings"
 
 // Rewrite adds sudo's askpass option to a simple, top-level invocation.
+// Trailing whitespace and newlines (a form's last line break) are ignored for
+// eligibility and kept in the launched form, which differs from cmd only by
+// the inserted " -A" (#213).
 func Rewrite(cmd string) (string, bool) {
+	full := cmd
+	cmd = strings.TrimRight(cmd, " \t\r\n")
 	i := 0
 	for i < len(cmd) && (cmd[i] == ' ' || cmd[i] == '\t') {
 		i++
@@ -71,7 +76,7 @@ func Rewrite(cmd string) (string, bool) {
 	if !command {
 		return "", false
 	}
-	return cmd[:i+4] + " -A" + rest, true
+	return full[:i+4] + " -A" + full[i+4:], true
 }
 
 // simpleWords recognizes shell words without evaluating expansions. Shell
@@ -149,6 +154,7 @@ func simpleWords(input string) ([]string, bool) {
 
 // User reports sudo's target account from the options preceding its command.
 func User(command string) string {
+	command = strings.TrimRight(command, " \t\r\n")
 	i := 0
 	for i < len(command) && (command[i] == ' ' || command[i] == '\t') {
 		i++
