@@ -127,14 +127,17 @@ export class ManualProcessesDialog {
     const check = h('input', { type: 'checkbox', checked: true });
     const option = h('label', { class: 'mp-askpass' }, check, ' Ask for the password in a dialog');
     const preview = h('pre', { class: 'mp-code' });
-    const update = () => { option.hidden = !askpassEligible(field.value); preview.hidden = option.hidden || !check.checked; preview.textContent = askpassForm(field.value); };
+    // #213: a field keeps line breaks as LF: the reviewed command goes as it came (a CR in it too) until it is edited.
+    const value = () => (field.value === command.replace(/\r\n?/g, '\n') ? command : field.value);
+    const update = () => { option.hidden = !askpassEligible(value()); preview.hidden = option.hidden || !check.checked; preview.textContent = askpassForm(value()); };
     field.addEventListener('input', update); check.addEventListener('change', update); update();
     const run = h('button', { class: 'btn btn--primary', onclick: async () => {
-      if (run.disabled || !field.value.trim()) return;
-      const spec = JSON.stringify([worker, field.value, folder.value, !option.hidden && check.checked]);
+      const text = value();
+      if (run.disabled || !text.trim()) return;
+      const spec = JSON.stringify([worker, text, folder.value, !option.hidden && check.checked]);
       if (spec !== this.entrySpec) { this.entrySpec = spec; this.entryOp = newManualOp(); }
       run.disabled = true;
-      const r = await this.host.send('manual_process.start', { op: this.entryOp, worker, command: field.value, ...(folder.value ? { cwd: folder.value } : {}), source: { kind: 'manual' }, askpass: !option.hidden && check.checked });
+      const r = await this.host.send('manual_process.start', { op: this.entryOp, worker, command: text, ...(folder.value ? { cwd: folder.value } : {}), source: { kind: 'manual' }, askpass: !option.hidden && check.checked });
       if (!this.isOpen || this.viewGeneration !== generation) return;
       run.disabled = false;
       if (r.ok) this.list();

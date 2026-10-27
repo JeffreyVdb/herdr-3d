@@ -85,6 +85,21 @@ describe('manual process list', () => {
     expect(newManualOp()).toMatch(/^mp-[a-z0-9]{20}$/);
     vi.restoreAllMocks();
   });
+  it('#213: Edit and run… fills the form with the exact command, sends nothing until Run, then sends it byte for byte', async () => {
+    const store = new WorldStore(); store.workers.set('w', { id: 'w', name: 'Worker', cwd: '/work' } as never);
+    const send = vi.fn().mockResolvedValue({ ok: true, data: {} });
+    const dlg = new ManualProcessesDialog(document.body, { store, send, input: vi.fn(), watch: vi.fn(), changed: vi.fn(), external: vi.fn() });
+    const command = 'sudo -k python3 tools/hello_world_server.py 80\r\n';
+    dlg.entry('w', command, '/srv');
+    const field = document.querySelector<HTMLTextAreaElement>('.mp-command-input')!;
+    expect(field.value).toBe('sudo -k python3 tools/hello_world_server.py 80\n');
+    expect(document.activeElement).toBe(field);
+    expect(document.querySelector('.mp-dialog pre')!.textContent).toBe('sudo -A -k python3 tools/hello_world_server.py 80\r\n');
+    expect(send).not.toHaveBeenCalled();
+    button('Run').click(); await Promise.resolve();
+    expect(send.mock.calls[0]![1]).toMatchObject({ command, cwd: '/srv', askpass: true, source: { kind: 'manual' } });
+    dlg.close();
+  });
   it('offers askpass only for top-level sudo followed by a non-flag word', () => {
     expect(askpassEligible('sudo id')).toBe(true);
     expect(askpassEligible('sudo  \tid')).toBe(true);

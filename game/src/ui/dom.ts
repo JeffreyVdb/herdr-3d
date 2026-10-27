@@ -49,6 +49,14 @@ export const ICON = {
   folder: '<path d="M3.5 7.5a2 2 0 0 1 2-2h3.8l2 2.2h7.2a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>',
   /** #108: "Review secrets", a prompt box's review of its possible secrets. */
   lock: '<rect x="5.5" y="10.5" width="13" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/><path d="M12 14.2v2.4"/>',
+  /** #213: a command in a terminal window (the transcript's tool rows draw the same one). */
+  terminal: '<rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M7.5 10l2.5 2-2.5 2M12.5 14.5h4"/>',
+  /** #213: run it. */
+  play: '<path d="M8 5.8v12.4a.8.8 0 0 0 1.2.7l9.6-6.2a.8.8 0 0 0 0-1.4L9.2 5.1a.8.8 0 0 0-1.2.7z"/>',
+  /** #213: copy (one sheet over another). */
+  copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/>',
+  /** #213: a warning (a triangle with a mark). */
+  alert: '<path d="M10.3 4.6 3.2 17.3A2 2 0 0 0 5 20.3h14a2 2 0 0 0 1.8-3L13.7 4.6a2 2 0 0 0-3.4 0z"/><path d="M12 9.5v4.2M12 17h.01"/>',
   // #247: a repository (a book with a bookmark, as GitHub draws one).
   repo: '<path d="M5.5 18V5.5a2 2 0 0 1 2-2h11v13h-11a2 2 0 0 0-2 2 2 2 0 0 0 2 2h11v-3.5"/><path d="M9 20.5v2l1.5-1 1.5 1v-2"/>',
 };

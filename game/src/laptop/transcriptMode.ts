@@ -924,7 +924,7 @@ export class TranscriptMode {
         if (live() && r.code !== 'stale') this.host.status('error', message);
         return { ok: false, code: r.code, message };
       },
-      commandRequest: { worker: s.id, host: () => this.host.manualHost?.() ?? '', start: (args) => this.host.send('manual_process.start', args), dismiss: (key) => this.host.send('worker.dismiss_command_request', { id: s.id, key }), edit: (command, cwd) => this.host.manualEntry?.(s.id, command, cwd) },
+      commandRequest: { worker: s.id, name: () => s.name, host: () => this.host.manualHost?.() ?? '', start: (args) => this.host.send('manual_process.start', args), dismiss: (key) => this.host.send('worker.dismiss_command_request', { id: s.id, key }), edit: (command, cwd) => this.host.manualEntry?.(s.id, command, cwd) },
       images: this.host.feed(s.id),
       upload: this.host.upload ?? null,
       label: s.name,
