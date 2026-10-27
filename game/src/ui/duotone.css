@@ -1,0 +1,50 @@
+/*
+ * #216: duotone line icons (duotone.ts). The base strokes are currentColor; the accent element takes --dt-accent,
+ * which is the accent text colour on every ground and the control's own text colour on an action-filled control (the
+ * accent is the action colour itself in Quiet: it would vanish there). A new filled control opts in with .dt-on-action.
+ */
+.dt {
+  flex: none;
+}
+.dt .ac {
+  stroke: var(--dt-accent, var(--accent-text));
+}
+.dt .acf {
+  fill: var(--dt-accent, var(--accent-text));
+  stroke: none;
+}
+.btn--primary,
+.mpa-act,
+.seat-mode-opt[data-on],
+.seat-tab[aria-selected='true'],
+.dt-on-action {
+  --dt-accent: var(--on-action);
+}
+/* The questions button is filled with its lane's colour: the accent follows its text. */
+.tx-qbtn {
+  --dt-accent: var(--q-text);
+}
+/* A warning's mark and the attention tape (filled with --warn, the accent's own hue in Quiet) stay one colour. */
+.mpa-tape,
+.mp-warning,
+.mp-alert {
+  --dt-accent: currentColor;
+}
+/* The request card's Run fills its old solid triangle; a duotone icon fills only its accent. */
+.mp-request .btn--primary svg.dt {
+  fill: none;
+}
+@media (forced-colors: active) {
+  .dt .ac {
+    stroke: currentColor;
+  }
+  .dt .acf {
+    fill: currentColor;
+  }
+}
+/* ubuntu:begin */
+:root[data-ui-theme='ubuntu'] :is(.tx, .tx-qcards) .tx-ask-send,
+:root[data-ui-theme='ubuntu'] .tx .tx-sys-toggle[aria-pressed='true'] {
+  --dt-accent: var(--on-action);
+}
+/* ubuntu:end */

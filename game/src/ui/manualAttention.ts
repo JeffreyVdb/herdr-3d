@@ -1,6 +1,7 @@
 import type { RunAttention } from '../world/manualProcess';
 import { attentionAction, attentionCount, attentionDetail, attentionLabel, shortCommand } from '../world/manualProcess';
-import { h, icon, ICON } from './dom';
+import { h } from './dom';
+import { duotone } from './duotone';
 import './manualAttention.css';
 
 export interface AttentionChipHost {
@@ -44,7 +45,7 @@ export class AttentionChip {
       const sure = list.some((r) => r.attention.confidence !== 'uncertain');
       const text = attentionCount(list);
       const b: HTMLButtonElement = h('button', { class: 'mpa-count', 'aria-haspopup': 'dialog', 'aria-label': `Manual runs: ${text}. Open the list`, title: list.map((r) => `${attentionLabel(r.attention)}: ${r.process.worker_name} · ${shortCommand(r.process)}`).join('\n'), onclick: () => this.host.list(b) },
-        h('span', { class: `mpa-tape${sure ? '' : ' mpa-tape--maybe'}` }, icon(ICON.terminal), h('span', {}, text)), icon(ICON.chevron));
+        h('span', { class: `mpa-tape${sure ? '' : ' mpa-tape--maybe'}` }, duotone('terminal'), h('span', {}, text)), duotone('chevronDown'));
       this.el.dataset.kind = sure ? 'sure' : 'maybe';
       this.el.replaceChildren(b);
       if (had) b.focus({ preventScroll: true });
@@ -59,7 +60,7 @@ export class AttentionChip {
     const what = this.o.names ? `${r.process.worker_name || r.process.worker} · ${shortCommand(r.process)}` : shortCommand(r.process);
     this.el.dataset.kind = sure ? 'sure' : 'maybe';
     this.el.title = [`${attentionLabel(a)}: ${r.process.worker_name} · ${r.process.host}`, shortCommand(r.process, 120), detail].filter(Boolean).join('\n');
-    this.el.replaceChildren(h('span', { class: `mpa-tape${sure ? '' : ' mpa-tape--maybe'}` }, icon(a.kind === 'credential' ? ICON.lock : ICON.terminal), h('span', {}, attentionLabel(a))), h('span', { class: 'mpa-what' }, what), act);
+    this.el.replaceChildren(h('span', { class: `mpa-tape${sure ? '' : ' mpa-tape--maybe'}` }, duotone(a.kind === 'credential' ? 'lock' : 'terminal'), h('span', {}, attentionLabel(a))), h('span', { class: 'mpa-what' }, what), act);
     if (had) act.focus({ preventScroll: true });
   }
 }

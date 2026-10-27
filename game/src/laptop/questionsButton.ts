@@ -1,4 +1,5 @@
-import { h, icon } from '../ui/dom';
+import { h } from '../ui/dom';
+import { duotone } from '../ui/duotone';
 import { questionWord } from '../world/codexQuestions';
 import './questionsButton.css';
 
@@ -14,10 +15,6 @@ export interface QuestionsState {
 
 type Lane = 'urgent' | 'optional';
 
-/** A stop sign with an exclamation: the agent cannot go on. */
-const STOP = '<path d="M8.4 3.5h7.2l4.9 4.9v7.2l-4.9 4.9H8.4l-4.9-4.9V8.4z"/><path d="M12 7.8v4.9"/><path d="M12 16.2v.1"/>';
-/** A speech bubble with a question mark: something was asked, nothing waits on it. */
-const BUBBLE = '<path d="M6 4.5h12a2.5 2.5 0 0 1 2.5 2.5v7.5a2.5 2.5 0 0 1-2.5 2.5h-6.5l-4.5 3.5v-3.5H6a2.5 2.5 0 0 1-2.5-2.5V7A2.5 2.5 0 0 1 6 4.5z"/><path d="M10 9.4a2 2 0 1 1 2.9 1.8c-.6.3-.9.7-.9 1.3"/><path d="M12 14.6v.1"/>';
 
 /** What the button shows and says for a state with questions: its lane, label, count, name and announcement. */
 function describe(s: QuestionsState): { lane: Lane; label: string; count: number; name: string; say: string } {
@@ -80,7 +77,8 @@ export class QuestionsButton {
     this.labelEl.textContent = d.label;
     this.countEl.textContent = String(d.count);
     if (this.iconLane !== d.lane) {
-      const svg = icon(d.lane === 'urgent' ? STOP : BUBBLE);
+      // A stop sign with an exclamation (the agent cannot go on), a speech bubble with a question mark (nothing waits on it).
+      const svg = duotone(d.lane === 'urgent' ? 'urgent' : 'ask');
       svg.dataset.icon = d.lane === 'urgent' ? 'stop' : 'bubble';
       svg.classList.add('tx-qbtn-icon');
       this.el.querySelector('svg')?.remove();
