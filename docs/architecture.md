@@ -513,6 +513,11 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   the new agent's task), then the reviewed hire, whose one Hire files the handoff (`ui/handoffFiling.ts`: one op,
   followed on the source worker until filed, its path read back with `handoff.get`) and hires with
   `world/handoff.hireWithHandoffTask(path, task)`; game only, the bridge is unchanged (decisions.md, 2026-10-25).
+  #219: for an agent's or LLM's handoff on a bridge with `world.handoff_hires`, the bridge hires instead (`protocol.md`
+  "Hire with handoff in the background"): the review reviews the task's secrets, sends one `worker.handoff` with `hire`
+  and follows the op's record (`world/handoffHire.ts`); closed, `ui/handoffHires.ts` (one per app, the browser's
+  `origin`) says how it ended, once, and gives the task back. Every client holds the desk and shows the source card's
+  line; a literal handoff, or a bridge without them, keeps #198's flow.
 - **Ask the agent** (#224, part 2 of #11; `protocol.md` "Ask the agent"): `worker.handoff` mode `agent` and the composer's
   exact `/handoff [instruction]` (read in `startPrompt` before translation) ask an idle or done worker's own agent to
   write a handoff with its `handoff` skill. `internal/server/agenthandoff.go` owns the flow: the catalog lists the skill
