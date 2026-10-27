@@ -5844,29 +5844,42 @@ type: a bridge from before #219 refuses the field.
    first prompt is #198's, exactly:
    `First read the handoff here: <path> and then follow these instructions:\n\n<task>` (the task's blank lines before
    and after dropped, nothing else changed), then the herdr hiring instructions when asked, as `worker.hire` sends them.
+   Only the task is translated for the harness (#39, as a plain hire's task is): the line with the path and the herdr
+   lines go as they are.
    The hire is `worker.hire`'s, audited as a `worker.hire` row of the client that asked (`req_id` `handoff:<op>`, the
    task by its length), answered to nobody. A refusal or a failed hire ends the record `failed` with the path set: the
    handoff stays in the cabinet. A hire that started ends it `hired` with `hired`, `prompted`, `delivery`,
    `prompt_error` as `HireResult` has them; an uncertain delivery (`unknown`) is reported, never retried.
 4. **Send home** (`send_home`) runs only after `hired` with `prompted: true`, through #223's send home; otherwise it is
    skipped ("The new agent was not hired; <source> stays."). `send_home_result` / `send_home_reason` are on the record
-   and on the source's `agent_handoff` / `llm_handoff`.
+   (on every record that asked for it and ended without a hire, before the filing too) and on the source's
+   `agent_handoff` / `llm_handoff`.
 5. **No handoff, no hire.** The handoff failing (`handoff_failed`, its reason), timing out (`timeout`), cancelled
-   (`cancelled`, state `cancelled`), the source worker gone before it filed (`source_gone`; an LLM job already filing
-   still files and hires), the target floor gone (`floor_gone`; a later filing does not hire): the record ends with
-   that code and a reason sentence, its task's files released, the desk free. **`worker.handoff_cancel {worker, op}`**
+   (`cancelled`, state `cancelled`), the source worker gone before it filed, or (agent mode) its session gone away
+   (`source_gone`; an LLM job already filing still files and hires), the target floor gone (`floor_gone`; a later
+   filing does not hire): the record ends with that code and a reason sentence, its task's files released (a
+   `hire.interpret` hand-over's too: it does not go back to pending), the desk free. **`worker.handoff_cancel {worker, op}`**
    (the review's Cancel request and the F dialog's) cancels the request or job and its pending hire in the same step;
    once filing began it is `busy` as before and the hire follows; once filed the hire is not cancelled.
 6. **Replays.** The same op with the same arguments answers its request or job (`existing: true`) and the record;
-   with another `hire`, none, or other arguments (agent mode included) it is `bad_request` ("This request was already
-   sent with other settings."); an op that had no hire, given one, too. Repeated filing callbacks, reconnects and
-   `since_seq` replays never start a second hire: only the hub's `waiting → hiring` does.
+   with another `hire`, none, or other arguments (agent mode included; the reviews' decisions and the hand-over are
+   arguments, the scans' revisions are not) it is `bad_request` ("This request was already sent with other
+   settings."); an op that had no hire, given one, too. Two identical requests sent at once both get the request, one
+   of them as `existing`, and only one is sent. After a restart, or once the record left the world, the arguments are
+   compared on what the marker keeps (the source, the mode, `send_home`, the floor, the desk, the label, the harness,
+   the model, the effort, the origin); the ack then carries the restored record, or no `handoff_hire` once it left. A
+   request refused at acceptance (`secrets_review_required`, `secrets_stale`, …) leaves nothing: the same op, reviewed
+   again, is a new request. Repeated filing callbacks, reconnects and `since_seq` replays never start a second hire:
+   only the hub's `waiting → hiring` does.
 7. **Restart.** The record, the task and the hold live in the bridge's memory. The agent request or LLM job row keeps
-   a marker (`hire`: floor, desk, label, harness, model, effort, origin, the source's name, send home, accepted at;
-   never the task, a secret or review data) until the record ends. A bridge that starts with a marked row publishes
-   its record `failed` with `interrupted`, holds no desk and never hires for it; a resumed agent request that files
-   later sets the record's `path` and skips the send home. The marker is cleared then (a pending agent request's when it
-   settles, so a second restart meanwhile publishes the same).
+   a marker (`hire`: floor, desk, label, harness, model, effort, origin, the source's name, send home, accepted at,
+   and while the hire waits the ids of the pending owners of its task's protected files; never the task, a secret or
+   review data). When the record ends the marker says how (`state`, `code`, `reason`) and stays: the request had a
+   hire, so a resumed one never sends its source home on its own, and a replay is compared with it. A bridge that
+   starts with a marker whose hire had not ended publishes the record `failed` with `interrupted` (the marker then says
+   so), releases its task's files, holds no desk and never hires for it; a pending agent request whose hire ended
+   (before the restart, or interrupted by an earlier one) is published as it ended. A resumed agent request that files
+   later sets the record's `path` and skips the send home.
 
 **`HandoffHire`** `{op, worker, worker_name, mode, floor, desk_index, label?, harness, model, effort, origin?, state,
 code?, reason?, handoff?, path?, hired?, prompted?, delivery?, prompt_error?, send_home?, send_home_result?,
@@ -5875,7 +5888,8 @@ of `handoff_failed`, `timeout`, `cancelled`, `source_gone`, `floor_gone`, `desk_
 `secrets_stale`, `hire_failed`, `interrupted`; `reason` one sentence, shown as is. `failed` with `path`: filed, not
 hired. Never the task, the instruction, a secret or review data. Retention: an ended record stays 10 minutes after
 `ended_at`, then `handoff_hire.removed`; at most 50 ended ones (the oldest go first); `waiting` and `hiring` ones
-always stay. The audit row of `worker.handoff` has the hire's fields with the task by its length.
+always stay. The audit row of `worker.handoff` has the hire's fields with the task by its length, its review by its
+counts and a hand-over (`secrets_pending`) by its presence, never its token (as `worker.hire`'s row has them).
 
 ### Scheduled agents
 
