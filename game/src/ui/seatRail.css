@@ -393,6 +393,11 @@
 :root[data-ui-theme='ubuntu'] .seat-rail {
   padding-top: 6px;
 }
+/* The header's run chips (seat.css, #207) reach Ubuntu's 32 px like its other controls (Stand up is 34). */
+:root[data-ui-theme='ubuntu'] .seat .seat-manual-run,
+:root[data-ui-theme='ubuntu'] .seat .seat-processes {
+  min-height: 32px;
+}
 /* The files drawer (filesDrawer.css) in the seat: Ubuntu's sizes and its 3px ring 2px outside, room for it in the tree. */
 :root[data-ui-theme='ubuntu'] .seat-main .fdr .btn--ghost {
   min-width: 32px;
