@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CommandRequest } from '../net/protocol';
 import { CommandRequestCard } from './commandRequestCard';
 
-const req: CommandRequest = { key: 'turn', at: 1, commands: [{ command: 'sudo id\nprintf done', cwd: '/work', cwd_named: true, host: 'bridge', host_text: '', why: 'Inspect it', variants: [{ label: 'temporary', command: 'echo temporary', note: 'Ends on stop' }] }] };
+const req: CommandRequest = { key: 'turn', at: 1, commands: [{ command: 'sudo -k id\n', cwd: '/work', cwd_named: true, host: 'bridge', host_text: '', why: 'Inspect it', variants: [{ label: 'temporary', command: 'echo temporary', note: 'Ends on stop' }] }] };
 const button = (el: HTMLElement, name: string) => [...el.querySelectorAll('button')].find((b) => b.textContent === name)!;
 
 describe('command request card', () => {
@@ -13,7 +13,7 @@ describe('command request card', () => {
     card.set(req);
     expect(card.el.textContent).toContain(req.commands[0]!.command);
     expect(card.el.textContent).toContain('named in the reply');
-    expect(card.el.textContent).toContain('sudo -A id');
+    expect(card.el.textContent).toContain('sudo -A -k id');
     expect(card.el.textContent).toContain('Ends on stop');
     button(card.el, 'Run').click(); await Promise.resolve(); await Promise.resolve();
     expect(card.el.textContent).toContain('Unsupported sudo form.');

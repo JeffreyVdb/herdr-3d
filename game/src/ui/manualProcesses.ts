@@ -5,11 +5,11 @@ import { SeatTerminal } from '../laptop/seatTerm';
 import { seatedKey } from '../laptop/keys';
 import type { WorldStore } from '../world/store';
 import { newOp } from '../world/handoff';
+import { askpassEligible, askpassForm } from '../world/askpass';
 import { h, replaceKeepingFocus } from './dom';
 import { failureText } from './messages';
 
-export const askpassEligible = (command: string): boolean => /^sudo [ \t]*[^\s-]/.test(command);
-export const askpassForm = (command: string): string => command.replace(/^sudo(?=\s)/, 'sudo -A');
+export { askpassEligible, askpassForm };
 export function newManualOp(): string {
   try { if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return `mp-${crypto.randomUUID()}`; } catch { /* A non-secure browser context uses the game's regular operation IDs. */ }
   return newOp().replace(/^ho-/, 'mp-');
