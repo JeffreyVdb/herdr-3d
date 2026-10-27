@@ -114,7 +114,8 @@
   line-height: 1.5;
 }
 .mp-well--prompt::before {
-  content: '$';
+  /* Decorative: no text for assistive technology (the alternative text after the slash is empty). */
+  content: '$' / '';
   flex: none;
   padding: calc(9px * var(--mp-k)) 0 calc(9px * var(--mp-k)) calc(12px * var(--mp-k));
   color: var(--accent-text);

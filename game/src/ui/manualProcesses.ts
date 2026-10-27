@@ -149,10 +149,16 @@ export class ManualProcessesDialog {
     const check = h('input', { type: 'checkbox', checked: true });
     const option = h('label', { class: 'mp-askpass' }, check, ' Ask for the password in a dialog');
     const preview = h('pre', { class: 'mp-code' });
-    // #213: a field keeps line breaks as LF: the reviewed command goes as it came (a CR in it too) until it is edited.
-    const value = () => (field.value === command.replace(/\r\n?/g, '\n') ? command : field.value);
+    // #213: a field shows a CR as a line break: the reviewed command goes as it came (its CRs too) until any edit, then
+    // exactly what the field holds (an edit back to the same text included); the notice says so. A change without an
+    // input event counts as an edit too.
+    const shown = field.value;
+    let edited = false;
+    const value = () => { edited ||= field.value !== shown; return edited ? field.value : command; };
+    const crNote = /\r/.test(command) ? h('p', { class: 'mp-detect', id: 'mp-cr-note' }, 'This command has carriage returns, shown here as line breaks. Run it unedited and they are kept; once you edit it, it is sent as shown.') : null;
     const update = () => { option.hidden = !askpassEligible(value()); preview.hidden = option.hidden || !check.checked; preview.textContent = askpassForm(value()); };
-    field.addEventListener('input', update); check.addEventListener('change', update); update();
+    if (crNote) field.setAttribute('aria-describedby', crNote.id);
+    field.addEventListener('input', () => { edited = true; update(); }); check.addEventListener('change', update); update();
     const run = h('button', { class: 'btn btn--primary', onclick: async () => {
       const text = value();
       if (run.disabled || !text.trim()) return;
@@ -166,7 +172,7 @@ export class ManualProcessesDialog {
       else if ((r.code === 'bad_args' || r.code === 'bad_request') && !option.hidden && check.checked) { check.checked = false; update(); this.status.textContent = `${r.message} You can run without the password dialog.`; }
       else this.status.textContent = r.code === 'stale' ? 'This request is out of date.' : failureText('manual_process.start', r.code, r.message);
     } }, 'Run');
-    this.body.replaceChildren(h('p', {}, `Machine: ${this.host.store.host || 'Bridge host'}`), h('label', {}, 'Command', field), h('label', {}, 'Folder', folder), option, preview, h('div', { class: 'mp-actions' }, h('button', { class: 'btn', onclick: () => this.list() }, 'Back'), run));
+    this.body.replaceChildren(h('p', {}, `Machine: ${this.host.store.host || 'Bridge host'}`), h('label', {}, 'Command', field), ...(crNote ? [crNote] : []), h('label', {}, 'Folder', folder), option, preview, h('div', { class: 'mp-actions' }, h('button', { class: 'btn', onclick: () => this.list() }, 'Back'), run));
     field.focus();
   }
   private async openTerminal(p: ManualProcess): Promise<void> {

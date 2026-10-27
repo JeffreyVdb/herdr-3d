@@ -284,7 +284,10 @@ export class App {
   private readonly attentionOwn = new AttentionChip({ ...this.attentionHost, list: (from) => { const id = this.laptops.seated; if (id) this.manualProcesses.open(id, from); } }, { names: false, label: 'This worker’s manual runs asking for you', cls: 'mpa--own' });
   private readonly attentionOthers = new AttentionChip(this.attentionHost, { names: true, label: 'Other workers’ manual runs asking for you', cls: 'mpa--others' });
   /** #213: the episodes announced once (a toast, a desktop notification), by id: a reconnect's snapshot repeats none. */
-  private readonly attentionEpisodes = new AttentionEpisodes();
+  private readonly attentionEpisodes = new AttentionEpisodes(sessionStore());
+  /** #213: the toast (`Hud.toast`'s token) and the desktop notifications announcing an open episode, by attention id. */
+  private readonly attentionToasts = new Map<string, number>();
+  private readonly attentionNotes = new Set<string>();
   /** #223: the filing dialog and the floor's filing cabinet. */
   readonly handoffDialog: HandoffDialog;
   readonly cabinet: Cabinet;
@@ -1130,8 +1133,9 @@ export class App {
 
   /**
    * #213: the runs asking for you, on the chips (top bar: all; seat: this worker's beside its process control, the
-   * others'), and a toast or a desktop notification for each new episode, once per page (a reconnect repeats none).
-   * Without a connection the chips go: their Respond could not answer anything.
+   * others'), and a toast or a desktop notification for each new episode, once per browser tab (a reconnect or a reload
+   * repeats none). An episode that ends takes its toast and notification with it. Without a connection the chips, the
+   * toast and the notifications all go: their Respond could not answer anything.
    */
   private syncAttention(): void {
     const list = this.conn.phase === 'live' ? openAttention(this.store.manualProcesses.all()) : [];
@@ -1140,10 +1144,23 @@ export class App {
     this.attentionOwn.set(seated ? list.filter((r) => r.process.worker === seated) : []);
     this.attentionOthers.set(seated ? list.filter((r) => r.process.worker !== seated) : []);
     this.seatBar.attention(seated ? list.filter((r) => r.process.worker === seated).length : 0, seated ? list.filter((r) => r.process.worker !== seated).length : 0);
-    if (this.conn.phase !== 'live') return;
+    // Not live: no episode update (the reconnect's snapshot brings no new episode), only the alerts go.
+    if (this.conn.phase !== 'live') return this.endAttentionAlerts([...this.attentionToasts.keys(), ...this.attentionNotes]);
     const { fresh, gone } = this.attentionEpisodes.update(list);
-    this.notify.close(gone.map((id) => `mp:${id}`));
+    this.endAttentionAlerts(gone);
     if (fresh.length) this.announceAttention(fresh);
+  }
+
+  /** #213: the toast and desktop notification of these episodes go (the toast only while it is still the one up). */
+  private endAttentionAlerts(ids: Iterable<string>): void {
+    const tags: string[] = [];
+    for (const id of ids) {
+      const token = this.attentionToasts.get(id);
+      if (token !== undefined) this.hud.dismissToast(token);
+      this.attentionToasts.delete(id);
+      if (this.attentionNotes.delete(id)) tags.push(`mp:${id}`);
+    }
+    this.notify.close(tags);
   }
 
   /** A new episode: a desktop notification with the game in the background, else a toast with the action. No terminal text, no secret. */
@@ -1153,12 +1170,17 @@ export class App {
     let shown = false;
     for (const r of fresh) {
       const where = `${r.process.worker_name || r.process.worker} · ${shortCommand(r.process)} · ${r.process.host}`;
-      shown = this.notify.show({ title: attentionLabel(r.attention), body: where, tag: `mp:${r.attention.id}`, onClick: () => act(r) }, desktop) === 'shown' || shown;
+      if (this.notify.show({ title: attentionLabel(r.attention), body: where, tag: `mp:${r.attention.id}`, onClick: () => act(r) }, desktop) !== 'shown') continue;
+      this.attentionNotes.add(r.attention.id);
+      shown = true;
     }
     if (shown) return;
     const one = fresh.length === 1 ? fresh[0]! : null;
-    if (one) this.hud.toast(`${attentionLabel(one.attention)} · ${one.process.worker_name || one.process.worker} · ${shortCommand(one.process, 28)}`, 9000, 'info', false, { label: attentionAction(one.attention), run: () => act(one, document.activeElement instanceof HTMLElement ? document.activeElement : null) });
-    else this.hud.toast(`${fresh.length} manual runs ask for you`, 9000, 'info', false, { label: 'Show runs', run: () => this.manualProcesses.open(null) });
+    const token = one
+      ? this.hud.toast(`${attentionLabel(one.attention)} · ${one.process.worker_name || one.process.worker} · ${shortCommand(one.process, 28)}`, 9000, 'info', false, { label: attentionAction(one.attention), run: () => act(one, document.activeElement instanceof HTMLElement ? document.activeElement : null) })
+      : this.hud.toast(`${fresh.length} manual runs ask for you`, 9000, 'info', false, { label: 'Show runs', run: () => this.manualProcesses.open(null) });
+    // Keyed by each of its episodes: the count toast goes once any of them ends (its count would be wrong then).
+    for (const r of fresh) this.attentionToasts.set(r.attention.id, token);
   }
 
   // ---- world -> views --------------------------------------------------------
@@ -1600,7 +1622,7 @@ export class App {
    */
   private onPing(p: PingOut): void {
     const s = this.inboxPrefs.settings;
-    if (p.t === 'away') return this.hud.toast(awayText(p.needs, p.finished), 5200, 'info', true);
+    if (p.t === 'away') return void this.hud.toast(awayText(p.needs, p.finished), 5200, 'info', true);
     if (p.t === 'ping' && p.chime && s.chime) this.audio.playUi(p.kind, s.chimeVolume);
     let text: { title: string; body: string };
     let shown: ReturnType<DesktopNotify['show']>;
@@ -5076,6 +5098,15 @@ function zero(): Counts {
 function safeStorage(): Storage | null {
   try {
     return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** #213: this browser tab's own, so a reload remembers what it announced and a new tab starts afresh. */
+function sessionStore(): Storage | null {
+  try {
+    return window.sessionStorage;
   } catch {
     return null;
   }

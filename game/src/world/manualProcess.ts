@@ -96,10 +96,12 @@ export function attentionLabel(a: ManualAttention): string {
   return a.confidence === 'confirmed' ? 'Waiting for input' : 'May be waiting for input';
 }
 
-/** The reason code in words; an unknown code says nothing more than the label. */
+const REASONS = new Map([['tty_read', 'It is reading from its terminal'], ['tty_wait', 'It seems to wait on its terminal'], ['sudo_terminal', 'sudo runs in its terminal, not in the password dialog']]);
+
+/** The reason code in words; an unknown code (`constructor` too: a Map, no prototype) says nothing more than the label. */
 export function attentionDetail(a: ManualAttention): string {
   if (a.kind === 'credential') return 'sudo asked for the password in the dialog';
-  return ({ tty_read: 'It is reading from its terminal', tty_wait: 'It seems to wait on its terminal', sudo_terminal: 'sudo runs in its terminal, not in the password dialog' } as Record<string, string>)[a.reason] ?? '';
+  return REASONS.get(a.reason) ?? '';
 }
 
 /** The direct action: answer the password dialog, or open the run's terminal. */
@@ -125,21 +127,50 @@ export function detectionNote(p: ManualProcess): string | null {
   return null;
 }
 
+/** Where the announced ids are kept: the tab's `sessionStorage` in the game (null: none, or it throws). */
+export type EpisodeStore = Pick<Storage, 'getItem' | 'setItem'>;
+
+const SEEN_KEY = 'h3d.manual.attention.seen';
+const SEEN_MAX = 200;
+
 /**
- * The episodes this page has announced (a toast, a desktop notification), by `attention.id`, for the page's whole life:
- * a reconnect's snapshot brings the same ids back and announces nothing. `gone` lists the ids no longer open.
+ * The episodes this browser tab has announced (a toast, a desktop notification), by `attention.id`: a reconnect's
+ * snapshot, or a reload (the ids are in the tab's storage), brings the same ids back and announces nothing; a new tab
+ * starts afresh. `gone` lists the ids no longer open; an episode that was seen open and then ended is forgotten (its id
+ * does not come back: a new request or new input is a new id). Bounded, oldest first.
  */
 export class AttentionEpisodes {
-  private readonly seen = new Set<string>();
+  private readonly seen: Set<string>;
   private open = new Set<string>();
+  constructor(private readonly store: EpisodeStore | null = null) {
+    this.seen = new Set(this.load());
+  }
   update(list: readonly RunAttention[]): { fresh: RunAttention[]; gone: string[] } {
     const fresh = list.filter((r) => !this.seen.has(r.attention.id));
     for (const r of fresh) this.seen.add(r.attention.id);
-    // Bounded: the oldest ids go first (a Set keeps insertion order).
-    for (const id of this.seen) { if (this.seen.size <= 500) break; this.seen.delete(id); }
     const now = new Set(list.map((r) => r.attention.id));
     const gone = [...this.open].filter((id) => !now.has(id));
     this.open = now;
+    for (const id of gone) this.seen.delete(id);
+    // Bounded: the oldest ids that are not open go first (a Set keeps insertion order), such as ones a reload brought
+    // back that ended meanwhile.
+    for (const id of this.seen) { if (this.seen.size <= SEEN_MAX) break; if (!now.has(id)) this.seen.delete(id); }
+    if (fresh.length || gone.length) this.save();
     return { fresh, gone };
+  }
+  private load(): string[] {
+    try {
+      const v: unknown = JSON.parse(this.store?.getItem(SEEN_KEY) ?? '[]');
+      return Array.isArray(v) ? v.filter((id): id is string => typeof id === 'string' && !!id && id.length <= 256).slice(-SEEN_MAX) : [];
+    } catch {
+      return [];
+    }
+  }
+  private save(): void {
+    try {
+      this.store?.setItem(SEEN_KEY, JSON.stringify([...this.seen]));
+    } catch {
+      // Full or blocked: this page still remembers.
+    }
   }
 }

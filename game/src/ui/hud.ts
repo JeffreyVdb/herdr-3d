@@ -155,6 +155,8 @@ export class Hud {
   /** #64 schedules: what a click on the toast up now does (null: a plain toast, which takes no pointer). */
   private toastAction: ToastAction | null = null;
   private toastSoft = false;
+  /** #213: which toast is up (`toast()`'s token), so one that went stale is hidden without touching a newer one. */
+  private toastToken = 0;
   private listeners = new Map<HudAction, Array<() => void>>();
   private promptKey = '';
   /** M15: what the radio is tuned to, for its look-at bar (the last target, to redraw it when this changes). */
@@ -811,11 +813,12 @@ export class Hud {
 
   /**
    * A message over the scene. #64 schedules: with `action` the toast is a control: a click on it (or its button, the
-   * keyboard's way, named `action.label`) runs it and hides the toast; a plain toast takes no pointer.
+   * keyboard's way, named `action.label`) runs it and hides the toast; a plain toast takes no pointer. Returns the toast's
+   * token for `dismissToast` (0: not shown).
    */
-  toast(msg: string, ms = 3200, kind: ToastKind = 'info', soft = false, action?: ToastAction): void {
+  toast(msg: string, ms = 3200, kind: ToastKind = 'info', soft = false, action?: ToastAction): number {
     // A soft toast (M15's "now playing") never covers a message that is still up.
-    if (soft && !this.toastEl.hidden && !this.toastSoft) return;
+    if (soft && !this.toastEl.hidden && !this.toastSoft) return 0;
     this.toastSoft = soft;
     this.toastAction = action ?? null;
     if (action) {
@@ -837,6 +840,12 @@ export class Hud {
     requestAnimationFrame(() => this.toastEl.hidden || this.placeToast());
     if (this.toastTimer) clearTimeout(this.toastTimer);
     this.toastTimer = setTimeout(() => this.hideToast(), ms);
+    return ++this.toastToken;
+  }
+
+  /** #213: hides the toast `token` names if it is still the one up (an attention toast whose episode ended); never another. */
+  dismissToast(token: number): void {
+    if (token && token === this.toastToken && !this.toastEl.hidden) this.hideToast();
   }
 
   private hideToast(): void {

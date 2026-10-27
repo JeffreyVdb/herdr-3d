@@ -39,6 +39,25 @@ describe('Hud.toast with an action (#64 schedules)', () => {
     expect(ran).toEqual(['a']);
   });
 
+  it('#213: dismissToast hides only the toast its token names, while it is up', () => {
+    const hud = new Hud(document.body);
+    const ran: string[] = [];
+    const a = hud.toast('Waiting for input · Pebble · read x', 9000, 'info', false, { label: 'Open terminal', run: () => ran.push('a') });
+    expect(a).toBeGreaterThan(0);
+    hud.dismissToast(a);
+    expect(hud.toastState()).toMatchObject({ shown: false, action: null });
+    const b = hud.toast('Password requested · Zippy · sudo id', 9000, 'info', false, { label: 'Respond', run: () => ran.push('b') });
+    const other = hud.toast('Could not save.', 4000, 'error');
+    hud.dismissToast(b);
+    hud.dismissToast(0);
+    expect(hud.toastState()).toMatchObject({ shown: true, text: 'Could not save.' });
+    // A soft toast that was not shown has no token.
+    expect(hud.toast('Now playing', 3000, 'info', true)).toBe(0);
+    hud.dismissToast(other);
+    expect(hud.toastState().shown).toBe(false);
+    expect(ran).toEqual([]);
+  });
+
   it('an action toast that times out takes no click', () => {
     const hud = new Hud(document.body);
     const el = document.querySelector<HTMLElement>('.toast')!;

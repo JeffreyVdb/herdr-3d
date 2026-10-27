@@ -63,6 +63,8 @@ describe('#213 attention', () => {
     const odd = attentionOf(run({ attention: input('confirmed', 'some_new_code') }))!;
     expect(attentionLabel(odd)).toBe('Waiting for input');
     expect(attentionDetail(odd)).toBe('');
+    // Object.prototype's names are unknown codes too.
+    for (const reason of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) expect(attentionDetail(attentionOf(run({ attention: input('confirmed', reason) }))!)).toBe('');
     for (const bad of [null, 'x', {}, { ...input('confirmed'), id: '' }, { ...input('confirmed'), since: 'now' }, { ...input('confirmed'), kind: 'password' }, input('authenticated'), { id: 'x', kind: 'credential', confidence: 'authenticated', reason: 'askpass', since: 1 }, { ...input('confirmed'), expires_at: 'soon' }])
       expect(attentionOf(run({ attention: bad as never }))).toBeNull();
   });
@@ -88,8 +90,48 @@ describe('#213 attention', () => {
     const one = openAttention([run({ attention: input('confirmed') })]);
     expect(e.update(one).fresh).toHaveLength(1);
     expect(e.update(one).fresh).toHaveLength(0);
-    expect(e.update([])).toEqual({ fresh: [], gone: ['ep1'] });
-    expect(e.update(one).fresh).toHaveLength(0); // the same episode after a reconnect
-    expect(e.update(openAttention([run({ attention: input('confirmed', 'tty_read', 'ep2') })])).fresh.map((r) => r.attention.id)).toEqual(['ep2']);
+    expect(e.update(one).fresh).toHaveLength(0); // the same episode in a reconnect's snapshot (nothing is updated while down)
+    expect(e.update(openAttention([run({ attention: input('confirmed', 'tty_read', 'ep2') })]))).toMatchObject({ fresh: [{ attention: { id: 'ep2' } }], gone: ['ep1'] });
+    expect(e.update([])).toEqual({ fresh: [], gone: ['ep2'] });
+  });
+  // A Storage-like map that can be made to throw.
+  const store = (init: Record<string, string> = {}) => {
+    const m = new Map(Object.entries(init));
+    const s = { broken: false, getItem: (k: string) => { if (s.broken) throw new Error('blocked'); return m.get(k) ?? null; }, setItem: (k: string, v: string) => { if (s.broken) throw new Error('quota'); m.set(k, v); }, m };
+    return s;
+  };
+  const episode = (id: string) => openAttention([run({ id, attention: input('confirmed', 'tty_read', id) })]);
+  it('remembers announced episodes in the tab (a reload announces none of them again); a new tab announces once', () => {
+    const tab = store();
+    expect(new AttentionEpisodes(tab).update(episode('ep1')).fresh).toHaveLength(1);
+    // The reload: a new page, the same tab's storage. Its first list may still be empty (before the snapshot).
+    const reloaded = new AttentionEpisodes(tab);
+    expect(reloaded.update([])).toEqual({ fresh: [], gone: [] });
+    expect(reloaded.update(episode('ep1')).fresh).toHaveLength(0);
+    expect(new AttentionEpisodes(store()).update(episode('ep1')).fresh).toHaveLength(1); // a new tab
+    // An episode seen and then ended is forgotten, from the storage too.
+    expect(reloaded.update([]).gone).toEqual(['ep1']);
+    expect(JSON.parse(tab.m.get('h3d.manual.attention.seen')!)).toEqual([]);
+  });
+  it('keeps the remembered ids bounded and survives storage that is malformed or throws', () => {
+    // A reload brings back ids that ended meanwhile (never seen open again, so never gone): the oldest go.
+    const ended = Array.from({ length: 250 }, (_, i) => `old${i}`);
+    const tab = store({ 'h3d.manual.attention.seen': JSON.stringify([...ended, 'live']) });
+    const e = new AttentionEpisodes(tab);
+    expect(e.update([...episode('live'), ...episode('new')]).fresh.map((r) => r.attention.id)).toEqual(['new']);
+    const kept = JSON.parse(tab.m.get('h3d.manual.attention.seen')!) as string[];
+    expect(kept).toHaveLength(200);
+    expect(kept.slice(-2)).toEqual(['live', 'new']);
+    expect(kept).not.toContain('old0');
+    // Open episodes are never dropped for the bound, however many.
+    const many = ended.flatMap((id) => episode(id));
+    const m = new AttentionEpisodes(store());
+    expect(m.update(many).fresh).toHaveLength(250);
+    expect(m.update(many).fresh).toHaveLength(0);
+    for (const bad of ['{', '{"a":1}', '[1,null,""]', 'null']) expect(new AttentionEpisodes(store({ 'h3d.manual.attention.seen': bad })).update(episode('x')).fresh).toHaveLength(1);
+    const broken = store(); broken.broken = true;
+    const b = new AttentionEpisodes(broken);
+    expect(b.update(episode('x')).fresh).toHaveLength(1);
+    expect(b.update(episode('x')).fresh).toHaveLength(0); // this page still remembers
   });
 });

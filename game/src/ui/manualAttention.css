@@ -109,9 +109,49 @@
   transform: rotate(-90deg);
 }
 
-/* A narrow bar keeps the tape and the action; whose and which command stay in the title and the action's name. */
+/*
+ * A narrow screen: one run's chip takes two lines, the tape on the first, then whose run and which command beside the
+ * action, so the worker and the command stay readable however long the tape's words are (an ellipsis cuts the command
+ * first). In the wrapped top bar only the chip gives way: the connection and the menu beside it stay whole.
+ */
 @media (max-width: 760px) {
-  .mpa-what {
-    display: none;
+  .mpa:not([hidden]):not(:has(.mpa-count)) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: 'tape tape' 'what act';
+    align-items: center;
+    gap: 4px 8px;
+    height: auto;
+    padding: 5px 3px 3px 8px;
+    border-radius: 12px;
+  }
+  .mpa:not(:has(.mpa-count)) .mpa-tape {
+    grid-area: tape;
+    justify-self: start;
+    max-width: 100%;
+    min-width: 0;
+  }
+  .mpa:not(:has(.mpa-count)) .mpa-tape > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mpa:not(:has(.mpa-count)) .mpa-what {
+    grid-area: what;
+  }
+  .mpa:not(:has(.mpa-count)) .mpa-act {
+    grid-area: act;
+  }
+}
+@media (max-width: 900px) {
+  .topbar-actions:has(> .mpa--top:not([hidden])) {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+  .topbar-actions > .mpa--top {
+    flex: 0 1 auto;
+  }
+  .topbar-actions > .mpa--top ~ * {
+    flex-shrink: 0;
   }
 }

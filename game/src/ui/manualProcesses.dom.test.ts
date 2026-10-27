@@ -100,6 +100,45 @@ describe('manual process list', () => {
     expect(send.mock.calls[0]![1]).toMatchObject({ command, cwd: '/srv', askpass: true, source: { kind: 'manual' } });
     dlg.close();
   });
+  it('#213: Edit and run… with carriage returns says so; once edited it sends exactly the field, even edited back', async () => {
+    const store = new WorldStore(); store.workers.set('w', { id: 'w', name: 'Worker', cwd: '/work' } as never);
+    const send = vi.fn().mockResolvedValue({ ok: true, data: {} });
+    const dlg = new ManualProcessesDialog(document.body, { store, send, input: vi.fn(), watch: vi.fn(), changed: vi.fn(), external: vi.fn() });
+    const command = "sudo -k printf 'a\rb'\r\n";
+    const field = () => document.querySelector<HTMLTextAreaElement>('.mp-command-input')!;
+    const type = (text: string) => { field().value = text; field().dispatchEvent(new Event('input')); };
+    const sent = async () => { button('Run').click(); await Promise.resolve(); await Promise.resolve(); return (send.mock.calls.at(-1)![1] as { command: string }).command; };
+    const note = () => document.querySelector('#mp-cr-note');
+    // Unedited: the original bytes, and the notice.
+    dlg.entry('w', command);
+    expect(note()?.textContent).toMatch(/carriage returns, shown here as line breaks.*unedited.*kept.*sent as shown/);
+    expect(field().getAttribute('aria-describedby')).toBe('mp-cr-note');
+    expect(await sent()).toBe(command);
+    // Another character edited: exactly the field (LF where the CRs were), and the preview follows the same bytes.
+    dlg.entry('w', command);
+    type(field().value.replace('printf', 'echo'));
+    expect(await sent()).toBe("sudo -k echo 'a\nb'\n");
+    dlg.entry('w', 'sudo -k id\r\n');
+    expect(document.querySelector('.mp-dialog pre')!.textContent).toBe('sudo -A -k id\r\n');
+    type(field().value.replace('id', 'whoami'));
+    expect(document.querySelector('.mp-dialog pre')!.textContent).toBe('sudo -A -k whoami\n');
+    expect(await sent()).toBe('sudo -k whoami\n');
+    // Replaced with LF-only text: that text.
+    dlg.entry('w', command);
+    type('sudo -k id\n');
+    expect(await sent()).toBe('sudo -k id\n');
+    // Edited, then back to the text as first shown: still edited, the field's text (no CR comes back).
+    dlg.entry('w', command);
+    const shown = field().value;
+    type('x'); type(shown);
+    expect(await sent()).toBe(shown);
+    expect(shown).not.toContain('\r');
+    // No CR: no notice.
+    dlg.entry('w', 'sudo id\n');
+    expect(note()).toBeNull();
+    expect(field().hasAttribute('aria-describedby')).toBe(false);
+    dlg.close();
+  });
   it('offers askpass only for top-level sudo followed by a non-flag word', () => {
     expect(askpassEligible('sudo id')).toBe(true);
     expect(askpassEligible('sudo  \tid')).toBe(true);

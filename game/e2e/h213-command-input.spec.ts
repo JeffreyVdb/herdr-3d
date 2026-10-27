@@ -37,6 +37,8 @@ async function start(page: Page, worker: string, op: string, command: string, as
   return (r.data as { process: { id: string } }).process.id;
 }
 const attention = (page: Page, id: string, kind: 'confirmed' | 'uncertain' | 'sudo' | 'odd' | 'clear') => page.evaluate((a) => window.__h3d.simManual('sim.manual_attention', a), { id, attention: kind });
+/** The attention toast up now (its text), or null: none, or another toast. */
+const attentionToast = (page: Page) => page.evaluate(() => { const t = window.__h3d.toastState(); return t?.shown && /^(Password requested|Waiting for input|May be waiting for input) · |manual runs ask for you$/.test(t.text) ? t.text : null; });
 
 /** The contrast of an element's text on the first opaque background behind it (WCAG 2 relative luminance). */
 async function contrast(page: Page, selector: string, prop: 'color' | 'border-top-color' | 'background-color' = 'color'): Promise<number> {
@@ -145,6 +147,8 @@ test('a password request is in the top bar from another floor; Respond opens its
   await dlg.getByLabel('Password').fill('fixture-pass'); await dlg.getByRole('button', { name: 'Submit' }).click();
   await expect(dlg).toBeHidden();
   await expect(chip).toBeHidden();
+  // Its toast went with it (the request ended well within the toast's 9 s).
+  expect(await attentionToast(page)).toBeNull();
   expect(JSON.stringify(await sent(page))).not.toContain('fixture-pass');
   clean();
 });
@@ -162,7 +166,12 @@ test('input: wording by certainty, Open terminal, the seat chips, several runs, 
   await expect(chip.locator('.mpa-tape')).toHaveText('Waiting for input');
   await expect(chip).not.toContainText(/password/i);
   await expect.poll(() => page.evaluate(() => window.__h3d.toastState()?.text)).toBe('Waiting for input · Pebble · read -p "Name? " name');
-  // A reconnect's snapshot brings the same episode back: no toast for it again.
+  // The connection drops: the toast goes with the chips; back live, the same episode is not announced again.
+  await page.evaluate(() => window.__h3d.reconnect());
+  await expect.poll(() => attentionToast(page)).toBeNull();
+  await expect.poll(() => page.evaluate(() => window.__h3d.connection().phase), { timeout: 20_000 }).toBe('live');
+  await expect(chip).toBeVisible();
+  // A reconnect's snapshot brings the same episode back: no toast for it again, and another toast is left alone.
   await page.evaluate(() => window.__h3d.toast('marker'));
   await page.evaluate(() => window.__h3d.reconnect());
   await expect.poll(() => page.evaluate(() => window.__h3d.connection().phase), { timeout: 20_000 }).toBe('live');
@@ -203,6 +212,119 @@ test('input: wording by certainty, Open terminal, the seat chips, several runs, 
   void b;
   clean();
 });
+
+test('an attention toast goes when its episode ends; a reload announces nothing again, a new tab once', async ({ page }) => {
+  const clean = watchErrors(page);
+  const key = `stale-${Date.now()}`;
+  await boot(page, key);
+  const a = await start(page, pebble.id, 's-1', 'read x');
+  await attention(page, a, 'uncertain');
+  await expect.poll(() => attentionToast(page)).toBe('May be waiting for input · Pebble · read x');
+  await attention(page, a, 'clear');
+  await expect(page.locator('.mpa--top')).toBeHidden();
+  expect(await attentionToast(page)).toBeNull();
+  // A new episode, still open across a reload of this tab: the chip is back, the announcement is not.
+  await attention(page, a, 'confirmed');
+  await expect.poll(() => attentionToast(page)).toBe('Waiting for input · Pebble · read x');
+  await page.reload();
+  await page.waitForFunction(() => window.__h3d?.error || (window.__h3d?.ready && window.__h3d.frames >= 3), undefined, { timeout: 60_000 });
+  await expect.poll(() => page.evaluate(() => window.__h3d.connection().phase), { timeout: 20_000 }).toBe('live');
+  await expect(page.locator('.mpa--top .mpa-tape')).toHaveText('Waiting for input');
+  await page.waitForTimeout(800);
+  expect(await attentionToast(page)).toBeNull();
+  // Another tab has not announced it: it does, once.
+  const other = await page.context().newPage();
+  await boot(other, key);
+  await expect.poll(() => attentionToast(other)).toBe('Waiting for input · Pebble · read x');
+  await other.close();
+  clean();
+});
+
+test('desktop notifications close when their episode ends and when the connection drops', async ({ page }) => {
+  // The page's Notification is a recorder with the permission granted, and the window is not in front (as in m100-notify).
+  await page.addInitScript(() => {
+    const w = window as unknown as { __mpNotes: Array<{ tag: string; title: string; body: string; closed: boolean }> };
+    w.__mpNotes = [];
+    class Recorder {
+      static permission = 'granted';
+      static requestPermission = () => Promise.resolve('granted');
+      onclick: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      private readonly note: { tag: string; title: string; body: string; closed: boolean };
+      constructor(title: string, o: { body: string; tag: string }) {
+        this.note = { tag: o.tag, title, body: o.body, closed: false };
+        w.__mpNotes.push(this.note);
+      }
+      close(): void {
+        this.note.closed = true;
+        this.onclose?.();
+      }
+    }
+    Object.defineProperty(window, 'Notification', { value: Recorder, configurable: true, writable: true });
+    document.hasFocus = () => false;
+  });
+  const clean = watchErrors(page);
+  await boot(page, `notes-${Date.now()}`);
+  const notes = () => page.evaluate(() => (window as unknown as { __mpNotes: Array<{ tag: string; title: string; body: string; closed: boolean }> }).__mpNotes.filter((n) => n.tag.startsWith('mp:')));
+  const a = await start(page, pebble.id, 'n-1', 'read x');
+  const e1 = (await attention(page, a, 'uncertain')).data as { id: string };
+  await expect.poll(notes).toEqual([{ tag: `mp:${e1.id}`, title: 'May be waiting for input', body: 'Pebble · read x · fixture-bridge', closed: false }]);
+  expect(await attentionToast(page)).toBeNull();
+  await attention(page, a, 'clear');
+  await expect.poll(async () => (await notes())[0]?.closed).toBe(true);
+  const e2 = (await attention(page, a, 'confirmed')).data as { id: string };
+  await expect.poll(async () => (await notes()).map((n) => [n.tag, n.closed])).toEqual([[`mp:${e1.id}`, true], [`mp:${e2.id}`, false]]);
+  await page.evaluate(() => window.__h3d.reconnect());
+  await expect.poll(async () => (await notes())[1]?.closed).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__h3d.connection().phase), { timeout: 20_000 }).toBe('live');
+  await expect(page.locator('.mpa--top')).toBeVisible();
+  await page.waitForTimeout(600);
+  expect(await notes()).toHaveLength(2);
+  clean();
+});
+
+for (const ui of ['quiet', 'ubuntu']) {
+  test(`ui=${ui}: the one-run chips say whose run and which command at 390 px and on a desktop`, async ({ page }) => {
+    const clean = watchErrors(page);
+    await boot(page, `chip-${ui}-${Date.now()}`, '', { ui, transcript: ui });
+    await start(page, zippy.id, 'c-1', 'sudo id', true);
+    const top = page.locator('.mpa--top');
+    // The visible start of the chip's "who · what": at least the worker's name and the command's first letters.
+    const shows = (chip: string, text: string) => page.locator(`${chip} .mpa-what`).evaluate((e, want) => {
+      const node = e.firstChild!; const r = document.createRange();
+      r.setStart(node, 0); r.setEnd(node, want.length);
+      return e.textContent!.startsWith(want) && r.getBoundingClientRect().width <= e.clientWidth + 0.5;
+    }, text);
+    const inView = (loc: ReturnType<Page['locator']>) => loc.evaluate((e) => { const r = e.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.width > 0; });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 800 }); await frames(page, 10);
+      await snap(page, `attention-top-${ui}-${width === 390 ? '390' : 'desktop'}`);
+      await expect(top.locator('.mpa-what')).toBeVisible();
+      await expect(top.locator('.mpa-what')).toContainText('Zippy · sudo');
+      expect(await shows('.mpa--top', 'Zippy · sudo')).toBe(true);
+      expect(await inView(top.getByRole('button', { name: 'Respond to the password request of “sudo id” (Zippy)' }))).toBe(true);
+      await noOverflow(page);
+    }
+    // Seated at Pebble with its own run asking too: its chip names the command, the others' chip the worker and command.
+    const own = await start(page, pebble.id, 'c-2', 'read -p "Name? " name');
+    await attention(page, own, 'uncertain');
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await sit(page, pebble.id);
+    // The new run's toast (9 s) would cover the chips in the shots.
+    await expect.poll(() => attentionToast(page), { timeout: 15_000 }).toBeNull();
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 800 }); await frames(page, 10);
+      await snap(page, `attention-seat-${ui}-${width === 390 ? '390' : 'desktop'}`);
+      await expect(page.locator('.mpa--others .mpa-what')).toBeVisible();
+      expect(await shows('.mpa--others', 'Zippy · sudo')).toBe(true);
+      expect(await shows('.mpa--own', 'read')).toBe(true);
+      expect(await inView(page.locator('.mpa--others .mpa-act'))).toBe(true);
+      expect(await inView(page.locator('.mpa--own .mpa-act'))).toBe(true);
+      await noOverflow(page);
+    }
+    clean();
+  });
+}
 
 test('an unknown reason is shown generically', async ({ page }) => {
   await boot(page, `odd-${Date.now()}`);

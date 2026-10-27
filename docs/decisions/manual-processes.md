@@ -92,8 +92,10 @@ count that opens the list of all manual processes) and, while seated, a line und
 run first, its process control marked, then the other workers'). The words follow kind and certainty: "Password
 requested" (Respond: the run's request-bound dialog, from anywhere), "Waiting for input" and "May be waiting for input"
 (Open terminal: that run's terminal); an unknown reason code is shown as its kind alone. A new episode id is announced
-once per page: a desktop notification while the game is in the background (the inbox's permission and setting), else
-a toast with the action; a reconnect's snapshot announces nothing again. The texts name the worker, the host and the
+once per browser tab: a desktop notification while the game is in the background (the inbox's permission and
+setting), else a toast with the action; a reconnect's snapshot, or a reload of the tab (the announced ids are in its
+`sessionStorage`, bounded), announces nothing again. An episode that ends takes its toast and notification with it, and
+a dropped connection takes them all with the chips. The texts name the worker, the host and the
 first line of the user's own reviewed command, never terminal output or the credential prompt. With `hints` or `none`
 the run's row and its terminal view say that other prompts may not be detected and the terminal is the way to answer.
 
