@@ -398,6 +398,19 @@ describe('the fixture’s prompt secrets on every other route (#108 round 2)', (
     expect(ack).toMatchObject({ t: 'ack', data: { protected: 1, request: { instruction: expect.stringMatching(/^focus on the deploy, TOKEN=\[secret in file [^\]]+\]$/) } } });
   });
 
+  it('#219 worker.handoff with hire: a replay is the same hire only with the same task as typed, its secrets protected or not', async () => {
+    const e = world({ secretsOn: true, handoffHires: true });
+    const pebble = e.id('Pebble');
+    const floor = (e.snap.world.workers as unknown as Array<{ id: string; session: string; floor?: string }>).find((w) => w.id === pebble)!;
+    const hire = (prompt: string) => ({ floor: floor.floor ?? floor.session, desk_index: 5, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', prompt, origin: 'tab-1', secrets: reviewOf(e, prompt, 'p') });
+    const task = 'deploy it, TOKEN=abc123xyz';
+    expect(await e.answer('worker.handoff', { worker: pebble, mode: 'agent', op: 'op-1', hire: hire(task) })).toMatchObject({ t: 'ack', data: { handoff_hire: { op: 'op-1', state: 'waiting' } } });
+    // The same task, reviewed again (its files named anew): the same request.
+    expect(await e.answer('worker.handoff', { worker: pebble, mode: 'agent', op: 'op-1', hire: hire(task) })).toMatchObject({ t: 'ack', data: { existing: true, handoff_hire: { op: 'op-1' } } });
+    // Another task with a secret: another hire, refused as the bridge does.
+    expect(await e.answer('worker.handoff', { worker: pebble, mode: 'agent', op: 'op-1', hire: hire('deploy something else, TOKEN=zzz987qqq') })).toMatchObject({ t: 'error', code: 'bad_request', message: 'bad args: This request was already sent with other settings.' });
+  });
+
   it('round 5: prompt_secrets.revoke removes what a worker holds (secret_files goes), on or off; an older bridge has neither', async () => {
     const e = world({ secrets: `k-${Math.random()}`, secretsOn: true });
     const pebble = e.id('Pebble');

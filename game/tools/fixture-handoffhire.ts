@@ -46,6 +46,8 @@ export interface HandoffHireHost {
   /** #108: the task's protected files: the new worker's, or gone. */
   claim(hire: object, worker: string): void;
   release(hire: object): void;
+  /** #108: `hire`'s task as typed, before the secrets gate put any of it in files (undefined: as it is). */
+  typed(hire: object): string | undefined;
   /** A floor's name for the messages. */
   floorName(id: string): string;
 }
@@ -100,10 +102,10 @@ export class HandoffHireSim {
     return this.recs.get(op)?.r;
   }
 
-  /** The args a replay must repeat (the task as typed only when nothing of it went to files). */
-  private keyOf(hire: Obj, sealed: boolean): string {
+  /** The args a replay must repeat: the task as typed (its secrets' files are named anew each time), not its review. */
+  private keyOf(hire: Obj): string {
     const { secrets: _s, secrets_pending: _p, prompt, ...rest } = hire;
-    return JSON.stringify([Object.entries(rest).sort(([a], [b]) => a.localeCompare(b)), sealed ? null : prompt]);
+    return JSON.stringify([Object.entries(rest).sort(([a], [b]) => a.localeCompare(b)), this.h.typed(hire) ?? prompt]);
   }
 
   /** `hire` before the request starts: its shape, then the hire's checks (a refusal is thrown). */
@@ -115,17 +117,17 @@ export class HandoffHireSim {
   }
 
   /** A replay of `op`: its record when `hire` is the same, else `bad_request`; null when the op has none. */
-  replay(op: string, hire: Obj | undefined, sealed: boolean): HandoffHire | null {
+  replay(op: string, hire: Obj | undefined): HandoffHire | null {
     const x = this.recs.get(op);
     if (!x && !hire) return null;
-    if (!x || !hire || x.key !== this.keyOf(hire, sealed)) throw this.h.error('bad_request', 'bad args: This request was already sent with other settings.');
+    if (!x || !hire || x.key !== this.keyOf(hire)) throw this.h.error('bad_request', 'bad args: This request was already sent with other settings.');
     // The replay's own files are not used (the first request's are).
     this.h.release(hire);
     return { ...x.r };
   }
 
   /** The request started: its record, `waiting`, holds the desk. */
-  create(src: Worker, mode: 'agent' | 'llm', op: string, hire: Obj, sendHome: boolean, sealed: boolean, send: Send): HandoffHire {
+  create(src: Worker, mode: 'agent' | 'llm', op: string, hire: Obj, sendHome: boolean, send: Send): HandoffHire {
     const r: HandoffHire = {
       op,
       worker: src.id,
@@ -142,7 +144,7 @@ export class HandoffHireSim {
       ...(sendHome ? { send_home: true } : {}),
       started_at: this.h.now(),
     };
-    this.recs.set(op, { r, hire, key: this.keyOf(hire, sealed) });
+    this.recs.set(op, { r, hire, key: this.keyOf(hire) });
     this.changed(r, send);
     return { ...r };
   }

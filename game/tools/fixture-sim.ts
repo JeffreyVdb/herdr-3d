@@ -1582,6 +1582,7 @@ export class SimWorld {
         },
         claim: (hire, worker) => this.secrets.claimHandoffHire(hire, worker),
         release: (hire) => this.secrets.releaseHandoffHire(hire),
+        typed: (hire) => this.secrets.typedHandoffTask(hire),
         floorName: (id) => this.floors.get(id)?.name ?? id,
       },
       this.handoffHireMode,

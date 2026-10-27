@@ -416,7 +416,7 @@ export class HandoffSim {
     const known = this.jobs.get(a.op);
     if (known) {
       if (known.worker !== a.worker || known.args !== args) throw this.h.error('bad_request', this.hires?.enabled ? 'bad args: This request was already sent with other settings.' : `op "${a.op}" was used for another handoff`);
-      const rec = this.hires?.enabled ? this.hires.replay(a.op, this.hireOf(a), this.sealed(a)) : null;
+      const rec = this.hires?.enabled ? this.hires.replay(a.op, this.hireOf(a)) : null;
       ack({ job: this.jobView(known), existing: true, ...(rec ? { handoff_hire: rec } : {}) });
       return;
     }
@@ -433,7 +433,7 @@ export class HandoffSim {
     this.llmRunning = a.op;
     w.llm_handoff = this.jobView(j);
     this.h.upsert(send, w);
-    const rec = hire ? this.hires?.create(w, 'llm', a.op, hire, a.send_home === true, this.sealed(a), send) : undefined;
+    const rec = hire ? this.hires?.create(w, 'llm', a.op, hire, a.send_home === true, send) : undefined;
     ack({ job: this.jobView(j), ...(rec ? { handoff_hire: rec } : {}) });
     if (this.llmState) {
       // No endpoint: the knob's outcome, after a beat (`slow`: until sim.llm_finish).
@@ -783,13 +783,13 @@ export class HandoffSim {
           // #219: a replay answers the request and its record when its args are the same.
           if (known && this.hires?.enabled) {
             if (known.worker !== w.id || (known.instruction ?? '') !== (instruction.trim() || 'summarize the conversation') || (known.send_home === true) !== (a.send_home === true)) throw this.h.error('bad_request', 'bad args: This request was already sent with other settings.');
-            const rec = this.hires.replay(a.op, hire, this.sealed(a));
+            const rec = this.hires.replay(a.op, hire);
             ack({ request: this.view(known), existing: true, ...(rec ? { handoff_hire: rec } : {}) });
             return true;
           }
           if (hire && !known) this.hires?.check(hire, a.op, a.send_home === true ? w.id : null);
           const r = this.ask(w, a.op, instruction, a.send_home === true, send, false);
-          const rec = hire && !r.existing ? this.hires?.create(w, 'agent', a.op, hire, a.send_home === true, this.sealed(a), send) : undefined;
+          const rec = hire && !r.existing ? this.hires?.create(w, 'agent', a.op, hire, a.send_home === true, send) : undefined;
           ack({ request: r.request, ...(r.existing ? { existing: true } : {}), ...(rec ? { handoff_hire: rec } : {}) });
           return true;
         }
@@ -954,11 +954,6 @@ export class HandoffSim {
   /** #219: `worker.handoff`'s `hire` (with the feature on). */
   private hireOf(a: Obj): Obj | undefined {
     return this.hires?.enabled && isObj(a.hire) ? a.hire : undefined;
-  }
-
-  /** #219: whether the gate put any of the hire's task in files (then a replay's task is not compared as typed). */
-  private sealed(a: Obj): boolean {
-    return isObj(a.hire) && typeof a.hire.prompt === 'string' && a.hire.prompt.includes('[secret in file ');
   }
 
   /** #219: the send home after a handoff hire, on the request or job as the worker shows it. */
