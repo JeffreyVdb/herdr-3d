@@ -68,3 +68,7 @@ func (h *Hub) HoldScanSlots() (release func()) {
 // AcceptOptions are the bridge's websocket options (#147), for the deflate
 // benchmarks.
 var AcceptOptions = acceptOptions
+
+// StopBeforeRun is a bridge that stops before Run (#219 A-R12): the
+// protected secrets directory closed, as a stopped process leaves it.
+func (h *Hub) StopBeforeRun() { h.closePromptSecrets() }

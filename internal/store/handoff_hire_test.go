@@ -69,7 +69,7 @@ func TestHandoffHireMarker(t *testing.T) {
 	// listed (it resumes), the others are not.
 	end := func(m *store.HandoffHireMarker) store.HandoffHireMarker {
 		e := *m
-		e.State, e.Code, e.Reason = "failed", "floor_gone", "The floor of Desk 3 is gone; nobody was hired."
+		e.State, e.Code, e.Reason, e.Owners = "failed", "floor_gone", "The floor of Desk 3 is gone; nobody was hired.", nil
 		return e
 	}
 	ea, eb := end(ma), end(mb)
@@ -86,6 +86,43 @@ func TestHandoffHireMarker(t *testing.T) {
 	}
 	if got, _ := st.HandoffRequestByOp(ctx, "op-n"); got.Hire != nil {
 		t.Fatalf("op-n got a marker: %+v", got.Hire)
+	}
+	// An interrupted hire's marker keeps its owners until they were
+	// released: listed (filed or not) until then.
+	ia, ib := end(ma), end(mb)
+	ia.Code, ib.Code = "interrupted", "interrupted"
+	ia.Owners, ib.Owners = []string{"OWNERA", "OWNERB"}, []string{"OWNERC"}
+	for op, m := range map[string]store.HandoffHireMarker{"op-a": ia, "op-b": ib} {
+		if err := st.EndHandoffHire(ctx, op, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err = st.HandoffHireRows(ctx)
+	want = []store.HandoffHireRow{{Op: "op-a", Mode: store.HandoffHireAgent, WorkerID: "a", State: store.HandoffRequestFiled, HandoffID: 7, Marker: ia},
+		{Op: "op-b", Mode: store.HandoffHireLLM, WorkerID: "b", State: store.HandoffJobRunning, Marker: ib}}
+	if err != nil || !reflect.DeepEqual(rows, want) {
+		t.Fatalf("interrupted, not released: %+v, %v", rows, err)
+	}
+	for _, op := range []string{"op-a", "op-b", "op-n", "nope"} {
+		if err := st.HandoffHireReleased(ctx, op); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rows, err := st.HandoffHireRows(ctx); err != nil || len(rows) != 0 {
+		t.Fatalf("released: %+v, %v", rows, err)
+	}
+	ia.Owners, ib.Owners = nil, nil
+	if got, _ := st.HandoffRequestByOp(ctx, "op-a"); got.Hire == nil || !reflect.DeepEqual(*got.Hire, ia) {
+		t.Fatalf("op-a's released marker: %+v", got.Hire)
+	}
+	if got, _ := st.HandoffLLMJobByOp(ctx, "op-b"); got.Hire == nil || !reflect.DeepEqual(*got.Hire, ib) {
+		t.Fatalf("op-b's released marker: %+v", got.Hire)
+	}
+	if got, _ := st.HandoffRequestByOp(ctx, "op-n"); got.Hire != nil {
+		t.Fatalf("op-n got a marker: %+v", got.Hire)
+	}
+	if err := st.EndHandoffHire(ctx, "op-a", ea); err != nil {
+		t.Fatal(err)
 	}
 	ra.State = store.HandoffRequestPending
 	if err := st.UpdateHandoffRequest(ctx, ra); err != nil {

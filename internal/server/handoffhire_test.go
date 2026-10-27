@@ -1064,3 +1064,80 @@ func TestReviewBSendHomeFailureOutcome(t *testing.T) {
 		t.Fatalf("record %+v", r)
 	}
 }
+
+// A-R12: an interrupted hire's marker keeps its task files' pending owners
+// until a start released them: a bridge that stops again while starting
+// (the marker said interrupted, the files not yet released) releases them
+// on its next start, also for a request that settled meanwhile; the
+// marker then has no owner, and says interrupted.
+func TestReviewDoubleRestartSecretCleanup(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	tweak := func(o *server.Options) {
+		o.SecretsDir = dir
+		o.SecretsSweep = 20 * time.Millisecond
+	}
+	ctx := context.Background()
+	ab := startAgentBridge(t, "", "", "", tweak)
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	a := hhArgs(ab.ids["w1"], "op-dra", 5, routeText)
+	a.Hire.Secrets = routeReview(t, c)
+	c.mustAck(proto.CmdWorkerHandoff, a)
+	b := hhArgs(ab.ids["w2"], "op-drb", 6, routeText)
+	b.Hire.Secrets = routeReview(t, c)
+	c.mustAck(proto.CmdWorkerHandoff, b)
+	waitFor(t, "the tasks' files", func() bool { return len(protectedFiles(t, dir)) == 4 })
+	for _, op := range []string{a.Op, b.Op} {
+		eventually(t, "the request "+op, func() bool {
+			_, err := ab.st.HandoffRequestByOp(ctx, op)
+			return err == nil
+		})
+	}
+	ab.stop()
+
+	// A start that stops before Run: the markers say interrupted, the
+	// files are not released yet.
+	st, err := store.Open(ctx, ab.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub, err := server.NewHub(ctx, st, server.Options{Log: quietLog(), Handoffs: hoService(t, ab.hdir, ab.db), SecretsDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub.StopBeforeRun()
+	for _, op := range []string{a.Op, b.Op} {
+		r, err := st.HandoffRequestByOp(ctx, op)
+		if err != nil || r.Hire == nil || r.Hire.Code != proto.HandoffHireInterrupted || len(r.Hire.Owners) != 1 {
+			t.Fatalf("%s's marker after a start without Run: %+v, %v", op, r.Hire, err)
+		}
+	}
+	// b's request settles meanwhile: it no longer resumes.
+	rb, _ := st.HandoffRequestByOp(ctx, b.Op)
+	rb.State = store.HandoffRequestFailed
+	if err := st.UpdateHandoffRequest(ctx, rb); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	if n := len(protectedFiles(t, dir)); n != 4 {
+		t.Fatalf("%d protected files before the next start", n)
+	}
+
+	ab2 := startAgentBridge(t, ab.db, ab.dir, ab.hdir, tweak)
+	c2 := ab2.connect(proto.Hello{})
+	c2.snapshot()
+	ab2.handoffHire(a.Op, hhState(proto.HandoffHireFailed))
+	waitFor(t, "the tasks' files released", func() bool { return len(protectedFiles(t, dir)) == 0 })
+	for _, op := range []string{a.Op, b.Op} {
+		eventually(t, op+"'s marker without its owners", func() bool {
+			r, err := ab2.st.HandoffRequestByOp(ctx, op)
+			return err == nil && r.Hire != nil && len(r.Hire.Owners) == 0 && r.Hire.Code == proto.HandoffHireInterrupted
+		})
+	}
+	if hh := ab2.world(func(proto.World) bool { return true }).HandoffHires; len(hh) != 1 || hh[0].Op != a.Op ||
+		hh[0].Code != proto.HandoffHireInterrupted {
+		t.Fatalf("after the restart %+v", hh)
+	}
+}

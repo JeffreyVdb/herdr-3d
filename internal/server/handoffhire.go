@@ -150,7 +150,14 @@ func sameHire(rec proto.HandoffHire, a proto.WorkerHandoffArgs) bool {
 // (released once the files are open, Run).
 type handoffHireState struct {
 	byOp    map[string]*handoffHire
-	orphans []string
+	orphans []hireOrphans
+}
+
+// hireOrphans are an interrupted hire's pending owners, by its op (its
+// marker keeps them until they were released).
+type hireOrphans struct {
+	op     string
+	owners []string
 }
 
 // deskHeldError refuses a hire into a desk a pending handoff hire holds,
@@ -809,18 +816,33 @@ func (h *Hub) handoffHireSourcesGone(ctx context.Context, floors ...string) {
 }
 
 // releaseInterruptedSecrets releases the task files of the hires a restart
-// interrupted (Run, the files open), off the hub goroutine.
+// interrupted (Run, the files open), off the hub goroutine; a hire's marker
+// drops its owners once all were released, so a bridge that stops before
+// that releases them on its next start.
 func (h *Hub) releaseInterruptedSecrets(ctx context.Context) {
-	owners := h.hh.orphans
+	orphans := h.hh.orphans
 	h.hh.orphans = nil
-	if len(owners) == 0 {
+	if len(orphans) == 0 {
 		return
 	}
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
-		for _, id := range owners {
-			h.releaseOwner(ctx, secretfiles.Owner{Kind: secretfiles.OwnerPending, ID: id})
+		ctx := context.WithoutCancel(ctx)
+		for _, o := range orphans {
+			released := true
+			for _, id := range o.owners {
+				if err := h.ps.files.Release(ctx, secretfiles.Owner{Kind: secretfiles.OwnerPending, ID: id}, h.liveWorkers); err != nil {
+					h.log.Warn("removing an interrupted hire's protected files failed (the next start or the janitor removes them)", "op", o.op, "err", err)
+					released = false
+				}
+			}
+			if !released {
+				continue
+			}
+			if err := h.st.HandoffHireReleased(ctx, o.op); err != nil {
+				h.log.Error("saving the interrupted hire's release failed", "op", o.op, "err", err)
+			}
 		}
 	}()
 }
@@ -878,7 +900,9 @@ func (h *Hub) removeHandoffHire(op string) {
 // it was filed, and its marker says so; nothing is hired for it and no
 // desk held. A pending agent request, which resumes, is published as its
 // hire ended (interrupted by an earlier restart too) until it settles: its
-// filing then sets the path and sends nobody home.
+// filing then sets the path and sends nobody home. The pending owners of
+// an interrupted hire's task files stay in its marker until Run released
+// them (an earlier start may have stopped first).
 func (h *Hub) loadHandoffHires(ctx context.Context) error {
 	rows, err := h.st.HandoffHireRows(ctx)
 	if err != nil {
@@ -887,16 +911,23 @@ func (h *Hub) loadHandoffHires(ctx context.Context) error {
 	now := h.opts.Now().UnixMilli()
 	for _, row := range rows {
 		m := row.Marker
+		if len(m.Owners) > 0 {
+			h.hh.orphans = append(h.hh.orphans, hireOrphans{op: row.Op, owners: m.Owners})
+		}
+		if m.Ended() && (row.Mode != store.HandoffHireAgent || row.State != store.HandoffRequestPending) {
+			continue // listed for its owners only: it was published when it was interrupted
+		}
 		r := &handoffHire{by: handoffHireClient, rec: markedHire(row.Op, row.Mode, row.WorkerID, m)}
 		r.rec.EndedAt = now
 		if !m.Ended() {
-			h.hh.orphans = append(h.hh.orphans, m.Owners...)
 			r.rec.State, r.rec.Code = proto.HandoffHireFailed, proto.HandoffHireInterrupted
 			r.rec.Reason = "The bridge restarted while the handoff was being written; nobody was hired: hire again from the handoff once it is filed."
 			if row.HandoffID != 0 {
 				r.rec.Reason = "The bridge restarted while the new agent was being hired: check the floor before hiring again from the handoff."
 			}
-			if err := h.st.EndHandoffHire(ctx, row.Op, *r.marker()); err != nil {
+			ended := r.marker()
+			ended.Owners = m.Owners
+			if err := h.st.EndHandoffHire(ctx, row.Op, *ended); err != nil {
 				return err
 			}
 		}
