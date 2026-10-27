@@ -579,6 +579,18 @@ describe('HireReviewDialog: hire with handoff in the background (#219)', () => {
     expect(e.last('worker.handoff').args.op).toBe(op);
   });
 
+  it('B-R6: asked again and told it went with other settings: the bridge has the op, so it is followed, never "not taken"', async () => {
+    const e = setup();
+    const { op } = await e.submit();
+    await e.answer('worker.handoff', { ok: false, code: 'timeout', message: 'timeout' });
+    await e.retry();
+    await e.answer('worker.handoff', { ok: false, code: 'bad_request', message: 'bad args: This request was already sent with other settings.' });
+    expect(e.rv.summary()).toMatchObject({ state: 'filing', error: false, handoff: { bridge: { op, accepted: true } } });
+    await e.record({ op, state: 'hired', path: PATH, hired: 'N', prompted: true });
+    expect(e.rv.isOpen).toBe(false);
+    expect(e.toasts).toEqual([{ text: 'Hired Nibble at Desk 2. Here they come.', kind: 'info' }]);
+  });
+
   it('B-R6: asked again without an answer: asked once more on the next connection or after a while, one at a time, same op', async () => {
     const e = setup();
     const { op } = await e.submit();
