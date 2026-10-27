@@ -82,9 +82,13 @@ test('orchestrator layout uses wide screens and keeps selects usable on narrow s
   const e = (await extra.boundingBox())!;
   const d = (await desk.boundingBox())!;
   const a = (await agent.boundingBox())!;
+  const form = (await page.locator('#run-form').boundingBox())!;
+  const label = (await page.locator('#run-label').boundingBox())!;
   expect(e.x).toBeGreaterThan(t.x + t.width);
   expect(a.x).toBeGreaterThan(d.x + d.width);
-  expect(a.width).toBeLessThanOrEqual(512);
+  expect(form.x + form.width - (a.x + a.width)).toBeLessThanOrEqual(24);
+  expect(label.x + label.width).toBeLessThan(a.x);
+  expect(label.y).toBeGreaterThan(d.y + d.height);
   expect(d.width).toBeLessThanOrEqual(160);
   await expect(desk).toHaveCSS('appearance', 'none');
 

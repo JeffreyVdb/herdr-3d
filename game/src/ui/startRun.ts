@@ -627,7 +627,7 @@ export class StartRunDialog {
     preset.addEventListener('change', () => this.pickPreset(preset.value));
     const edit = h('button', { class: 'btn btn--sm', 'data-key': 'presets', title: 'Create, edit and delete team presets', onclick: (e: Event) => this.host.openPresets(e.currentTarget as HTMLElement) }, icon(ICON.pencil), h('span', {}, 'Presets'));
     const last = this.f.preset && fv?.floor.last_preset === this.f.preset ? 'Last run here' : null;
-    const setup: Node[] = [
+    const placement = h('div', { class: 'run-placement' },
       h(
         'div',
         { class: 'dd-grid dd-grid--run' },
@@ -640,7 +640,8 @@ export class StartRunDialog {
           h('p', { class: 'field-hint', id: 'run-preset-hint' }, 'Who it hires for coding, reviews, UX and research.'),
         ),
       ),
-    ];
+    );
+    const setup: Node[] = [placement];
 
     // The orchestrator itself.
     if (this.f.orch) {
@@ -670,7 +671,6 @@ export class StartRunDialog {
         ),
       );
     } else setup.push(h('div', { class: 'dd-skeleton', 'aria-hidden': 'true' }, h('i'), h('i')));
-    nodes.push(h('div', { class: 'run-setup' }, ...setup));
 
     const label = h('input', { id: 'run-label', 'data-key': 'label', autocomplete: 'off', spellcheck: 'false', maxlength: 64, placeholder: this.prep?.label || 'ORCH|…' });
     label.value = this.f.label;
@@ -678,7 +678,7 @@ export class StartRunDialog {
       this.f.label = label.value;
       this.renderActions();
     });
-    nodes.push(
+    placement.append(
       h(
         'div',
         { class: 'dd-grid' },
@@ -697,7 +697,7 @@ export class StartRunDialog {
         this.f.worktree = box.checked;
         this.render();
       });
-      nodes.push(
+      placement.append(
         h(
           'div',
           { class: 'dd-worktree', 'data-on': on ? 'true' : 'false', 'data-off': g.usable ? null : 'true' },
@@ -721,7 +721,7 @@ export class StartRunDialog {
           ),
         );
     }
-    nodes.push(this.promptField());
+    nodes.push(h('div', { class: 'run-setup' }, ...setup), this.promptField());
     if (this.prep) notices.push(this.capacityBlock());
     const taken = this.state === 'ready' ? this.takenBy() : null;
     if (taken) {

@@ -167,8 +167,13 @@
   gap: 16px;
 }
 .run-setup > .dd-agent, .run-setup > .dd-skeleton {
-  width: min(100%, 32rem);
   box-sizing: border-box;
+  min-width: 0;
+}
+.run-placement {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
 }
 .dd-grid.dd-grid--run {
   grid-template-columns: minmax(0, 10rem) minmax(0, 20rem);
