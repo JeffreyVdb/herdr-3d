@@ -1,5 +1,6 @@
 import type { CommandResult } from '../net/client';
 import type { KeyItem } from '../net/protocol';
+import type { SeatMode } from './transcriptMode';
 
 /**
  * M5: typing at a worker's laptop. A keydown becomes herdr logical keys
@@ -33,9 +34,12 @@ export interface SeatKey {
    * `look` (#59): the keyboard to the seat bar's terminal preset and zoom; `palette` (#147): the command palette
    * (the game opens it from the capture phase; the pane never gets the chord); `dictate` (#213): the dictation bar, the same way;
    * `copy` (#176): Ctrl+Shift+C off a Mac copies the terminal's selection (as Linux terminals do; Ctrl+C stays ^C, and a
-   * Mac's ⌘C is the browser's copy event).
+   * Mac's ⌘C is the browser's copy event); `view` (#216): Ctrl+Shift+1…4 jump to a view (`view` says which), from every
+   * view; `files` (#216): Ctrl+Shift+E opens or closes the files drawer.
    */
-  action?: 'stand' | 'paste' | 'copy' | 'toggle-transcript' | 'look' | 'palette' | 'dictate' | ZoomAction;
+  action?: 'stand' | 'paste' | 'copy' | 'toggle-transcript' | 'look' | 'palette' | 'dictate' | 'view' | 'files' | ZoomAction;
+  /** The view of a `view` action. */
+  view?: SeatMode;
   /** The browser must not act on it (Tab moving focus, Backspace, F5, Ctrl+W…). */
   prevent: boolean;
 }
@@ -112,6 +116,26 @@ export function zoomKey(e: KeyLike): ZoomAction | null {
  */
 export const LOOK_KEY = { key: ',', label: ['Ctrl', ','], aria: 'Control+,' } as const;
 
+/** The key that flips Conversation <-> Images (when no text box has the keyboard). */
+export const FLIP_KEY = 'i';
+
+/**
+ * #216: Ctrl+Shift+1…4 jump to Terminal, Chat, Images and Runs, and Ctrl+Shift+E opens the files drawer, from every view
+ * (the terminal and a run's terminal included). By the physical key (`code`): by `key` Ctrl+Shift+1 is Ctrl+! on a US
+ * layout and Ctrl+& on AZERTY. Ctrl on a Mac too (⌘ chords stay the browser's); never with Alt or Meta. A pane got
+ * nothing for Ctrl+Shift+digit before (swallowed); Ctrl+Shift+E was a second Ctrl+E (the line's end, which Ctrl+E keeps).
+ */
+export const VIEW_KEYS: readonly SeatMode[] = ['terminal', 'transcript', 'images', 'runs'];
+export const FILES_KEY = { code: 'KeyE', label: ['Ctrl', 'Shift', 'E'], aria: 'Control+Shift+E' } as const;
+
+/** #216: the seat's own chords (a view, the drawer), or null: what a run's terminal checks before it sends a key. */
+export function seatChord(e: KeyLike): Pick<SeatKey, 'action' | 'view'> | null {
+  if (!e.ctrlKey || !e.shiftKey || e.altKey || e.metaKey || e.isComposing) return null;
+  if (e.code === FILES_KEY.code) return { action: 'files' };
+  const n = /^Digit([1-4])$/.exec(e.code)?.[1];
+  return n ? { action: 'view', view: VIEW_KEYS[Number(n) - 1] as SeatMode } : null;
+}
+
 /** What a keydown does while you sit at a laptop (`mac`: Cmd is the command key, Ctrl goes to the pane). */
 export function seatedKey(e: KeyLike, mac: boolean): SeatKey {
   // IME composition and dead keys: the composed text arrives as input (see `composedText`).
@@ -123,6 +147,8 @@ export function seatedKey(e: KeyLike, mac: boolean): SeatKey {
     if (e.ctrlKey && !e.shiftKey && !e.metaKey && !e.altKey) return { items: [], action: 'toggle-transcript', prevent: true };
     return e.ctrlKey || e.metaKey || e.altKey ? none(true) : { items: [], action: 'stand', prevent: true };
   }
+  const chord = seatChord(e);
+  if (chord) return { items: [], ...chord, prevent: true };
   const zoom = zoomKey(e);
   if (zoom) return { items: [], action: zoom, prevent: true };
   if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.key === LOOK_KEY.key) return { items: [], action: 'look', prevent: true };

@@ -187,8 +187,8 @@ export interface TranscriptView {
    * stays on. `working`: the worker works on (its effective status, not a real block), the card's "still working".
    */
   setCodex(worker: string, codex: WorkerCodex | null, working: boolean): void;
-  /** The mode's tab strip (Conversation | Images), put in the bar after the title. */
-  attachTabs(tabs: HTMLElement): void;
+  /** #216: what leads the bar (the view's icon), put before the title. */
+  attachLead(lead: Element): void;
   /** Is the item in the timeline (loaded)? */
   hasItem(id: string): boolean;
   /** Scrolls to an item and flashes it; false when it is not loaded (the caller pages older items first). */
@@ -1990,9 +1990,9 @@ class Transcript implements TranscriptView {
     this.scroller.focus({ preventScroll: true });
   }
 
-  attachTabs(tabs: HTMLElement): void {
+  attachLead(lead: Element): void {
     if (this.destroyed) return;
-    this.titleEl.after(tabs);
+    this.titleEl.before(lead);
   }
 
   hasItem(id: string): boolean {

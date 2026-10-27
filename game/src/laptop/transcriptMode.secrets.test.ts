@@ -78,7 +78,7 @@ async function harness(o: { on?: boolean; scans?: CommandResult[]; detects?: Com
   let host: TranscriptRenderHost | null = null;
   const mount: MountTranscript = (_box, h) => {
     host = h;
-    return { setItems() {}, applyUpdates() {}, setBlocked() {}, setAsk() {}, setFollowup() {}, setCodex() {}, setUsage() {}, setActivity() {}, setPending: (rows: readonly PendingPrompt[]) => pending.push(rows), attachTabs() {}, hasItem: () => false, scrollToItem: () => false, focus() {}, focusPrompt() {}, destroy() {} } as never;
+    return { setItems() {}, applyUpdates() {}, setBlocked() {}, setAsk() {}, setFollowup() {}, setCodex() {}, setUsage() {}, setActivity() {}, setPending: (rows: readonly PendingPrompt[]) => pending.push(rows), attachLead() {}, hasItem: () => false, scrollToItem: () => false, focus() {}, focusPrompt() {}, destroy() {} } as never;
   };
   const others: Array<{ t: string; args: Record<string, unknown> }> = [];
   const tx = new TranscriptMode({

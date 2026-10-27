@@ -121,6 +121,26 @@ describe('seatedKey', () => {
     }
   });
 
+  it('#216: Ctrl+Shift+1…4 pick a view and Ctrl+Shift+E the files, by physical key, on a Mac too (Ctrl, not Cmd)', () => {
+    const views = ['terminal', 'transcript', 'images', 'runs'] as const;
+    for (const mac of [false, true]) {
+      for (const [i, view] of views.entries()) {
+        // By `key` it is Ctrl+! (US), Ctrl+& (AZERTY), Ctrl+" (UK): the code is what counts.
+        for (const key of ['!@#$'[i]!, '&é"\''[i]!, String(i + 1)]) {
+          expect(seatedKey(kd(key, { ctrlKey: true, shiftKey: true, code: `Digit${i + 1}` }), mac), `mac ${mac} ${key}`).toEqual({ items: [], action: 'view', view, prevent: true });
+        }
+      }
+      expect(seatedKey(kd('E', { ctrlKey: true, shiftKey: true, code: 'KeyE' }), mac)).toEqual({ items: [], action: 'files', prevent: true });
+      // Not with Alt or Cmd, not without Shift: those stay what they were.
+      expect(seatedKey(kd('1', { ctrlKey: true, shiftKey: true, altKey: true, code: 'Digit1' }), mac).action).toBeUndefined();
+      expect(seatedKey(kd('1', { metaKey: true, shiftKey: true, code: 'Digit1' }), mac).action).toBeUndefined();
+      expect(seatedKey(kd('5', { ctrlKey: true, shiftKey: true, code: 'Digit5' }), mac).action).toBeUndefined();
+      expect(seatedKey(kd('E', { metaKey: true, shiftKey: true, code: 'KeyE' }), mac).action).toBeUndefined();
+    }
+    expect(seatedKey(kd('e', { ctrlKey: true, code: 'KeyE' }), false).items).toEqual([{ key: 'ctrl+e' }]);
+    expect(seatedKey(kd('1', { ctrlKey: true, code: 'Digit1' }), false)).toEqual({ items: [], prevent: true });
+  });
+
   it('#176: Ctrl+Shift+C copies off a Mac (kept from the browser); Ctrl+C is ^C; a Mac’s ⌘C is the browser’s copy', () => {
     expect(seatedKey(kd('C', { ctrlKey: true, shiftKey: true, code: 'KeyC' }), false)).toEqual({ items: [], action: 'copy', prevent: true });
     expect(seatedKey(kd('c', { ctrlKey: true, code: 'KeyC' }), false).items).toEqual([{ key: 'ctrl+c' }]);

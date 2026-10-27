@@ -281,7 +281,6 @@ export class App {
     list: (from) => this.manualProcesses.open(null, from),
   };
   private readonly attentionTop = new AttentionChip(this.attentionHost, { names: true, label: 'Manual runs asking for you', cls: 'mpa--top' });
-  private readonly attentionOwn = new AttentionChip({ ...this.attentionHost, list: (from) => { const id = this.laptops.seated; if (id) this.manualProcesses.open(id, from); } }, { names: false, label: 'This worker’s manual runs asking for you', cls: 'mpa--own' });
   private readonly attentionOthers = new AttentionChip(this.attentionHost, { names: true, label: 'Other workers’ manual runs asking for you', cls: 'mpa--others' });
   /** #213: the episodes announced once (a toast, a desktop notification), by id: a reconnect's snapshot repeats none. */
   private readonly attentionEpisodes = new AttentionEpisodes(sessionStore());
@@ -720,7 +719,10 @@ export class App {
           }
           // M5: a dropped connection took every watch with it; the next live one watches again.
           this.laptops.setConnected(s.phase === 'live');
-          if (s.phase === 'live' && !wasLive) this.manualProcesses.reconnect();
+          if (s.phase === 'live' && !wasLive) {
+            this.manualProcesses.reconnect();
+            this.laptops.reconnectRuns(); // #216
+          }
           if ((s.phase === 'live') !== wasLive) this.syncAttention(); // #213: no Respond without a connection
           this.screen.setConnected(s.phase === 'live'); // M13: a new connection is told whether this game shares
           this.hud.setConn(s, this.fixture, Date.now());
@@ -949,6 +951,13 @@ export class App {
       manualRun: (from) => { const id = this.laptops.seated; if (id) { this.manualProcesses.open(id, from); this.manualProcesses.entry(id); } },
       processes: (from) => { const id = this.laptops.seated; if (id) this.manualProcesses.open(id, from); },
       review: () => this.laptops.revealCommandRequest(), // #213
+      // #216: the rail (Files, Host) and the needs-you line (Respond, Open terminal, +N more).
+      files: () => this.laptops.toggleFiles(),
+      host: (from) => this.manualProcesses.open(null, from),
+      respond: (id) => this.respondManual(id),
+      openRun: (id) => this.laptops.openRun(id),
+      runs: () => this.laptops.showRuns(),
+      refocus: () => this.laptops.focusSeat(),
       revoke: (from) => {
         const id = this.laptops.seated;
         if (id) this.revokeSecrets.open(id, from);
@@ -965,6 +974,7 @@ export class App {
         seat: this.seatBar,
         seatChanged: () => this.syncManualProcesses(),
         manualEntry: (id, command, cwd) => this.manualProcesses.entry(id, command, cwd),
+        respond: (id) => this.respondManual(id), // #216: the Runs view's Respond
         // #176: the seated workspace covers the window (no bar over the scene): the monitor's glass is placed between the top bar and the edge.
         insets: () => ({ top: parseFloat(this.hud.root.style.getPropertyValue('--topbar-bottom')) || 70, bottom: 18 }),
         external: (url) => this.external(url), // #176: the seated terminal's links
@@ -1059,7 +1069,7 @@ export class App {
     addFloorButton(this.hud, (b) => this.openAddFloor(b)); // #58, before Presets
     this.scheduleButtons(); // #64 schedules
     this.hud.mountAttention(this.attentionTop.el); // #213
-    this.seatBar.mountAttention(this.attentionOwn.el, this.attentionOthers.el);
+    this.seatBar.mountAttention(this.attentionOthers.el); // #216: this worker's runs have the needs-you line
     const manualAll = h('button', { class: 'btn', 'data-action': 'manual-processes.all', 'aria-haspopup': 'dialog', onclick: () => this.manualProcesses.open(null) }, 'All manual processes');
     this.hud.addTopbarButton(manualAll, 'buildings', () => true);
     this.m6Buttons = m6StartButtons(this.hud, { run: () => this.openStartRun(), presets: (b) => this.openPresets(b), off: () => runUnsupported(hireHost) });
@@ -1141,7 +1151,7 @@ export class App {
     const list = this.conn.phase === 'live' ? openAttention(this.store.manualProcesses.all()) : [];
     const seated = this.laptops.seated;
     this.attentionTop.set(list);
-    this.attentionOwn.set(seated ? list.filter((r) => r.process.worker === seated) : []);
+    this.seatBar.needsYou(seated ? list.filter((r) => r.process.worker === seated) : []); // #216
     this.attentionOthers.set(seated ? list.filter((r) => r.process.worker !== seated) : []);
     this.seatBar.attention(seated ? list.filter((r) => r.process.worker === seated).length : 0, seated ? list.filter((r) => r.process.worker !== seated).length : 0);
     // Not live: no episode update (the reconnect's snapshot brings no new episode), only the alerts go.

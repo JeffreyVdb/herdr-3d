@@ -1,0 +1,382 @@
+/*
+ * #216: the seated workspace's frame: a rail at the left (the views, the files toggle, Host and Leave), the stage beside
+ * it (a 44 px strip at its top in every view, then the view), the needs-you line in the notices and a footer of one
+ * fixed height. New selectors only (seat.css keeps Quiet as it was): `.seat[data-rail]` is the redesigned seat.
+ * Nothing here moves the terminal's box on a swap: the strip row is the same in every view, the drawer lies over the
+ * stage, and the footer never wraps. No transforms anywhere in the seat.
+ */
+
+.seat-main {
+  grid-row: 3;
+  position: relative;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+}
+.seat-main > .seat-content {
+  grid-row: 1;
+  grid-column: 2;
+  margin: 0 8px 0 0;
+  border-radius: 0 8px 8px 0;
+  background: var(--surface);
+  box-shadow: none;
+  outline: 1px solid var(--line);
+  outline-offset: -1px;
+}
+
+/* ---- the rail ------------------------------------------------------------------------------------------------ */
+.seat-rail {
+  grid-row: 1;
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  padding: 0 0 6px;
+  background: var(--chrome);
+  overflow: hidden auto;
+  scrollbar-width: none;
+}
+.seat-rail-tabs,
+.seat-rail-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 6px;
+}
+.seat-rail-foot {
+  margin-top: auto;
+}
+.seat-rail > .seat-rail-files {
+  margin-left: 6px;
+}
+.seat-rail-item {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 4px;
+  width: 58px;
+  height: 60px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px 0 0 10px;
+  background: transparent;
+  color: var(--text-2);
+  font: 700 10.5px/1 var(--font);
+  cursor: pointer;
+  transition: background 140ms var(--ease), color 140ms var(--ease);
+}
+.seat-rail-item[hidden] {
+  display: none;
+}
+.seat-rail-ic {
+  width: 26px;
+  height: 26px;
+}
+.seat-rail-foot .seat-rail-item {
+  height: 48px;
+}
+.seat-rail-foot .seat-rail-ic {
+  width: 22px;
+  height: 22px;
+}
+.seat-rail-item:hover {
+  background: var(--raised);
+  color: var(--text);
+}
+/* The view that is up takes the stage's ground, with the action's bar at its left edge and no edge to the stage. */
+.seat-rail-view[aria-selected='true'] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: inset 3px 0 0 var(--action);
+  cursor: default;
+}
+.seat-rail-files[aria-pressed='true'] {
+  background: var(--raised);
+  color: var(--text);
+  box-shadow: inset 3px 0 0 var(--accent-text);
+}
+.seat-rail-item:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.seat-rail-sep {
+  flex: none;
+  height: 1px;
+  margin: 4px 12px 4px 12px;
+  background: var(--line);
+}
+.seat-rail-badge {
+  position: absolute;
+  top: 5px;
+  right: 7px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: var(--raised);
+  box-shadow: inset 0 0 0 1px var(--border-chip);
+  color: var(--text);
+  font: 800 10.5px/18px var(--font);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.seat-rail-badge[hidden] {
+  display: none;
+}
+.seat-rail-badge[data-warn] {
+  background: var(--warn);
+  box-shadow: none;
+  color: var(--on-action);
+}
+
+/* ---- the strip: the view's icon and name, its context, its controls (44 px in every view) -------------------- */
+.seat-strip {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 0 12px 0 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  white-space: nowrap;
+}
+.seat-strip-ic,
+.seat-lead {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+.seat-strip-name {
+  flex: none;
+  font: 800 13.5px/1 var(--font);
+}
+.seat-strip-sub {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+  font: 600 12.5px/1 var(--font);
+  font-variant-numeric: tabular-nums;
+}
+.seat-term-strip .seat-look {
+  flex-wrap: nowrap;
+  margin-left: auto;
+}
+.seat-main .seat-content > .seat-term {
+  inset: 44px 0 0 0;
+}
+/* The conversation's and the images' own bars are their strips: as tall, the view's icon first. */
+.seat-transcript .tx-bar,
+.seat-transcript .imgs-bar {
+  min-height: 44px;
+  box-sizing: border-box;
+}
+.seat-transcript .seat-lead {
+  color: var(--text);
+}
+
+/* A view's pane in the overlay (the conversation, the images, the runs): one shown at a time. */
+.seat-pane {
+  position: absolute;
+  inset: 0;
+}
+.seat-pane[hidden] {
+  display: none;
+}
+
+/* ---- the footer: one row, one height ---------------------------------------------------------------------------- */
+.seat[data-rail] .seat-keys {
+  flex-wrap: nowrap;
+  height: 32px;
+  box-sizing: border-box;
+  padding-top: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+.seat[data-rail] .seat-keys > .key {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* ---- the needs-you line ------------------------------------------------------------------------------------------ */
+.seat-needs {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 100%;
+  height: 40px;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 0 6px 0 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 60%, transparent);
+  border-radius: 10px;
+  background: var(--raised);
+  color: var(--text);
+  white-space: nowrap;
+}
+.seat-needs[hidden] {
+  display: none;
+}
+.seat-needs[data-kind='maybe'] {
+  border-style: dashed;
+}
+.seat-needs-ic {
+  width: 18px;
+  height: 18px;
+}
+.seat-needs-who {
+  flex: none;
+  font: 800 13px/1 var(--font);
+}
+.seat-needs-cmd {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+  font: 500 12.5px/1 var(--font-mono);
+}
+.seat-needs-where {
+  flex: none;
+  color: var(--text-2);
+  font: 600 12.5px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.seat-needs-more {
+  flex: none;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent-text);
+  font: 700 12.5px/1 var(--font);
+  cursor: pointer;
+}
+.seat-needs-more:hover {
+  background: var(--hover);
+}
+.seat-needs-more:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.seat-needs-acts {
+  flex: none;
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.seat .seat-needs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 11px 0 9px;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.seat-needs-btn svg {
+  width: 16px;
+  height: 16px;
+}
+/* With the line up, the notices' row has room under it for the other workers' chip (they wrap below it). */
+.seat[data-rail] .seat-attn {
+  align-items: center;
+}
+
+@media (max-width: 1000px) {
+  .seat-needs-cmd {
+    display: none;
+  }
+  .seat-needs-where {
+    margin-right: auto;
+  }
+}
+@media (max-width: 760px) {
+  .seat-needs-where,
+  .seat-key-views {
+    display: none;
+  }
+  .seat-needs-btn span {
+    display: none;
+  }
+  .seat .seat-needs-btn {
+    padding: 0 7px;
+  }
+}
+/* A phone: a narrower rail, words under the icons kept short; the terminal's strip keeps its controls. */
+@media (max-width: 560px) {
+  .seat-main {
+    grid-template-columns: 52px minmax(0, 1fr);
+  }
+  .seat-rail-item {
+    width: 48px;
+    height: 52px;
+    font-size: 9.5px;
+  }
+  .seat-rail-ic {
+    width: 22px;
+    height: 22px;
+  }
+  .seat-main > .seat-content,
+  :root:has(.limits:not([hidden])) .seat-main > .seat-content {
+    margin: 0 4px 0 0;
+  }
+  .seat-term-strip .seat-strip-name,
+  .seat-term-strip .seat-strip-sub {
+    display: none;
+  }
+  .seat-needs-who {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .seat-rail-item {
+    transition: none;
+  }
+}
+
+/* ubuntu:begin */
+/*
+ * #216 Ubuntu: Ubuntu's mono is smaller at one px (the command and the time a size up); the rail's items and the line's
+ * buttons keep a 32 px target at least (they are 48–60 px already), with the 3 px orange ring and a dark keyline.
+ */
+:root[data-ui-theme='ubuntu'] .seat-needs-cmd,
+:root[data-ui-theme='ubuntu'] .seat-needs-where {
+  font-size: 13.5px;
+}
+:root[data-ui-theme='ubuntu'] .seat-rail-item:focus-visible,
+:root[data-ui-theme='ubuntu'] .seat-needs-more:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: -3px;
+}
+:root[data-ui-theme='ubuntu'] .seat-rail-item:hover {
+  background: var(--hover);
+}
+:root[data-ui-theme='ubuntu'] .seat .seat-needs-btn {
+  min-height: 32px;
+}
+:root[data-ui-theme='ubuntu'] .seat-needs-more {
+  min-height: 32px;
+}
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .seat-rail-view[aria-selected='true'] {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+}
+/* ubuntu:end */

@@ -224,22 +224,40 @@ describe('the seated workspace (#176)', () => {
     expect(bar.content.contains(bar.termHost)).toBe(true);
   });
 
-  it('the view switch is three buttons, the one up pressed; a pick goes to the host', () => {
+  it('#216: the rail is a vertical tab list of the four views, the one up selected; a pick goes to the host', () => {
     const { bar, hud, calls } = setup();
     bar.show('Tofu', false);
-    const buttons = [...hud.querySelectorAll<HTMLButtonElement>('.seat-mode button')];
-    expect(buttons.map((b) => [b.textContent, b.getAttribute('aria-pressed')])).toEqual([
-      ['Terminal', 'true'],
-      ['Conversation', 'false'],
-      ['Images', 'false'],
+    const list = hud.querySelector<HTMLElement>('.seat-rail [role="tablist"]')!;
+    expect(list.getAttribute('aria-orientation')).toBe('vertical');
+    const tabs = [...list.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    expect(tabs.map((b) => [b.textContent, b.getAttribute('aria-selected'), b.tabIndex])).toEqual([
+      ['Terminal', 'true', 0],
+      ['Chat', 'false', -1],
+      ['Images', 'false', -1],
+      ['Runs', 'false', -1],
     ]);
-    buttons[1]!.click();
-    buttons[2]!.click();
-    buttons[0]!.click(); // the one up: nothing to do
-    expect(calls).toEqual(['mode transcript', 'mode images']);
-    bar.setMode('transcript');
-    expect(buttons.map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'true', 'false']);
-    expect(bar.content.dataset.mode).toBe('transcript');
+    expect(tabs.map((b) => b.getAttribute('aria-keyshortcuts'))).toEqual(['Control+Shift+1', 'Control+Shift+2', 'Control+Shift+3', 'Control+Shift+4']);
+    tabs[1]!.click();
+    tabs[2]!.click();
+    tabs[3]!.click();
+    tabs[0]!.click(); // the one up: nothing to do
+    expect(calls).toEqual(['mode transcript', 'mode images', 'mode runs']);
+    bar.setMode('runs');
+    expect(tabs.map((b) => b.getAttribute('aria-selected'))).toEqual(['false', 'false', 'false', 'true']);
+    expect(bar.content.dataset.mode).toBe('runs');
+    // ↓ moves along the list (roving: one tab stop), wrapping; the move picks nothing.
+    tabs[3]!.focus();
+    tabs[3]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(document.activeElement).toBe(tabs[0]);
+    expect(tabs.map((b) => b.tabIndex)).toEqual([0, -1, -1, -1]);
+    expect(calls).toHaveLength(3);
+    // The counts are in the tabs' names; Runs says what waits before what runs.
+    bar.railCounts({ chat: 2, images: 5, runs: { waiting: 1, running: 3 } });
+    expect(bar.summary().rail).toEqual(['Terminal', 'Chat, 2 waiting for you', 'Images, 5 images', 'Runs, 1 waiting for you']);
+    expect(hud.querySelector('.seat-rail-view[data-mode="runs"] .seat-rail-badge')!.hasAttribute('data-warn')).toBe(true);
+    bar.railCounts({ chat: 0, images: null, runs: { waiting: 0, running: 3 } });
+    expect(bar.summary().rail).toEqual(['Terminal', 'Chat', 'Images', 'Runs, 3 running']);
+    expect(hud.querySelector<HTMLElement>('.seat-rail-view[data-mode="transcript"] .seat-rail-badge')!.hidden).toBe(true);
   });
 
   it('the worker’s status, the read-only line and the history indicator; Back to live goes to the host', () => {
@@ -307,8 +325,8 @@ describe('seat bar: #213 command suggestion and runs asking for you', () => {
   it('the notices row holds the chips while a run asks; the process control carries the mark and says so', () => {
     const hud = document.createElement('div');
     const bar = new SeatBar(hud, { ...noop, processes: () => {} });
-    const own = document.createElement('div'); const others = document.createElement('div');
-    bar.mountAttention(own, others);
+    const others = document.createElement('div');
+    bar.mountAttention(others); // #216: after the needs-you line (this worker's runs)
     bar.manualProcesses(2, true);
     const seat = hud.querySelector<HTMLElement>('.seat')!;
     const proc = hud.querySelector<HTMLButtonElement>('.seat-processes')!;

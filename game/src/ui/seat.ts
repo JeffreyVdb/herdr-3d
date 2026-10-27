@@ -2,10 +2,13 @@ import type { CodexNotice } from '../world/codexServer';
 import type { Display } from '../world/derive';
 import './seat.css';
 import './secretChips.css';
+import './seatRail.css';
 import { secretFilesText } from '../world/revokeSecrets';
-import { icon, ICON } from './dom';
+import type { RunAttention } from '../world/manualProcess';
+import { duotone, type DuotoneName } from './duotone';
+import { NeedsYouLine } from './needsYou';
 import type { SeatView } from '../laptop';
-import { LOOK_KEY } from '../laptop/keys';
+import { FILES_KEY, LOOK_KEY } from '../laptop/keys';
 import type { FullscreenChip } from '../laptop/fullscreen';
 import type { SeatMode } from '../laptop/transcriptMode';
 import { filesOf } from './composer/field';
@@ -26,6 +29,22 @@ function key(k: string[], label: string): HTMLSpanElement {
   return s;
 }
 
+/** #216: the rail's views, in their order (Ctrl+Shift+1…4): the icon, the rail's word and the view's own name. */
+const VIEWS: ReadonlyArray<{ mode: SeatMode; icon: DuotoneName; word: string; name: string }> = [
+  { mode: 'terminal', icon: 'terminal', word: 'Terminal', name: 'Terminal' },
+  { mode: 'transcript', icon: 'chat', word: 'Chat', name: 'Conversation' },
+  { mode: 'images', icon: 'image', word: 'Images', name: 'Images' },
+  { mode: 'runs', icon: 'play', word: 'Runs', name: 'Runs' },
+];
+const VIEW_WORD: Record<SeatMode, string> = { terminal: 'Terminal', transcript: 'Chat', images: 'Images', runs: 'Runs' };
+
+/** #216: the rail's counts: Chat's things waiting for you, the session's images, this worker's runs (waiting, running). */
+export interface RailCounts {
+  chat: number;
+  images: number | null;
+  runs: { waiting: number; running: number };
+}
+
 /**
  * M5: what you see while you sit at a worker's laptop. #176: the **seated workspace**, an in-app surface over the whole
  * window (`position: fixed; inset: 0`, never the browser's Fullscreen API) like the floor overview: a compact header
@@ -39,6 +58,11 @@ function key(k: string[], label: string): HTMLSpanElement {
  * always in view; by keyboard Ctrl+, reaches them from any view (Esc goes back). #74: in the read-only fallback (#176:
  * another client owns the pane) a chip states a split pane's size and zooms herdr's tab; while you own the pane its
  * size is the window's and there is no chip.
+ * #216: the view switch is a rail at the left (Terminal, Chat, Images, Runs with their counts; the Files drawer's toggle;
+ * Host, the bridge host's runs, and Leave), each view has a 44 px strip at the top of the stage (the terminal's: its
+ * preset, zoom and fullscreen chip), and the seated worker's runs that wait for you have a line of their own in the
+ * notices (`NeedsYouLine`). Nothing the rail, the strips, the drawer or that line do moves the terminal's box sideways:
+ * only the notices' row may change its rows (the debounced fit), never its columns.
  */
 export class SeatBar implements SeatView {
   readonly el: HTMLDivElement;
@@ -47,9 +71,23 @@ export class SeatBar implements SeatView {
   private readonly note = el('span', 'seat-note');
   private readonly keys = el('div', 'seat-keys');
   private readonly standBtn = el('button', 'seat-stand');
-  /** #176: the view switch: one button per view (the one up is pressed); Ctrl+Esc still swaps. */
-  private readonly modeBtn = el('div', 'seat-mode');
-  private readonly modeBtns: Record<SeatMode, HTMLButtonElement> = { terminal: el('button', 'seat-mode-opt'), transcript: el('button', 'seat-mode-opt'), images: el('button', 'seat-mode-opt') };
+  /** #216: the rail (the views as tabs, the files toggle, Host and Leave) and the stage beside it. */
+  readonly rail = el('nav', 'seat-rail');
+  private readonly railTabs = el('div', 'seat-rail-tabs');
+  private readonly viewBtns = {} as Record<SeatMode, HTMLButtonElement>;
+  private readonly badges = {} as Record<SeatMode, HTMLSpanElement>;
+  private readonly filesBtn = el('button', 'seat-rail-item seat-rail-files');
+  private readonly hostBtn = el('button', 'seat-rail-item seat-rail-host');
+  private readonly leaveBtn = el('button', 'seat-rail-item seat-rail-leave');
+  private readonly main = el('div', 'seat-main');
+  /** #216: the terminal's strip (its name, its preset, zoom and fullscreen chip), over the terminal in the stage. */
+  private readonly termStrip = el('div', 'seat-strip seat-term-strip');
+  private readonly termContext = el('span', 'seat-strip-sub');
+  /** #216: the seated worker's runs that wait for you (the notices' first line). */
+  private readonly needs: NeedsYouLine;
+  private railKey = '';
+  /** #216: the view Ctrl+Esc goes back to from the terminal (the keys line names it). */
+  private last: SeatMode = 'transcript';
   /** #176: the header, the notices under it, the content area (the terminal's host and the conversation's layer). */
   readonly head = el('div', 'seat-head');
   private readonly notes = el('div', 'seat-notes');
@@ -117,8 +155,18 @@ export class SeatBar implements SeatView {
       manualRun?(from: HTMLElement): void;
       /** #213: the command suggestion's chip: the conversation, scrolled to the card, its first action focused. */
       review?(from: HTMLElement): void;
-      /** #176: a view picked on the switch. */
+      /** #176: a view picked on the switch (#216: the rail). */
       mode?(m: SeatMode): void;
+      /** #216: the rail's Files: the drawer opens or closes. */
+      files?(): void;
+      /** #216: the rail's Host: the bridge host's runs (the manual-processes dialog's whole list). */
+      host?(from: HTMLElement): void;
+      /** #216: the needs-you line: Respond (the run's password dialog), Open terminal (the Runs view on it), +N more. */
+      respond?(id: string, from: HTMLElement): void;
+      openRun?(id: string): void;
+      runs?(): void;
+      /** #216: where the keyboard goes when a control that had it went, or the rail's tab of the view that is up (the view). */
+      refocus?(): void;
       /** #176: "Back to live": the terminal's view to the live bottom of herdr's history. */
       live?(): void;
       /** #176: the terminal's selected text, for a copy ('' or none: the browser's own copy). */
@@ -141,7 +189,7 @@ export class SeatBar implements SeatView {
       this.secretsBtn.setAttribute('aria-haspopup', 'dialog');
       const ic = el('span', 'secret-chip-ic');
       ic.setAttribute('aria-hidden', 'true');
-      ic.append(icon(ICON.lock));
+      ic.append(duotone('lock'));
       const tape = el('span', 'secret-chip-tape');
       tape.append(ic, this.secretsCount, this.secretsText);
       this.secretsBtn.append(tape);
@@ -170,26 +218,13 @@ export class SeatBar implements SeatView {
     this.standBtn.type = 'button';
     this.standBtn.append(el('kbd', '', 'Esc'), document.createTextNode('Stand up'));
     this.standBtn.addEventListener('click', () => handlers.stand());
-    this.modeBtn.setAttribute('role', 'group');
-    this.modeBtn.setAttribute('aria-label', 'View');
-    this.modeBtn.title = 'Ctrl+Esc switches between the terminal and what you read last, the conversation or the images';
-    const words: Record<SeatMode, string> = { terminal: 'Terminal', transcript: 'Conversation', images: 'Images' };
-    for (const m of ['terminal', 'transcript', 'images'] as const) {
-      const b = this.modeBtns[m];
-      b.type = 'button';
-      b.dataset.mode = m;
-      b.textContent = words[m];
-      b.addEventListener('click', () => {
-        if (m === this.current) return this.backToPane();
-        if (handlers.mode) handlers.mode(m);
-        else handlers.toggle();
-      });
-      this.modeBtn.append(b);
-    }
-    const swap = el('span', 'key seat-mode-key');
-    swap.append(el('kbd', '', 'Ctrl'), el('kbd', '', 'Esc'));
-    swap.setAttribute('aria-hidden', 'true');
-    this.modeBtn.prepend(swap);
+    this.buildRail();
+    this.needs = new NeedsYouLine({
+      respond: (id, from) => handlers.respond?.(id, from),
+      terminal: (id) => handlers.openRun?.(id),
+      more: () => handlers.runs?.(),
+      refocus: () => (handlers.refocus ? handlers.refocus() : this.focus()),
+    });
     this.input = el('textarea', 'seat-input');
     this.input.setAttribute('aria-label', 'Keyboard for the terminal');
     this.input.autocapitalize = 'off';
@@ -225,15 +260,20 @@ export class SeatBar implements SeatView {
     this.roLine.setAttribute('role', 'status');
     this.historyBtn.type = 'button';
     this.historyBtn.hidden = true;
-    this.historyBtn.append(icon(ICON.down), this.historyText, el('span', 'seat-history-act', 'Back to live'));
+    this.historyBtn.append(duotone('down'), this.historyText, el('span', 'seat-history-act', 'Back to live'));
     this.historyBtn.addEventListener('click', () => {
       handlers.live?.();
       this.backToPane();
     });
-    this.notes.append(this.askLine, this.codexBox, this.roLine, this.attnLine);
-    this.content.append(this.termHost, this.historyBtn);
-    this.head.append(line, this.modeBtn, this.standBtn);
-    this.el.append(this.head, this.notes, this.content, this.keys, this.input);
+    this.attnLine.append(this.needs.el);
+    this.notes.append(this.attnLine, this.askLine, this.codexBox, this.roLine);
+    this.termStrip.append(duotone('terminal', 'seat-strip-ic'), el('span', 'seat-strip-name', 'Terminal'), this.termContext);
+    this.content.append(this.termStrip, this.termHost, this.historyBtn);
+    this.content.id = 'seat-stage';
+    this.main.append(this.rail, this.content);
+    this.head.append(line, this.standBtn);
+    this.el.dataset.rail = '';
+    this.el.append(this.head, this.notes, this.main, this.keys, this.input);
     // #176: a copy while the seat has the keyboard (⌘C on a Mac, the browser's menu) takes the terminal's selection.
     this.el.addEventListener('copy', (e) => {
       const text = handlers.selection?.() ?? '';
@@ -243,14 +283,142 @@ export class SeatBar implements SeatView {
     });
     if (prefs) {
       this.zoomBtns = this.buildLook(prefs, handlers.fullscreen);
-      // #176: in the header, between the view switch and Stand up.
-      this.head.insertBefore(this.look, this.standBtn);
+      // #216: in the terminal's strip, at its end.
+      this.termStrip.append(this.look);
       prefs.onChange((what) => {
         if (what === 'terminalTheme' || what === 'terminalZoom') this.renderLook();
       });
       this.renderLook();
     }
     hud.append(this.el);
+  }
+
+  /**
+   * #216: the rail: the four views as a vertical tab list (one tab stop, ↑ ↓ Home End move, Enter or Space picks, a click
+   * picks), a divider, the Files drawer's toggle, and at the bottom Host (the bridge host's runs) and Leave (Stand up).
+   */
+  private buildRail(): void {
+    const h = this.handlers;
+    this.rail.setAttribute('aria-label', 'Laptop');
+    this.railTabs.setAttribute('role', 'tablist');
+    this.railTabs.setAttribute('aria-orientation', 'vertical');
+    this.railTabs.setAttribute('aria-label', 'View');
+    for (const [i, v] of VIEWS.entries()) {
+      const b = el('button', 'seat-rail-item seat-rail-view');
+      b.type = 'button';
+      b.dataset.mode = v.mode;
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-controls', 'seat-stage');
+      b.setAttribute('aria-keyshortcuts', `Control+Shift+${i + 1}`);
+      b.title = `${v.name} (Ctrl+Shift+${i + 1})`;
+      const n = el('span', 'seat-rail-badge');
+      n.hidden = true;
+      n.setAttribute('aria-hidden', 'true');
+      b.append(duotone(v.icon, 'seat-rail-ic'), el('span', 'seat-rail-word', v.word), n);
+      b.addEventListener('click', () => this.pick(v.mode));
+      this.viewBtns[v.mode] = b;
+      this.badges[v.mode] = n;
+      this.railTabs.append(b);
+    }
+    this.railTabs.addEventListener('keydown', (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      const i = VIEWS.findIndex((v) => this.viewBtns[v.mode] === e.target);
+      if (i < 0) return;
+      const n = VIEWS.length;
+      const to = e.key === 'ArrowDown' ? (i + 1) % n : e.key === 'ArrowUp' ? (i - 1 + n) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
+      if (to < 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      for (const v of VIEWS) this.viewBtns[v.mode].tabIndex = -1;
+      const b = this.viewBtns[(VIEWS[to] as (typeof VIEWS)[number]).mode];
+      b.tabIndex = 0;
+      b.focus();
+    });
+    const tool = (b: HTMLButtonElement, ic: DuotoneName, word: string) => {
+      b.type = 'button';
+      b.append(duotone(ic, 'seat-rail-ic'), el('span', 'seat-rail-word', word));
+    };
+    tool(this.filesBtn, 'files', 'Files');
+    this.filesBtn.setAttribute('aria-pressed', 'false');
+    this.filesBtn.setAttribute('aria-keyshortcuts', FILES_KEY.aria);
+    this.filesBtn.title = `The worker’s files: Enter puts an @ reference in the prompt box (${FILES_KEY.label.join('+')})`;
+    this.filesBtn.hidden = !h.files;
+    this.filesBtn.addEventListener('click', () => h.files?.());
+    tool(this.hostBtn, 'server', 'Host');
+    this.hostBtn.setAttribute('aria-haspopup', 'dialog');
+    this.hostBtn.hidden = !h.host;
+    this.hostBtn.addEventListener('click', () => h.host?.(this.hostBtn));
+    tool(this.leaveBtn, 'door', 'Leave');
+    this.leaveBtn.setAttribute('aria-label', 'Stand up');
+    this.leaveBtn.title = 'Stand up (Esc)';
+    this.leaveBtn.addEventListener('click', () => h.stand());
+    const sep = el('div', 'seat-rail-sep');
+    sep.setAttribute('role', 'presentation');
+    const foot = el('div', 'seat-rail-foot');
+    foot.append(this.hostBtn, this.leaveBtn);
+    this.rail.append(this.railTabs, sep, this.filesBtn, foot);
+    this.hostName('');
+  }
+
+  /** A view picked on the rail: the one up gives the keyboard back to its view. */
+  private pick(m: SeatMode): void {
+    if (m === this.current) return this.handlers.refocus ? this.handlers.refocus() : this.backToPane();
+    if (this.handlers.mode) this.handlers.mode(m);
+    else this.handlers.toggle();
+  }
+
+  /** #216: the rail's Host names the bridge host ("Runs on kiswe-omarchy"). */
+  hostName(host: string): void {
+    const name = host ? `Runs on ${host}` : 'Runs on the bridge host';
+    this.hostBtn.setAttribute('aria-label', name);
+    this.hostBtn.title = `${name}: every worker’s manual runs`;
+  }
+
+  /** #216: the rail's counts (each in its tab's name too); the same counts draw nothing. */
+  railCounts(c: RailCounts): void {
+    const key = JSON.stringify(c);
+    if (key === this.railKey) return;
+    this.railKey = key;
+    const set = (m: SeatMode, n: number, warn: boolean, said: string) => {
+      const b = this.badges[m];
+      b.hidden = n <= 0;
+      b.textContent = n > 0 ? (n > 99 ? '99+' : String(n)) : '';
+      b.toggleAttribute('data-warn', warn && n > 0);
+      this.viewBtns[m].setAttribute('aria-label', n > 0 ? `${VIEW_WORD[m]}, ${said}` : VIEW_WORD[m]);
+    };
+    set('terminal', 0, false, '');
+    set('transcript', c.chat, false, `${c.chat} waiting for you`);
+    set('images', c.images ?? 0, false, `${c.images ?? 0} ${c.images === 1 ? 'image' : 'images'}`);
+    const w = c.runs.waiting;
+    if (w > 0) set('runs', w, true, `${w} waiting for you`);
+    else set('runs', c.runs.running, false, `${c.runs.running} running`);
+  }
+
+  /** #216: the files drawer is open (the toggle is pressed). */
+  filesOpen(on: boolean): void {
+    this.filesBtn.setAttribute('aria-pressed', String(on));
+  }
+
+  /** #216: where the files drawer goes: over the stage, at the rail's edge (never in the grid's flow). */
+  mountDrawer(drawer: HTMLElement): void {
+    this.main.append(drawer);
+  }
+
+  /** #216: the seated worker's runs that wait for you, oldest first (the needs-you line; empty: it goes). */
+  needsYou(list: readonly RunAttention[]): void {
+    this.needs.set(list);
+  }
+
+  /** #216: what the terminal's strip says beside its name (the pane's grid, read only…; '' for nothing). */
+  terminalContext(text: string): void {
+    if (this.termContext.textContent !== text) this.termContext.textContent = text;
+  }
+
+  /** #216: the view Ctrl+Esc goes back to from the terminal (the keys line names it). */
+  lastView(m: SeatMode): void {
+    if (m === this.last || m === 'terminal') return;
+    this.last = m;
+    this.renderMode();
   }
 
   /** #59: "Terminal" and its three swatches (a radio group), then A− / level / A+. */
@@ -366,14 +534,17 @@ export class SeatBar implements SeatView {
     this.commandBtn.hidden = n === 0;
     if (!n) return;
     const text = n === 1 ? 'Command to review' : `${n} commands to review`;
-    this.commandBtn.replaceChildren(icon(ICON.terminal), document.createTextNode(text));
+    this.commandBtn.replaceChildren(duotone('terminal'), document.createTextNode(text));
     this.commandBtn.setAttribute('aria-label', `${text}: the agent suggests ${n === 1 ? 'a command' : 'commands'} to run. Show the suggestion`);
     this.commandBtn.title = 'The agent’s reply suggests a command to run. Show it in the conversation.';
   }
 
-  /** #213: the attention chips, in the notices' row under the header: `own` (this worker's runs) first, then `others`. */
-  mountAttention(own: HTMLElement, others: HTMLElement): void {
-    this.attnLine.append(own, others);
+  /**
+   * #213: the attention chips, in the notices' row under the header. #216: this worker's runs have the needs-you line (it
+   * comes first); the other workers' chip follows it.
+   */
+  mountAttention(others: HTMLElement): void {
+    this.attnLine.append(others);
   }
 
   /**
@@ -581,9 +752,11 @@ export class SeatBar implements SeatView {
     this.el.dataset.mode = m;
     // #26: Esc goes back to the worker's conversation first: the stand button stops naming it.
     this.el.toggleAttribute('data-child', this.child !== null && m === 'transcript');
-    for (const k of ['terminal', 'transcript', 'images'] as const) {
-      this.modeBtns[k].setAttribute('aria-pressed', String(k === m));
-      this.modeBtns[k].toggleAttribute('data-on', k === m);
+    // #216: the rail's tab of the view that is up is selected, and the list's one tab stop.
+    for (const v of VIEWS) {
+      const b = this.viewBtns[v.mode];
+      b.setAttribute('aria-selected', String(v.mode === m));
+      b.tabIndex = v.mode === m ? 0 : -1;
     }
     this.content.dataset.mode = m;
     const flip = key(['I'], m === 'images' ? 'Conversation' : 'Images');
@@ -599,35 +772,49 @@ export class SeatBar implements SeatView {
       a.title = text;
       return a;
     };
+    // #216: the rail's chords, in every view (a narrow bar drops them: the rail's tooltips say them).
+    const views = key(['Ctrl', 'Shift', '1…4'], 'Views');
+    views.classList.add('seat-key-views');
     this.keys.replaceChildren(
       ...(m === 'transcript' && this.child !== null
-        ? [key(['Esc'], `Back to ${this.name}`), flip, swap('Terminal'), aside(`A subagent’s conversation, read only; PgUp, PgDn, j and k scroll`)]
+        ? [key(['Esc'], `Back to ${this.name}`), flip, swap('Terminal'), views, aside(`A subagent’s conversation, read only; PgUp, PgDn, j and k scroll`)]
         : m === 'transcript'
-        ? [key(['Enter'], 'Write a prompt'), flip, swap('Terminal'), aside(`PgUp, PgDn, j and k scroll; ${nothing}`)]
+        ? [key(['Enter'], 'Write a prompt'), flip, swap('Terminal'), views, aside(`PgUp, PgDn, j and k scroll; ${nothing}`)]
         : m === 'images'
-          ? [key(['Enter'], 'Open'), flip, swap('Terminal'), aside(`Arrows move between images; ${nothing}`)]
-          : [
-              key(['Shift', 'Esc'], 'Send Esc'),
-              key([this.mac ? '⌘' : 'Ctrl', 'V'], 'Paste'),
-              key(this.mac ? ['⌘', 'C'] : ['Ctrl', 'Shift', 'C'], 'Copy'),
-              swap('Conversation'),
-              aside(`Tab, arrows and Ctrl keys go to the terminal; the wheel scrolls its history; ${this.mac ? '⌘' : 'Ctrl'}+click opens a link`),
-            ]),
+          ? [key(['Enter'], 'Open'), flip, swap('Terminal'), views, aside(`Arrows move between images; ${nothing}`)]
+          : m === 'runs'
+            ? [key(['↑ ↓'], 'Pick a run'), key(['Enter'], 'Its terminal'), swap('Terminal'), views, aside(`In a run’s terminal Ctrl+Esc gives the keyboard back to the runs; ${nothing}`)]
+            : [
+                key(['Shift', 'Esc'], 'Send Esc'),
+                key([this.mac ? '⌘' : 'Ctrl', 'V'], 'Paste'),
+                key(this.mac ? ['⌘', 'C'] : ['Ctrl', 'Shift', 'C'], 'Copy'),
+                swap(this.last === 'transcript' ? 'Conversation' : VIEW_WORD[this.last]),
+                views,
+                aside(`Tab, arrows and Ctrl keys go to the terminal; the wheel scrolls its history; ${this.mac ? '⌘' : 'Ctrl'}+click opens a link`),
+              ]),
     );
   }
 
-  /** #57: "Claude is asking a question. T to answer in the transcript view." (null: hidden). */
-  asking(ask: { who: string; key: 'T' | 'Ctrl+Esc' } | null): void {
+  /**
+   * #57: "Claude is asking a question. T to answer in the transcript view." (null: hidden). #216: in every view (the
+   * notices' row keeps its height across a swap, so the terminal's rows do not change): `key` null in the conversation
+   * itself ("answer it below"), Ctrl+Shift+2 from Images and Runs.
+   */
+  asking(ask: { who: string; key: 'T' | 'Ctrl+Esc' | 'Ctrl+Shift+2' | null } | null): void {
     this.askLine.hidden = !ask;
     this.el.toggleAttribute('data-asking', !!ask);
     if (!ask) {
       this.askLine.replaceChildren();
       return;
     }
-    const keys = ask.key === 'T' ? ['T'] : ['Ctrl', 'Esc'];
+    const tag = el('span', 'seat-ask-tag', 'Question');
+    if (ask.key === null) {
+      this.askLine.replaceChildren(tag, el('span', 'seat-ask-text', `${ask.who} is asking a question: answer it in the conversation below.`));
+      return;
+    }
     const k = el('span', 'key');
-    for (const part of keys) k.append(el('kbd', '', part));
-    this.askLine.replaceChildren(el('span', 'seat-ask-tag', 'Question'), el('span', 'seat-ask-text', `${ask.who} is asking a question.`), k, el('span', 'seat-ask-text', 'to answer in the transcript view.'));
+    for (const part of ask.key.split('+')) k.append(el('kbd', '', part));
+    this.askLine.replaceChildren(tag, el('span', 'seat-ask-text', `${ask.who} is asking a question.`), k, el('span', 'seat-ask-text', 'to answer in the transcript view.'));
   }
 
   /** #155: what the worker's Codex launch has to tell you (null: nothing): its own server stopped, or it runs without one. */
@@ -680,7 +867,7 @@ export class SeatBar implements SeatView {
     this.el.dataset.state = kind;
     // Sending is quick: keep the resting line instead of flickering "sending".
     if (kind === 'busy') return;
-    this.note.textContent = text ?? (this.current === 'transcript' ? `Reading ${this.child ?? this.name}’s conversation` : this.current === 'images' ? `Looking at ${this.name}’s images` : `Your keys go to ${this.name}’s terminal`);
+    this.note.textContent = text ?? (this.current === 'transcript' ? `Reading ${this.child ?? this.name}’s conversation` : this.current === 'images' ? `Looking at ${this.name}’s images` : this.current === 'runs' ? `${this.name}’s manual runs` : `Your keys go to ${this.name}’s terminal`);
     this.note.title = this.note.textContent;
   }
 
@@ -704,8 +891,15 @@ export class SeatBar implements SeatView {
     readOnly: string | null;
     history: string | null;
     covering: boolean;
+    /** #216: the needs-you line (null: hidden), the files toggle, the rail's tabs' names. */
+    needs: string | null;
+    files: boolean;
+    rail: string[];
   } {
     return {
+      needs: this.needs.summary(),
+      files: this.filesBtn.getAttribute('aria-pressed') === 'true',
+      rail: VIEWS.map((v) => this.viewBtns[v.mode].getAttribute('aria-label') ?? v.word),
       status: this.statusTape.hidden ? null : (this.statusTape.textContent ?? ''),
       readOnly: this.roLine.hidden ? null : (this.roLine.textContent ?? ''),
       history: this.historyBtn.hidden ? null : (this.historyBtn.textContent ?? ''),

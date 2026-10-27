@@ -1,0 +1,315 @@
+/*
+ * #216: the Runs view (runsView.ts), a pane of the seat's overlay: its strip, then a column that scrolls only when it
+ * must (a phone, a long card): the request card, the run rows (their own scroll past a few), the picked run's header and
+ * its terminal filling the rest. Tokens of the UI theme; no transforms (the run's xterm measures its box).
+ */
+.seat-runs {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+}
+.seat-runs > .seat-strip {
+  position: relative;
+  flex: none;
+}
+.seat-runs-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  margin-left: auto;
+  padding: 0 11px 0 9px;
+  font-size: 12.5px;
+}
+.seat-runs-new svg,
+.seat-runs-btn svg {
+  width: 16px;
+  height: 16px;
+}
+.seat-runs-body {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+.seat-runs-body > .mp-request {
+  flex: none;
+  margin: 0;
+}
+.seat-runs-status {
+  flex: none;
+  margin: 0;
+  color: var(--error-text);
+  font-size: 13px;
+}
+.seat-runs-status[hidden] {
+  display: none;
+}
+
+/* The rows: compact, one line each; the list scrolls by itself past about five. */
+.seat-runs-list {
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 232px;
+  min-height: 0;
+  margin: 0;
+  padding: 2px;
+  overflow: auto;
+  list-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+.seat-runs-empty {
+  padding: 10px 2px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+.seat-run {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: 40px;
+  padding-right: 6px;
+  border-radius: 9px;
+  background: var(--raised);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.seat-run--on {
+  box-shadow: inset 0 0 0 1px var(--border-chip), inset 3px 0 0 var(--action);
+}
+.seat-run[data-tone='attn'] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 60%, transparent);
+}
+.seat-run--on[data-tone='attn'] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 60%, transparent), inset 3px 0 0 var(--action);
+}
+.seat-run-pick {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 40px;
+  padding: 0 8px 0 14px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.seat-run-pick:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.seat-run-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--idle);
+}
+.seat-run-dot[data-tone='attn'] {
+  background: var(--warn);
+}
+.seat-run-dot[data-tone='live'] {
+  background: var(--working);
+}
+.seat-run-dot[data-tone='ok'] {
+  background: var(--done);
+}
+.seat-run-dot[data-tone='bad'] {
+  background: var(--error);
+}
+.seat-run-cmd {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 500 12.5px/1 var(--font-mono);
+}
+.seat-run-state {
+  flex: none;
+  color: var(--text-2);
+  font: 600 12px/1 var(--font);
+  white-space: nowrap;
+}
+.seat-run-state[data-attn] {
+  color: var(--accent-text);
+  font-weight: 700;
+}
+.seat-run-time {
+  flex: none;
+  min-width: 58px;
+  color: var(--text-2);
+  font: 500 12px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.seat-runs-head .seat-run-time {
+  min-width: 0;
+}
+.seat-run-acts {
+  flex: none;
+  display: inline-flex;
+  gap: 2px;
+}
+.seat-run-act {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.seat-run-act svg {
+  width: 18px;
+  height: 18px;
+}
+.seat-run-act:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.seat-run-act--primary {
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--accent-text);
+}
+.seat-run-act:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.seat-run-act:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+/* The picked run: its header, then its terminal filling the rest (at least a usable height; the column scrolls). */
+.seat-runs-panel {
+  flex: 1 0 220px;
+  display: flex;
+  flex-direction: column;
+  min-height: 220px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.seat-runs-panel[hidden] {
+  display: none;
+}
+.seat-runs-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  min-width: 0;
+  padding: 0 6px 0 12px;
+  background: var(--raised);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.seat-runs-head-ic {
+  width: 16px;
+  height: 16px;
+}
+.seat-runs-head-cmd {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: 600 12.5px/1 var(--font-mono);
+}
+.seat-runs-head-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+  font: 500 12px/1 var(--font-mono);
+}
+.seat-runs-head-acts {
+  flex: none;
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.seat-runs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 11px 0 9px;
+  font-size: 12.5px;
+}
+.seat-runs-term {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  background: var(--seat-term-bg, #10162a);
+}
+.seat-runs-placeholder {
+  margin: 0;
+  padding: 16px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+@media (max-width: 560px) {
+  .seat-runs-body {
+    padding: 10px 8px;
+  }
+  .seat-run-time,
+  .seat-runs-head-meta {
+    display: none;
+  }
+  .seat-run-state {
+    max-width: 40%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .seat-runs-new span {
+    display: none;
+  }
+  .seat-runs-head {
+    flex-wrap: wrap;
+    padding: 6px 6px 6px 12px;
+  }
+}
+
+/* ubuntu:begin */
+/* #216 Ubuntu: the mono a size up (Ubuntu Mono is smaller at one px), 3 px focus rings. */
+:root[data-ui-theme='ubuntu'] .seat-run-cmd,
+:root[data-ui-theme='ubuntu'] .seat-runs-head-cmd,
+:root[data-ui-theme='ubuntu'] .seat-run-time,
+:root[data-ui-theme='ubuntu'] .seat-runs-head-meta {
+  font-size: 13.5px;
+}
+:root[data-ui-theme='ubuntu'] .seat-run-pick:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: -3px;
+}
+:root[data-ui-theme='ubuntu'] .seat-run-act:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .seat-runs-btn,
+:root[data-ui-theme='ubuntu'] .seat-runs-new {
+  min-height: 32px;
+}
+/* ubuntu:end */

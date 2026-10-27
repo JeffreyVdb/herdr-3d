@@ -15,8 +15,8 @@ import type { ImageFeed } from './imageFeed';
 export interface ImagesTabHost {
   /** This worker's images (null: nothing can be fetched; every image shows as not available). */
   feed: ImageFeed | null;
-  /** A fresh Conversation | Images strip for this view's bar (null: none). */
-  tabs(): HTMLElement | null;
+  /** #216: what leads this view's bar (its icon; null: none). */
+  lead(): Element | null;
   /** "Jump to message": the conversation, at the item the image is in. */
   jump(ref: ImageRef): void;
 }
@@ -133,8 +133,8 @@ class ImagesTab implements ImagesTabView {
   ) {
     this.countEl = h('span', { class: 'imgs-count-total' });
     const bar = h('div', { class: 'imgs-bar' }, h('span', { class: 'imgs-title' }, 'Images'), this.countEl);
-    const tabs = host.tabs();
-    if (tabs) bar.append(tabs);
+    const lead = host.lead();
+    if (lead) bar.prepend(lead);
     this.status = h('div', { class: 'imgs-status', role: 'status', 'aria-live': 'polite' });
     const section = (g: 'input' | 'agent', title: string, hint: string) => {
       const count = h('span', { class: 'imgs-h-n' });

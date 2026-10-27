@@ -230,11 +230,14 @@ describe('the "At a laptop" group follows laptop/keys.ts (#124: seated keys are 
     expect(seatedKey(kd('Escape'), false).action).toBe('stand');
     expect(seatedKey(kd('Escape', { ctrlKey: true }), false).action).toBe('toggle-transcript');
     expect(seatedKey(kd(LOOK_KEY.key, { ctrlKey: true, code: 'Comma' }), false).action).toBe('look');
+    // #216: the views and the files drawer, by physical key, as the table lists them.
+    for (const n of [1, 2, 3, 4]) expect(seatedKey(kd('!', { ctrlKey: true, shiftKey: true, code: `Digit${n}` }), false).action).toBe('view');
+    expect(seatedKey(kd('E', { ctrlKey: true, shiftKey: true, code: 'KeyE' }), true).action).toBe('files');
     for (const k of ['=', '+']) expect(zoomKey(kd(k, { ctrlKey: true }))).toBe('zoom-in');
     expect(zoomKey(kd('-', { ctrlKey: true }))).toBe('zoom-out');
     expect(zoomKey(kd('0', { ctrlKey: true }))).toBe('zoom-reset');
     const seated = ALL.filter((b) => scopesOf(b).includes('seated'));
-    expect(seated.map((b) => b.id)).toEqual(['seat.stand', 'seat.view', 'seat.palette', 'seat.dictate', 'seat.overview', 'seat.questions', 'seat.look', 'seat.zoom']);
+    expect(seated.map((b) => b.id)).toEqual(['seat.stand', 'seat.view', 'seat.views', 'seat.files', 'seat.palette', 'seat.dictate', 'seat.overview', 'seat.questions', 'seat.look', 'seat.zoom']);
     expect(seated.every((b) => b.readonly)).toBe(true);
     expect(seated.find((b) => b.id === 'seat.look')?.keys[0]).toMatchObject({ key: LOOK_KEY.key, ctrl: true });
     expect(bindingCaps(seated.find((b) => b.id === 'seat.look') as Binding, false)).toEqual([LOOK_KEY.label]);

@@ -68,7 +68,7 @@ class FakeView {
   setLoading(on: boolean): void {
     this.loadings.push(on);
   }
-  attachTabs(): void {}
+  attachLead(): void {}
   hasItem(): boolean {
     return false;
   }
