@@ -1,6 +1,7 @@
 import type { CommandArgs, HandoffEntry, HandoffHire, HireGit, HireInterpretation, HirePrepare, WorkerHandoffHire } from '../net/protocol';
 import { HANDOFF_PATH_RESERVE, hireWithHandoffTask, newOp } from '../world/handoff';
 import { pendingHire } from '../world/handoffHire';
+import type { WorldStore } from '../world/store';
 import { capacityView, capBlocker, firstFreeDesk, formFromPrepare, hireArgs, hireBlocker, HARNESS_LABEL, modelsFor, newerGit, offeredOptions, OriginFetches, optionsBlocker, promptBlocker, resolveHireDesk, worktreeUsable, type CapacityView, type HireForm } from '../world/hire';
 import {
   agentQuestion,
@@ -656,7 +657,9 @@ export class HireReviewDialog {
     if (!fv || this.busy()) return null;
     const held = this.host.held(this.floor);
     const seat = fv.seats[this.desk];
-    const why = seat ? `${seat.name} just sat down at Desk ${this.desk + 1}.` : held.has(this.desk) ? `Another hire is already on its way to Desk ${this.desk + 1}.` : null;
+    // #219: a desk the bridge holds for someone's handoff hire says whose.
+    const hold = held.has(this.desk) ? (this.host.store.handoffHires as WorldStore['handoffHires'] | undefined)?.holding(this.floor, this.desk) : undefined;
+    const why = seat ? `${seat.name} just sat down at Desk ${this.desk + 1}.` : hold ? `Desk ${this.desk + 1} is held for ${hold.worker_name}’s handoff hire.` : held.has(this.desk) ? `Another hire is already on its way to Desk ${this.desk + 1}.` : null;
     return why ? { why, next: firstFreeDesk(fv, held) } : null;
   }
 

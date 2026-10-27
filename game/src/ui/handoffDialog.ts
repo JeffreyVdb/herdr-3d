@@ -1,5 +1,9 @@
 import './handoff.css';
-import type { AgentHandoff, AgentHandoffAck, HandoffAck, HandoffCandidate, HandoffGetAck, HandoffPreviewAck, LLMHandoff, LLMHandoffAck } from '../net/protocol';
+import type { AgentHandoff, AgentHandoffAck, HandoffAck, HandoffCandidate, HandoffGetAck, HandoffHire, HandoffPreviewAck, LLMHandoff, LLMHandoffAck } from '../net/protocol';
+import { pendingHire } from '../world/handoffHire';
+import type { WorldStore } from '../world/store';
+import { HARNESS_LABEL } from '../world/hire';
+import { labelsOf, modelLabel } from '../world/modelLabel';
 import { cacheCopy, cacheState, candidateOf, newOp, noCandidateWhy, omittedNote } from '../world/handoff';
 import { coverageText, jobText, llmModeWhy, omittedText, payloadText, redactionText } from '../world/handoffLlm';
 import { backdropPolicy } from './dismiss';
@@ -141,6 +145,8 @@ export class HandoffDialog {
   /** #58: the worker's floor's name (the messages, the sub line; never its id). */
   private floorName = '';
   private state: State = 'loading';
+  /** #219: the version of the handoff hires the running request was last drawn with. */
+  private hireSeen = -1;
   private cand: HandoffCandidate | null = null;
   private preview: HandoffPreviewAck | null = null;
   private ack: HandoffAck | null = null;
@@ -433,6 +439,12 @@ export class HandoffDialog {
   /** The world changed: the worker gone, or its reply replaced (a new turn): the preview is stale. */
   refresh(): void {
     if (!this.dialog.open) return;
+    // #219: a running request's hire follows the bridge's record.
+    const hv = (this.host.store.handoffHires as WorldStore['handoffHires'] | undefined)?.version ?? 0;
+    if (this.state === 'pending' && hv !== this.hireSeen) {
+      this.hireSeen = hv;
+      this.render();
+    }
     if (this.mode === 'llm') {
       const w = this.host.store.workers.get(this.id);
       if (this.job) this.followJob(w?.llm_handoff);
@@ -672,6 +684,7 @@ export class HandoffDialog {
           { class: 'dd-callout dd-callout--box ho-request', role: 'status', 'data-hook': 'ho-request' },
           h('p', {}, h('span', { class: 'tape tape--box' }, r.state === 'filing' ? 'Filing' : 'Asked'), ` since ${since}`),
           h('p', {}, `Waiting for ${this.name}’s agent to finish its turn with the handoff written. It is filed when both are done, within 10 minutes; prompting or answering ${this.name} meanwhile stops it.`),
+          this.pendingHireNode(r.op),
           // #108 round 4: an instruction with protected secrets was stored with their references: chips.
           r.instruction ? h('p', { class: 'ho-hint', 'data-hook': 'ho-instruction' }, 'Instruction: ', ...secretTextNodes(r.instruction, dialogChips(secretsDirOf(this.host.store), (m, e) => this.setStatus(m, e), (t) => this.host.copy(t)))) : null,
         ),
@@ -720,6 +733,27 @@ export class HandoffDialog {
     return nodes;
   }
 
+  /** #219: the hire the bridge makes once this request (`op`) is filed, while it waits (undefined: none). */
+  private pendingHire(op: string): HandoffHire | undefined {
+    // (A host without the book: a bridge without them.)
+    const r = (this.host.store.handoffHires as WorldStore['handoffHires'] | undefined)?.get(op);
+    return r && pendingHire(r) ? r : undefined;
+  }
+
+  /** #219: the running request's hire, in its callout: who is hired where once it is filed, and that Cancel cancels it too. */
+  private pendingHireNode(op: string): HTMLElement | null {
+    const r = this.pendingHire(op);
+    if (!r) return null;
+    const who = r.label || 'A new agent';
+    const where = `Desk ${r.desk_index + 1}${r.floor !== this.host.store.workerView(this.id)?.worker.floor ? ` of ${this.host.store.floorName(r.floor)}` : ''}`;
+    return h(
+      'p',
+      { class: 'ho-hire', 'data-hook': 'ho-hire' },
+      h('span', { class: 'tape tape--idle' }, r.state === 'hiring' ? 'Hiring' : 'Then hires'),
+      ` ${who} (${HARNESS_LABEL[r.harness] ?? r.harness} · ${modelLabel(r.harness, r.model, labelsOf(this.host.store.hireOptions, r.harness))} · ${r.effort}) at ${where} once it is filed; the desk is held until then. Cancel request cancels the hire too.`,
+    );
+  }
+
   /** #9: Use configured LLM: who receives what, the focus; then the job as it runs, or why it failed. */
   private llmNodes(): Node[] {
     const j = this.job;
@@ -732,6 +766,7 @@ export class HandoffDialog {
           { class: 'dd-callout dd-callout--box ho-request', role: 'status', 'data-hook': 'ho-job', 'data-state': j.state },
           h('p', {}, h('span', { class: 'tape tape--box' }, 'Writing'), ` since ${clock(j.started_at)}`),
           h('p', {}, `${to} is writing the handoff from ${this.name}’s conversation; ${this.name} is not asked. It is filed once the answer has its title and every section, within ${secs} seconds.`),
+          this.pendingHireNode(j.op),
           h('p', { class: 'ho-hint' }, 'Cancel stops the wait and files nothing; the provider may still bill a request it already received.'),
         ),
       ];
@@ -931,7 +966,8 @@ export class HandoffDialog {
     const r = this.req;
     if (this.state === 'pending' && r) {
       const off = r.state === 'filing';
-      this.actions.replaceChildren(cancel, h('button', { class: 'btn btn--danger-quiet', 'data-key': 'cancel-request', 'aria-disabled': off ? 'true' : null, title: off ? 'It is being filed' : null, onclick: () => void this.cancelRequest() }, 'Cancel request'));
+      const hire = this.pendingHire(r.op);
+      this.actions.replaceChildren(cancel, h('button', { class: 'btn btn--danger-quiet', 'data-key': 'cancel-request', 'aria-disabled': off ? 'true' : null, title: off ? `It is being filed${hire ? `; the hire at Desk ${hire.desk_index + 1} follows` : ''}` : hire ? `Cancels the request and the hire at Desk ${hire.desk_index + 1}: nothing is filed, nobody is hired` : null, onclick: () => void this.cancelRequest() }, hire ? 'Cancel request and hire' : 'Cancel request'));
       return;
     }
     if (this.state === 'failed' && r) {
@@ -954,7 +990,8 @@ export class HandoffDialog {
   private llmActions(cancel: HTMLElement): void {
     const j = this.job;
     if (this.state === 'pending' && j) {
-      this.actions.replaceChildren(cancel, h('button', { class: 'btn btn--danger-quiet', 'data-key': 'cancel-request', onclick: () => void this.cancelJob() }, 'Cancel request'));
+      const hire = this.pendingHire(j.op);
+      this.actions.replaceChildren(cancel, h('button', { class: 'btn btn--danger-quiet', 'data-key': 'cancel-request', title: hire ? `Cancels the request and the hire at Desk ${hire.desk_index + 1}: nothing is filed, nobody is hired` : null, onclick: () => void this.cancelJob() }, hire ? 'Cancel request and hire' : 'Cancel request'));
       return;
     }
     if (this.state === 'failed' && j) {
