@@ -107,7 +107,10 @@ export class FilesDrawer {
   private readonly msg: HTMLElement;
   private readonly partial: HTMLElement;
   private open_ = false;
+  /** The query of the answer shown (the field may be newer). */
   private query = '';
+  /** The query of the latest request, answered or not. */
+  private asked = '';
   private result: WorkerFiles | null | undefined; // undefined: not asked yet
   private loading = false;
   private seq = 0;
@@ -116,6 +119,8 @@ export class FilesDrawer {
   private readonly expanded = new Set<string>();
   /** Folders opened for the changes once (the user's collapse then sticks). */
   private readonly autoOpened = new Set<string>();
+  /** A filtered tree starts open; the folders the user collapsed in it (until an answer for another query). */
+  private readonly collapsedInFilter = new Set<string>();
   private active = '';
   private rows: Row[] = [];
   private disposed = false;
@@ -149,7 +154,8 @@ export class FilesDrawer {
     this.open_ = true;
     this.el.dataset.open = 'true';
     this.el.toggleAttribute('inert', false);
-    if (this.result === undefined || this.result === null) this.ask();
+    // A filter typed and then closed before its debounce fired is asked for now.
+    if (this.result === undefined || this.result === null || this.filter.value.trim() !== this.asked) this.ask();
     else this.refreshChanges();
     this.filter.focus({ preventScroll: true });
   }
@@ -197,6 +203,7 @@ export class FilesDrawer {
   private ask(): void {
     const q = this.filter.value.trim();
     const n = ++this.seq;
+    this.asked = q;
     this.loading = true;
     this.tree.setAttribute('aria-busy', 'true');
     this.render();
@@ -210,6 +217,7 @@ export class FilesDrawer {
     if (n !== this.seq || this.disposed) return;
     this.loading = false;
     this.tree.removeAttribute('aria-busy');
+    if (q !== this.query) this.collapsedInFilter.clear();
     this.query = q;
     this.result = r;
     this.rebuild();
@@ -237,13 +245,18 @@ export class FilesDrawer {
     this.render();
   }
 
-  /** The rows a person can see: a filtered tree is open all the way down (its answer is small). */
+  /** Whether a folder shows its children: a filtered tree is open all the way down (its answer is small) until collapsed. */
+  private opened(n: TreeNode): boolean {
+    return n.kind === 'dir' && (this.query ? !this.collapsedInFilter.has(n.path) : this.expanded.has(n.path));
+  }
+
+  /** The rows a person can see. */
   private flatten(): Row[] {
     const out: Row[] = [];
     const walk = (n: TreeNode, level: number, parent: TreeNode | null) => {
       n.children.forEach((c, i) => {
         out.push({ node: c, level, parent, pos: i + 1, size: n.children.length });
-        if (c.kind === 'dir' && (this.query || this.expanded.has(c.path))) walk(c, level + 1, c);
+        if (this.opened(c)) walk(c, level + 1, c);
       });
     };
     walk(this.root, 1, null);
@@ -265,12 +278,15 @@ export class FilesDrawer {
     else if (r === null) {
       text = 'Could not list the files.';
       if (!this.loading) this.msg.append(text, ' ', h('button', { class: 'btn btn--ghost fdr-retry', onclick: () => this.ask() }, 'Try again'));
-    } else if (!this.rows.length) text = r.source === 'none' ? `No file list for this checkout${r.reason ? `: ${r.reason}` : '.'}` : `${this.query ? `No files match “${this.query}”` : 'No files'}${r.reason ? ` — ${r.reason}` : ''}`;
+    } else if (r.source === 'none') {
+      // Said from the answer, not the rows: changed files can fill the tree without a listing.
+      text = `No file list for this checkout${r.reason ? `: ${r.reason}` : ''}${this.rows.length ? ' — only the changed files are shown' : r.reason ? '' : '.'}`;
+    } else if (!this.rows.length) text = this.query ? `No files match “${this.query}”` : 'No files';
     if (!this.msg.firstChild) this.msg.textContent = text;
     this.msg.hidden = !this.msg.textContent;
-    // The answer is capped and ranked: say so; never a total.
+    // The answer is capped and ranked, or the bridge says it is incomplete: say so (the reason only here); never a total.
     const capped = !!r && r.files.length >= FILES_CAP;
-    const reason = r && r.source !== 'none' && r.files.length ? r.reason : null;
+    const reason = r && r.source !== 'none' ? r.reason : null;
     const search = this.query ? 'type more to narrow' : 'type to search';
     const note = capped ? `Showing the first ${FILES_CAP}${this.query ? ' matches' : ''} — ${search}` : reason ? `This list may be incomplete — ${search}` : '';
     this.partial.textContent = [note, reason].filter(Boolean).join(' · ');
@@ -280,7 +296,7 @@ export class FilesDrawer {
   private item(row: Row): HTMLElement {
     const n = row.node;
     const dir = n.kind === 'dir';
-    const open = dir && (!!this.query || this.expanded.has(n.path));
+    const open = this.opened(n);
     const words = [n.name, dir ? 'folder' : null, n.change ? CHANGE_WORDS[n.change] : dir && n.dirty ? 'has changes' : null].filter(Boolean).join(', ');
     return h('li', {
       class: `fdr-row${dir ? ' fdr-row--dir' : ''}`,
@@ -312,7 +328,7 @@ export class FilesDrawer {
     const row = this.rowOf(e.target);
     if (!row) return;
     this.setActive(row.node.path);
-    if (row.node.kind === 'dir' && !this.query) this.setOpen(row.node, !this.expanded.has(row.node.path));
+    if (row.node.kind === 'dir') this.setOpen(row.node, !this.opened(row.node));
   }
 
   private focusActive(): void {
@@ -330,7 +346,10 @@ export class FilesDrawer {
   }
 
   private setOpen(n: TreeNode, open: boolean): void {
-    if (open) this.expanded.add(n.path);
+    if (this.query) {
+      if (open) this.collapsedInFilter.delete(n.path);
+      else this.collapsedInFilter.add(n.path);
+    } else if (open) this.expanded.add(n.path);
     else this.expanded.delete(n.path);
     this.render();
     this.focusActive();
@@ -351,7 +370,7 @@ export class FilesDrawer {
     if (e.target === this.filter) {
       if ((e.key === 'ArrowDown' || e.key === 'Enter') && this.rows.length) {
         e.preventDefault();
-        if (this.timer) {
+        if (this.timer || this.filter.value.trim() !== this.asked) {
           // The newest text first, then into its answer.
           this.cancelTimer();
           this.ask();
@@ -368,7 +387,7 @@ export class FilesDrawer {
       if (r) this.setActive(r.node.path);
     };
     const n = row.node;
-    const open = n.kind === 'dir' && (!!this.query || this.expanded.has(n.path));
+    const open = this.opened(n);
     switch (e.key) {
       case 'ArrowDown': go(i + 1); break;
       case 'ArrowUp': go(i - 1); break;
@@ -380,14 +399,14 @@ export class FilesDrawer {
         else if (n.children.length) go(i + 1);
         break;
       case 'ArrowLeft':
-        if (open && !this.query) this.setOpen(n, false);
+        if (open) this.setOpen(n, false);
         else if (row.parent) this.setActive(row.parent.path);
         break;
       case 'Enter':
         this.insert(n);
         break;
       case ' ':
-        if (n.kind === 'dir' && !this.query) this.setOpen(n, !open);
+        if (n.kind === 'dir') this.setOpen(n, !open);
         break;
       default:
         // Typing in the tree types into the filter.

@@ -211,6 +211,80 @@ describe('FilesDrawer', () => {
     expect(rejected.el.querySelector('.fdr-msg')!.textContent).toContain('Could not list the files.');
   });
 
+  it('says the listing is unavailable or partial even when changed files fill the tree, and a reason only once', async () => {
+    changes = new Map([['src/app.ts', 'M']]);
+    const partial = await make(answer([], { reason: 'the file index is still building' }));
+    expect(names(partial)).toEqual(['src •', '  app.ts M']);
+    const note = partial.el.querySelector<HTMLElement>('.fdr-partial')!;
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toBe('This list may be incomplete — type to search · the file index is still building');
+    expect((partial.el.querySelector('.fdr-msg') as HTMLElement).hidden).toBe(true);
+    partial.dispose();
+    const none = await make(answer([], { source: 'none', reason: 'no rg on the bridge host' }));
+    expect(names(none)).toEqual(['src •', '  app.ts M']);
+    const msg = none.el.querySelector<HTMLElement>('.fdr-msg')!;
+    expect(msg.hidden).toBe(false);
+    expect(msg.textContent).toBe('No file list for this checkout: no rg on the bridge host — only the changed files are shown');
+    expect(none.el.textContent!.split('no rg on the bridge host')).toHaveLength(2);
+    none.dispose();
+    // No rows at all: the message says so and the footer carries the reason, once.
+    changes = null;
+    const empty = await make(answer([], { reason: 'the file index is still building' }));
+    expect(empty.el.querySelector('.fdr-msg')!.textContent).toBe('No files');
+    expect(empty.el.querySelector('.fdr-partial')!.textContent).toBe('This list may be incomplete — type to search · the file index is still building');
+    expect(empty.el.textContent!.split('the file index is still building')).toHaveLength(2);
+  });
+
+  it('a filter typed and closed before the debounce is asked for on reopen; an unchanged filter is not', async () => {
+    vi.useFakeTimers();
+    const d = await make();
+    deps.list.mockResolvedValue(answer([f('src/ui/seat.ts')]));
+    const input = d.el.querySelector<HTMLInputElement>('.fdr-input')!;
+    input.value = 'seat'; input.dispatchEvent(new Event('input'));
+    vi.advanceTimersByTime(DEBOUNCE_MS - 1);
+    d.close();
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    expect(deps.list.mock.calls).toEqual([['']]);
+    d.open(); await flush();
+    expect(deps.list.mock.calls).toEqual([[''], ['seat']]);
+    expect(names(d)).toEqual(['src', '  ui', '    seat.ts']);
+    d.close(); d.open(); await flush();
+    expect(deps.list).toHaveBeenCalledTimes(2);
+  });
+
+  it('a filtered tree starts open but its folders collapse and open by click, ←, → and Space; clearing it restores the old expansion', async () => {
+    vi.useFakeTimers();
+    const all = answer([f('src/ui/seat.ts'), f('src/app.ts'), f('docs/a.md')]);
+    const seat = answer([f('src/ui/seat.ts'), f('src/ui/seat.css')]);
+    const d = await make(all);
+    const input = d.el.querySelector<HTMLInputElement>('.fdr-input')!;
+    const type = async (v: string, r: WorkerFiles) => { deps.list.mockResolvedValue(r); input.value = v; input.dispatchEvent(new Event('input')); vi.advanceTimersByTime(DEBOUNCE_MS); await flush(); };
+    rows(d)[0]!.click();
+    expect(names(d)).toEqual(['docs', '  a.md', 'src']);
+    await type('seat', seat);
+    expect(names(d)).toEqual(['src', '  ui', '    seat.css', '    seat.ts']);
+    key('ArrowDown', input); key('ArrowDown');
+    expect(document.activeElement!.getAttribute('data-path')).toBe('src/ui');
+    key('ArrowLeft');
+    expect(names(d)).toEqual(['src', '  ui']);
+    expect(rows(d)[1]!.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement!.getAttribute('data-path')).toBe('src/ui');
+    key('ArrowRight');
+    expect(names(d)).toEqual(['src', '  ui', '    seat.css', '    seat.ts']);
+    expect(rows(d)[1]!.getAttribute('aria-expanded')).toBe('true');
+    key(' ');
+    expect(names(d)).toEqual(['src', '  ui']);
+    rows(d)[0]!.click();
+    expect(names(d)).toEqual(['src']);
+    rows(d)[0]!.click();
+    expect(names(d)).toEqual(['src', '  ui']);
+    await type('', all);
+    expect(names(d)).toEqual(['docs', '  a.md', 'src']);
+    // A new query starts open again.
+    await type('seat', seat);
+    expect(names(d)).toEqual(['src', '  ui', '    seat.css', '    seat.ts']);
+  });
+
   it('no match for a query says so; refreshChanges redraws the badges without asking', async () => {
     const d = await make(answer([f('a.ts'), f('b.ts')]));
     expect(names(d)).toEqual(['a.ts', 'b.ts']);

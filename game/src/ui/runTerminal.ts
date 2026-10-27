@@ -279,6 +279,9 @@ export function mountRunTerminal(host: RunTerminalHost, p: ManualProcess, opts: 
     watched = false;
     showHeld(false);
     await term.mount();
+    // A dispose during the font wait: SeatTerminal.open still built its xterm and observers, so dispose them now. A
+    // surface that only lost the run keeps its xterm (it may hold again).
+    if (disposed) term.dispose();
     if (!current(g)) return;
     screen.querySelector('.xterm-helper-textarea')?.setAttribute('aria-hidden', 'true');
     const grid = term.grid;
