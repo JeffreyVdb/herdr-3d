@@ -145,7 +145,7 @@ func TestManualInputAttentionEndToEnd(t *testing.T) {
 			break
 		}
 	}
-	answer := "y\n"
+	answer := "H3D-MARKER-typed-answer-0123456789\n"
 	mark := r.wire.Len()
 	if e := r.command(proto.CmdTerminalInput, proto.TerminalInputArgs{ID: "mp:" + testManualID, Text: &answer}); e.T != "" {
 		t.Fatalf("input: %+v", e)
@@ -168,9 +168,12 @@ func TestManualInputAttentionEndToEnd(t *testing.T) {
 	}
 	fake.set(false)
 	r.processUpsert(func(p proto.ManualProcess) bool { return p.Attention == nil && p.State == "running" })
-	r.hygiene(marker)
-	if strings.Contains(r.log.String(), marker) {
-		t.Fatal("marker in the log")
+	typed := strings.TrimSpace(answer)
+	r.hygiene(marker, typed)
+	for _, m := range []string{marker, typed} {
+		if strings.Contains(r.log.String(), m) {
+			t.Fatal("marker in the log")
+		}
 	}
 }
 

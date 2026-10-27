@@ -324,6 +324,15 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
   Tailscale record), `simcmdreq=bridge|multi-line|sudo|other-host|tailscale-bg` puts a command request on Zippy's reply,
   and the fixture's password is `fixture-pass`. For a UX look: `make dev`, then
   `?ws=%2Ffixture%2Fdemo-m5%3Fplay%3Dnone%26sim%3D1%26simmanual%3Dlook%26simcmdreq%3Dsudo&floor=herdr-3d`, sit at Zippy.
+- #213 (bridge side): `go test ./internal/manual/inputwatch` covers the input detector's matrix on a fake proc reader
+  (syscalls readable, denied as under Yama `ptrace_scope=1`, and no `children` files) plus real parent-owned ptys
+  (`BenchmarkObserveSystem` measures a sample on the live `/proc`); `go test ./internal/server -run
+  'ManualInput|ManualCredentialAttention'` the episodes, and `TestManualInputAttentionEndToEnd` the running hub with a
+  scripted proc reader, a terminal watch and the hygiene sweep. `go test ./internal/manual/askpass -run
+  TestEligibilityVectors -update-eligibility` rewrites `testdata/eligibility.json` (the game's parity test reads it).
+  `go test ./internal/server -run 'TestCommandRequest(MissedReply|Pipeline)'` feeds the missed 27 October reply
+  (`internal/cmdrequest/testdata/reply-213-first.txt`, checked by its SHA-256) through the settled-turn path and the real
+  `ai.Service`, with `httptest` servers for the classifier and the LLM.
 - `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
   in-process bridge.
 
