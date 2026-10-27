@@ -63,35 +63,60 @@ func accountPhrase(hostText string) (ok, led bool) {
 	return accountBareOK[noun] || (qualified && accountNouns[noun]), led
 }
 
-// accountOnly reports whether an "other" entry's host text, for the command
-// at reply[at:end], is only an execution account: an account phrase, used as
-// one in the reply, which mentions no other machine. Both reply checks read
-// the reply with the command and a path-shaped cwd blanked out; a cwd that
-// is not a path could hide a machine ("On your Mac") and stays.
-func accountOnly(reply string, at, end int, cwd, hostText string) bool {
+// accountOnly reports whether an "other" entry's host text, for command,
+// is only an execution account: an account phrase, used as one in the
+// reply, which mentions no other machine. Both reply checks read the reply
+// with the command and a path-shaped cwd blanked out, each only when it
+// occurs once: a repeat could be a machine's name ("On prod, run `prod`").
+// A cwd that is not a path could hide a machine ("On your Mac") and stays.
+// The command or the cwd right after "on", "onto" or "from" ("On /server,
+// run …") is a machine itself.
+func accountOnly(reply, command, cwd, hostText string) bool {
 	ok, led := accountPhrase(hostText)
-	if !ok {
+	if !ok || machineForm(reply, command) || machineForm(reply, cwd) {
 		return false
 	}
 	b := []byte(reply)
-	blank := func(i, j int) {
-		for ; i < j; i++ {
-			b[i] = ' '
+	blankOnce := func(s string) {
+		i := strings.Index(reply, s)
+		if i < 0 || strings.Contains(reply[i+1:], s) {
+			return
+		}
+		for j := i; j < i+len(s); j++ {
+			b[j] = ' '
 		}
 	}
-	blank(at, end)
+	blankOnce(command)
 	if cwd != "" && (cwd[0] == '/' || cwd[0] == '~') && strings.IndexFunc(cwd, unicode.IsSpace) < 0 {
-		for i := 0; ; {
-			j := strings.Index(reply[i:], cwd)
-			if j < 0 {
-				break
-			}
-			blank(i+j, i+j+len(cwd))
-			i += j + len(cwd)
-		}
+		blankOnce(cwd)
 	}
 	prose := string(b)
 	return accountLed(prose, hostText, led) && !machineMention(prose)
+}
+
+// machineForm reports whether s occurs in reply right after "on", "onto" or
+// "from", with only whitespace and opening quotes or brackets between.
+func machineForm(reply, s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; ; i++ {
+		j := strings.Index(reply[i:], s)
+		if j < 0 {
+			return false
+		}
+		i += j
+		before := strings.TrimRightFunc(reply[:i], func(r rune) bool {
+			return unicode.IsSpace(r) || unicode.Is(unicode.Cf, r) || strings.ContainsRune("\"'`“‘([<", r)
+		})
+		w := len(before)
+		for w > 0 && wordByte(before[w-1]) {
+			w--
+		}
+		if l := strings.ToLower(before[w:]); l == "on" || l == "onto" || l == "from" {
+			return true
+		}
+	}
 }
 
 // accountLed reports whether hostText occurs in prose (ASCII case aside, not

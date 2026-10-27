@@ -296,3 +296,72 @@ func TestAccountHostRunnableReplies(t *testing.T) {
 	}
 	t.Logf("%d replies", n)
 }
+
+// R3: the command and a path cwd are blanked only when they occur once and
+// not after "on", "onto" or "from"; a machine named like the command or the
+// cwd, before or after it, at a sentence's start or inside a longer word,
+// is never hidden.
+func TestAccountHostRepeatedSpans(t *testing.T) {
+	expectHost(t, "On prod, run `prod` as your user.", otherAnswer("prod", "your user", ""), "prod", "other", "your user", "")
+	expectHost(t, "On /server, run `pwd` as your user in /server.", otherAnswer("pwd", "your user", "/server"), "pwd", "other", "your user", "")
+	n := 0
+	for _, p := range accountPhrases {
+		for _, lead := range []string{"as ", "under ", "with "} {
+			a := leadPhrase(lead, p)
+			type tmpl struct{ reply, command, cwd string }
+			var rows []tmpl
+			for _, m := range []string{"prod", "build", "mac", "server", "node1", "kiswe-mbp", "staging", "db"} {
+				for _, r := range []string{
+					"On M, run `M` A.",
+					"on M, run `M` A.",
+					"Run `M` A on M.",
+					"Run `M` A. Do it on M.",
+					"Do it on M. Run `M` A.",
+					"From M, run `M` A.",
+					"Copy it onto M, then run `M` A.",
+					"On `M`, run `M` A.",
+					"On M-db, run `M` A.",
+					"Run it A on `M`.",
+					"I couldn't do it A.\n\nOn M, run:\n\n```sh\nM\n```\n",
+				} {
+					rows = append(rows, tmpl{strings.NewReplacer("M", m, "A", a).Replace(r), m, ""})
+				}
+			}
+			for _, cwd := range []string{"/server", "/mnt/mac", "~/prod", "/srv/node1", "~/build-box"} {
+				for _, r := range []string{
+					"On C, run `pwd` A in C.",
+					"On C, run `pwd` A.",
+					"on C, run `pwd` A.",
+					"Run `pwd` A in C. Do it on C.",
+					"From C, run `pwd` A.",
+					"On `C`, run `pwd` A.",
+					"In C, run `pwd` A on C.",
+				} {
+					rows = append(rows, tmpl{strings.NewReplacer("C", cwd, "A", a).Replace(r), "pwd", cwd})
+				}
+			}
+			// A repeat that is a machine noun, with no "on" before it.
+			for _, m := range []string{"mac", "server", "box", "vm", "laptop"} {
+				rows = append(rows, tmpl{"In the " + m + "'s shell, run `" + m + "` " + a + ".", m, ""},
+					tmpl{"Open a shell in the " + m + "-1. Run `" + m + "` " + a + ".", m, ""})
+			}
+			for _, cwd := range []string{"/server", "/mnt/mac", "~/build-box"} {
+				rows = append(rows, tmpl{"In " + cwd + ", run `pwd` " + a + " in " + cwd + ".", "pwd", cwd})
+			}
+			for _, f := range rows {
+				for _, ht := range []string{p, a} {
+					expectHost(t, f.reply, otherAnswer(f.command, ht, f.cwd), f.command, "other", ht, "")
+					n++
+				}
+			}
+			// A repeat that names no machine keeps the reply runnable.
+			for _, f := range []tmpl{
+				{"Run `ls` " + a + ", then `ls` again.", "ls", ""},
+				{"In /home/jeff/repo, run `ls -la` " + a + " in /home/jeff/repo.", "ls -la", "/home/jeff/repo"},
+			} {
+				expectHost(t, f.reply, otherAnswer(f.command, a, f.cwd), f.command, "bridge", "", "account_host:1")
+			}
+		}
+	}
+	t.Logf("%d replies", n)
+}

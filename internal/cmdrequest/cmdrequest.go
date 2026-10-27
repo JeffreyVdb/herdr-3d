@@ -175,7 +175,7 @@ func ParseReport(reply, answer string) (Result, error) {
 		}
 		// #220: an account or privilege is not a machine; the entry is kept,
 		// on the bridge, and counted, unless the reply mentions a machine.
-		if c.Host == "other" && accountOnly(reply, at, at+len(command), c.Cwd, c.HostText) {
+		if c.Host == "other" && accountOnly(reply, command, c.Cwd, c.HostText) {
 			c.Host, c.HostText = "bridge", ""
 			reject("account_host")
 		}
