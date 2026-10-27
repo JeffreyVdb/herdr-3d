@@ -173,10 +173,12 @@ type Snapshot struct {
 // floors in floor order; Unassigned is the lot of sessions not in any
 // building, by name. Floors and Workers follow the same order.
 type World struct {
-	Buildings  []Building `json:"buildings"`
-	Unassigned []string   `json:"unassigned"`
-	Floors     []Floor    `json:"floors"`
-	Workers    []Worker   `json:"workers"`
+	Host            string          `json:"host"`
+	ManualProcesses []ManualProcess `json:"manual_processes"`
+	Buildings       []Building      `json:"buildings"`
+	Unassigned      []string        `json:"unassigned"`
+	Floors          []Floor         `json:"floors"`
+	Workers         []Worker        `json:"workers"`
 	// HireOptions are the harness/model/effort choices the bridge accepts
 	// (floor.settings.set default_hire, and hiring later).
 	HireOptions *HireOptions `json:"hire_options,omitempty"`
@@ -445,6 +447,7 @@ type Worker struct {
 	// suggests, until it is accepted (a schedule.create from it), dismissed,
 	// or the transcript goes on.
 	ScheduleSuggestion *ScheduleSuggestion `json:"schedule_suggestion,omitempty"`
+	CommandRequest     *CommandRequest     `json:"command_request,omitempty"`
 	// #223: Handoff is the agent's latest completed final reply a literal
 	// handoff can file (absent: none now, or no filing cabinet).
 	Handoff *HandoffCandidate `json:"handoff,omitempty"`
@@ -643,13 +646,14 @@ type Worktree struct {
 //	followups.update the fields of Followups (#90)
 //	inbox.dismissed  id, status_since (#106)
 type Event struct {
-	T        string    `json:"t"`
-	Seq      uint64    `json:"seq"`
-	Building *Building `json:"building,omitempty"`
-	Floor    *Floor    `json:"floor,omitempty"`
-	Worker   *Worker   `json:"worker,omitempty"`
-	ID       string    `json:"id,omitempty"`
-	Session  string    `json:"session,omitempty"`
+	Process  *ManualProcess `json:"process,omitempty"`
+	T        string         `json:"t"`
+	Seq      uint64         `json:"seq"`
+	Building *Building      `json:"building,omitempty"`
+	Floor    *Floor         `json:"floor,omitempty"`
+	Worker   *Worker        `json:"worker,omitempty"`
+	ID       string         `json:"id,omitempty"`
+	Session  string         `json:"session,omitempty"`
 	// FloorID (#58) is the floor id on floor.removed, worker.removed,
 	// worker.status, handoff.added and handoff.removed (the key "floor" is
 	// the floor.upsert's Floor).

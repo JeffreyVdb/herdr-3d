@@ -290,6 +290,10 @@ var (
 // names (both made from them) and the seeded presets' ids.
 func normalizeFrames(frames [][]byte) []byte {
 	all := bytes.Join(frames, []byte("\n"))
+	// These child-agent fixtures predate the bridge-wide manual-process view.
+	// Its own tests cover those snapshot fields; keep these fixtures focused
+	// on child events and independent of the machine's hostname.
+	all = regexp.MustCompile(`"host":"(?:\\.|[^"\\])*","manual_processes":\[\],`).ReplaceAll(all, nil)
 	renumber := func(re *regexp.Regexp, as func(n int) string) {
 		seen := map[string]string{}
 		all = re.ReplaceAllFunc(all, func(b []byte) []byte {

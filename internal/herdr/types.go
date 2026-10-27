@@ -23,6 +23,7 @@ type Snapshot struct {
 	Version    string          `json:"version"`
 	Protocol   int             `json:"protocol"`
 	Workspaces []WorkspaceInfo `json:"workspaces"`
+	Tabs       []TabInfo       `json:"tabs"`
 	Panes      []PaneInfo      `json:"panes"`
 	Agents     []AgentInfo     `json:"agents"`
 	// M5 term: where each tab's panes are, in cells.
@@ -156,6 +157,12 @@ func (s *Snapshot) viewportRows(pane string) int {
 		}
 	}
 	return 0
+}
+
+type TabInfo struct {
+	TabID       string `json:"tab_id"`
+	WorkspaceID string `json:"workspace_id"`
+	Label       string `json:"label"`
 }
 
 // WorkspaceInfo mirrors the schema's WorkspaceInfo.

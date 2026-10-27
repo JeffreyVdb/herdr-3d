@@ -1,7 +1,7 @@
 import './transcript.css';
 import DOMPurify, { type Config, type DOMPurify as Purifier } from 'dompurify';
 import { Marked } from 'marked';
-import type { Ask, CommandArgs, Followup, HandoffCandidate, ScheduleSuggestion, TranscriptChanges, TranscriptCollab, TranscriptDiff, TranscriptItem, TranscriptTerminal, Usage, WorkerCodex } from '../net/protocol';
+import type { Ask, CommandArgs, CommandRequest, Followup, HandoffCandidate, ScheduleSuggestion, TranscriptChanges, TranscriptCollab, TranscriptDiff, TranscriptItem, TranscriptTerminal, Usage, WorkerCodex } from '../net/protocol';
 import { AskCard, askItem, type AskCardHost, type AskResult } from './askCard';
 import { AsyncCard, type AsyncResult } from './asyncCard';
 import { AsyncDrafts } from './asyncDrafts';
@@ -9,6 +9,7 @@ import type { AnswerOptions } from './askStack';
 import { BlockedCard, type BlockedQuestion } from './blockedCard';
 import { QuestionSheet, type OpenedAsks } from './questionSheet';
 import { diffColours, type DiffColours } from './diffHighlight';
+import { CommandRequestCard, type CommandRequestCardHost } from './commandRequestCard';
 import { FollowupCard, type FollowupMessage, type FollowupResult } from './followupCard';
 import type { FollowupDraft } from './followupDrafts';
 import type { ImageFeed } from './imageFeed';
@@ -83,6 +84,7 @@ export interface TranscriptRenderHost {
   loadFollowupMessage?(turnId: string): Promise<FollowupMessage>;
   /** #60: what you picked and wrote for the follow-up, kept by the host across views (none: the card's own). */
   followupDrafts?: { get(turn: string): FollowupDraft | null; set(turn: string, d: FollowupDraft): void; clear(turn: string): void };
+  commandRequest?: CommandRequestCardHost;
   /** #223: the inline Handoff button on the worker's latest completed reply was pressed (none: no button). */
   onHandoff?(c: HandoffCandidate): void;
   /** #198: "Hire with handoff" beside it: a handoff, then a new agent with it (none: no button). */
@@ -165,6 +167,7 @@ export interface TranscriptView {
   setAsk(ask: Ask | null): void;
   /** #90: the open questions of the agent's final message (null: none): the sheet's calm lane; the prompt box stays on. */
   setFollowup(f: Followup | null): void;
+  setCommandRequest?(r: CommandRequest | null): void;
   /**
    * #223: the worker's latest completed reply a literal handoff can file (null: none). Its row, when the timeline has
    * it, gets the inline Handoff button; no other row ever does.
@@ -1413,6 +1416,7 @@ class Transcript implements TranscriptView {
   /** #223: the worker's handoff candidate, and the inline button on its row (null: none shown). */
   private handoff: HandoffCandidate | null = null;
   private handoffEl: HTMLElement | null = null;
+  private commandCard: CommandRequestCard | null = null;
   /** #66: the worker's schedule suggestion, the × in flight, and the minute tick that keeps the chip's day words true. */
   private suggestion: ScheduleSuggestion | null = null;
   private dismissing = false;
@@ -1526,6 +1530,7 @@ class Transcript implements TranscriptView {
       answer: (hash, choice, cancel) => host.onAnswer(hash, choice, cancel),
       toTerminal: () => host.onSwitchToTerminal(),
     });
+    this.commandCard = host.commandRequest ? new CommandRequestCard(host.commandRequest) : null;
     const noFollowup = (): Promise<FollowupResult> => Promise.resolve({ ok: false, code: 'unsupported', message: 'Not available here.' });
     this.followup = new FollowupCard({
       answer: (args, o) => (host.onAnswerFollowup ? host.onAnswerFollowup(args, o) : noFollowup()),
@@ -1712,6 +1717,19 @@ class Transcript implements TranscriptView {
   setFollowup(f: Followup | null): void {
     if (this.destroyed) return;
     this.followup.set(f);
+  }
+
+  setCommandRequest(r: CommandRequest | null): void {
+    this.commandCard?.set(r);
+    this.syncCommandRequest();
+  }
+
+  private syncCommandRequest(): void {
+    const card = this.commandCard;
+    if (!card || card.el.hidden) { card?.el.remove(); return; }
+    const last = [...this.timeline.values()].filter((item) => item.kind === 'assistant').sort((a, b) => b.seq - a.seq)[0];
+    const row = last ? this.timeline.row(last.id) : undefined;
+    if (row && card.el.parentElement !== row) row.append(card.el);
   }
 
   setHandoff(c: HandoffCandidate | null): void {
@@ -2727,6 +2745,7 @@ class Transcript implements TranscriptView {
   private afterChange(added: TranscriptItem[], initial: boolean): void {
     this.updateCounts();
     this.syncHandoff(); // #223
+    this.syncCommandRequest();
     if (initial || this.following) {
       this.stick(true);
       this.fileRefs.place(); // #31: its reference's row may be drawn anew, or scrolled away
@@ -2776,6 +2795,7 @@ class Transcript implements TranscriptView {
     if (this.destroyed) return;
     this.root.removeAttribute('data-building');
     this.syncHandoff();
+    this.syncCommandRequest();
     this.fileRefs.place();
     this.updateCounts();
     this.stick();

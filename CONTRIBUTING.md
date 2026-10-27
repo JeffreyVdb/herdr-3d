@@ -315,6 +315,15 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
   composers' surfaces with the switch on). For a UX look of pack up: as round 3's, with `simjev=<a fake Jev>`, or the
   schedule form (Menu → Scheduled agents → New) with the same prompt; of the chips and revoke: send the prompt from
   Pebble's laptop box (E, then the conversation), then the seat bar's "protected file" chip.
+- #207 manual processes: `go test ./internal/manual/... ./internal/cmdrequest` and `go test ./internal/server -run
+  'Manual|Askpass|CommandRequest'` never run sudo or change Tailscale: credentials are synthetic markers and
+  `internal/server/testdata/fake-sudo.sh` plays `sudo -A`. `go test -tags integration ./internal/app ./internal/server
+  -run '^(TestIntegrationManualProcess|TestManualAskpassIntegration)$'` uses a throwaway Herdr session with isolated XDG
+  dirs. The e2e is `e2e/h207-manual-processes.spec.ts` on `tools/fixture-manualproc.ts`: `simmanual=<key>` shares a
+  key's records between connections (a key containing `cleanup`, `gone` or `all` seeds a gone worker's cleanup-needed
+  Tailscale record), `simcmdreq=bridge|multi-line|sudo|other-host|tailscale-bg` puts a command request on Zippy's reply,
+  and the fixture's password is `fixture-pass`. For a UX look: `make dev`, then
+  `?ws=%2Ffixture%2Fdemo-m5%3Fplay%3Dnone%26sim%3D1%26simmanual%3Dlook%26simcmdreq%3Dsudo&floor=herdr-3d`, sit at Zippy.
 - `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
   in-process bridge.
 

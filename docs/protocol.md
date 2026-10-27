@@ -6513,6 +6513,35 @@ even an HTTP origin), token, account data or raw error or stderr text: none is d
 
 Errors not tied to a command have no `req_id`.
 
+### Manual process terminals
+
+The existing `terminal.watch`, `terminal.resize`, `terminal.scroll`, and `terminal.unwatch` commands accept
+`id: "mp:<process id>"` for a manual process's pane. Frames, control state, history, and closure messages carry that
+same id. These watches count toward the connection and host limits; a connection can control a manual pane while it
+also controls its worker pane. Unwatching detaches the view and does not stop the process. If the pane disappears,
+`terminal.closed` has reason `process_gone`.
+
+`terminal.input {id, text?, bytes?}` sends input to the connection's own control watch of that manual id. Supply
+exactly one of `text` (UTF-8) or `bytes` (base64), at most 16 KiB decoded per command. The bridge returns the view to
+the live bottom first, then writes the input through the terminal controller's stdin. `worker.keys` accepts worker
+ids only. The audit entry contains `{id, bytes}` and never the input. A terminal application controls whether input is
+echoed in its display; applications reading secrets should disable echo.
+
+### Manual process credentials
+
+A waiting manual process exposes `credential: {request, prompt, user, attempt, expires_at}`. The request is scoped to
+that process and helper invocation. Answer it with `manual_process.credential {id, request, secret}` or cancel it with
+`manual_process.credential {id, request, cancel: true}`. Exactly one of `secret` and `cancel` is required. The answer
+acks with `{}`; an answered, replaced, disconnected, expired, or ended request returns `stale`. A retry creates a new
+request and increments `attempt`. An unanswered request expires after 120 seconds. The audit entry contains only
+`{id, request, cancel, secret_bytes}`.
+
+For supported top-level sudo commands, the reviewed command remains unchanged in the record and the launched form has
+`-A` inserted. The helper authenticates to the bridge over a 0600 local socket with the process's 0600 nonce and a
+same-UID peer check. A credential is sent only over the WebSocket and that local helper connection, then written to
+sudo's askpass pipe; it is not placed in process arguments, environment, files, logs, audit rows, or world messages.
+Nested sudo and other password prompts use terminal input instead.
+
 ## Flow control and closing
 
 Each client has a bounded send queue (1024 messages). The bridge never waits for a slow client: if the queue fills up,
@@ -6557,3 +6586,24 @@ herdr-world cmd run.start '{"session":"h3d-scratch","desk_index":1,"issue":3,"pr
 
 `dump` prints the `welcome` line on stderr. `cmd` prints the `ack` or `error` and exits 1 on error; it waits up to
 `--timeout` (1 min) for a reply. All three take `--socket`.
+
+## Manual processes
+
+A manual process is a user-authorized command in an unfocused, labelled sibling tab of a worker's Herdr workspace. It does not change the worker's `pane_id`. The snapshot contains `host` (the bridge hostname) and `manual_processes`; updates are `manual_process.upsert {process}` and `manual_process.removed {id}`. The snapshot retains every nonterminal process and every process with cleanup `needed` or `failed`, plus the newest 20 terminal processes per current worker and 20 terminal processes overall for departed workers.
+
+A process carries `id`, the start's `op`, `worker`, `worker_name`, `floor`, `session`, `workspace_id`, `tab_id`, `pane_id`, `host`, `cwd`, the exact reviewed `command`, optional `launched` form, `title`, `source`, `state`, optional `exit_code` and `error`, `cleanup`, optional `cleanup_note`, `effects`, optional `credential`, and `created_at`, `started_at`, and `ended_at` in Unix milliseconds. `source.kind` is `manual` or `suggestion`; the latter includes the request `key` and entry `index`. The bridge reserves each `op` durably, including after dismissal, so a retry returns the original record and does not launch a second command.
+
+`manual_process.start {op, worker, command, cwd?, source?, askpass?}` acknowledges `{process}`. An operation key is 1–64 ASCII letters, digits, underscores or hyphens. A command is nonempty valid UTF-8 of at most 8 KiB, with no NUL; cwd is an existing absolute directory, defaulting to the worker's cwd. A suggestion start must still match the worker's current request, bridge host, key, index, and exact command or variant; otherwise it fails with `stale`. The password dialog is available only for a supported rewrite; an unsupported `askpass` request fails with `bad_args`.
+
+`manual_process.stop {id}` acknowledges `{process}` after the stop attempt. It can be retried for cleanup `needed` or `failed`. `manual_process.dismiss {id}` acknowledges `{}` and removes a terminal record from the view only when cleanup is `none` or `done`; the operation key remains reserved. Command audit entries store the command's byte length and a SHA-256 prefix, not the command text.
+
+States are `starting`, `running`, `waiting`, `stopping`, `exited`, `stopped`, `failed`, and `unknown`; only `exited`, `stopped`, and `failed` are terminal. `waiting` indicates an active credential request. Cleanup is `none`, `pending`, `done`, `needed`, or `failed`. An unknown process or a cleanup-needed record remains actionable after its worker leaves. Process identity combines PID and Linux start ticks; a PID alone is never sufficient to signal or establish that an earlier process still runs.
+
+Stop, send-home, floor sleep, external closure, owner loss, and restart reconciliation use the same ownership boundary. A verified live foreground process group receives SIGINT, then SIGTERM, then SIGKILL with bounded waits. The bridge closes the manual tab and reports tagged surviving descendants as cleanup needed with their PIDs; a later Stop may signal those exact re-identified descendants. Send-home is refused before exiting the agent if a process cannot be verified stopped. Floor sleep stops manual processes before stopping the session. If the launcher is gone but a detached child remains, sleep proceeds and the record remains cleanup needed; wake closes restored `⚙ ` tabs in recorded workspaces and never relaunches commands. Restart reads status files and observes the existing tabs; it never reruns a command.
+
+A recognized background Tailscale Serve effect is checked against read-only status before launch. If the effect adapter is unavailable, supported top-level background Serve commands are refused. It remains cleanup needed until a separate visible manual process running its scoped `off` command exits successfully. The bridge does not reset all Serve configuration, stop the daemon, or change sudoers. Other external effects are unmanaged. Terminal detach is independent of Stop.
+## Command requests
+
+A worker can include `command_request: {key, at, commands}` after a settled agent reply asks the human to run a command. Each entry has the exact `command`, its `cwd` and `cwd_named`, `host` (`bridge`, `other`, or `unknown`), optional `host_text` and `why`, and optional reviewed `variants`. The key is the reply's SHA-256. A variant is a separate, visible choice and never replaces the original command. Only bridge-host entries can be launched as suggestions.
+
+`worker.dismiss_command_request {id, key}` closes the current card; a stale key returns `stale`. A new prompt or turn and a launch from the request also close it. `worker.upsert` publishes changes. The bridge persists seen replies, including dismissed or stale requests, to avoid showing them again after a restart. The feature defaults on with configured AI and can be disabled with `HERDR_WORLD_COMMAND_REQUESTS_ENABLED=false`.

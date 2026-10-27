@@ -83,6 +83,7 @@ import { HandoffSim } from './fixture-handoff.ts';
 import { ScheduleSim } from './fixture-schedule.ts';
 // #66: schedule suggestions (`schedule_suggestions.*`, `worker.dismiss_schedule_suggestion`, `sim.suggest`, `simschedsuggest=`, `simsuggest=<key>`).
 import { schedSuggestMode, SchedSuggestSim } from './fixture-schedsuggest.ts';
+import { ManualProcessSim } from './fixture-manualproc.ts';
 
 export interface SimOptions {
   /** Time between the scripted steps of a wake or sleep (and a hire, a send-home). */
@@ -155,6 +156,8 @@ export interface SimOptions {
   /** #66: the schedule suggestions' state with no models (`simschedsuggest=on|off|incomplete|env|env-off|none`), and Zippy's seeded suggestion, remembered by the key (`simsuggest=<key>`; tools/fixture-schedsuggest.ts). */
   schedSuggest?: string;
   suggestKey?: string;
+  manual?: string;
+  commandRequest?: string;
   /** #247: `simrepos=<key>`: demo-m5's floors set up for `@r:`, the shared switch shared by the key's connections (tools/fixture-repos.ts). */
   repos?: string;
   /** #93: `simhirepresets=<key>`: the hire presets shared by the key's connections, as a bridge's database (tools/fixture-hirepreset.ts). */
@@ -328,6 +331,8 @@ export class SimWorld {
     this.scheduleInstructions = o.fail !== 'no_schedule_instructions' && o.fail !== 'no_herdr_instructions'; // #127
     this.schedSuggestMode = o.schedSuggest; // #66
     this.suggestKey = o.suggestKey ?? null;
+    this.manualPreset = o.manual;
+    this.commandRequestPreset = o.commandRequest;
     this.handoffLlm = { ...(o.handoffLlm ? { state: o.handoffLlm } : {}), ...(o.handoffLlmOut ? { outcome: o.handoffLlmOut } : {}) }; // #9
     this.now = o.now ?? (() => Date.now());
     this.setT = o.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
@@ -404,7 +409,8 @@ export class SimWorld {
     this.activitySettings = new ActivitySettingsSim({ ai: this.ai, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) });
     if (o.codex) this.codexq.seed(o.codex); // #157
     if (o.followup) this.followups.seed(o.followup); // #60
-    if (this.suggestKey !== null) this.schedSuggest.seed(); // #66
+    if (this.suggestKey !== null) this.schedSuggest.seed();
+    this.manual.seed(); // #66
     if (o.repos !== undefined) seedRepos(this.floors, [...this.buildings.values()]); // #247
     this.repos = new ReposSim(
       {
@@ -590,6 +596,8 @@ export class SimWorld {
   private readonly scheduleInstructions: boolean;
   private readonly schedSuggestMode: string | undefined; // #66
   private readonly suggestKey: string | null;
+  private readonly manualPreset: string | undefined;
+  private readonly commandRequestPreset: string | undefined;
   private readonly handoffLlm: { state?: string; outcome?: string };
   /** #98: the agents' activities (tools/fixture-activity.ts). */
   private readonly activity: ActivitySim;
@@ -728,7 +736,8 @@ export class SimWorld {
     this.kaneo.decorate(world); // #184
     this.telegram.decorate(world); // #11
     this.handoffs.decorate(world); // #223
-    this.schedules.decorate(world); // #64 schedules
+    this.schedules.decorate(world);
+    this.manual.decorate(world); // #64 schedules
     this.inbox.decorate(world); // #106
     this.children.decorate(world); // #26
     this.share.decorate(world); // M13
@@ -802,7 +811,7 @@ export class SimWorld {
     }
     let ack = (data?: unknown) => send(data === undefined ? { t: 'ack', req_id: reqId } : { t: 'ack', req_id: reqId, data });
     let fail = (e: unknown) => {
-      const err = e instanceof CmdError ? e : new CmdError('internal', String(e));
+      const err = e instanceof CmdError ? e : e instanceof Error && 'code' in e && typeof e.code === 'string' ? new CmdError(e.code, e.message) : new CmdError('internal', String(e));
       send({ t: 'error', req_id: reqId, code: err.code, message: err.message, ...(err.data !== undefined ? { data: err.data } : {}) });
     };
     try {
@@ -816,6 +825,7 @@ export class SimWorld {
       // M5: laptop screens and seated input (tools/fixture-screen.ts); world events close the watches they end.
       const screens = screensOf(this, () => ({
         worker: (id: string) => this.workers.find((w) => w.id === id),
+        manualProcess: (id: string) => this.manual.has(id),
         floor: (s: string) => this.floors.get(s),
         later: (fn: () => void, ms: number) => {
           const h = this.setT(() => {
@@ -870,6 +880,7 @@ export class SimWorld {
           created(data);
         };
       }
+      if (this.manual.handle(m.t, a, send, ack, fail)) return;
       if (this.schedSuggest.handle(m.t, a, send, ack, fail)) return;
       if (this.followups.handle(m.t, a, send, ack, fail)) return;
       if (this.packup.handle(m.t, a, send, ack, fail)) return; // #110
@@ -1455,6 +1466,12 @@ export class SimWorld {
       prompt: (a, send, ack, fail) => this.panels.prompt(a, send, ack, fail),
     });
     return this.followupSim;
+  }
+
+  private manualSim: ManualProcessSim | null = null;
+  private get manual(): ManualProcessSim {
+    this.manualSim ??= new ManualProcessSim({ workers: this.workers, now: () => this.now(), emit: (send, m) => this.emit(send, m), upsert: (send, w) => this.upsertWorker(send, w), final: (id, text) => void this.handoffs.handle('sim.final', { id, text }, () => undefined, () => undefined), later: (fn, ms) => { this.setT(fn, ms); } }, this.manualPreset, this.commandRequestPreset);
+    return this.manualSim;
   }
 
   // ---- #66: schedule suggestions (tools/fixture-schedsuggest.ts) ------

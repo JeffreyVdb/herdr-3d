@@ -37,6 +37,8 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/imgcache"
 	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
+	"github.com/JeffreyVdb/herdr-3d/internal/manual"
+	"github.com/JeffreyVdb/herdr-3d/internal/manual/askpass"
 	"github.com/JeffreyVdb/herdr-3d/internal/notify"
 	"github.com/JeffreyVdb/herdr-3d/internal/notify/telegram"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -130,6 +132,10 @@ const EnvFollowupsEnabled = "HERDR_WORLD_FOLLOWUPS_ENABLED"
 // #110 pack up on request: the environment's toggle (true or false; unset:
 // the panel's). While set it wins and the panel shows it read-only.
 const EnvPackupEnabled = "HERDR_WORLD_PACKUP_ENABLED"
+
+// #207 command requests: the environment's toggle (true or false; unset: on
+// while the AI integration is configured). There is no panel toggle yet.
+const EnvCommandRequestsEnabled = "HERDR_WORLD_COMMAND_REQUESTS_ENABLED"
 
 // #66 schedule suggestions: the environment's toggle (true or false; unset:
 // the panel's). While set it wins and the panel shows it read-only.
@@ -290,6 +296,20 @@ func World(name string, args []string, stdout, stderr io.Writer) int {
 	defer stop()
 	var err error
 	switch sub {
+	case "manual-launch":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "manual-launch requires a directory")
+			return 2
+		}
+		err = manual.Launch(args[0], stdout)
+	case "manual-askpass":
+		if len(args) != 2 {
+			return 1
+		}
+		if askpass.Helper(args[0], args[1], stdout) != nil {
+			return 1
+		}
+		return 0
 	case "serve":
 		err = serveMain(ctx, name, args, stdout, stderr)
 	case "dump":
@@ -504,8 +524,9 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	aiLLMBase := fs.String("ai-llm-base-url", os.Getenv(EnvAILLMBaseURL), "OpenAI-compatible endpoint's base URL; overrides the panel's ($"+EnvAILLMBaseURL+")")
 	aiLLMKey := fs.String("ai-llm-key-file", os.Getenv(EnvAILLMKeyFile), "file holding the LLM's key; overrides the panel's ($"+EnvAILLMKeyFile+")")
 	aiLLMModel := fs.String("ai-llm-model", os.Getenv(EnvAILLMModel), "LLM model; overrides the panel's ($"+EnvAILLMModel+")")
-	followupsEnabled := fs.String("followups-enabled", os.Getenv(EnvFollowupsEnabled), "true or false: switch the follow-up questions on or off, overriding the panel's toggle ($"+EnvFollowupsEnabled+")")                                           // #90
-	packupEnabled := fs.String("packup-enabled", os.Getenv(EnvPackupEnabled), "true or false: switch pack up on request on or off, overriding the panel's toggle ($"+EnvPackupEnabled+")")                                                            // #110
+	followupsEnabled := fs.String("followups-enabled", os.Getenv(EnvFollowupsEnabled), "true or false: switch the follow-up questions on or off, overriding the panel's toggle ($"+EnvFollowupsEnabled+")") // #90
+	packupEnabled := fs.String("packup-enabled", os.Getenv(EnvPackupEnabled), "true or false: switch pack up on request on or off, overriding the panel's toggle ($"+EnvPackupEnabled+")")                  // #110
+	commandRequestsEnabled := fs.String("command-requests-enabled", os.Getenv(EnvCommandRequestsEnabled), "true or false: switch command requests on or off ($"+EnvCommandRequestsEnabled+")")
 	scheduleSuggestionsEnabled := fs.String("schedule-suggestions-enabled", os.Getenv(EnvScheduleSuggestionsEnabled), "true or false: switch the schedule suggestions on or off, overriding the panel's toggle ($"+EnvScheduleSuggestionsEnabled+")") // #66
 	digestEnabled := fs.String("digest-enabled", os.Getenv(EnvDigestEnabled), "true or false: switch the floor overview summaries on or off, overriding the panel's toggle ($"+EnvDigestEnabled+")")                                                  // #118
 	handoffLLMEnabled := fs.String("handoff-llm-enabled", os.Getenv(EnvHandoffLLMEnabled), "true or false: switch LLM handoffs on or off, overriding the panel's toggle ($"+EnvHandoffLLMEnabled+")")                                                 // #9
@@ -556,6 +577,14 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 			return fmt.Errorf("-followups-enabled must be true or false, got %q", *followupsEnabled)
 		}
 		followupsOn = &on
+	}
+	var commandRequestsOn *bool
+	if *commandRequestsEnabled != "" {
+		on, err := strconv.ParseBool(*commandRequestsEnabled)
+		if err != nil {
+			return fmt.Errorf("-command-requests-enabled must be true or false, got %q", *commandRequestsEnabled)
+		}
+		commandRequestsOn = &on
 	}
 	var scheduleSuggestionsOn *bool // #66
 	if *scheduleSuggestionsEnabled != "" {
@@ -679,7 +708,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		return fmt.Errorf("telegram settings: %w", err)
 	}
 	return Serve(ctx, ServeConfig{
-		Socket: *socket, DB: *db, Herdr: &herdr.Client{Bin: *herdrBin}, Only: only,
+		Socket: *socket, DB: *db, Askpass: true, Herdr: &herdr.Client{Bin: *herdrBin}, Only: only,
 		Poll: poll, Resnapshot: resnap, MaxDesks: maxDesks, NameHold: nameHold, Log: log, Name: name,
 		Control:     &herdr.Control{Herdr: *herdrBin, SystemdRun: *systemdRun, Only: only, CodexRun: orNone(*codexRun), Shell: shellKind, ShellBin: shellBin},
 		CodexRun:    orNone(*codexRun), // #155 shared Codex server
@@ -702,8 +731,9 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		DropsRoot:        *dropzoneData,                                                     // M13 drops.list
 		AI: &ai.Options{File: orDefault(*aiFile, DefaultAIFile(*db)), Env: ai.Overrides{ // #92 AI integration
 			ClassifierKeyFile: *aiClsKey, ClassifierModel: *aiClsModel, LLMBaseURL: *aiLLMBase, LLMKeyFile: *aiLLMKey, LLMModel: *aiLLMModel}},
-		FollowupsEnabled:           followupsOn,           // #90 follow-up questions
-		PackupEnabled:              packupOn,              // #110 pack up on request
+		FollowupsEnabled:           followupsOn, // #90 follow-up questions
+		PackupEnabled:              packupOn,    // #110 pack up on request
+		CommandRequestsEnabled:     commandRequestsOn,
 		ScheduleSuggestionsEnabled: scheduleSuggestionsOn, // #66 schedule suggestions
 		ActivityModel:              activityOn,            // #98 activity
 		DigestEnabled:              digestOn,              // #118 floor overview summaries
@@ -715,6 +745,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 
 // ServeConfig configures Serve.
 type ServeConfig struct {
+	Askpass    bool // enable the private credential broker
 	Socket     string
 	DB         string
 	Herdr      watch.Herdr
@@ -832,6 +863,7 @@ type ServeConfig struct {
 	// #110 pack up on request: the environment's toggle (nil: the panel's).
 	PackupEnabled *bool
 	// #66 schedule suggestions: the environment's toggle (nil: the panel's).
+	CommandRequestsEnabled     *bool
 	ScheduleSuggestionsEnabled *bool
 	// #98 activity: the environment's "Classify unknown commands" toggle
 	// (nil: the panel's).
@@ -862,6 +894,19 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		WakeTimeout: cfg.WakeTimeout, ResumeTimeout: cfg.ResumeTimeout, ResumePoll: cfg.ResumePoll, ResumeSettle: cfg.ResumeSettle}
 	if cfg.Control != nil {
 		opts.Herdr = floorHerdr{Control: cfg.Control, read: cfg.Herdr}
+		cfg.Control.ManualDir = filepath.Join(filepath.Dir(DefaultDB()), "manual")
+		opts.Manual = cfg.Control
+		opts.ManualDir = cfg.Control.ManualDir
+		opts.ManualShell = cfg.Control.ShellBin
+		if opts.ManualShell == "" {
+			opts.ManualShell, err = shell.Resolve(cfg.Control.Shell)
+			if err != nil {
+				return err
+			}
+		}
+		if cfg.Herdr != nil {
+			opts.ManualSnapshot = cfg.Herdr.Snapshot
+		}
 		opts.Hire = cfg.Control
 		opts.Term = cfg.Control // M5 term
 	}
@@ -976,9 +1021,10 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		}
 		opts.AI = svc
 	}
-	opts.Kaneo = cfg.Kaneo                                           // #184
-	opts.FollowupsEnabled = cfg.FollowupsEnabled                     // #90
-	opts.PackupEnabled = cfg.PackupEnabled                           // #110
+	opts.Kaneo = cfg.Kaneo                       // #184
+	opts.FollowupsEnabled = cfg.FollowupsEnabled // #90
+	opts.PackupEnabled = cfg.PackupEnabled       // #110
+	opts.CommandRequestsEnabled = cfg.CommandRequestsEnabled
 	opts.ScheduleSuggestionsEnabled = cfg.ScheduleSuggestionsEnabled // #66
 	opts.ActivityModel = cfg.ActivityModel                           // #98
 	opts.DigestEnabled = cfg.DigestEnabled                           // #118
@@ -1008,6 +1054,12 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if cfg.Askpass {
+		if err := hub.ListenAskpass(ctx, askpass.SocketPath()); err != nil {
+			_ = ln.Close()
+			return fmt.Errorf("askpass listener: %w", err)
+		}
+	}
 	var wg sync.WaitGroup
 	errs := make(chan error, 3)
 	run := func(what string, fn func() error) {

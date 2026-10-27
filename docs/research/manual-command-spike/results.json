@@ -1,0 +1,35 @@
+{
+  "herdr": "herdr 0.9.1",
+  "real_credentials_used": false,
+  "scope": "isolated local Herdr CLI, not browser/bridge",
+  "tab_close": {
+    "input_received": true,
+    "input_absent_from_frames": true,
+    "input_absent_from_process_argv": true,
+    "controller_release_preserved_processes": true,
+    "alive_after_close": {
+      "main": false,
+      "normal": false,
+      "detached": true
+    },
+    "owner_alive_after_close": true
+  },
+  "workspace_close": {
+    "input_received": true,
+    "input_absent_from_frames": true,
+    "input_absent_from_process_argv": true,
+    "controller_release_preserved_processes": true,
+    "alive_after_close": {
+      "main": false,
+      "normal": false,
+      "detached": true
+    },
+    "owner_alive_after_close": false
+  },
+  "cleanup": {
+    "server_exited": true,
+    "session_stopped": true,
+    "session_deleted": true,
+    "all_probe_processes_stopped": true
+  }
+}

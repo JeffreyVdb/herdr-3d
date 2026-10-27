@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"reflect"
 	"regexp"
 	"sort"
@@ -51,13 +52,19 @@ var ErrSlowConsumer = errors.New("slow consumer")
 
 // Options configure a Hub.
 type Options struct {
-	Ring     int           // events kept for since_seq replay (default 4096)
-	Queue    int           // per-client send queue, in messages (default 1024)
-	MaxDesks int           // cap on the desks a floor renders beyond its occupied ones (default DefaultMaxDesks)
-	NameHold time.Duration // how long a name stays held for a worker that left its floor, from when it left (default DefaultNameHold)
-	Server   string        // version banner sent in welcome
-	Log      *slog.Logger
-	Now      func() time.Time // bridge clock for status_since and the name hold (default time.Now)
+	Manual             ManualHerdr
+	ManualDir          string
+	ManualShell        string
+	ManualSnapshot     func(context.Context, string) (*herdr.Snapshot, error)
+	ManualNoNewPrivs   func(context.Context, string) (bool, error)
+	ManualEffectStatus func(context.Context) ([]byte, error)
+	Ring               int           // events kept for since_seq replay (default 4096)
+	Queue              int           // per-client send queue, in messages (default 1024)
+	MaxDesks           int           // cap on the desks a floor renders beyond its occupied ones (default DefaultMaxDesks)
+	NameHold           time.Duration // how long a name stays held for a worker that left its floor, from when it left (default DefaultNameHold)
+	Server             string        // version banner sent in welcome
+	Log                *slog.Logger
+	Now                func() time.Time // bridge clock for status_since and the name hold (default time.Now)
 
 	// Herdr wakes floors and puts them to sleep (nil: floor.wake and
 	// floor.sleep fail with internal).
@@ -304,6 +311,7 @@ type Options struct {
 	// not set), ScheduleSuggestRoles the models (default FollowupRoles, then
 	// AI; tests pass fakes). They look at the follow-up questions' turn ends
 	// (FollowupDebounce).
+	CommandRequestsEnabled     *bool
 	ScheduleSuggestionsEnabled *bool
 	ScheduleSuggestRoles       schedsuggest.Roles
 	// #110 pack up on request: PackupEnabled is the environment's toggle
@@ -424,13 +432,20 @@ const (
 // event sequence numbers and fans events out to clients. Nothing it does
 // blocks on a client: a client that cannot keep up is dropped.
 type Hub struct {
-	opts    Options
-	log     *slog.Logger
-	st      *store.Store
-	epoch   string
-	updates chan world.Update
-	ops     chan func(context.Context)
-	done    chan struct{} // closed when Run stops processing operations, before waiting for background tasks
+	manualProcesses map[string]proto.ManualProcess
+	manualOrder     map[string]uint64
+	manualNext      uint64
+	manualLocks     map[string]*sync.Mutex
+	manualStopBusy  map[string]bool
+	manualPolling   bool
+	manualCleanups  map[string]manualCleanupLink
+	opts            Options
+	log             *slog.Logger
+	st              *store.Store
+	epoch           string
+	updates         chan world.Update
+	ops             chan func(context.Context)
+	done            chan struct{} // closed when Run stops processing operations, before waiting for background tasks
 
 	seq     uint64
 	ring    *ring
@@ -467,12 +482,15 @@ type Hub struct {
 	usageFor map[string]usageTag
 	reported map[string]modelEffort
 	// M5 term
-	term      termWatches              // laptop screens being watched
-	zoom      zoomTabs                 // #74: the tabs zoomed for them
-	lanes     map[string]*inputLane    // worker id → its input commands, in order
-	questions map[string]questionState // worker id → what its blocked screen asks
-	calls     map[string]workerCalls   // #106: worker id → the calls its transcript waits on
-	asking    map[string]bool          // worker id → its screen reader runs
+	credentials        map[string]*credentialRequest
+	credentialAttempts map[string]int
+	credentialTimeout  time.Duration
+	term               termWatches              // laptop screens being watched
+	zoom               zoomTabs                 // #74: the tabs zoomed for them
+	lanes              map[string]*inputLane    // worker id → its input commands, in order
+	questions          map[string]questionState // worker id → what its blocked screen asks
+	calls              map[string]workerCalls   // #106: worker id → the calls its transcript waits on
+	asking             map[string]bool          // worker id → its screen reader runs
 	// #57: worker id → its ask as last published, and the last ask call
 	// whose result its transcript recorded.
 	asks        map[string]*proto.Ask
@@ -509,7 +527,8 @@ type Hub struct {
 
 	dismissed map[string]int64 // #106: inbox dismissals, worker id → status_since
 
-	fu  followupState     // #90 follow-up questions
+	fu  followupState // #90 follow-up questions
+	cr  commandRequestState
 	ss  suggestState      // #66 schedule suggestions
 	ho  handoffState      // #223 handoffs
 	ah  agentHandoffState // #224 agent handoff requests
@@ -722,36 +741,44 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	var epoch [8]byte
 	_, _ = rand.Read(epoch[:])
 	h := &Hub{
-		opts:          opts,
-		log:           opts.Log,
-		st:            st,
-		epoch:         hex.EncodeToString(epoch[:]),
-		updates:       make(chan world.Update, 256),
-		ops:           make(chan func(context.Context), 64),
-		done:          make(chan struct{}),
-		ring:          newRing(opts.Ring),
-		clients:       map[*Client]struct{}{},
-		floors:        map[string]*floorState{},
-		vfloors:       map[string]store.VirtualFloor{},
-		hidden:        map[string]bool{},
-		workers:       map[string]*proto.Worker{},
-		saved:         map[string]savedWorker{},
-		desks:         map[string]map[string]int{},
-		names:         map[string]map[string]nameClaim{},
-		viewBuildings: map[string]proto.Building{},
-		viewFloors:    map[string]proto.Floor{},
-		resume:        map[string]string{},
-		branches:      map[string]branchRead{},
-		rescan:        make(chan struct{}, 1),
-		creating:      map[string]*createOp{},
-		suggest:       make(chan suggestJob, 256),
-		usage:         map[string]*proto.Usage{},
-		usageFor:      map[string]usageTag{},
-		reported:      map[string]modelEffort{},
-		limits:        map[string]proto.Limits{},
-		limitsPoller:  newLimitsPoller(opts.Limits),
-		dg:            map[string]*transcript.Digest{},
-		mcp:           mcpState{obs: map[string]*mcpObs{}},
+		opts:            opts,
+		manualProcesses: map[string]proto.ManualProcess{},
+		manualOrder:     map[string]uint64{},
+		manualLocks:     map[string]*sync.Mutex{},
+		manualStopBusy:  map[string]bool{},
+		manualCleanups:  map[string]manualCleanupLink{},
+		log:             opts.Log,
+		st:              st,
+		epoch:           hex.EncodeToString(epoch[:]),
+		updates:         make(chan world.Update, 256),
+		ops:             make(chan func(context.Context), 64),
+		done:            make(chan struct{}),
+		ring:            newRing(opts.Ring),
+		clients:         map[*Client]struct{}{},
+		floors:          map[string]*floorState{},
+		vfloors:         map[string]store.VirtualFloor{},
+		hidden:          map[string]bool{},
+		workers:         map[string]*proto.Worker{},
+		saved:           map[string]savedWorker{},
+		desks:           map[string]map[string]int{},
+		names:           map[string]map[string]nameClaim{},
+		viewBuildings:   map[string]proto.Building{},
+		viewFloors:      map[string]proto.Floor{},
+		resume:          map[string]string{},
+		branches:        map[string]branchRead{},
+		rescan:          make(chan struct{}, 1),
+		creating:        map[string]*createOp{},
+		suggest:         make(chan suggestJob, 256),
+		usage:           map[string]*proto.Usage{},
+		usageFor:        map[string]usageTag{},
+		reported:        map[string]modelEffort{},
+		limits:          map[string]proto.Limits{},
+		limitsPoller:    newLimitsPoller(opts.Limits),
+		dg:              map[string]*transcript.Digest{},
+		mcp:             mcpState{obs: map[string]*mcpObs{}},
+	}
+	if err := h.initManualProcesses(ctx); err != nil {
+		return nil, err
 	}
 	h.initTerm()        // M5 term
 	h.initTranscripts() // M16 transcript
@@ -786,6 +813,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if err := h.initFollowups(ctx); err != nil { // #90
 		return nil, err
 	}
+	h.initCommandRequests()
 	if err := h.initScheduleSuggestions(ctx); err != nil { // #66
 		return nil, err
 	}
@@ -939,12 +967,24 @@ func (h *Hub) Run(ctx context.Context) error {
 		defer t.Stop()
 		boardC = t.C
 	}
+	manualC := time.NewTicker(time.Second)
+	defer manualC.Stop()
+	h.reconcileCredentials()
+	credentialTick := time.NewTicker(time.Second)
+	defer credentialTick.Stop()
 	schedC := time.NewTicker(h.opts.ScheduleTick) // #62: a look at the wall clock, not a timer to a due time
 	defer schedC.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			for id, r := range h.credentials {
+				h.expireCredential(id, r)
+			}
 			return nil
+		case <-manualC.C:
+			h.pollManualProcesses(ctx)
+		case <-credentialTick.C:
+			h.reconcileCredentials()
 		case <-schedC.C:
 			h.checkSchedules(ctx)
 		case <-boardC:
@@ -1041,6 +1081,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 		}
 		var start func(context.Context, *Client, proto.Command) error
 		switch cmd.T {
+		case proto.CmdManualProcessStart, proto.CmdManualProcessStop, proto.CmdManualProcessDismiss:
+			start = h.startManualCommand
 		case proto.CmdFloorWake, proto.CmdFloorSleep:
 			start = h.startFloorOp
 		case proto.CmdSessionCreate: // #58
@@ -1096,6 +1138,10 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startResize
 		case proto.CmdTerminalScroll: // #176
 			start = h.startScroll
+		case proto.CmdManualProcessCredential:
+			start = h.startManualCredential
+		case proto.CmdTerminalInput:
+			start = h.startTerminalInput
 		case proto.CmdWorkerKeys:
 			start = h.startKeys
 		case proto.CmdWorkerPrompt:
@@ -1126,6 +1172,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startFollowups
 		case proto.CmdScheduleSuggestionsGet, proto.CmdScheduleSuggestionsSet, proto.CmdScheduleSuggestionsZone: // #66
 			start = h.startScheduleSuggestions
+		case proto.CmdWorkerDismissCommandRequest:
+			start = h.startDismissCommandRequest
 		case proto.CmdWorkerDismissScheduleSuggestion: // #66
 			start = h.startDismissScheduleSuggestion
 		case proto.CmdPackupGet, proto.CmdPackupSet, proto.CmdPackupTest, proto.CmdPackupDetect: // #110
@@ -1535,6 +1583,7 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 	if f == nil || u.Gen < f.gen || f.virtual {
 		return
 	}
+	h.scheduleManualCleanup(context.Background(), "", u.Session, "session removed", true)
 	for _, g := range h.sessionFloors(u.Session) {
 		for _, id := range g.order {
 			w := h.workers[id]
@@ -1544,9 +1593,10 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 			delete(h.typed, id)    // #95
 			delete(h.starts, id)
 			delete(h.dirty, id)
-			delete(h.dg, id)                                                      // #118
-			delete(h.dgs.ws, id)                                                  // #118 phase 2
-			h.dropFollowup(context.Background(), id, true)                        // #90: gone
+			delete(h.dg, id)                               // #118
+			delete(h.dgs.ws, id)                           // #118 phase 2
+			h.dropFollowup(context.Background(), id, true) // #90: gone
+			h.dropCommandRequest(context.Background(), id, "gone")
 			h.dropSuggestion(context.Background(), id, store.ScheduleSuggestGone) // #66
 			h.ch.reg.Remove(id)                                                   // #22: its children go with its worker.removed
 			if w != nil {
@@ -1724,15 +1774,17 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			continue
 		}
 		w := h.workers[id]
+		h.scheduleManualCleanup(ctx, id, "", "owner workspace closed", true)
 		delete(h.workers, id)
 		delete(h.saved, id)
 		delete(h.reported, id) // H3D-2
 		delete(h.typed, id)    // #95
 		delete(h.starts, id)
 		delete(h.dirty, id)
-		delete(h.dg, id)                                     // #118
-		delete(h.dgs.ws, id)                                 // #118 phase 2
-		h.dropFollowup(ctx, id, true)                        // #90: gone
+		delete(h.dg, id)              // #118
+		delete(h.dgs.ws, id)          // #118 phase 2
+		h.dropFollowup(ctx, id, true) // #90: gone
+		h.dropCommandRequest(ctx, id, "gone")
 		h.dropSuggestion(ctx, id, store.ScheduleSuggestGone) // #66
 		delete(h.ho.cands, id)                               // #223
 		h.ch.reg.Remove(id)                                  // #22: its children go with its worker.removed
@@ -1880,6 +1932,11 @@ func (h *Hub) syncFloorWorkers(ctx context.Context, f *floorState, obs []world.W
 			h.dropFollowup(ctx, id, false)
 		}
 		next.Followup = h.followupView(id)
+		if s := h.cr.shown[id]; s.request != nil && s.source.Agent != next.AgentSession {
+			h.dropCommandRequest(ctx, id, "moved")
+			delete(h.cr.latest, id)
+		}
+		next.CommandRequest = h.commandRequestView(id)
 		next.ScheduleSuggestion = h.suggestionView(id)      // #66
 		next.Handoff = h.handoffView(id, next.AgentSession) // #223
 		next.AgentHandoff = h.agentHandoffView(id)          // #224
@@ -2327,6 +2384,8 @@ func (h *Hub) snapshot() proto.Snapshot {
 	hire := h.hireOptions()
 	w := proto.World{Buildings: h.buildingViews(), Unassigned: []string{}, Floors: []proto.Floor{}, Workers: []proto.Worker{},
 		HireOptions: &hire, Presets: h.presetViews(), Limits: h.limitsViews(), Children: []proto.Child{}} // M6 launch: presets; M10 limits; #22
+	w.Host, _ = os.Hostname()
+	w.ManualProcesses = h.manualProcessViews()
 	w.Screen = h.screenView()                           // M13 screen
 	w.AI = h.aiView()                                   // #92 AI integration
 	w.Kaneo = h.kaneoView()                             // #184 Kaneo

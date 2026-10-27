@@ -35,6 +35,8 @@ import (
 // control` without --takeover (resize, history scroll, release), never
 // focuses anything and never uses systemctl.
 type Control struct {
+	// ManualDir is the private state directory containing manual process directories.
+	ManualDir string
 	// Herdr is the herdr executable (default "herdr").
 	Herdr string
 	// SystemdRun is the systemd-run executable (default "systemd-run").
@@ -109,6 +111,9 @@ const (
 	opReportCodex          = "report-codex-session"
 	opProcessInfo          = "process-info"
 
+	opTabCreate       = "tab-create"
+	opTabClose        = "tab-close"
+	opManualLaunch    = "manual-launch"
 	opWorkspaceCreate = "workspace-create"
 	opWorktreeCreate  = "worktree-create"
 	opMarkPane        = "mark-pane"
@@ -166,6 +171,9 @@ const (
 // placeholders); everything else is literal. TestControlAllowlist is the
 // tripwire: widening this needs review.
 var controlShapes = map[string][]string{
+	opTabCreate:    {"{herdr}", "--session", "{session}", "tab", "create", "--workspace", "{workspace}", "--cwd", "{dir}", "--label", "{label}", "--no-focus"},
+	opTabClose:     {"{herdr}", "--session", "{session}", "tab", "close", "{tab}"},
+	opManualLaunch: {"{herdr}", "--session", "{session}", "pane", "run", "{pane}", "{manual-exe} manual-launch {mpdir}"},
 	// Restore only a just-started Codex's name after a hook-review startup timeout.
 	opRestoreCodexName: {"{herdr}", "--session", "{session}", "agent", "rename", "{pane}", "{agent}"},
 	// Wake: a supervised headless server with the user's login environment
@@ -296,6 +304,7 @@ var controlShapes = map[string][]string{
 var (
 	sessionNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 	paneIDRe      = regexp.MustCompile(`^[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}$`)
+	tabIDRe       = regexp.MustCompile(`^[A-Za-z0-9]{1,32}:t[A-Za-z0-9]{1,31}$`)
 	agentIDRe     = regexp.MustCompile(`^[A-Za-z0-9-]{1,128}$`)
 	workspaceIDRe = regexp.MustCompile(`^[A-Za-z0-9]{1,32}$`)
 	branchRe      = regexp.MustCompile(`^h3d/[a-z0-9]+(-[a-z0-9]+)*$`)
@@ -321,6 +330,9 @@ func ValidSessionName(name string) bool {
 // ValidPaneID reports whether id looks like a herdr pane id ("w1:p2").
 func ValidPaneID(id string) bool { return paneIDRe.MatchString(id) }
 
+// ValidTabID reports whether id looks like a herdr tab id ("w1:t2").
+func ValidTabID(id string) bool { return tabIDRe.MatchString(id) }
+
 // ValidAgentSessionID reports whether id may be resumed or reported: an
 // agent's native session id (a UUID for Claude and Codex).
 func ValidAgentSessionID(id string) bool { return agentIDRe.MatchString(id) && id[0] != '-' }
@@ -345,7 +357,7 @@ func ValidLabel(label string) bool {
 		return false
 	}
 	for _, r := range label {
-		if unicode.IsControl(r) {
+		if !unicode.IsPrint(r) {
 			return false
 		}
 	}
@@ -537,6 +549,8 @@ func (p *ProcessInfo) Runs(harness, agentSession string) bool {
 var placeholders = map[string]func(string) bool{
 	"session":   ValidSessionName,
 	"pane":      ValidPaneID,
+	"tab":       ValidTabID,
+	"mpdir":     ValidDir,
 	"id":        ValidAgentSessionID,
 	"home":      validHome,
 	"dir":       ValidDir,
@@ -642,6 +656,9 @@ func (c *Control) argv(op string, vars map[string]string) ([]string, error) {
 	if s := vars["session"]; c.Only != nil && !c.Only.MatchString(s) {
 		return nil, fmt.Errorf("%w: session %q is not watched", ErrNotAllowed, s)
 	}
+	if dir, ok := vars["mpdir"]; ok && !c.validManualDir(dir) {
+		return nil, fmt.Errorf("%w: invalid manual process directory", ErrNotAllowed)
+	}
 	if l, ok := vars["launcher"]; ok && !c.launcherFits(l) {
 		return nil, fmt.Errorf("%w: launcher %q is not a %s launcher (shell policy %s)", ErrNotAllowed, l,
 			c.Shell.Or().LauncherExt(), c.Shell.Or())
@@ -659,6 +676,18 @@ func (c *Control) argv(op string, vars map[string]string) ([]string, error) {
 		}
 		argv = append(argv, placeholderRe.ReplaceAllStringFunc(tmpl, func(ph string) string {
 			switch name := ph[1 : len(ph)-1]; name {
+			case "manual-exe":
+				exe, err := os.Executable()
+				if err != nil {
+					missing = err
+				}
+				return shellQuoteManual(exe)
+			case "mpdir":
+				v, ok := vars[name]
+				if !ok {
+					missing = fmt.Errorf("%w: %s needs %s", ErrNotAllowed, op, name)
+				}
+				return shellQuoteManual(v)
 			case "herdr":
 				return c.bin(c.Herdr, "herdr")
 			case "systemd-run":

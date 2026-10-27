@@ -19,6 +19,7 @@ import type { ReviewSummary } from './ui/hireReview';
 import type { DictationSummary } from './ui/dictation';
 import type { SecretsReviewSummary } from './ui/secretsReview';
 import type { RevokeSecretsSummary } from './ui/revokeSecrets';
+import type { ManualCredentialSummary } from './ui/manualCredential';
 import type { HireInterpretation } from './net/protocol';
 import type { HandoffDialogSummary } from './ui/handoffDialog';
 import type { CabinetSummary } from './ui/cabinet';
@@ -264,7 +265,7 @@ export interface H3DDebug {
   /** M4: opens the send-home dialog for a worker. */
   openSendHome(workerId: string): void;
   /** M4: what the open hire / send-home dialog shows, null when neither is open; M6: the presets panel (on top), else the start-run dialog first. */
-  dialog(): HireSummary | ReviewSummary | SendHomeSummary | StartRunSummary | PresetsSummary | HirePresetsSummary | AddFloorSummary | OpenPrSummary | DictationSummary | SecretsReviewSummary | RevokeSecretsSummary | null;
+  dialog(): ManualCredentialSummary | HireSummary | ReviewSummary | SendHomeSummary | StartRunSummary | PresetsSummary | HirePresetsSummary | AddFloorSummary | OpenPrSummary | DictationSummary | SecretsReviewSummary | RevokeSecretsSummary | null;
   /** M6: the start-run dialog for a floor (default: yours) and desk (default: its first free one), as the top bar's Run and M7 open it. */
   openStartRun(o?: Partial<StartRunOptions>): void;
   /** M6: the team presets panel. */
@@ -289,6 +290,7 @@ export interface H3DDebug {
   openSchedules(o?: SchedulesOpen): void;
   toastState(): { shown: boolean; text: string; kind: string; action: string | null } | null;
   /** #64 schedules: the fixture bridge's schedule plays (`sim=1`, tools/fixture-schedule.ts). */
+  simManual(t: 'sim.manual_list' | 'sim.manual_finish', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   simSchedule(t: 'sim.schedule_fire' | 'sim.schedule_fail', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #108: the files the fixture bridge wrote for protected prompt secrets (`sim.secret_files`; the simulator's own). */
   simSecretFiles(): Promise<Array<{ path: string; owner: string; text: string }>>;
@@ -362,7 +364,7 @@ export interface H3DDebug {
   /** #74: the fixture simulator's `sim.host` (script the host's numbers) and `sim.host_log` (the commands and frames of this connection). */
   simHost(t: 'sim.host' | 'sim.host_log', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #176: the fixture simulator's `sim.write` (raw text on a worker's screen) and `sim.terminal` (what its watch has). */
-  simTerm(t: 'sim.write' | 'sim.terminal', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  simTerm(t: 'sim.write' | 'sim.terminal' | 'sim.watches', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** M17: the light as shown (`daylight`, eased) and its `target`, the zone and where it comes from, the latitude, whether the time is pinned, the office lamps and what the wall clock's face shows. */
   daylight(): ReturnType<import('./app').App['daylightInfo']> | null;
   /** M13: the screen share (phase, surface, paused, video size), what this floor's TV shows, the frames answered and who looked. */
@@ -611,7 +613,7 @@ const h3d: H3DDebug = {
   },
   openSendHome: (id) => app?.openSendHome(id),
   // #108: the review of a prompt's secrets opens over the others (the P overlay, the pack-up confirm): it comes first.
-  dialog: () => app?.secretsReview.summary() ?? app?.revokeSecrets.summary() ?? app?.addFloor.summary() ?? app?.presetsPanel.summary() ?? app?.hirePresets.summary() ?? app?.openPr.summary() ?? app?.startRun.summary() ?? app?.hire.summary() ?? app?.hireReview.summary() ?? app?.sendHome.summary() ?? app?.dictation.summary() ?? null,
+  dialog: () => app?.manualCredential.summary() ?? app?.secretsReview.summary() ?? app?.revokeSecrets.summary() ?? app?.addFloor.summary() ?? app?.presetsPanel.summary() ?? app?.hirePresets.summary() ?? app?.openPr.summary() ?? app?.startRun.summary() ?? app?.hire.summary() ?? app?.hireReview.summary() ?? app?.sendHome.summary() ?? app?.dictation.summary() ?? null,
   openStartRun: (o) => app?.openStartRun(o),
   openPresets: () => app?.openPresets(),
   arrivals: () => app?.arrivals.info(performance.now() / 1000) ?? [],
@@ -627,6 +629,11 @@ const h3d: H3DDebug = {
   scheduleForm: () => app?.scheduleForm.summary() ?? null,
   openSchedules: (o) => app?.openSchedules(o),
   toastState: () => app?.hud.toastState() ?? null,
+  simManual: async (t, args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    const r = await app.client.request(t as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: r.code };
+  },
   simSchedule: async (t, args) => {
     if (!app) return { ok: false, code: 'not_started' };
     const r = await app.client.request(t as CommandName, args as never);

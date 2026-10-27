@@ -44,6 +44,7 @@ import { loadingScreen } from './transcriptLoading';
 import { Watches } from './watches';
 import type { PackupCheck } from '../ui/packupSend';
 import { secretFilesOf } from '../world/revokeSecrets';
+import { commandRequestOf, needsAttention } from '../world/manualProcess';
 import type { Worker } from '../net/protocol';
 
 export { screensParam };
@@ -102,6 +103,8 @@ export interface LaptopHost {
   scheduleFollowup?(id: string, c: HandoffCandidate, s?: ScheduleSuggestion): void;
   /** #176: a link the seated terminal opens (Ctrl/⌘+click): the app's validated opener (https only). */
   external?(url: string): void;
+  seatChanged?(): void;
+  manualEntry?(id: string, command: string, cwd: string): void;
 }
 
 /** The HUD while you sit at a laptop. */
@@ -145,6 +148,7 @@ export interface SeatView {
   setFullscreen?(chip: FullscreenChip | null): void;
   /** #108 round 4: how many protected files the worker you sit at holds (0: none, or no way to remove them). */
   secretFiles?(n: number): void;
+  manualProcesses?(count: number, hasRecords: boolean): void;
 }
 
 /** Keys a focused control of the seat bar keeps (moving between its controls, pressing one). */
@@ -200,7 +204,7 @@ const GRID_WAIT_MS = 1500;
 /** #187: how long the seat waits before asking for a watch the bridge refused. */
 const SEAT_RETRY_MS = 5000;
 /** #187: the commands that put something into a worker: refused while it is away. */
-const TO_WORKER: ReadonlySet<string> = new Set(['worker.prompt', 'worker.keys', 'worker.answer', 'worker.answer_ask', 'worker.answer_followup', 'worker.dismiss_followup', 'worker.answer_async', 'worker.dismiss_async']);
+const TO_WORKER: ReadonlySet<string> = new Set(['worker.prompt', 'worker.keys', 'worker.answer', 'worker.answer_ask', 'worker.answer_followup', 'worker.dismiss_followup', 'worker.answer_async', 'worker.dismiss_async', 'manual_process.start']);
 /** The seat bar's line while the connection is down. */
 const OFFLINE_NOTE = 'Not connected to herdr-world: what you type is not sent';
 const viewKey = (cam: THREE.PerspectiveCamera) => `${cam.aspect.toFixed(4)}:${window.innerHeight}`;
@@ -378,6 +382,8 @@ export class Laptops {
       ...(host.handoff ? { handoff: (id: string) => host.handoff?.(id) } : {}),
       ...(host.hireHandoff ? { hireHandoff: (id: string, c: HandoffCandidate) => host.hireHandoff?.(id, c) } : {}),
       ...(host.scheduleFollowup ? { scheduleFollowup: (id: string, c: HandoffCandidate, sug?: ScheduleSuggestion) => host.scheduleFollowup?.(id, c, sug) } : {}),
+      manualHost: () => host.store.host,
+      manualEntry: (id, command, cwd) => host.manualEntry?.(id, command, cwd),
       repoRefs: host.store.repoRefs, // #247
       repoDiscovery: host.store.repoDiscovery, // #54
       floorName: (id: string) => host.store.floorName(id), // #58
@@ -562,6 +568,8 @@ export class Laptops {
   syncSecretFiles(): void {
     const s = this.seat;
     if (!s) return;
+    const records = this.host.store.manualProcesses.all().filter((p) => p.worker === s.id);
+    this.host.seat.manualProcesses?.(records.filter(needsAttention).length, records.length > 0);
     this.host.seat.secretFiles?.(this.host.unsupported('prompt_secrets.revoke') ? 0 : secretFilesOf(this.host.store.workers.get(s.id)));
   }
 
@@ -968,6 +976,7 @@ export class Laptops {
     this.watchContent();
     this.syncChip(id);
     this.syncSecretFiles();
+    this.host.seatChanged?.();
     this.host.seat.focus();
     // M16: its transcript is watched from now on. #98: you sit down to its conversation, unless you left it in the
     // terminal, the bridge reads no transcripts or its harness writes none (a shell, another agent).
@@ -994,6 +1003,7 @@ export class Laptops {
     this.seatTerm?.clearSelection();
     this.seatGridWait = false;
     this.seat = null;
+    this.host.seatChanged?.();
     window.removeEventListener('wheel', this.onWheel);
     this.lanes.stand();
     this.input = null;
@@ -1383,7 +1393,8 @@ export class Laptops {
           this.syncAsk(askOf(v.worker)); // #57
           this.syncCodex(codexNotice(v.worker)); // #155
           this.syncProfile(profileNotice(v.worker, this.host.store.codexProfiles.state)); // #139
-          this.transcript.followedUp(followupOf(v.worker)); // #90
+          this.transcript.followedUp(followupOf(v.worker));
+          this.transcript.commandRequestSeen(commandRequestOf(v.worker)); // #90
           this.transcript.handoffSeen(candidateOf(v.worker)); // #223
           this.transcript.suggestionSeen(suggestionOf(v.worker)); // #66
           this.transcript.codexSeen(v.worker.codex ?? null, status === 'working'); // #157: its async questions

@@ -422,6 +422,10 @@ func (h *Hub) runWake(ctx context.Context, op *floorOp, socket string) {
 		return
 	}
 	report.PingAfterMs = time.Since(start).Milliseconds()
+	if err := h.closeRestoredManualTabs(ctx, op.session, socket); err != nil {
+		h.finishOp(ctx, op, fmt.Errorf("%w: closing restored manual tabs: %v", errWakeFailed, err), report)
+		return
+	}
 	h.requestRescan() // follow the floor now, not at the next poll
 	if !h.awaitFlag(ctx, op, up, func() bool { return op.running }) {
 		h.finishOp(ctx, op, fmt.Errorf("%w: the %s server answers ping, but its floor was not seen running within %s",
@@ -648,6 +652,10 @@ type sleepReport struct {
 func (h *Hub) runSleep(ctx context.Context, op *floorOp, shared []sharedSleep, backfills []backfill, known map[string]bool) {
 	defer h.wg.Done()
 	report := &sleepReport{Backfills: []backfill{}}
+	if name, err := h.stopManualForSession(ctx, op.session, "stopped for floor sleep"); err != nil {
+		h.finishOp(ctx, op, fmt.Errorf("%w: cannot verify manual process %s stopped", errSleepFailed, name), report)
+		return
+	}
 	for _, s := range shared { // #155
 		s.Note = h.sleepShared(ctx, op.session, s)
 		report.Shared = append(report.Shared, s)

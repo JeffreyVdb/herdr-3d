@@ -6,9 +6,12 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -276,6 +279,9 @@ func (h *Hub) startKeys(ctx context.Context, c *Client, cmd proto.Command) error
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	if strings.HasPrefix(a.ID, "mp:") {
+		return bad("worker.keys does not accept manual process ids")
+	}
 	steps, err := inputSteps(a.Input)
 	if err != nil {
 		return err
@@ -285,6 +291,8 @@ func (h *Hub) startKeys(ctx context.Context, c *Client, cmd proto.Command) error
 	}
 	h.tookOver(ctx, a.ID)      // #83: a person types: an armed wrap-up is off
 	h.agentTookOver(ctx, a.ID) // #224: and a handoff request
+	delete(h.cr.latest, a.ID)
+	h.closeCommandRequest(a.ID, "", "moved")
 	h.clearFollowup(ctx, a.ID) // #90: and its follow-up questions are moot
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
 		t := h.opts.Term
@@ -423,6 +431,8 @@ func (h *Hub) planPrompt(ctx context.Context, a proto.WorkerPromptArgs, r prompt
 	terminal := h.opts.Prompts != nil && h.opts.Prompts.TerminalOnly(kind, a.Text)
 	h.tookOver(ctx, a.ID)      // #83: a person prompts: an armed wrap-up is off
 	h.agentTookOver(ctx, a.ID) // #224: and a handoff request
+	delete(h.cr.latest, a.ID)
+	h.closeCommandRequest(a.ID, "", "moved")
 	h.clearFollowup(ctx, a.ID) // #90: and its follow-up questions are moot
 	return func(ctx context.Context, session, pane string) (any, error) {
 		if rewrites {
@@ -722,6 +732,29 @@ func (h *Hub) typeIn(ctx context.Context, id, session, pane, text string, settli
 // lengths and the key names).
 func auditArgs(cmd proto.Command) json.RawMessage {
 	switch cmd.T {
+	case proto.CmdManualProcessStart:
+		var a proto.ManualProcessStartArgs
+		if json.Unmarshal(cmd.Args, &a) != nil {
+			return redacted(cmd.Args)
+		}
+		sum := sha256.Sum256([]byte(a.Command))
+		return mustJSON(struct {
+			Op           string `json:"op"`
+			Worker       string `json:"worker"`
+			CommandBytes int    `json:"command_bytes"`
+			CommandSHA   string `json:"command_sha256_prefix"`
+			Askpass      bool   `json:"askpass"`
+		}{clip(a.Op), clip(a.Worker), len(a.Command), hex.EncodeToString(sum[:8]), a.Askpass})
+	case proto.CmdManualProcessStop, proto.CmdManualProcessDismiss:
+		var a proto.ManualProcessIDArgs
+		if json.Unmarshal(cmd.Args, &a) != nil {
+			return redacted(cmd.Args)
+		}
+		return mustJSON(struct {
+			ID string `json:"id"`
+		}{clip(a.ID)})
+	case proto.CmdWorkerDismissCommandRequest:
+		return redacted(cmd.Args)
 	// #108 round 2: a hire's prompt (a schedule's fire's too, whose args
 	// name the schedule), a run's texts and a stored prompt by their
 	// lengths, never their text, with the switch on or off; a review by its
@@ -749,6 +782,38 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 			Secrets          *secretsAudit `json:"secrets,omitempty"` // #108 round 2
 		}{clip(a.Worker), clip(a.Mode), clip(a.Session), clip(a.Candidate), clip(a.Revision), len(a.Instruction), a.SendHome, clip(a.Op),
 			auditReviews(a.Secrets)})
+	case proto.CmdManualProcessCredential:
+		var a proto.ManualProcessCredentialArgs
+		if json.Unmarshal(cmd.Args, &a) != nil {
+			return redacted(cmd.Args)
+		}
+		n := 0
+		if a.Secret != nil {
+			n = len(*a.Secret)
+		}
+		cancel := a.Cancel != nil && *a.Cancel
+		return mustJSON(struct {
+			ID          string `json:"id"`
+			Request     string `json:"request"`
+			Cancel      bool   `json:"cancel"`
+			SecretBytes int    `json:"secret_bytes"`
+		}{clip(a.ID), clip(a.Request), cancel, n})
+	case proto.CmdTerminalInput:
+		var a proto.TerminalInputArgs
+		if json.Unmarshal(cmd.Args, &a) != nil {
+			return redacted(cmd.Args)
+		}
+		n := 0
+		if a.Text != nil {
+			n = len(*a.Text)
+		}
+		if a.Bytes != nil {
+			n += len(*a.Bytes)
+		}
+		return mustJSON(struct {
+			ID    string `json:"id"`
+			Bytes int    `json:"bytes"`
+		}{clip(a.ID), n})
 	case proto.CmdWorkerKeys:
 		var a proto.WorkerKeysArgs
 		if json.Unmarshal(cmd.Args, &a) != nil {
