@@ -189,7 +189,12 @@ func (r *manualRig) credential() proto.ManualCredential {
 		}
 		var ev proto.Event
 		if json.Unmarshal(b, &ev) == nil && ev.Process != nil && ev.Process.Credential != nil {
-			return *ev.Process.Credential
+			// #213: the request is also the run's credential attention.
+			c, a := ev.Process.Credential, ev.Process.Attention
+			if a == nil || a.ID != c.Request || a.Kind != "credential" || a.Confidence != "authenticated" || a.Reason != "askpass" || a.ExpiresAt != c.ExpiresAt || a.Since <= 0 || a.Since > c.ExpiresAt || ev.Process.State != "waiting" {
+				r.t.Fatalf("credential attention: %+v state %s", a, ev.Process.State)
+			}
+			return *c
 		}
 	}
 }

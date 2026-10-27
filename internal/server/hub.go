@@ -29,6 +29,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/handoff"
 	"github.com/JeffreyVdb/herdr-3d/internal/handoffllm"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/manual/inputwatch"
 	"github.com/JeffreyVdb/herdr-3d/internal/hireintent"
 	"github.com/JeffreyVdb/herdr-3d/internal/hoststats"
 	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
@@ -58,6 +59,11 @@ type Options struct {
 	ManualSnapshot     func(context.Context, string) (*herdr.Snapshot, error)
 	ManualNoNewPrivs   func(context.Context, string) (bool, error)
 	ManualEffectStatus func(context.Context) ([]byte, error)
+	// #213: what the input detection reads (nil: inputwatch.System()) and
+	// how often a running manual run is sampled (default
+	// DefaultManualInputPoll).
+	ManualInputProc inputwatch.Proc
+	ManualInputPoll time.Duration
 	Ring               int           // events kept for since_seq replay (default 4096)
 	Queue              int           // per-client send queue, in messages (default 1024)
 	MaxDesks           int           // cap on the desks a floor renders beyond its occupied ones (default DefaultMaxDesks)
@@ -439,6 +445,7 @@ type Hub struct {
 	manualStopBusy  map[string]bool
 	manualPolling   bool
 	manualCleanups  map[string]manualCleanupLink
+	mi              manualInput // #213
 	opts            Options
 	log             *slog.Logger
 	st              *store.Store
@@ -777,6 +784,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		dg:              map[string]*transcript.Digest{},
 		mcp:             mcpState{obs: map[string]*mcpObs{}},
 	}
+	h.initManualInput() // #213
 	if err := h.initManualProcesses(ctx); err != nil {
 		return nil, err
 	}
@@ -969,6 +977,12 @@ func (h *Hub) Run(ctx context.Context) error {
 	}
 	manualC := time.NewTicker(time.Second)
 	defer manualC.Stop()
+	h.syncManualInputTicker()
+	defer func() {
+		if h.mi.ticker != nil {
+			h.mi.ticker.Stop()
+		}
+	}()
 	h.reconcileCredentials()
 	credentialTick := time.NewTicker(time.Second)
 	defer credentialTick.Stop()
@@ -983,6 +997,9 @@ func (h *Hub) Run(ctx context.Context) error {
 			return nil
 		case <-manualC.C:
 			h.pollManualProcesses(ctx)
+			h.syncManualInputTicker()
+		case <-h.manualInputTick(): // #213
+			h.sampleManualInput(ctx)
 		case <-credentialTick.C:
 			h.reconcileCredentials()
 		case <-schedC.C:

@@ -29,6 +29,7 @@ type credentialRequest struct {
 	result       chan askpass.Response
 	answered     bool
 	info         proto.ManualCredential
+	opened       time.Time // #213: the credential attention's since
 	disconnected atomic.Bool
 }
 
@@ -102,7 +103,7 @@ func (h *Hub) serveAskpass(ctx context.Context, c *net.UnixConn) {
 	if _, err := rand.Read(random[:]); err != nil {
 		return
 	}
-	r := &credentialRequest{request: "cr_" + hex.EncodeToString(random[:]), expires: time.Now().Add(askpass.Timeout), result: make(chan askpass.Response, 1)}
+	r := &credentialRequest{request: "cr_" + hex.EncodeToString(random[:]), expires: time.Now().Add(askpass.Timeout), opened: time.Now(), result: make(chan askpass.Response, 1)}
 	opened := make(chan bool, 1)
 	if h.do(ctx, func(context.Context) {
 		p, ok := h.manualProcess(req.Process)
