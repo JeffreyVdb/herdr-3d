@@ -42,7 +42,8 @@
   display: none !important;
 }
 @media (prefers-reduced-motion: no-preference) {
-  .desk-dlg[open] {
+  /* Hire tabs hand off between dialogs; animating each opening flashes the whole panel. */
+  .desk-dlg--home[open] {
     animation: panel-in 240ms var(--ease);
   }
 }

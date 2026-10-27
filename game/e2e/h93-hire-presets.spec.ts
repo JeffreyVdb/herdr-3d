@@ -283,6 +283,33 @@ test('#95: a ticked global preset adds the herdr hiring instructions for the flo
   clean();
 });
 
+test('switching hire tabs and pinned presets does not animate the dialog', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await boot(page, keyOf('no-flash'), 'pastry');
+  await openPresets(page, 14);
+  await createPreset(page, 'Deploy', 'Deploy the release.', 'floor');
+  await createPreset(page, 'Audit', 'Audit the dependencies.', 'global');
+  const list = (await dialog(page)) as Presets;
+  const id = (name: string) => [...list.groups.floor, ...list.groups.global].find((r) => r.name === name)!.id;
+  for (const name of ['Deploy', 'Audit']) await presetsDlg(page).locator(`[data-key="pin:${id(name)}"]`).click();
+
+  const noAnimation = async (selector: string) => {
+    await expect(page.locator(`${selector}[open]`)).toHaveCSS('animation-name', 'none');
+  };
+  await presetsDlg(page).locator('[data-key="tab:worker"]').click();
+  await noAnimation('dialog.desk-dlg--hire');
+  await hireDlg(page).locator(`[data-key="tab:pin:${id('Deploy')}"]`).click();
+  await noAnimation('dialog.desk-dlg--hire');
+  await expect.poll(async () => ((await dialog(page)) as Hire)?.preset?.name).toBe('Deploy');
+  await hireDlg(page).locator(`[data-key="tab:pin:${id('Audit')}"]`).click();
+  await noAnimation('dialog.desk-dlg--hire');
+  await expect.poll(async () => ((await dialog(page)) as Hire)?.form.prompt).toBe('Audit the dependencies.');
+  await hireDlg(page).locator('[data-key="tab:orch"]').click();
+  await noAnimation('dialog.desk-dlg--run');
+  await page.locator('dialog.desk-dlg--run [data-key="tab:preset"]').click();
+  await noAnimation('dialog.desk-dlg--hire-presets');
+});
+
 test('pinned presets sit in the desk tabs, hire in one click, move by drag or Shift+arrows, and stay pinned after a reload', async ({ page }) => {
   test.setTimeout(240_000);
   const key = keyOf('pins');
