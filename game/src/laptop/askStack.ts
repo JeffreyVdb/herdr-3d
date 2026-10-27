@@ -1,4 +1,5 @@
-import { h, icon } from '../ui/dom';
+import { h } from '../ui/dom';
+import { duotone } from '../ui/duotone';
 
 /**
  * The questions of a question card (the ask's #57, the follow-up's #90, #187: in the questions' sheet) stacked: the open one with its options, the
@@ -9,10 +10,8 @@ import { h, icon } from '../ui/dom';
  * to pick instead). Shared by askCard.ts and followupCard.ts; each card owns its picks and its options.
  */
 
-const CHECK = '<path d="M5.5 12.5l4 4 9-9"/>';
-
 /** A question's (or an option's) mark: its number, or a tick once answered. */
-export const mark = (n: number, done: boolean): Node => (done ? icon(CHECK) : document.createTextNode(String(n)));
+export const mark = (n: number, done: boolean): Node => (done ? duotone('check') : document.createTextNode(String(n)));
 
 /** The send shortcut as this keyboard says it. */
 export const SEND_KEY = typeof navigator !== 'undefined' && /Mac|iP(hone|ad|od)/.test(navigator.platform) ? '⌘↩' : 'Ctrl+Enter';

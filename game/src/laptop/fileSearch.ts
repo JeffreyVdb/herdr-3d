@@ -3,7 +3,8 @@ import type { CommandResult } from '../net/client';
 import type { CommandArgs, FileMatch, WorkerFiles } from '../net/protocol';
 import type { Source } from '../ui/composer/complete';
 import { filePathProblem } from '../ui/composer/model';
-import { h, ICON, icon } from '../ui/dom';
+import { h, icon } from '../ui/dom';
+import { duotone } from '../ui/duotone';
 
 /**
  * #141: the transcript composer's `@` source: the files and folders of the worker's checkout, searched by the bridge
@@ -76,7 +77,7 @@ export function fileRow(m: FileMatch): HTMLElement {
   return h(
     'span',
     { class: 'tx-file', 'data-kind': m.kind, title: dir ? `${m.path}/` : m.path },
-    icon(dir ? ICON.folder : ICON.file),
+    duotone(dir ? 'folder' : 'file'),
     marked('tx-file-name', chars, slash + 1, chars.length, hits, dir ? '/' : ''),
     // A space between the parts, for the option's accessible name (a flex row draws none).
     slash > 0 ? ' ' : null,

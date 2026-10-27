@@ -1,5 +1,6 @@
 import type { ChildState, TranscriptAvailability } from '../net/protocol';
-import { h, icon, ICON } from '../ui/dom';
+import { h } from '../ui/dom';
+import { duotone } from '../ui/duotone';
 
 /**
  * #26: a native child's own conversation in the seated view: the transcript view's bar becomes a breadcrumb from the
@@ -63,7 +64,7 @@ export class ChildBar {
     const back = h(
       'button',
       { class: 'tx-crumb-back', type: 'button', 'aria-label': `Back to ${host.worker}’s conversation`, title: `Back to ${host.worker}’s conversation (Esc)`, onclick: () => host.onBack() },
-      icon(ICON.back),
+      duotone('chevronLeft'),
       h('span', { class: 'tx-crumb-worker' }, host.worker),
     );
     this.pip = h('span', { class: 'tx-crumb-pip', 'aria-hidden': 'true' });
@@ -78,7 +79,7 @@ export class ChildBar {
       'nav',
       { class: 'tx-crumbs', 'aria-label': 'Conversation' },
       back,
-      h('span', { class: 'tx-crumb-sep', 'aria-hidden': 'true' }, icon('<path d="M9.5 6l6 6-6 6"/>')),
+      h('span', { class: 'tx-crumb-sep', 'aria-hidden': 'true' }, duotone('chevronRight')),
       here,
       h('span', { class: 'tx-crumb-status' }, this.pip, this.stateEl),
     );

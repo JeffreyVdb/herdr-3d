@@ -19,13 +19,14 @@
 
 import './composer.css';
 import { postUpload } from '../../net/upload';
-import { h, ICON, icon } from '../dom';
+import { h, icon } from '../dom';
 import { mountCompletion, type CompleteOptions, type Completion } from './completion';
 import { filesOf } from './field';
 import { Draft, type AddResult, type DraftEvent, type DraftOptions, type DraftSnapshot, type ResolveResult, type Uploader } from './draft';
 import { openPreview, type Preview } from './lightbox';
 import { caret, chipAt, type FileOccurrence, fromSaved, IMG, imagesOf, isFileOcc, mentionText, type Occurrence, rangeOf, readSavedParts, savedParts, type Selection, ZWSP } from './model';
 import { CHIP, isCanonical, offsetToPoint, pointToOffset, readDoc, TAIL } from './tree';
+import { duotone } from '../duotone';
 
 export interface ComposerOptions {
   /** The draft to show; else the composer makes one (the host then keeps it with `getDraft()`). */
@@ -134,7 +135,7 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
   const live = h('span', { class: 'cmp-sr', role: 'status', 'aria-live': 'polite' });
   // A draft that holds refusals (`holdRefused`, #64): the refused file stays said, with its dismiss, until the user acts.
   const refusalText = h('span', { class: 'cmp-refusal-text' });
-  const dismiss = h('button', { class: 'cmp-dismiss', type: 'button', title: 'Dismiss: send without the refused file' }, icon(ICON.close));
+  const dismiss = h('button', { class: 'cmp-dismiss', type: 'button', title: 'Dismiss: send without the refused file' }, duotone('x'));
   // Announced by `live` when it appears (polite), not a `role=alert` of its own: a hidden alert would be the first one
   // anything looking for the dialog's alert finds.
   const refusal = h('p', { class: 'cmp-refusal', hidden: true }, refusalText, dismiss);
@@ -191,7 +192,7 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     const el = h(
       'span',
       { class: `${CHIP} cmp-file`, contenteditable: 'false', draggable: 'false', 'data-occ': occ.occ, 'data-kind': occ.dir ? 'dir' : 'file', role: 'img', 'aria-label': fileWord(occ), title: occ.path },
-      icon(occ.dir ? ICON.folder : ICON.file),
+      duotone(occ.dir ? 'folder' : 'file'),
       h('span', { class: 'cmp-file-name', 'aria-hidden': 'true' }, baseName(occ.path)),
     );
     chips.set(occ.occ, el);
@@ -204,8 +205,8 @@ export function mountComposer(o: ComposerOptions = {}): Composer {
     const badge = h('span', { class: 'cmp-num', 'aria-hidden': 'true' });
     const name = h('span', { class: 'cmp-name' });
     const state = h('span', { class: 'cmp-state' });
-    const retry = h('button', { class: 'cmp-retry' }, icon(ICON.refresh), 'Retry');
-    const remove = h('button', { class: 'cmp-remove' }, icon(ICON.close));
+    const retry = h('button', { class: 'cmp-retry' }, duotone('refresh'), 'Retry');
+    const remove = h('button', { class: 'cmp-remove' }, duotone('x'));
     const bar = h('span', { class: 'cmp-bar', 'aria-hidden': 'true' });
     const el = h(
       'span',

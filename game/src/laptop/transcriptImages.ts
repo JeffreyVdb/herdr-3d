@@ -1,7 +1,8 @@
 import type { ImageOmittedPart, ImagePart, ImageRef, TranscriptItem } from '../net/protocol';
-import { h, ICON, icon } from '../ui/dom';
+import { h } from '../ui/dom';
 import { openImageLightbox, originLabel, unavailableText } from '../ui/imageLightbox';
 import type { ImageFeed } from './imageFeed';
+import { duotone } from '../ui/duotone';
 
 /**
  * M16 phase 2: images in the conversation.
@@ -112,7 +113,7 @@ export class Thumbs {
     const feed = this.host.feed;
     const fetchable = !!feed && feed.canFetch(r);
     if (r.mime === 'binary' && !r.unavailable) {
-      return h('span', { class: 'tx-imgchip', title: 'Bytes that are not a PNG, JPEG, GIF or WebP image' }, icon(TX_IMAGE), 'binary data');
+      return h('span', { class: 'tx-imgchip', title: 'Bytes that are not a PNG, JPEG, GIF or WebP image' }, duotone('image'), 'binary data');
     }
     const open = (btn: HTMLElement) => {
       if (this.destroyed) return;
@@ -123,7 +124,7 @@ export class Thumbs {
       const btn = h(
         'button',
         { class: 'tx-imgcard', 'data-origin': r.origin, title: `${why}${r.path ? `\n${r.path}` : ''}`, 'aria-label': `Image not available${r.path ? `: ${r.path}` : ''}` },
-        icon(TX_IMAGE),
+        duotone('image'),
         h('span', { class: 'tx-imgcard-title' }, 'Image not available'),
         ...(r.path ? [h('code', { class: 'tx-imgcard-path' }, r.path)] : []),
       );
@@ -169,7 +170,7 @@ export class Thumbs {
   }
 
   private thumbFailed(r: ImageRef, open: (b: HTMLElement) => void): HTMLElement {
-    const btn = h('button', { class: 'tx-imgcard', 'data-origin': r.origin, title: 'The image could not be loaded' }, icon(TX_IMAGE), h('span', { class: 'tx-imgcard-title' }, 'Image not available'), ...(r.path ? [h('code', { class: 'tx-imgcard-path' }, r.path)] : []));
+    const btn = h('button', { class: 'tx-imgcard', 'data-origin': r.origin, title: 'The image could not be loaded' }, duotone('image'), h('span', { class: 'tx-imgcard-title' }, 'Image not available'), ...(r.path ? [h('code', { class: 'tx-imgcard-path' }, r.path)] : []));
     btn.addEventListener('click', () => open(btn));
     return btn;
   }
@@ -207,7 +208,5 @@ export class Thumbs {
     this.aborts.clear();
   }
 }
-
-const TX_IMAGE = ICON.image;
 
 export { originLabel };

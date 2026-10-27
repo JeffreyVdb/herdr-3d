@@ -1,8 +1,9 @@
 import './imagesTab.css';
 import type { ImageRef } from '../net/protocol';
-import { h, ICON, icon } from '../ui/dom';
+import { h, icon } from '../ui/dom';
 import { originLabel, openImageLightbox, unavailableText, type Lightbox } from '../ui/imageLightbox';
 import type { ImageFeed } from './imageFeed';
+import { duotone } from '../ui/duotone';
 
 /**
  * M16 phase 2: every image of the session in the seated overlay's third mode. Two groups, **Input** (what you attached to
@@ -301,7 +302,7 @@ class ImagesTab implements ImagesTabView {
       const img = h('img', { class: 'imgs-img', alt: '', draggable: 'false', loading: 'lazy', decoding: 'async' });
       face = h('span', { class: 'imgs-face imgs-pending' }, img);
     } else if (binary) {
-      face = h('span', { class: 'imgs-face imgs-chip' }, icon(ICON.image), h('span', { class: 'imgs-chip-t' }, 'binary'), h('span', { class: 'imgs-chip-s' }, size(r.bytes)));
+      face = h('span', { class: 'imgs-face imgs-chip' }, duotone('image'), h('span', { class: 'imgs-chip-t' }, 'binary'), h('span', { class: 'imgs-chip-s' }, size(r.bytes)));
     } else {
       face = this.goneFace(r);
     }
@@ -321,7 +322,7 @@ class ImagesTab implements ImagesTabView {
     return h(
       'span',
       { class: 'imgs-face imgs-gone' },
-      icon(ICON.image),
+      duotone('image'),
       h('span', { class: 'imgs-gone-t' }, 'Not available'),
       r.path ? h('code', { class: 'imgs-gone-path', title: r.path }, r.path) : h('span', { class: 'imgs-gone-why' }, unavailableText(r)),
     );
