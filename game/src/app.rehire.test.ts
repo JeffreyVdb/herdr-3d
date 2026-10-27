@@ -10,6 +10,7 @@ import { Reservations, resolveHireDesk } from './world/hire';
 import { floorLayout, outlineOf, type FloorLayout } from './world/layout';
 import { deskToDeskRoute, handOver, walkOutRoute } from './world/route';
 import type { FloorView } from './world/store';
+import { HandoffHireBook } from './world/handoffHire';
 
 /**
  * #53: the hire gate (`App.heldDesks` → `resolveHireDesk`) with a worker sent home still walking out: real `Arrivals`,
@@ -81,7 +82,8 @@ function scenario(...walks: ArrivalSpec[]) {
   for (const w of walks) arrivals.start(w, 0);
   const app = Object.create(App.prototype) as App;
   const inside = app as unknown as Inside;
-  Object.assign(inside, { arrivals, reserved: new Reservations() });
+  // #219: no handoff hire holds a desk here.
+  Object.assign(inside, { arrivals, reserved: new Reservations(), store: { handoffHires: new HandoffHireBook() } });
   /** The clock at `s` seconds; the walks advanced to it (a walk past its end is over). */
   const tick = (s: number) => {
     vi.spyOn(performance, 'now').mockReturnValue(s * 1000);
