@@ -39,6 +39,28 @@ describe('command request card', () => {
     expect(c.el.querySelector('.mp-askpass')).toBeNull();
     expect(edit).not.toHaveBeenCalled();
   });
+  // #220: "as your user" is the bridge's request once extracted; the exact `! sudo …` bytes run, without the dialog option.
+  it('runs the bridge request of an account reply, its exact bytes, with the dialog only where eligible', async () => {
+    const edit = vi.fn(); const start = vi.fn().mockResolvedValue({ ok: true, data: {} });
+    const c = card({ edit, start });
+    const command = '! sudo tailscale serve --bg --https=8216 http://127.0.0.1:45215';
+    c.set({ key: 'k220', at: 1, commands: [{ command, cwd: '', cwd_named: false, host: 'bridge', host_text: '', why: '' }] });
+    expect(button(c.el, 'Run').disabled).toBe(false);
+    expect(c.el.querySelector('.mp-warning')).toBeNull();
+    expect(c.el.textContent).toContain('Machine:host');
+    expect(c.el.querySelector('.mp-well pre')!.textContent).toBe(command);
+    expect(c.el.querySelector('.mp-askpass')).toBeNull();
+    button(c.el, 'Edit and run…').click();
+    expect(edit).toHaveBeenCalledWith(command, '');
+    button(c.el, 'Run').click(); await flush();
+    expect(start.mock.calls[0]![0]).toMatchObject({ command, askpass: false, source: { kind: 'suggestion', key: 'k220', index: 0 } });
+    const plain = card();
+    plain.set({ key: 'k220b', at: 1, commands: [{ command: command.slice(2), cwd: '', cwd_named: false, host: 'bridge', host_text: '', why: '' }] });
+    expect(button(plain.el, 'Run').disabled).toBe(false);
+    expect(plain.el.querySelector('.mp-warning')).toBeNull();
+    expect(plain.el.querySelector<HTMLInputElement>('.mp-askpass input')!.checked).toBe(true);
+    expect(plain.el.querySelector('.mp-launched')!.textContent).toContain('sudo -A tailscale serve --bg --https=8216 http://127.0.0.1:45215');
+  });
   it('reads as a terminal command preview: the icon, whose request, the question, the exact bytes without a prompt in them', () => {
     const c = card();
     const command = 'printf "a  b\\n"\n\techo \'q\'  ';

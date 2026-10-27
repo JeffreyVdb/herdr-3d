@@ -32,8 +32,10 @@ export class ManualProcessSim {
     if (!this.requestPreset) return;
     const isBg = this.requestPreset === 'tailscale-bg';
     // #213: `sudo-k` is the user's real launch shape, with the form's trailing line break.
-    const cmd = this.requestPreset === 'sudo' ? 'sudo id' : this.requestPreset === 'sudo-k' ? 'sudo -k python3 tools/hello_world_server.py 80\n' : this.requestPreset === 'multi-line' ? 'printf "first\\n"\nprintf "second\\n"' : isBg ? 'sudo tailscale serve --bg --https=8443 http://127.0.0.1:39525' : 'printf "hello from the fixture\\n"';
-    this.h.final(w.id, `Please run this command on the bridge:\n\n\`\`\`sh\n${cmd}\n\`\`\``);
+    // #220: the reply that says "as your user" (an account, not a machine): a bridge request with its exact `! sudo …` bytes.
+    const account = this.requestPreset === 'account-host';
+    const cmd = account ? '! sudo tailscale serve --bg --https=8216 http://127.0.0.1:45215' : this.requestPreset === 'sudo' ? 'sudo id' : this.requestPreset === 'sudo-k' ? 'sudo -k python3 tools/hello_world_server.py 80\n' : this.requestPreset === 'multi-line' ? 'printf "first\\n"\nprintf "second\\n"' : isBg ? 'sudo tailscale serve --bg --https=8443 http://127.0.0.1:39525' : 'printf "hello from the fixture\\n"';
+    this.h.final(w.id, account ? `I couldn't expose it over Tailscale as your user. To do it, run \`${cmd}\`, then open [the Tailscale URL] with the same query string.` : `Please run this command on the bridge:\n\n\`\`\`sh\n${cmd}\n\`\`\``);
     if (this.data.closed) return;
     w.command_request = { key: `fixture-${this.requestPreset}`, at: this.h.now(), commands: [{ command: cmd, cwd: w.cwd ?? '/', cwd_named: false, host: this.requestPreset === 'other-host' ? 'other' : 'bridge', host_text: this.requestPreset === 'other-host' ? 'the build machine' : '', why: 'The agent needs this command run.', ...(isBg ? { variants: [{ label: 'temporary (foreground)', command: 'sudo tailscale serve --https=8443 http://127.0.0.1:39525', note: 'Ends when the process stops; --bg would keep serving after restarts.' }] } : {}) }] };
   }

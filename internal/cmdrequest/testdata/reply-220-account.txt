@@ -1,0 +1,1 @@
+I couldn't expose it over Tailscale as your user. To do it, run `! sudo tailscale serve --bg --https=8216 http://127.0.0.1:45215`, then open [the Tailscale URL] with the same query string.
