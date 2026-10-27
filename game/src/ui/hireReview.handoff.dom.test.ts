@@ -99,8 +99,8 @@ function setup(o: { background?: boolean; secrets?: PromptSecretsFlow; git?: Hir
     rv.refresh();
     await flush();
   };
-  const open = async (plan: Partial<HandoffPlan> = {}, task = TASK) => {
-    const seed = fromHandoff({ harness: 'claude', model: 'claude-opus-5-5' }, task, CAT);
+  const open = async (plan: Partial<HandoffPlan> = {}, task = TASK, from = { harness: 'claude', model: 'claude-opus-5-5' }) => {
+    const seed = fromHandoff(from, task, CAT);
     const p: HandoffPlan = { worker: 'A', name: 'Pixel', floorName: 'floor', mode: 'agent', candidate: null, instruction: 'focus on the tests', sendHome: false, ...plan };
     expect(rv.open('floor', INTERP, 1, { choice: { ...seed, origin: { ...seed.origin, task: 'chosen' } }, cwd: '/w/pixel', handoff: p })).toBe(true);
     await flush();
@@ -480,7 +480,6 @@ describe('HireReviewDialog: hire with handoff (#198)', () => {
     await e.open({ mode: 'literal', candidate: CAND, instruction: '' });
     const before = e.rv.summary()!;
     // The human's choices: another model and an effort, a label, another folder, the worktree flipped.
-    q<HTMLButtonElement>('[data-key="sec:agent"]')!.click();
     q<HTMLInputElement>('[data-key="model:claude-sonnet-5-5"]')!.click();
     pickEffort('low');
     q<HTMLButtonElement>('[data-key="sec:where"]')!.click();
@@ -521,6 +520,31 @@ describe('HireReviewDialog: hire with handoff (#198)', () => {
     await flush();
     await e.answer('worker.handoff', ok({ handoff: ENTRY }));
     expect(e.last('worker.hire').args).toMatchObject({ harness: 'claude', model: 'claude-sonnet-5-5', effort: 'low', label: 'Pip', cwd: '/w/other', worktree, prompt: hireWithHandoffTask(PATH, 'Fix it, then the docs') });
+  });
+
+  it('agent: another harness and model for the new agent; the source’s agent still writes the handoff', async () => {
+    const e = setup();
+    // Pixel runs Codex: the review starts from its harness and model.
+    await e.open({}, TASK, { harness: 'codex', model: 'gpt-6-luna' });
+    const s = e.rv.summary()!;
+    expect(s.form).toMatchObject({ harness: 'codex', model: 'gpt-6-luna' });
+    // Resolved from the source, yet shown open: another harness is one click away, and focused first.
+    expect(s.sections.find((x) => x.id === 'agent')).toMatchObject({ open: true, origin: 'From the handoff' });
+    expect(document.activeElement).toBe(q('[data-key="sec:agent"]'));
+    q<HTMLInputElement>('[data-key="harness:claude"]')!.click();
+    q<HTMLInputElement>('[data-key="model:claude-sonnet-5-5"]')!.click();
+    pickEffort('high');
+    expect(e.rv.summary()).toMatchObject({ blocker: null, form: { harness: 'claude', model: 'claude-sonnet-5-5', effort: 'high' } });
+    hireBtn().click();
+    await flush();
+    const op = String(e.last('worker.handoff').args.op);
+    expect(e.last('worker.handoff').args).toMatchObject({ worker: 'A', mode: 'agent' });
+    await e.answer('worker.handoff', ok({ request: req({ op }) }));
+    await e.update({ agent_handoff: req({ op, state: 'filed', handoff: 7 }) });
+    await e.answer('handoff.get', ok({ handoff: ENTRY, body: '# Loader' }));
+    await e.update({ agent_handoff: req({ op, state: 'filed', handoff: 7 }) });
+    expect(e.of('worker.hire')).toHaveLength(1);
+    expect(e.last('worker.hire').args).toMatchObject({ harness: 'claude', model: 'claude-sonnet-5-5', effort: 'high', prompt: hireWithHandoffTask(PATH, TASK) });
   });
 
   it('back from step 1 with nothing chosen in the review: the bridge’s defaults stay defaults', async () => {

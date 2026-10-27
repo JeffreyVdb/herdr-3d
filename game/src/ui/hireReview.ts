@@ -386,6 +386,8 @@ export class HireReviewDialog {
     this.choice = seed?.choice ?? fromInterpretation(interp, this.host.store.hireOptions);
     this.keep = [{ harness: this.choice.harness, model: this.choice.model }];
     this.openSet = needsAttention(this.choice, this.host.store.hireOptions, this.taskIssue());
+    // #198: the new agent's harness and model start as the source's: shown open, so another is easy to choose.
+    if (this.plan) this.openSet.add('agent');
     this.f = { label: seed?.label ?? '', cwd: seed?.cwd ?? '', worktree: seed?.worktree ?? false };
     this.changed = { label: seed?.label !== undefined, cwd: !!seed?.cwd, worktree: seed?.worktree !== undefined };
     this.modelQuery = '';
