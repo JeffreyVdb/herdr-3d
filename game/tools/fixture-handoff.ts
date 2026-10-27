@@ -328,7 +328,7 @@ export class HandoffSim {
       const message = LLM_FAIL[outcome] ?? `${outcome.replace(/_/g, ' ')}; nothing was filed`;
       this.settleJob(w, j, { state: 'failed', code: outcome, message }, send);
       // #219: nobody is hired from it.
-      this.hires?.failed(j.op, outcome === 'timeout' ? 'timeout' : 'handoff_failed', `The LLM handoff was not filed: ${message}.`, send);
+      this.hires?.failed(j.op, outcome === 'timeout' ? 'timeout' : 'handoff_failed', message, send);
       return;
     }
     const c = this.cands.get(w.id);
@@ -415,7 +415,7 @@ export class HandoffSim {
     const args = JSON.stringify([a.worker, a.session, a.candidate, a.revision, a.send_home === true, focus]);
     const known = this.jobs.get(a.op);
     if (known) {
-      if (known.worker !== a.worker || known.args !== args) throw this.h.error(this.hires?.enabled ? 'bad_args' : 'bad_request', this.hires?.enabled ? 'bad args: This request was already sent with other settings.' : `op "${a.op}" was used for another handoff`);
+      if (known.worker !== a.worker || known.args !== args) throw this.h.error('bad_request', this.hires?.enabled ? 'bad args: This request was already sent with other settings.' : `op "${a.op}" was used for another handoff`);
       const rec = this.hires?.enabled ? this.hires.replay(a.op, this.hireOf(a), this.sealed(a)) : null;
       ack({ job: this.jobView(known), existing: true, ...(rec ? { handoff_hire: rec } : {}) });
       return;
@@ -646,7 +646,7 @@ export class HandoffSim {
         if (!r) throw this.h.error('invalid_state', `${w.name ?? w.id} has no handoff request running`);
         if (typeof a.fail === 'string') {
           this.settle(w, r, { state: 'failed', reason: a.fail }, send);
-          this.hires?.failed(r.op, /timed? ?out/.test(a.fail) ? 'timeout' : 'handoff_failed', `${w.name ?? w.id}’s agent handoff was not filed: ${a.fail}.`, send);
+          this.hires?.failed(r.op, /timed? ?out/.test(a.fail) ? 'timeout' : 'handoff_failed', a.fail, send);
           ack({ request: this.view(r) });
           return true;
         }
@@ -691,7 +691,7 @@ export class HandoffSim {
         if (j && j.worker === w.id && w.llm_handoff?.op === j.op) {
           if (j.state === 'running') {
             this.settleJob(w, j, { state: 'cancelled', code: 'cancelled', message: 'cancelled; nothing was filed' }, send);
-            this.hires?.failed(j.op, 'cancelled', 'Cancelled: nothing was filed and nobody was hired.', send); // #219: both, at once
+            this.hires?.failed(j.op, 'cancelled', 'cancelled', send); // #219: both, at once
           } else {
             delete w.llm_handoff;
             this.h.upsert(send, w);
@@ -703,7 +703,7 @@ export class HandoffSim {
         if (!r || r.worker !== w.id || w.agent_handoff?.op !== r.op) throw this.h.error('invalid_state', `${w.name ?? w.id} has no handoff request "${String(a.op)}"`);
         if (r.state === 'pending') {
           this.settle(w, r, { state: 'failed', reason: 'cancelled' }, send);
-          this.hires?.failed(r.op, 'cancelled', 'Cancelled: nothing was filed and nobody was hired.', send); // #219: both, at once
+          this.hires?.failed(r.op, 'cancelled', 'cancelled', send); // #219: both, at once
         } else {
           delete w.agent_handoff;
           this.h.upsert(send, w);
@@ -772,8 +772,8 @@ export class HandoffSim {
       case 'worker.handoff': {
         for (const k of Object.keys(a)) if (!['worker', 'mode', 'session', 'candidate', 'revision', 'send_home', 'op', 'instruction', ...(this.hires?.enabled ? ['hire'] : [])].includes(k)) throw this.h.error('bad_request', `bad args: json: unknown field "${k}"`);
         // #219: the hire follows an agent's or an LLM's handoff only (a literal one is filed at once: the game hires).
-        if (a.hire !== undefined && (a.mode !== 'agent' && a.mode !== 'llm')) throw this.h.error('bad_args', 'bad args: hire is for an agent or an LLM handoff');
-        if (a.hire !== undefined && !isObj(a.hire)) throw this.h.error('bad_args', 'bad args: hire must be an object');
+        if (a.hire !== undefined && (a.mode !== 'agent' && a.mode !== 'llm')) throw this.h.error('bad_request', 'bad args: hire is for an agent or an LLM handoff');
+        if (a.hire !== undefined && !isObj(a.hire)) throw this.h.error('bad_request', 'bad args: hire must be an object');
         if (a.mode === 'agent') {
           if (typeof a.op !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(a.op)) throw this.h.error('bad_request', 'bad args: op must be 1–64 characters of A-Z, a-z, 0-9, _ and -');
           const w = this.worker(a, 'worker');
@@ -782,7 +782,7 @@ export class HandoffSim {
           const known = this.reqs.get(a.op);
           // #219: a replay answers the request and its record when its args are the same.
           if (known && this.hires?.enabled) {
-            if (known.worker !== w.id || (known.instruction ?? '') !== (instruction.trim() || 'summarize the conversation') || (known.send_home === true) !== (a.send_home === true)) throw this.h.error('bad_args', 'bad args: This request was already sent with other settings.');
+            if (known.worker !== w.id || (known.instruction ?? '') !== (instruction.trim() || 'summarize the conversation') || (known.send_home === true) !== (a.send_home === true)) throw this.h.error('bad_request', 'bad args: This request was already sent with other settings.');
             const rec = this.hires.replay(a.op, hire, this.sealed(a));
             ack({ request: this.view(known), existing: true, ...(rec ? { handoff_hire: rec } : {}) });
             return true;

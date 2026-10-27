@@ -169,7 +169,7 @@ test('Cancel from the F dialog cancels the request and the hire; the task comes 
   await f.getByRole('button', { name: 'Cancel request and hire' }).click();
   await expect.poll(async () => (await records(page))[0]?.state).toBe('cancelled');
   // The F dialog is open: the task waits behind Review again.
-  await expect.poll(async () => (await toasts(page)).at(-1) ?? '').toContain('Cancelled: nothing was filed and nobody was hired.');
+  await expect.poll(async () => (await toasts(page)).at(-1) ?? '').toContain('The handoff request was cancelled; nobody was hired.');
   await expect.poll(async () => (await desk(page, d))?.plus).toBe(true);
   await page.keyboard.press('Escape');
   await expect(f).toBeHidden();
@@ -195,7 +195,7 @@ test('a hire refused after filing: nobody hired, the task comes back with the pa
   const s = await reviewState(page);
   expect(s?.form?.prompt).toBe('Fix the issue');
   expect(s?.handoff?.filed).toMatch(/^\/home\/u\/handoff\/herdr-3d\/.+\.md$/);
-  expect(s?.status).toContain(`The handoff is saved at ${s?.handoff?.filed}. Desk ${d + 1} of`);
+  expect(s?.status).toContain(`The handoff is saved at ${s?.handoff?.filed}. The new agent was not hired: Desk ${d + 1} of herdr-3d was taken while the handoff was written.`);
   expect(s?.status).toContain('Hire again hires only: the handoff is not made again.');
   await shot(page, 'h219-giveback');
   expect(await sent(page, 'worker.hire')).toHaveLength(0);

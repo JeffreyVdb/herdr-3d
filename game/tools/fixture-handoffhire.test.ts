@@ -59,11 +59,11 @@ describe('fixture handoff hires', () => {
     expect(a.data.handoff_hire).toMatchObject({ op: 'op-1', worker: 'A', worker_name: 'Pixel', mode: 'agent', floor: 'f1', desk_index: 3, state: 'waiting', origin: 'tab-1' });
     expect(JSON.stringify(r.out)).not.toContain('Fix the issue');
     // Nobody else hires into the held desk.
-    expect(r.cmd('worker.hire', { session: 'f1', desk_index: 3, harness: 'claude', model: 'claude-opus-5-5', effort: 'high' }).at(-1)).toMatchObject({ code: 'desk_taken', message: 'Desk 4 is held for Pixel’s handoff hire.' });
+    expect(r.cmd('worker.hire', { session: 'f1', desk_index: 3, harness: 'claude', model: 'claude-opus-5-5', effort: 'high' }).at(-1)).toMatchObject({ code: 'desk_taken', message: "Desk 4 is held for Pixel's handoff hire." });
     expect(r.cmd('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-2', hire: hire() }).at(-1)).toMatchObject({ code: 'desk_taken' });
     // A replay: the same args answer the record; other args are refused.
     expect(r.ack('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1', hire: hire() }).data).toMatchObject({ existing: true, handoff_hire: { op: 'op-1', state: 'waiting' } });
-    expect(r.cmd('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1', hire: hire({ desk_index: 4 }) }).at(-1)).toMatchObject({ code: 'bad_args', message: 'bad args: This request was already sent with other settings.' });
+    expect(r.cmd('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1', hire: hire({ desk_index: 4 }) }).at(-1)).toMatchObject({ code: 'bad_request', message: 'bad args: This request was already sent with other settings.' });
     const filed = r.ack('sim.agent_turn', { id: 'A' });
     const path = (filed.data.handoff as { path: string }).path;
     await r.until(() => r.last('op-1')?.state === 'hired');
@@ -83,14 +83,14 @@ describe('fixture handoff hires', () => {
     r.ack('worker.handoff_cancel', { worker: 'A', op: 'op-1' });
     expect(r.last('op-1')).toMatchObject({ state: 'cancelled', code: 'cancelled' });
     expect(r.cmd('sim.agent_turn', { id: 'A' }).at(-1)).toMatchObject({ t: 'error' });
-    expect(r.cmd('worker.handoff', { worker: 'A', mode: 'literal', session: 's', candidate: 'c', revision: 'r', op: 'op-3', hire: hire() }).at(-1)).toMatchObject({ code: 'bad_args' });
+    expect(r.cmd('worker.handoff', { worker: 'A', mode: 'literal', session: 's', candidate: 'c', revision: 'r', op: 'op-3', hire: hire() }).at(-1)).toMatchObject({ code: 'bad_request' });
   });
 
   it('a failed handoff hires nobody; a hire refused after filing keeps the path; send home only after a hire', async () => {
     const r = rig();
     r.ack('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1', hire: hire() });
     r.ack('sim.agent_turn', { id: 'A', fail: 'a person took over' });
-    expect(r.last('op-1')).toMatchObject({ state: 'failed', code: 'handoff_failed', reason: 'Pixel’s agent handoff was not filed: a person took over.' });
+    expect(r.last('op-1')).toMatchObject({ state: 'failed', code: 'handoff_failed', reason: 'Nobody was hired, the handoff was not filed: a person took over.' });
     r.ack('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-2', send_home: true, hire: hire() });
     r.ack('sim.handoff_hire', {});
     r.ack('sim.agent_turn', { id: 'A' });
@@ -102,10 +102,10 @@ describe('fixture handoff hires', () => {
 
   it('checks the hire before the ack: catalog, desk, blank task, too long', () => {
     const r = rig();
-    expect(r.cmd('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1', hire: hire({ model: 'nope' }) }).at(-1)).toMatchObject({ code: 'bad_args' });
+    expect(r.cmd('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1', hire: hire({ model: 'nope' }) }).at(-1)).toMatchObject({ code: 'bad_request' });
     expect(r.cmd('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1', hire: hire({ desk_index: 0 }) }).at(-1)).toMatchObject({ code: 'desk_taken' });
-    expect(r.cmd('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1', hire: hire({ prompt: '  ' }) }).at(-1)).toMatchObject({ code: 'bad_args' });
-    expect(r.cmd('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1', hire: hire({ prompt: 'x'.repeat(32 * 1024 - 900) }) }).at(-1)).toMatchObject({ code: 'too_long' });
+    expect(r.cmd('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1', hire: hire({ prompt: '  ' }) }).at(-1)).toMatchObject({ code: 'bad_request' });
+    expect(r.cmd('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1', hire: hire({ prompt: 'x'.repeat(32 * 1024 - 900) }) }).at(-1)).toMatchObject({ code: 'bad_request' });
     expect(r.out.some((m) => m.t === 'handoff_hire.upsert')).toBe(false);
   });
 

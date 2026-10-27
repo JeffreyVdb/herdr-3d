@@ -1593,23 +1593,23 @@ export class SimWorld {
   private handoffHireCheck(a: Obj, op: string, source: string | null): void {
     const f = this.runningFloor({ session: a.floor ?? a.session });
     const desk = a.desk_index;
-    if (typeof desk !== 'number' || !Number.isInteger(desk) || desk < 0) throw new CmdError('bad_args', 'bad args: hire.desk_index must be an int >= 0');
+    if (typeof desk !== 'number' || !Number.isInteger(desk) || desk < 0) throw new CmdError('bad_request', 'bad args: hire.desk_index must be an int >= 0');
     const o = this.hire[str(a, 'harness')];
     const model = str(a, 'model');
     const effort = str(a, 'effort');
-    if (!o) throw new CmdError('bad_args', `bad args: unknown harness ${String(a.harness)}`);
-    if (!o.models.includes(model)) throw new CmdError('bad_args', `bad args: ${String(a.harness)} has no model ${model}`);
-    if (![...o.efforts, ...(o.extra_efforts?.[model] ?? [])].includes(effort)) throw new CmdError('bad_args', `bad args: ${model} has no effort ${effort}`);
-    if (a.label !== undefined && (typeof a.label !== 'string' || !a.label.trim() || bytes(a.label) > 64 || a.label.startsWith('-'))) throw new CmdError('bad_args', 'bad args: label must be 1-64 bytes, not starting with -');
-    if (a.cwd !== undefined && (typeof a.cwd !== 'string' || !a.cwd.startsWith('/'))) throw new CmdError('bad_args', 'bad args: cwd must be an absolute path');
+    if (!o) throw new CmdError('bad_request', `bad args: unknown harness ${String(a.harness)}`);
+    if (!o.models.includes(model)) throw new CmdError('bad_request', `bad args: ${String(a.harness)} has no model ${model}`);
+    if (![...o.efforts, ...(o.extra_efforts?.[model] ?? [])].includes(effort)) throw new CmdError('bad_request', `bad args: ${model} has no effort ${effort}`);
+    if (a.label !== undefined && (typeof a.label !== 'string' || !a.label.trim() || bytes(a.label) > 64 || a.label.startsWith('-'))) throw new CmdError('bad_request', 'bad args: label must be 1-64 bytes, not starting with -');
+    if (a.cwd !== undefined && (typeof a.cwd !== 'string' || !a.cwd.startsWith('/'))) throw new CmdError('bad_request', 'bad args: cwd must be an absolute path');
     const prompt = String(a.prompt ?? '');
-    if (prompt.startsWith('--')) throw new CmdError('bad_args', 'bad args: prompt must not start with --');
+    if (prompt.startsWith('--')) throw new CmdError('bad_request', 'bad args: prompt must not start with --');
     // The task, the line that points to the handoff (a 1024-byte path allowance) and the herdr instructions: one prompt.
     const extra = bytes(`First read the handoff here: ${'x'.repeat(1024)} and then follow these instructions:\n\n`) + (a.herdr_instructions === true ? 2 + bytes(herdrInstructions(f.session)) : 0);
-    if (bytes(prompt) + extra > 32 * 1024) throw new CmdError('too_long', 'too long: the task with the line that points to the handoff must fit in 32 KiB');
+    if (bytes(prompt) + extra > 32 * 1024) throw new CmdError('bad_request', 'bad args: the task with the line that points to the handoff must fit in 32 KiB');
     const held = this.handoffHires.holder(f.session, desk, op);
     if (desk >= (f.desks ?? 0) || this.hiring.has(`${f.session}:${desk}`) || held || this.workers.some((w) => w.session === f.session && w.desk_index === desk)) {
-      throw new CmdError('desk_taken', held ? `Desk ${desk + 1} is held for ${held.worker_name}’s handoff hire.` : `desk_taken: desk ${desk} of ${f.session} is ${desk >= (f.desks ?? 0) ? 'out of range' : 'occupied'}`);
+      throw new CmdError('desk_taken', held ? `Desk ${desk + 1} is held for ${held.worker_name}'s handoff hire.` : `desk_taken: desk ${desk} of ${f.session} is ${desk >= (f.desks ?? 0) ? 'out of range' : 'occupied'}`);
     }
     // The caps count the other waiting holds, and not the source when it goes home right after.
     const leaving = source && this.workers.some((w) => w.id === source && w.session === f.session) ? 1 : 0;
@@ -2021,7 +2021,7 @@ export class SimWorld {
     }
     // #219: a desk held for a handoff hire is nobody else's.
     const holder = this.handoffHireSim?.holder(f.session, desk, own);
-    if (holder) throw new CmdError('desk_taken', `Desk ${desk + 1} is held for ${holder.worker_name}’s handoff hire.`);
+    if (holder) throw new CmdError('desk_taken', `Desk ${desk + 1} is held for ${holder.worker_name}'s handoff hire.`);
     const cap = this.floorCap(f);
     if (cap.count >= cap.hard) throw new CmdError('capacity', `capacity: ${f.session} has ${cap.count} workers (hard cap ${cap.hard})`);
     const host = this.hostCap();

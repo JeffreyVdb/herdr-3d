@@ -1910,7 +1910,7 @@ export class HireReviewDialog {
 function recordReason(r: HandoffHire): string {
   const why = (r.reason ?? '').trim() || (r.state === 'cancelled' ? 'Cancelled: nothing was filed.' : 'It stopped.');
   const end = /[.!?…]$/.test(why) ? why : `${why}.`;
-  return /nobody (was|is) hired/i.test(end) ? end : `${end} Nobody was hired.`;
+  return /nobody (was|is) hired|\bnot hired\b/i.test(end) ? end : `${end} Nobody was hired.`;
 }
 
 /** A proposal with nothing in it: the review's state before the first `open`. */

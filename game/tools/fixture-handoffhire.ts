@@ -1,12 +1,13 @@
 // #219: "Hire with handoff" in the background, bridge-side, for the fixture server's `sim=1` (tools/fixture-handoff.ts
 // hands these over; `simhandoffhires=1` turns it on, else the snapshot has no `handoff_hires` and the game hires after
 // filing itself, as #198). Rules, like herdr-world's (docs/protocol.md "Handoffs", the run's contract §2):
-// - `worker.handoff {mode: 'agent'|'llm', hire}` (`hire` with `literal`: `bad_args`) checks the hire before the ack the
+// - `worker.handoff {mode: 'agent'|'llm', hire}` (`hire` with `literal`: `bad_request`) checks the hire before the ack the
 //   way `worker.hire` does (`check`: the catalog, the floor, the desk in range, free, not on its way, not held, the
 //   label, the caps counting the other holds and, with `send_home`, not the source; the task non-blank and, with a
 //   1024-byte path allowance and the herdr instructions, within 32 KiB); its task's secrets went through the gate
 //   (tools/fixture-secrets.ts, `hire.prompt: …` refusals). Accepted: a `waiting` record holds the desk, and the ack has
-//   it (`handoff_hire`, also on an `existing` replay). A replay of the op with other args is `bad_args`.
+//   it (`handoff_hire`, also on an `existing` replay). A replay of the op with other args is `bad_request` ("This
+//   request was already sent with other settings."), as are a blank task, a bad origin and a task too long.
 // - Filed (`sim.agent_turn`, `sim.llm_finish`, a job that finishes by itself): `hiring`, then the simulator's own
 //   worker.hire with `First read the handoff here: <path> and then follow these instructions:\n\n<task>`: `hired`
 //   (its worker id, `prompted`, `delivery`) and only then the send home when asked (`skipped` unless the task reached
@@ -60,6 +61,9 @@ const KEEP_MS = 10 * 60_000;
 const KEEP_MAX = 50;
 const HIRE_KEYS = ['session', 'floor', 'desk_index', 'harness', 'model', 'effort', 'label', 'cwd', 'worktree', 'prompt', 'herdr_instructions', 'secrets', 'secrets_pending', 'codex_profile', 'origin'];
 
+/** The bridge's ": <why>." after a sentence's start. */
+const because = (why: string) => `: ${why.trim().replace(/\.+$/, '')}.`;
+
 const terminal = (r: HandoffHire) => r.state !== 'waiting' && r.state !== 'hiring';
 
 export class HandoffHireSim {
@@ -104,17 +108,17 @@ export class HandoffHireSim {
 
   /** `hire` before the request starts: its shape, then the hire's checks (a refusal is thrown). */
   check(hire: Obj, op: string, sendHome: string | null): void {
-    for (const k of Object.keys(hire)) if (!HIRE_KEYS.includes(k)) throw this.h.error('bad_args', `bad args: json: unknown field "hire.${k}"`);
-    if (hire.origin !== undefined && (typeof hire.origin !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(hire.origin))) throw this.h.error('bad_args', 'bad args: hire.origin must be 1–80 characters of A-Z, a-z, 0-9, _ and -');
-    if (typeof hire.prompt !== 'string' || !hire.prompt.trim()) throw this.h.error('bad_args', 'bad args: hire.prompt is required: the task for the new agent');
+    for (const k of Object.keys(hire)) if (!HIRE_KEYS.includes(k)) throw this.h.error('bad_request', `bad args: json: unknown field "hire.${k}"`);
+    if (hire.origin !== undefined && (typeof hire.origin !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(hire.origin))) throw this.h.error('bad_request', 'bad args: hire.origin must be 1–80 characters of A-Z, a-z, 0-9, _ and -');
+    if (typeof hire.prompt !== 'string' || !hire.prompt.trim()) throw this.h.error('bad_request', 'bad args: hire.prompt is required: the task for the new agent');
     this.h.check(hire, op, sendHome);
   }
 
-  /** A replay of `op`: its record when `hire` is the same, else `bad_args`; null when the op has none. */
+  /** A replay of `op`: its record when `hire` is the same, else `bad_request`; null when the op has none. */
   replay(op: string, hire: Obj | undefined, sealed: boolean): HandoffHire | null {
     const x = this.recs.get(op);
     if (!x && !hire) return null;
-    if (!x || !hire || x.key !== this.keyOf(hire, sealed)) throw this.h.error('bad_args', 'bad args: This request was already sent with other settings.');
+    if (!x || !hire || x.key !== this.keyOf(hire, sealed)) throw this.h.error('bad_request', 'bad args: This request was already sent with other settings.');
     // The replay's own files are not used (the first request's are).
     this.h.release(hire);
     return { ...x.r };
@@ -163,14 +167,14 @@ export class HandoffHireSim {
     if (this.failNext) {
       const code = this.failNext;
       this.failNext = null;
-      res = { ok: false, code, message: code === 'desk_taken' ? `Desk ${x.r.desk_index + 1} of ${this.h.floorName(x.r.floor)} was taken while the handoff was written.` : `the hire failed: ${code.replace(/_/g, ' ')} (simulated)` };
+      res = { ok: false, code, message: code === 'desk_taken' ? `Desk ${x.r.desk_index + 1} of ${this.h.floorName(x.r.floor)} was taken while the handoff was written` : `${code.replace(/_/g, ' ')} (simulated)` };
     } else res = await this.h.hire(args, op, send);
     const name = x.r.worker_name;
     if (!res.ok) {
       this.h.release(x.hire);
       const code = ['desk_taken', 'capacity', 'too_long', 'floor_gone'].includes(res.code) ? res.code : res.code === 'secrets_review_stale' ? 'secrets_stale' : res.code === 'bad_request' && /prompt/.test(res.message) ? 'too_long' : 'hire_failed';
       const home = x.r.send_home ? { send_home_result: 'skipped' as const, send_home_reason: `The new agent was not hired; ${name} stays.` } : null;
-      this.end(x, { state: 'failed', code, reason: res.message, ...(home ?? {}) }, send);
+      this.end(x, { state: 'failed', code, reason: `The new agent was not hired${because(res.message)}`, ...(home ?? {}) }, send);
       return home;
     }
     const d = res.data;
@@ -189,11 +193,12 @@ export class HandoffHireSim {
     return home;
   }
 
-  /** The handoff ended without a filing: nobody is hired. */
-  failed(op: string, code: 'handoff_failed' | 'timeout' | 'cancelled', reason: string, send: Send): void {
+  /** The handoff ended without a filing (`why`: the handoff's reason): nobody is hired. */
+  failed(op: string, code: 'handoff_failed' | 'timeout' | 'cancelled', why: string, send: Send): void {
     const x = this.recs.get(op);
     if (!x || x.r.state !== 'waiting') return;
     this.h.release(x.hire);
+    const reason = code === 'cancelled' ? 'The handoff request was cancelled; nobody was hired.' : `Nobody was hired, the handoff was not filed${because(why)}`;
     this.end(x, { state: code === 'cancelled' ? 'cancelled' : 'failed', code, reason }, send);
   }
 
@@ -202,7 +207,7 @@ export class HandoffHireSim {
     for (const x of this.recs.values())
       if (x.r.worker === id && x.r.state === 'waiting') {
         this.h.release(x.hire);
-        this.end(x, { state: 'failed', code: 'source_gone', reason: `${x.r.worker_name} left before its handoff was filed; nobody was hired.` }, send);
+        this.end(x, { state: 'failed', code: 'source_gone', reason: `${x.r.worker_name} left before the handoff was filed; nobody was hired.` }, send);
       }
   }
 
@@ -211,7 +216,7 @@ export class HandoffHireSim {
     for (const x of this.recs.values())
       if (x.r.floor === floor && x.r.state === 'waiting') {
         this.h.release(x.hire);
-        this.end(x, { state: 'failed', code: 'floor_gone', reason: `${this.h.floorName(floor)} is gone; nobody was hired.` }, send);
+        this.end(x, { state: 'failed', code: 'floor_gone', reason: `The floor of Desk ${x.r.desk_index + 1} is gone; nobody was hired.` }, send);
       }
   }
 
