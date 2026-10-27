@@ -1,13 +1,12 @@
 import './manualProcesses.css';
 import type { CommandResult } from '../net/client';
 import type { CommandArgs, CommandName, ConnMessage, ManualProcess } from '../net/protocol';
-import { SeatTerminal } from '../laptop/seatTerm';
-import { seatedKey } from '../laptop/keys';
 import type { WorldStore } from '../world/store';
 import { newOp } from '../world/handoff';
 import { askpassEligible, askpassForm } from '../world/askpass';
 import { attentionAction, attentionDetail, attentionLabel, attentionOf, detectionNote } from '../world/manualProcess';
 import { attentionActionName } from './manualAttention';
+import { mountRunTerminal, RunTerminalBroker, type RunTerminalHandle } from './runTerminal';
 import { h, replaceKeepingFocus } from './dom';
 import { failureText } from './messages';
 
@@ -18,9 +17,6 @@ export function newManualOp(): string {
 }
 const terminalState = (p: ManualProcess) => ['exited', 'stopped', 'failed'].includes(p.state);
 const dismissible = (p: ManualProcess) => terminalState(p) && ['none', 'done'].includes(p.cleanup);
-const keyBytes: Record<string, string> = { enter: '\r', tab: '\t', 'shift+tab': '\x1b[Z', esc: '\x1b', backspace: '\x7f', delete: '\x1b[3~', up: '\x1b[A', down: '\x1b[B', right: '\x1b[C', left: '\x1b[D', home: '\x1b[H', end: '\x1b[F', pageup: '\x1b[5~', pagedown: '\x1b[6~', space: ' ', 'shift+enter': '\x1b[13;2u', 'alt+enter': '\x1b\r', 'alt+backspace': '\x1b\x7f', 'ctrl+left': '\x1b[1;5D', 'ctrl+right': '\x1b[1;5C', 'alt+left': '\x1b[1;3D', 'alt+right': '\x1b[1;3C', 'shift+up': '\x1b[1;2A', 'shift+down': '\x1b[1;2B', 'shift+left': '\x1b[1;2D', 'shift+right': '\x1b[1;2C' };
-for (let i = 1; i <= 26; i++) keyBytes[`ctrl+${String.fromCharCode(96 + i)}`] = String.fromCharCode(i);
-for (const [i, seq] of ['OP', 'OQ', 'OR', 'OS', '[15~', '[17~', '[18~', '[19~', '[20~', '[21~', '[23~', '[24~'].entries()) keyBytes[`f${i + 1}`] = `\x1b${seq}`;
 
 interface ManualHost {
   store: WorldStore;
@@ -31,6 +27,8 @@ interface ManualHost {
   external(url: string): void;
   /** #213: a run's password dialog (its row's Respond). */
   respond?(id: string, from: HTMLElement): void;
+  /** #216: the connection's run-terminal broker, shared with the seat's Runs view (none: the dialog's own). */
+  runs?: RunTerminalBroker;
 }
 
 /** List, manual entry and the separate controlled terminal. */
@@ -43,12 +41,10 @@ export class ManualProcessesDialog {
   private worker: string | null = null;
   private view: 'list' | 'entry' | 'terminal' = 'list';
   private viewGeneration = 0;
-  private terminalStateLabel: HTMLElement | null = null;
-  private terminalDetect: HTMLElement | null = null;
-  private terminal: SeatTerminal | null = null;
+  private terminal: RunTerminalHandle | null = null;
   private terminalId: string | null = null;
-  private terminalGeneration = 0;
-  private terminalInput: HTMLTextAreaElement | null = null;
+  /** #216: one live surface per run, across the dialog and the seat. */
+  readonly runs: RunTerminalBroker;
   private busy = new Set<string>();
   private entryOp = '';
   private entrySpec = '';
@@ -57,6 +53,7 @@ export class ManualProcessesDialog {
   private returnTo: HTMLElement | null = null;
 
   constructor(parent: HTMLElement, private readonly host: ManualHost) {
+    this.runs = host.runs ?? new RunTerminalBroker((t, args) => host.watch(t, args));
     this.dialog.append(h('header', { class: 'dd-head' }, h('div', { class: 'dd-titles' }, this.title)), this.body, h('footer', { class: 'dd-foot' }, this.status, h('div', { class: 'dd-actions' }, this.closeBtn)));
     this.dialog.addEventListener('cancel', (e) => { e.preventDefault(); if (this.view !== 'list') this.list(); else this.close(); });
     this.dialog.addEventListener('close', () => { this.viewGeneration++; this.detach(); this.returnTo?.focus({ preventScroll: true }); this.returnTo = null; this.host.changed(); });
@@ -79,7 +76,7 @@ export class ManualProcessesDialog {
     if (this.view === 'list' && (force || this.listVersion !== this.host.store.manualProcesses.version)) this.renderList();
     if (this.view === 'terminal' && this.terminalId) {
       const p = this.host.store.manualProcesses.get(this.terminalId.slice(3));
-      if (p) this.updateTerminalState(p);
+      if (p) this.terminal?.update(p);
     }
   }
   private list(): void { this.viewGeneration++; this.detach(); this.view = 'list'; this.status.textContent = ''; this.renderList(); }
@@ -114,7 +111,7 @@ export class ManualProcessesDialog {
       const respond: HTMLButtonElement = h('button', { class: 'btn btn--primary', 'data-key': `respond:${p.id}`, 'aria-haspopup': 'dialog', 'aria-label': attentionActionName({ process: p, attention: a }), onclick: () => this.host.respond?.(p.id, respond) }, attentionAction(a));
       actions.append(respond);
     }
-    actions.append(h('button', { class: a?.kind === 'input' ? 'btn btn--primary' : 'btn', 'data-key': `open:${p.id}`, ...(a?.kind === 'input' ? { 'aria-label': attentionActionName({ process: p, attention: a }) } : {}), onclick: () => void this.openTerminal(p) }, 'Open terminal'));
+    actions.append(h('button', { class: a?.kind === 'input' ? 'btn btn--primary' : 'btn', 'data-key': `open:${p.id}`, ...(a?.kind === 'input' ? { 'aria-label': attentionActionName({ process: p, attention: a }) } : {}), onclick: () => this.openTerminal(p) }, 'Open terminal'));
     const note = terminalState(p) ? null : detectionNote(p);
     if (!terminalState(p) || p.cleanup === 'needed' || p.cleanup === 'failed') actions.append(h('button', { class: 'btn', 'data-key': `stop:${p.id}`, disabled: this.busy.has(p.id), onclick: () => void this.stop(p) }, 'Stop'));
     if (dismissible(p)) actions.append(h('button', { class: 'btn', 'data-key': `dismiss:${p.id}`, disabled: this.busy.has(p.id), onclick: () => void this.action('manual_process.dismiss', p.id) }, 'Dismiss'));
@@ -138,7 +135,7 @@ export class ManualProcessesDialog {
     const p = this.host.store.manualProcesses.get(id);
     if (!p) return;
     this.open(p.worker, from);
-    void this.openTerminal(p);
+    this.openTerminal(p);
   }
   entry(worker: string, command = '', cwd?: string): void {
     if (!this.isOpen) this.open(worker);
@@ -175,86 +172,22 @@ export class ManualProcessesDialog {
     this.body.replaceChildren(h('p', {}, `Machine: ${this.host.store.host || 'Bridge host'}`), h('label', {}, 'Command', field), ...(crNote ? [crNote] : []), h('label', {}, 'Folder', folder), option, preview, h('div', { class: 'mp-actions' }, h('button', { class: 'btn', onclick: () => this.list() }, 'Back'), run));
     field.focus();
   }
-  private async openTerminal(p: ManualProcess): Promise<void> {
+  private openTerminal(p: ManualProcess): void {
     this.viewGeneration++; this.detach(); this.view = 'terminal'; this.title.textContent = p.title; this.status.textContent = '';
-    const id = `mp:${p.id}`; this.terminalId = id;
-    const generation = ++this.terminalGeneration;
-    const current = () => this.terminalId === id && this.terminalGeneration === generation;
-    const screen = h('div', { class: 'mp-terminal', 'aria-label': 'Process terminal' });
-    const input = h('textarea', { class: 'mp-terminal-input', 'aria-label': 'Terminal input', autocapitalize: 'off', autocomplete: 'off', spellcheck: 'false', rows: 1 }); this.terminalInput = input;
-    const state = h('p', { 'aria-live': 'polite' }); this.terminalStateLabel = state;
-    const detect = h('p', { class: 'mp-detect' }); this.terminalDetect = detect;
-    this.updateTerminalState(p);
+    this.terminalId = `mp:${p.id}`;
     const back = h('button', { class: 'btn', onclick: () => this.list() }, 'Back to processes');
-    this.body.replaceChildren(state, detect, screen, input, h('p', {}, 'Ctrl Esc releases the keyboard to Back. Tab and Esc are sent to the process.'), h('p', {}, 'Closing this view does not stop the process.'), back);
-    input.focus();
-    let inputQueue = Promise.resolve();
-    const sendText = (text: string) => {
-      let part = ''; let bytes = 0;
-      const flush = () => {
-        if (!part) return;
-        const chunk = part; part = ''; bytes = 0;
-        inputQueue = inputQueue.then(async () => {
-          if (!current()) return;
-          const result = await this.host.input({ id, text: chunk });
-          if (!result.ok && current()) this.status.textContent = 'Could not send terminal input. Try again.';
-        });
-      };
-      for (const ch of text) { const n = new TextEncoder().encode(ch).length; if (bytes + n > 16384) flush(); part += ch; bytes += n; }
-      flush();
-    };
-    input.addEventListener('compositionend', (e) => { if (e.data) sendText(e.data); input.value = ''; });
-    input.addEventListener('input', (e) => {
-      const event = e as InputEvent;
-      if (event.isComposing) return;
-      const text = event.inputType === 'insertFromComposition' ? '' : input.value;
-      input.value = ''; sendText(text);
-    });
-    input.addEventListener('keydown', (e) => {
-      if (e.isComposing) return;
-      if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); back.focus(); return; }
-      // In this modal Ctrl+P belongs to the process, not the game's palette.
-      if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); sendText('\x10'); return; }
-      const key = seatedKey(e, /Mac/.test(navigator.platform));
-      if (key.items.length && key.items.some((it) => 'key' in it)) { e.preventDefault(); sendText(key.items.map((it) => 'text' in it ? it.text : keyBytes[it.key] ?? '').join('')); }
-      else if (e.key === 'Escape') { e.preventDefault(); sendText('\x1b'); }
-    });
-    let watched = false;
-    const term = new SeatTerminal(screen, { mac: /Mac/.test(navigator.platform), grid: (g) => { if (watched && current()) void this.host.watch('terminal.resize', { id, cols: g.cols, rows: g.rows }); }, wheel: (lines, column, row, modifiers) => { if (current()) void this.host.watch('terminal.scroll', { id, direction: lines > 0 ? 'up' : 'down', lines: Math.abs(lines), column, row, modifiers }); }, open: (url) => this.host.external(url), paste: (text) => sendText(text), keyboard: () => { if (current()) input.focus(); } });
+    // #216: the run's terminal is the component the seat's Runs view shows too; opening it here takes the run.
+    const term = mountRunTerminal({ broker: this.runs, input: (args) => this.host.input(args), watch: (t, args) => this.host.watch(t, args), external: (url) => this.host.external(url) }, p, { surface: 'dialog', releaseFocus: () => back.focus(), onStatus: (text) => { this.status.textContent = text; } });
     this.terminal = term;
-    await term.mount();
-    if (!current()) { term.dispose(); return; }
-    screen.querySelector('.xterm-helper-textarea')?.setAttribute('aria-hidden', 'true');
-    const grid = term.grid;
-    const r = await this.host.watch('terminal.watch', { id, fps: 10, control: true, ...(grid ? { cols: grid.cols, rows: grid.rows } : {}) });
-    if (!current()) return;
-    watched = r.ok;
-    if (!r.ok) this.status.textContent = failureText('terminal.watch', r.code, r.message);
-    else { const gridNow = term.grid; if (gridNow) void this.host.watch('terminal.resize', { id, cols: gridNow.cols, rows: gridNow.rows }); }
+    this.body.replaceChildren(term.el, h('p', {}, 'Ctrl Esc releases the keyboard to Back. Tab and Esc are sent to the process.'), h('p', {}, 'Closing this view does not stop the process.'), back);
+    term.focus();
   }
-  private updateTerminalState(p: ManualProcess): void {
-    if (!this.terminalStateLabel) return;
-    const result = p.state === 'exited' ? `Exited${p.exit_code !== undefined ? ` with code ${p.exit_code}` : ''} — output stays until you dismiss it` : p.state;
-    // #213: what the run asks for, in words (an input episode never says password).
-    const a = attentionOf(p);
-    this.terminalStateLabel.textContent = `${p.host} · ${result}${a ? ` · ${attentionLabel(a)}` : ''} · Cleanup: ${p.cleanup}${p.cleanup_note ? ` — ${p.cleanup_note}` : ''}${p.error ? ` — ${p.error}` : ''}`;
-    const note = terminalState(p) ? null : detectionNote(p);
-    if (this.terminalDetect) { this.terminalDetect.textContent = note ?? ''; this.terminalDetect.hidden = !note; }
-  }
-  onConn(m: ConnMessage): boolean {
-    if (!('id' in m) || typeof m.id !== 'string' || !m.id.startsWith('mp:')) return false;
-    if (m.id === this.terminalId && m.t === 'terminal.frame') this.terminal?.frame(m);
-    if (m.id === this.terminalId && m.t === 'terminal.control' && this.terminalInput) {
-      this.terminalInput.disabled = m.mode !== 'control';
-      this.status.textContent = m.mode === 'control' ? '' : 'This terminal is read only because another client controls it.';
-    }
-    if (m.id === this.terminalId && m.t === 'terminal.closed') this.status.textContent = 'The terminal closed.';
-    return true;
-  }
-  reconnect(): void { const p = this.terminalId && this.host.store.manualProcesses.get(this.terminalId.slice(3)); if (p && this.isOpen) void this.openTerminal(p); }
+  /** Routes a run's connection message to the surface holding it (every `mp:` message is the broker's). */
+  onConn(m: ConnMessage): boolean { return this.runs.onConn(m); }
+  reconnect(): void { this.runs.reconnect(); }
   private detach(): void {
-    const id = this.terminalId; this.terminalId = null; this.terminalInput = null; this.terminalStateLabel = null; this.terminalDetect = null; this.terminalGeneration++;
+    this.terminalId = null;
+    // Hands the run back to the seat's surface (if one is mounted) or unwatches it; the process goes on.
     this.terminal?.dispose(); this.terminal = null;
-    if (id) void this.host.watch('terminal.unwatch', { id });
   }
 }

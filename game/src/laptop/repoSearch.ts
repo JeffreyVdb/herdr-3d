@@ -3,8 +3,9 @@ import type { CommandResult } from '../net/client';
 import type { CommandArgs, RepoDiscoveryState, RepoRef, RepoRefsState } from '../net/protocol';
 import type { Source } from '../ui/composer/complete';
 import { filePathProblem } from '../ui/composer/model';
-import { h, ICON, icon } from '../ui/dom';
+import { h } from '../ui/dom';
 import { rankByKeys, type KeyRanked } from '../world/rank';
+import { duotone } from '../ui/duotone';
 
 /**
  * #247: the transcript composer's `@r:` (and `@repo:`) source, behind the `@` files (`atSource.ts`): the repositories
@@ -150,7 +151,7 @@ export function repoRow(it: RepoItem): HTMLElement {
     return h(
       'span',
       { class: 'tx-repo', 'data-kind': 'repo', 'data-cloned': String(r.cloned), 'data-source': r.source, title: `${r.repo} ${from}: puts in ${pick}${more(r)}` },
-      icon(ICON.repo),
+      duotone('repo'),
       h('span', { class: 'tx-repo-label' }, marked('tx-repo-owner', owner, hit(1)), it.key === 0 ? marked('tx-repo-name', name, it.hits) : marked('tx-repo-name', name, hit(1), slash + 1)),
       // Spaces between the parts, for the option's accessible name (a flex row draws none).
       r.cloned ? ' ' : null,
@@ -165,7 +166,7 @@ export function repoRow(it: RepoItem): HTMLElement {
   return h(
     'span',
     { class: 'tx-repo', 'data-kind': 'dir', 'data-source': r.source, title: `${dir} ${from}${more(r)}` },
-    icon(ICON.folder),
+    duotone('folder'),
     h('span', { class: 'tx-repo-label' }, marked('tx-repo-name', name, hit(2))),
     ' ',
     marked('tx-repo-dir', dir, hit(3)),

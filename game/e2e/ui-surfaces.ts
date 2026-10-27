@@ -1301,12 +1301,48 @@ export const SURFACES: Surface[] = [
     open: async (page) => {
       await sitAtTofu(page, 'transcript');
       await expect.poll(async () => (await page.evaluate(() => window.__h3d.transcript()))?.imageCount ?? 0).toBeGreaterThan(0);
-      await page.locator('.seat-transcript .tx-bar .seat-tab[data-mode="images"]').click();
+      await page.locator('.seat-rail').getByRole('tab', { name: /^Images/ }).click(); // #216: the rail
       await expect(page.locator('.seat-transcript .imgs')).toBeVisible();
       // (A phone shows two tiles, the rest are below the fold.)
       await expect.poll(() => page.locator('.imgs img.imgs-img').evaluateAll((els) => els.filter((e) => (e as HTMLImageElement).naturalWidth > 0).length)).toBeGreaterThan(0);
     },
     root: '.seat-transcript .imgs',
+  },
+  {
+    // #216: the Runs view: this worker's runs (one running, one ended), the agent's request card, the rows and the
+    // picked run's terminal.
+    name: 'seat-runs',
+    fixture: 'demo-m5',
+    extra: '&prints=0',
+    get wsQuery() {
+      return `${SIM}&simmanual=surface-runs-${Date.now()}-${Math.random().toString(36).slice(2)}&simcmdreq=sudo`;
+    },
+    open: async (page) => {
+      const id = await sitAtTofu(page, 'terminal', 'Zippy');
+      const start = (op: string, command: string) => page.evaluate((a) => window.__h3d.simManual('manual_process.start', a), { op, worker: id, command, askpass: false });
+      // (No run asks for you here: its toast and the top bar's chip are other surfaces; h216 shoots the line.)
+      const done = ((await start('surface-1', 'make lint')).data as { process: { id: string } }).process.id;
+      await start('surface-2', 'pnpm vitest run src/laptop');
+      await page.evaluate((id) => window.__h3d.simManual('sim.manual_finish', { id, exit_code: 0 }), done);
+      await page.keyboard.press('Control+Shift+Digit4');
+      await expect(page.locator('.seat-runs')).toBeVisible();
+      await expect(page.locator('.seat-runs .seat-run')).toHaveCount(2);
+      await expect(page.locator('.seat-runs .xterm-rows')).toBeVisible();
+    },
+    root: '.seat-runs',
+  },
+  {
+    // #216: the files drawer over the terminal (Ctrl+Shift+E), its tree from the worker's files.
+    name: 'seat-files',
+    fixture: 'demo-m5',
+    extra: '&prints=0',
+    open: async (page) => {
+      await sitAtTofu(page, 'terminal', 'Zippy');
+      await page.keyboard.press('Control+Shift+KeyE');
+      await expect(page.locator('.fdr[data-open="true"]')).toBeVisible();
+      await expect(page.locator('.fdr [role="treeitem"]').first()).toBeVisible();
+    },
+    root: '.fdr',
   },
   {
     name: 'lightbox',
@@ -1315,7 +1351,7 @@ export const SURFACES: Surface[] = [
     open: async (page) => {
       await sitAtTofu(page, 'transcript');
       await expect.poll(async () => (await page.evaluate(() => window.__h3d.transcript()))?.imageCount ?? 0).toBeGreaterThan(0);
-      await page.locator('.seat-transcript .tx-bar .seat-tab[data-mode="images"]').click();
+      await page.locator('.seat-rail').getByRole('tab', { name: /^Images/ }).click(); // #216: the rail
       const tile = page.locator('.imgs .imgs-group[data-origin="input"] .imgs-item .imgs-tile').first();
       await tile.click();
       const lb = page.locator('dialog.ilb');

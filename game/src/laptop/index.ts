@@ -3,7 +3,7 @@ import { profileNotice } from '../world/codexProfiles';
 import * as THREE from 'three/webgpu';
 import type { CommandResult } from '../net/client';
 import type { CommandCatalogs } from './commandCatalog';
-import type { Ask, Child, CommandArgs, CommandName, ConnMessage, HandoffCandidate, KeyItem, ScheduleSuggestion, TranscriptChild } from '../net/protocol';
+import type { Ask, Changes, Child, CommandArgs, CommandName, ConnMessage, HandoffCandidate, KeyItem, ManualProcess, ScheduleSuggestion, TranscriptChild, Worker, WorkerFiles } from '../net/protocol';
 import { childSinceText } from '../world/overview';
 import { glassFrame, screenFrame } from '../render/desks';
 import type { OfficeView } from '../render/office';
@@ -23,7 +23,7 @@ import { effectiveStatus } from '../world/codexQuestions';
 import type { WorldStore } from '../world/store';
 import { DESK_H, SEAT_OFFSET } from '../world/layout';
 import { DEFAULT_SCREENS, screensParam, WatchPlanner, type Candidate, type ScreenConfig } from '../world/screens';
-import { InputLanes, InputQueue, MAX_PROMPT, seatedKey, textItems, type ZoomAction } from './keys';
+import { FLIP_KEY, InputLanes, InputQueue, MAX_PROMPT, seatChord, seatedKey, textItems, type KeyLike, type ZoomAction } from './keys';
 import type { PromptSecretsFlow } from '../ui/secretsFlow';
 import { fullscreenChip, type FullscreenChip } from './fullscreen';
 import { pasteImages } from './pasteImages';
@@ -37,15 +37,17 @@ import { LaptopTerminal, LIVE_SIZE } from './terminal';
 import { SeatTerminal, type SeatGrid } from './seatTerm';
 import { terminalPx } from './seatTermLogic';
 import type { Display } from '../world/derive';
-import { createSeatTabs, FLIP_KEY } from './seatTabs';
 import { childEndText, hasTranscript, loadImagesTab, loadRenderer, TranscriptMode, type ChildInfo, type OverlayRect, type SeatMode } from './transcriptMode';
+import { RunsView, type RunTerminalLike } from './runsView';
+import type { FilesDrawer, FilesDrawerDeps } from './filesDrawer';
+import { duotone } from '../ui/duotone';
+import type { RailCounts } from '../ui/seat';
 import { TranscriptWatches, WATCH_LIMIT } from './transcriptWatches';
 import { loadingScreen } from './transcriptLoading';
 import { Watches } from './watches';
 import type { PackupCheck } from '../ui/packupSend';
 import { secretFilesOf } from '../world/revokeSecrets';
-import { commandRequestOf, needsAttention } from '../world/manualProcess';
-import type { Worker } from '../net/protocol';
+import { attentionOf, commandRequestOf, needsAttention, openAttention } from '../world/manualProcess';
 
 export { screensParam };
 export type { ImageFeed };
@@ -105,6 +107,35 @@ export interface LaptopHost {
   external?(url: string): void;
   seatChanged?(): void;
   manualEntry?(id: string, command: string, cwd: string): void;
+  /** #216: a run's password dialog (the app's Respond, bound to that request). */
+  respond?(id: string, from: HTMLElement): void;
+  /** #216: a run's live terminal for the Runs view (the dialog's component; none: a placeholder). `release`: Ctrl+Esc in it. */
+  runTerminal?(p: ManualProcess, o: { release(): void; onKey(e: KeyboardEvent): boolean }): RunTerminalLike | null;
+  /** #216: the files drawer (none: no drawer, no Files on the rail). */
+  filesDrawer?(deps: FilesDrawerDeps): FilesDrawerLike;
+}
+
+/** #216: the files drawer as the seat drives it (`FilesDrawer`; tests pass a fake). */
+export type FilesDrawerLike = Pick<FilesDrawer, 'el' | 'isOpen' | 'open' | 'close' | 'toggle' | 'refreshChanges' | 'dispose'>;
+
+/** #216: the drawer's badges from a worker's Changes: `U` untracked, `M` any other change (a rename, a deletion too). */
+export function changeMarks(c: Pick<Changes, 'files'> | null): Map<string, 'M' | 'U'> {
+  const out = new Map<string, 'M' | 'U'>();
+  for (const f of c?.files ?? []) {
+    if (typeof f?.path !== 'string' || !f.path) continue;
+    out.set(f.path, f.untracked ? 'U' : 'M');
+  }
+  return out;
+}
+
+/** #216: what Chat's rail count says waits for you: the questions (an ask's, the screen's, follow-ups, Codex's) and the commands to review. */
+export function chatCount(w: Worker | null | undefined, blocked: boolean): number {
+  if (!w) return 0;
+  const ask = askOf(w);
+  const urgent = ask ? ask.questions.length : blocked && w.question ? 1 : 0;
+  const follow = followupOf(w)?.questions.length ?? 0;
+  const codex = w.codex?.mode === 'shared' ? (w.codex.questions?.length ?? 0) : 0;
+  return urgent + follow + codex + (commandRequestOf(w)?.commands.length ?? 0);
 }
 
 /** The HUD while you sit at a laptop. */
@@ -133,7 +164,7 @@ export interface SeatView {
    * #57: the worker's agent asks a question (null: it does not): in terminal mode a line says so and how to answer it
    * in the transcript view (`key`: T while you have not typed into the terminal since, else Ctrl+Esc).
    */
-  asking?(ask: { who: string; key: 'T' | 'Ctrl+Esc' } | null): void;
+  asking?(ask: { who: string; key: 'T' | 'Ctrl+Esc' | 'Ctrl+Shift+2' | null } | null): void;
   /** #155: what the seated worker's Codex launch has to tell you (null: nothing). */
   codexNote?(n: CodexNotice | null): void;
   /** #139: the seated Codex worker's profile (null: nothing, as with one profile). */
@@ -151,6 +182,17 @@ export interface SeatView {
   manualProcesses?(count: number, hasRecords: boolean): void;
   /** #213: the seated worker's suggested commands while their card is out of sight (0: hide the chip). */
   commandRequest?(n: number): void;
+  /** #216: the rail's counts (Chat, Images, Runs). */
+  railCounts?(c: RailCounts): void;
+  /** #216: the files drawer is open; where it goes (over the stage). */
+  filesOpen?(on: boolean): void;
+  mountDrawer?(el: HTMLElement): void;
+  /** #216: what the terminal's strip says beside its name. */
+  terminalContext?(text: string): void;
+  /** #216: the view Ctrl+Esc goes back to (the keys line names it). */
+  lastView?(m: SeatMode): void;
+  /** #216: the bridge host's name (the rail's Host). */
+  hostName?(host: string): void;
 }
 
 /** Keys a focused control of the seat bar keeps (moving between its controls, pressing one). */
@@ -322,6 +364,13 @@ export class Laptops {
   /** #176: the seat waits for its terminal's first grid before it watches (a controller starts at the PTY's size). */
   private seatGridWait: boolean | 'late' = false;
   private contentObserver: ResizeObserver | null = null;
+  /** #216: the seated worker's Runs view (made when you sit, gone when you stand). */
+  private runsView: RunsView | null = null;
+  /** #216: the files drawer (made once), where the keyboard was when it opened, and the seated worker's Changes marks. */
+  private drawer: FilesDrawerLike | null = null;
+  private drawerFrom: HTMLElement | null = null;
+  private marks: { id: string; map: Map<string, 'M' | 'U'> } | null = null;
+  private marksGen = 0;
 
   constructor(
     private readonly host: LaptopHost,
@@ -353,7 +402,21 @@ export class Laptops {
       },
       renderer: loadRenderer,
       imagesRenderer: loadImagesTab,
-      tabs: (pick) => createSeatTabs(pick),
+      // #216: each view's strip starts with its rail icon; the images' count is the rail's.
+      lead: (mode) => duotone(mode === 'images' ? 'image' : 'chat', 'seat-lead'),
+      imagesCounted: () => this.syncRail(),
+      runs: {
+        show: (box) => {
+          const v = this.runsView;
+          if (!v) return;
+          if (v.el.parentElement !== box) box.append(v.el);
+          v.setVisible(true);
+        },
+        hide: () => this.runsView?.setVisible(false),
+        focus: () => this.runsView?.focus(),
+      },
+      // #216: the files drawer keeps the keyboard while a reference it put in the prompt box shows the conversation.
+      focusHeld: () => !!this.drawer?.isOpen && this.drawer.el.contains(document.activeElement),
       pane: (box) => {
         const pane = document.createElement('div');
         pane.className = 'seat-pane';
@@ -452,7 +515,7 @@ export class Laptops {
     const prefs = this.host.themes?.prefs;
     if (!prefs || !this.seat) return;
     const mode = this.transcript.mode;
-    if (mode === 'images') return;
+    if (mode === 'images' || mode === 'runs') return;
     const view = mode === 'transcript' ? 'transcript' : 'terminal';
     prefs.setZoom(view, a === 'zoom-reset' ? ZOOM.reset : stepZoom(prefs.zoom(view), a === 'zoom-in' ? 1 : -1));
   }
@@ -667,14 +730,30 @@ export class Laptops {
     );
   }
 
-  /** #176: a view picked on the workspace's switch. */
+  /**
+   * #176: a view picked on the workspace's switch; #216: the rail, Ctrl+Shift+1…4. Runs needs no transcript (a shell's
+   * runs too); the view that is up again: its keyboard back.
+   */
   pickMode(m: SeatMode): void {
-    if (!this.seat || m === this.transcript.mode) return;
-    if (m !== 'terminal') {
+    if (!this.seat) return;
+    if (m === this.transcript.mode) return this.focusSeat();
+    if (m === 'transcript' || m === 'images') {
       const why = this.whyNoTranscript();
       if (why) return this.host.seat.status('error', why);
     }
     this.transcript.setMode(m);
+  }
+
+  /** #216: the needs-you line's and a row's Open terminal: the Runs view on run `id`, the keyboard in its terminal. */
+  openRun(id: string): void {
+    if (!this.seat || !this.runsView) return;
+    this.transcript.setMode('runs');
+    this.runsView.select(id, true);
+  }
+
+  /** #216: the Runs view (the needs-you line's "+N more"). */
+  showRuns(): void {
+    if (this.seat) this.pickMode('runs');
   }
 
   /** The seat's terminal opened (or could not): its grid is known, so its watch can start. */
@@ -731,6 +810,127 @@ export class Laptops {
     });
   }
 
+  // ---- #216: the rail, the Runs view, the files drawer ---------------------------------------
+
+  /** The rail's counts: Chat's (questions, commands to review), the images, this worker's runs asking (else running). */
+  private syncRail(): void {
+    const s = this.seat;
+    if (!s) return;
+    const w = this.host.store.workers.get(s.id);
+    const runs = this.host.store.manualProcesses.all().filter((p) => p.worker === s.id);
+    const waiting = this.connected ? openAttention(runs).length : 0;
+    const running = runs.filter((p) => p.state !== 'exited' && p.state !== 'stopped' && p.state !== 'failed').length;
+    this.host.seat.railCounts?.({ chat: w ? chatCount(w, effectiveStatus(w) === 'blocked') : 0, images: this.transcript.imageCount, runs: { waiting, running } });
+  }
+
+  /** The seated worker's Runs view (the overlay shows it when Runs is up). */
+  private makeRuns(id: string, name: string): void {
+    this.runsView?.dispose();
+    const store = this.host.store;
+    const away = () => (this.seat?.away ? Promise.resolve({ ok: false as const, code: 'unavailable', message: this.seat.away }) : null);
+    const terminal = this.host.runTerminal;
+    this.runsView = new RunsView({
+      worker: id,
+      store,
+      name: () => (this.seat?.id === id ? this.seat.name : name),
+      send: (t, args) => this.host.send(t, args),
+      card: {
+        worker: id,
+        name: () => (this.seat?.id === id ? this.seat.name : name),
+        host: () => store.host,
+        start: (args) => away() ?? this.host.send('manual_process.start', args),
+        dismiss: (key) => this.host.send('worker.dismiss_command_request', { id, key }),
+        edit: (command, cwd) => this.host.manualEntry?.(id, command, cwd),
+      },
+      respond: (pid, from) => this.host.respond?.(pid, from),
+      runCommand: () => this.host.manualEntry?.(id, '', store.workers.get(id)?.cwd ?? ''),
+      ...(terminal ? { terminal: (p: ManualProcess, release: () => void) => terminal(p, { release, onKey: (e) => this.chord(e) }) } : {}),
+    });
+  }
+
+  /** The seated worker's files drawer, over the stage at the rail's edge (none: the host has no drawer). */
+  private makeDrawer(id: string, cwd: string): void {
+    this.drawer?.dispose();
+    this.drawer = null;
+    const make = this.host.filesDrawer;
+    if (!make) return;
+    const root = cwd.replace(/\/+$/, '').split('/').pop() || 'Files';
+    this.drawer = make({
+      rootLabel: root,
+      list: async (query) => {
+        const r = await this.host.send('worker.files', { id, query, limit: 100 });
+        return r.ok ? (r.data as WorkerFiles) : null;
+      },
+      changes: () => (this.marks?.id === id ? this.marks.map : null),
+      insertRef: (path, kind) => this.insertRef(id, path, kind),
+      closed: () => this.drawerClosed(id),
+    });
+    this.host.seat.mountDrawer?.(this.drawer.el);
+  }
+
+  /** Ctrl+Shift+E, the rail's Files: the drawer opens (the keyboard goes into it) or closes (it goes back). */
+  toggleFiles(): void {
+    const d = this.drawer;
+    if (!this.seat || !d) return;
+    if (d.isOpen) {
+      d.close();
+      return;
+    }
+    const a = document.activeElement;
+    this.drawerFrom = a instanceof HTMLElement && a !== document.body ? a : null;
+    this.drawerMode = this.transcript.mode;
+    this.loadMarks(this.seat.id);
+    d.open();
+    this.host.seat.filesOpen?.(true);
+  }
+
+  /** Esc: an open drawer closes (true), else nothing happens here (false). */
+  private closeDrawer(): boolean {
+    if (!this.drawer?.isOpen) return false;
+    this.drawer.close();
+    return true;
+  }
+
+  /** Where the view was when the drawer opened (the keyboard goes back there), or null after it put a reference in. */
+  private drawerMode: SeatMode | null = null;
+
+  private drawerClosed(id: string): void {
+    this.host.seat.filesOpen?.(false);
+    if (this.seat?.id !== id) return;
+    const from = this.drawerFrom;
+    this.drawerFrom = null;
+    // A reference went in: the prompt box, with it. Else back where it was, in the view it was in.
+    if (this.drawerMode === null && this.transcript.mode === 'transcript') return this.transcript.focusPrompt();
+    if (from?.isConnected && this.drawerMode === this.transcript.mode && !from.closest('[hidden]')) from.focus({ preventScroll: true });
+    else this.focusSeat();
+  }
+
+  /**
+   * The drawer's Enter: a file chip in the seated worker's prompt box (the conversation shows it; the drawer stays). Why
+   * not, for the drawer to say, when the box cannot take it: nothing changed then (no draft edit, no view swap).
+   */
+  private insertRef(id: string, path: string, kind: 'file' | 'dir'): string | null {
+    const s = this.seat;
+    if (s?.id !== id) return null;
+    const why = this.whyNoTranscript() ?? (hasTranscript(this.host.store.workerView(id)?.harness) ? null : `${s.name} has no conversation here, so no prompt box to put a reference in.`);
+    const refused = why ?? this.transcript.insertFileRef(path, kind === 'dir', false);
+    if (refused) return refused;
+    this.drawerMode = null;
+    this.host.seat.status('ok', `Added @${path} to the prompt box`);
+    return null;
+  }
+
+  /** The worker's Changes, for the drawer's M and U marks (asked each time it opens; the old ones meanwhile). */
+  private loadMarks(id: string): void {
+    if (this.host.unsupported('worker.changes')) return;
+    const gen = ++this.marksGen;
+    void this.host.send('worker.changes', { id }).then((r) => {
+      if (gen !== this.marksGen || this.seat?.id !== id || !r.ok) return;
+      this.marks = { id, map: changeMarks(r.data as Changes) };
+      this.drawer?.refreshChanges();
+    });
+  }
+
   // ---- M16: the transcript ----------------------------------------------------------
 
   /** Why Ctrl+Esc cannot show the conversation, or null when it can. */
@@ -739,10 +939,10 @@ export class Laptops {
     return why === null ? null : failureText('transcript.watch', 'unknown_command', why);
   }
 
-  /** Ctrl+Esc or the seat bar's switch: the terminal or the conversation. */
+  /** Ctrl+Esc or the seat bar's switch: the terminal or the view read last (#216: Runs needs no transcript). */
   toggleTranscript(): void {
     if (!this.seat) return;
-    if (this.transcript.mode === 'terminal') {
+    if (this.transcript.mode === 'terminal' && this.transcript.reading !== 'runs') {
       const why = this.whyNoTranscript();
       if (why) return this.host.seat.status('error', why);
     }
@@ -768,6 +968,7 @@ export class Laptops {
 
   private onMode(mode: SeatMode): void {
     this.host.seat.setMode(mode);
+    if (mode !== 'terminal') this.host.seat.lastView?.(mode);
     this.syncCommandChip(); // #213
     // #187: the bar's setMode says "ok"; an away worker or a lost connection is still the case in the other view.
     if (this.seat && (this.seat.away || !this.connected)) this.restStatus(this.seat);
@@ -794,9 +995,11 @@ export class Laptops {
     if (this.seat?.id !== id) return;
     const name = this.seat.name;
     if (code === 'unknown_command') {
+      // #216: Runs reads no conversation: it stays up, and says nothing (Chat says why when you pick it).
+      if (this.transcript.mode === 'runs') return;
       this.transcript.stop(id);
       this.host.seat.status('error', failureText('transcript.watch', code, message));
-    } else if (this.transcript.mode !== 'terminal') {
+    } else if (this.transcript.mode !== 'terminal' && this.transcript.mode !== 'runs') {
       this.host.seat.status('error', code === 'capacity' ? 'herdr-world is reading as many conversations as it allows. Trying again in a moment.' : failureText('transcript.watch', code, message, { worker: name }));
     }
   }
@@ -997,6 +1200,9 @@ export class Laptops {
     this.watchContent();
     this.syncChip(id);
     this.syncSecretFiles();
+    this.host.seat.hostName?.(this.host.store.host);
+    this.makeRuns(id, v.name); // #216: before the transcript's sit, which may open the Runs view
+    this.makeDrawer(id, v.worker.cwd ?? '');
     this.host.seatChanged?.();
     this.host.seat.focus();
     // M16: its transcript is watched from now on. #98: you sit down to its conversation, unless you left it in the
@@ -1029,6 +1235,13 @@ export class Laptops {
     this.lanes.stand();
     this.input = null;
     this.transcript.stand();
+    this.runsView?.dispose();
+    this.runsView = null;
+    this.drawerFrom = null;
+    this.drawer?.dispose();
+    this.drawer = null;
+    this.marks = null;
+    this.host.seat.filesOpen?.(false);
     this.markReading(null);
     document.documentElement.removeAttribute('data-seated');
     this.meshes?.unfreeze(s.desk);
@@ -1116,7 +1329,9 @@ export class Laptops {
       this.askId = id;
       this.askArmed = !!id;
     }
-    const line = ask && this.transcript.mode === 'terminal' ? { who: askAgent(ask), key: this.askArmed ? ('T' as const) : ('Ctrl+Esc' as const) } : null;
+    // #216: in every view (the notices' row keeps its height across a swap): how to get to the answer from where you are.
+    const mode = this.transcript.mode;
+    const line = ask ? { who: askAgent(ask), key: mode === 'terminal' ? (this.askArmed ? ('T' as const) : ('Ctrl+Esc' as const)) : mode === 'transcript' ? null : ('Ctrl+Shift+2' as const) } : null;
     const key = line ? `${line.who}\u0000${line.key}` : '';
     if (key === this.askShown) return;
     this.askShown = key;
@@ -1139,9 +1354,27 @@ export class Laptops {
     this.host.seat.profileNote?.(n);
   }
 
+  /**
+   * #216: the seat's own chords (Ctrl+Shift+1…4: a view; Ctrl+Shift+E: the files drawer) from anywhere in the seat, a run's
+   * terminal included (its key hook asks here before it sends a byte). True when it was one (taken, never sent).
+   */
+  chord(e: KeyLike & { preventDefault?(): void }): boolean {
+    const c = this.seat ? seatChord(e) : null;
+    if (!c) return false;
+    e.preventDefault?.();
+    if (c.action === 'files') this.toggleFiles();
+    else if (c.view) this.pickMode(c.view);
+    return true;
+  }
+
   /** A keydown while seated: true when it was consumed (nothing else sees it). */
   key(e: KeyboardEvent): boolean {
     if (!this.seat) return false;
+    // #216: a run's terminal has every key (its hook took the seat's chords before they reached here).
+    if (this.runsView?.ownsTerminal(e.target)) return true;
+    if (this.chord(e)) return true;
+    // #216: the files drawer's filter and tree keep their keys (its Esc is its own); nothing of them reaches the pane.
+    if (this.drawer?.isOpen && e.target instanceof Node && this.drawer.el.contains(e.target)) return true;
     const k = seatedKey(e, this.mac);
     if (k.action === 'zoom-in' || k.action === 'zoom-out' || k.action === 'zoom-reset') {
       e.preventDefault();
@@ -1157,6 +1390,8 @@ export class Laptops {
     // pane its Tab); Esc there hands the keyboard back to the view that is up instead of standing you up.
     if (k.action === 'look') {
       e.preventDefault();
+      // #216: they are the terminal's strip's now: from another view, the terminal first (they are not covered then).
+      if (this.transcript.mode !== 'terminal') this.pickMode('terminal');
       this.host.seat.focusLook?.();
       return true;
     }
@@ -1182,7 +1417,9 @@ export class Laptops {
     }
     if (k.prevent) e.preventDefault();
     if (k.action === 'copy') this.copySelection(); // #176
-    else if (k.action === 'stand') this.stand();
+    else if (k.action === 'stand') {
+      if (!this.closeDrawer()) this.stand(); // #216: the drawer first
+    }
     else if (k.action === 'toggle-transcript') this.toggleTranscript();
     else if (k.items.length) this.type(k.items);
     return true;
@@ -1207,8 +1444,10 @@ export class Laptops {
     if (e.key === 'Escape' && !mods) {
       e.preventDefault();
       // #110: Esc while the prompt is being checked cancels the send, nothing else. #26: a child's conversation goes back
-      // to its worker's first; the next Esc stands you up.
-      if (!this.transcript.cancelCheck() && !this.transcript.closeChild()) this.stand();
+      // to its worker's first; #216: then an open files drawer closes; the next Esc stands you up.
+      if (!this.transcript.cancelCheck() && !this.transcript.closeChild() && !this.closeDrawer()) this.stand();
+    } else if (this.transcript.mode === 'runs') {
+      // #216: the Runs view's keys are its own (its rows' ↑ ↓ Enter); nothing goes to the pane.
     } else if (e.key === 'Enter' && !mods && !this.transcriptOwns(e.target)) {
       e.preventDefault();
       this.transcript.focusPrompt();
@@ -1423,6 +1662,10 @@ export class Laptops {
           this.transcript.usageSeen(v.worker.usage ?? null); // #101: its context meter (the worker's usage is replaced, not edited, when it changes)
           this.host.seat.workerStatus?.(v.display); // #176
           this.syncChild(s.id); // #26
+          this.syncRail(); // #216
+          this.runsView?.update();
+          const t = this.seatTerm;
+          this.host.seat.terminalContext?.(t?.opened && t.cols ? `${t.cols} × ${t.rows}` : '');
         }
       }
     }
@@ -1817,6 +2060,11 @@ export class Laptops {
       pending: this.transcript.pending.map((p) => (p.late ? `${p.state}+late` : p.state)),
       child: this.transcript.childState,
     };
+  }
+
+  /** #216: the Runs view and the files drawer (test hook). */
+  seatViewsState(): { runs: ReturnType<RunsView['summary']> | null; drawer: boolean; reading: SeatMode | null } {
+    return { runs: this.runsView?.summary() ?? null, drawer: !!this.drawer?.isOpen, reading: this.transcript.reading };
   }
 
   dispose(): void {

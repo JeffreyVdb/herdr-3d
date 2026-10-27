@@ -42,22 +42,23 @@ export async function loadImagesTab(): Promise<MountImagesTab | null> {
 
 /**
  * What you look at while seated: the live terminal, the worker's conversation drawn over the monitor, or (M16 phase 2)
- * every image of the session, split into what you sent and what the agent viewed or made.
+ * every image of the session, split into what you sent and what the agent viewed or made, or (#216) the worker's manual
+ * runs (their request card, their rows and the picked run's live terminal).
  */
-export type SeatMode = 'terminal' | 'transcript' | 'images';
+export type SeatMode = 'terminal' | 'transcript' | 'images' | 'runs';
 
 /** #98: the harnesses whose transcripts the bridge reads (Claude Code, Codex); a seat at any other opens in the terminal. */
 export const hasTranscript = (harness: string | undefined): boolean => harness === 'claude' || harness === 'codex';
 
-/** The two ways to read: the modes the overlay shows. */
+/** The views the overlay shows (every one but the terminal): what Ctrl+Esc goes back to. */
 export type ReadMode = Exclude<SeatMode, 'terminal'>;
 
-/** The Conversation | Images strip that sits in the bar of both views. */
-export interface SeatTabs {
-  /** A fresh strip (one per view: an element has one place); they stay in step through `update`. */
-  create(): HTMLElement;
-  update(active: ReadMode, images: number | null): void;
-  dispose(): void;
+/** #216: the Runs view, which the host owns (the seat's runs of its worker): shown in the overlay, over the terminal. */
+export interface RunsPane {
+  /** Into `box` (once) and up. */
+  show(box: HTMLElement): void;
+  hide(): void;
+  focus(): void;
 }
 
 /** The overlay's box over the monitor, in CSS px of the viewport. */
@@ -82,8 +83,14 @@ export interface TranscriptModeHost {
   imagesRenderer?(): Promise<MountImagesTab | null>;
   /** A child of the overlay for one view (both views are in it, one shown). None: the view takes the overlay itself. */
   pane?(box: HTMLElement): HTMLElement;
-  /** The tab strip; `pick` switches the view. */
-  tabs?(pick: (mode: ReadMode) => void): SeatTabs;
+  /** #216: what leads a view's strip (its icon), for the conversation's and the images' (none: nothing). */
+  lead?(mode: 'transcript' | 'images'): Element | null;
+  /** #216: the session's distinct images changed (null: not known): the rail's Images count. */
+  imagesCounted?(n: number | null): void;
+  /** #216: the Runs view (none: there is none, Runs stays on the terminal). */
+  runs?: RunsPane;
+  /** #216: something over the views has the keyboard (the files drawer): a view that shows or mounts does not take it. */
+  focusHeld?(): boolean;
   /**
    * #126: what stands in for a conversation (`who`'s) while the render module loads: its outline, opening
    * (`transcriptLoading.ts`). None: nothing.
@@ -170,6 +177,8 @@ const MODES_KEY = 'h3d.seat.terminal';
 const OLD_MODES_KEY = 'h3d.seat.transcript';
 /** Remembered per worker: the ones whose last way to read was the images tab (not the conversation). */
 const IMAGES_KEY = 'h3d.seat.images';
+/** #216: remembered per worker: the ones whose last view other than the terminal was Runs. */
+const RUNS_KEY = 'h3d.seat.runs';
 /** Older pages read to find a message the images tab points at: 20 x 200 items. */
 const REVEAL_PAGES = 20;
 const REVEAL_LIMIT = 200;
@@ -277,9 +286,10 @@ interface Sitting {
   relist: ReturnType<typeof setTimeout> | null;
   /** How many distinct images the session has (null: not asked yet). */
   imageCount: number | null;
-  tabs: SeatTabs | null;
   /** Focus was asked for while the overlay was not placed yet (invisible: the browser ignores focus there). */
   focusLater: boolean;
+  /** #216: the prompt box takes the keyboard once the conversation is mounted (a file reference went into it). */
+  promptLater: boolean;
   /** #58: the worker's status as the store has it (null: not seen yet) and since when (the bridge's clock). */
   status: string | null;
   since: number;
@@ -412,13 +422,15 @@ export class TranscriptMode {
   sit(id: string, name: string, canRead = true, harness = ''): void {
     this.stand();
     dropOldModes(this.host.storage);
-    const opens = canRead && !readModes(this.host.storage).includes(id);
-    // The way to read it last time (what the first Ctrl+Esc shows when it opens in the terminal).
-    const last: ReadMode = canRead && this.host.imagesRenderer && readModes(this.host.storage, IMAGES_KEY).includes(id) ? 'images' : 'transcript';
+    // The view looked at last time (what the first Ctrl+Esc shows when it opens in the terminal). #216: Runs needs no
+    // transcript, so a worker left in it opens in it.
+    const last: ReadMode =
+      this.host.runs && readModes(this.host.storage, RUNS_KEY).includes(id) ? 'runs' : canRead && this.host.imagesRenderer && readModes(this.host.storage, IMAGES_KEY).includes(id) ? 'images' : 'transcript';
+    const opens = (canRead || last === 'runs') && !readModes(this.host.storage).includes(id);
     this.s = {
       id, name, harness, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', commandRequest: null, commandRequestKey: '', commandCardInView: false, revealCard: false, handoff: null, handoffKey: '', suggestion: null, suggestionKey: '', codex: null, codexWorking: false, codexKey: '', usage: null, usageKey: '', box: null, view: null,
       viewPane: null, tabPane: null, tab: null, mounting: false, loader: null, acked: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
-      revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false, status: null, since: 0, mark: null, sendMark: null,
+      revealing: false, unsub: null, relist: null, imageCount: null, focusLater: false, promptLater: false, status: null, since: 0, mark: null, sendMark: null,
       pending: [], taken: new Set(), timeline: null, cueKey: '', cueDirty: true, child: null,
     };
     if (opens) this.setMode(last, false);
@@ -444,7 +456,7 @@ export class TranscriptMode {
       s.tab.destroy();
       this.counts.tabsDestroyed++;
     }
-    s.tabs?.dispose();
+    if (s.mode === 'runs') this.host.runs?.hide();
     s.viewPane?.remove();
     s.tabPane?.remove();
     if (s.box) {
@@ -468,19 +480,26 @@ export class TranscriptMode {
     if (this.s) this.setMode(this.s.mode === 'terminal' ? this.s.reading : 'terminal');
   }
 
-  /** The key that flips the two ways to read (Conversation <-> Images). */
+  /** The view Ctrl+Esc goes back to from the terminal (seated; null: not seated). */
+  get reading(): ReadMode | null {
+    return this.s?.reading ?? null;
+  }
+
+  /** The key that flips the two ways to read (Conversation <-> Images); #216: Runs keeps it (its rows' letters). */
   flip(): void {
     const s = this.s;
-    if (!s || s.mode === 'terminal') return;
+    if (!s || (s.mode !== 'transcript' && s.mode !== 'images')) return;
     this.setMode(s.mode === 'transcript' ? 'images' : 'transcript');
   }
 
   setMode(mode: SeatMode, remember = true): void {
     const s = this.s;
     if (!s || s.mode === mode) return;
-    // No images tab (an older shell, a module that did not load): the conversation.
+    // No images tab (an older shell, a module that did not load): the conversation. #216: no Runs view: none to show.
     if (mode === 'images' && !this.host.imagesRenderer) mode = 'transcript';
+    if (mode === 'runs' && !this.host.runs) return;
     if (s.mode === mode) return;
+    const was = s.mode;
     s.mode = mode;
     if (mode !== 'terminal') s.reading = mode;
     if (remember) {
@@ -488,11 +507,14 @@ export class TranscriptMode {
       if (mode === 'terminal') ids.push(s.id);
       writeModes(this.host.storage, ids);
       if (mode !== 'terminal') {
-        const imgs = readModes(this.host.storage, IMAGES_KEY).filter((x) => x !== s.id);
-        if (mode === 'images') imgs.push(s.id);
-        writeModes(this.host.storage, imgs, IMAGES_KEY);
+        for (const [key, m] of [[IMAGES_KEY, 'images'], [RUNS_KEY, 'runs']] as const) {
+          const kept = readModes(this.host.storage, key).filter((x) => x !== s.id);
+          if (mode === m) kept.push(s.id);
+          writeModes(this.host.storage, kept, key);
+        }
       }
     }
+    if (was === 'runs') this.host.runs?.hide();
     if (mode !== 'terminal') this.show(s);
     else {
       s.focusLater = false;
@@ -501,7 +523,6 @@ export class TranscriptMode {
     this.visible(s);
     // #58: the cue runs only while the conversation is up.
     this.cue(s, true);
-    this.tabsChanged(s);
     this.host.modeChanged(mode);
   }
 
@@ -512,8 +533,9 @@ export class TranscriptMode {
       this.applyRect(s.box);
     }
     s.box.hidden = false;
-    this.watchImages(s);
     if (s.child?.pane) s.child.pane.hidden = true;
+    if (s.mode === 'runs') return this.showRuns(s);
+    this.watchImages(s);
     if (s.mode === 'images') return this.showTab(s);
     if (s.child) return this.showChild(s, s.child);
     if (s.viewPane) s.viewPane.hidden = false;
@@ -535,6 +557,14 @@ export class TranscriptMode {
       (mount) => this.mounted(gen, mount),
       () => this.mounted(gen, null),
     );
+  }
+
+  /** #216: the Runs view, over the other views (they stay mounted underneath, hidden). */
+  private showRuns(s: Sitting): void {
+    if (s.viewPane) s.viewPane.hidden = true;
+    if (s.tabPane) s.tabPane.hidden = true;
+    this.host.runs?.show(s.box as HTMLElement);
+    this.focus();
   }
 
   private showTab(s: Sitting): void {
@@ -579,15 +609,6 @@ export class TranscriptMode {
     return this.host.pane ? this.host.pane(box) : box;
   }
 
-  private tabsFor(s: Sitting): SeatTabs | null {
-    if (!s.tabs && this.host.tabs) s.tabs = this.host.tabs((mode) => this.setMode(mode));
-    return s.tabs;
-  }
-
-  private tabsChanged(s: Sitting): void {
-    if (s.mode !== 'terminal') s.tabs?.update(s.mode, s.imageCount);
-  }
-
   /** The list of images is kept fresh while you read: the strip's count and the images tab. */
   private watchImages(s: Sitting): void {
     if (s.unsub) return;
@@ -597,8 +618,9 @@ export class TranscriptMode {
       void feed.list().then(
         (refs) => {
           if (this.s !== s) return;
-          s.imageCount = distinctImages(refs);
-          this.tabsChanged(s);
+          const n = distinctImages(refs);
+          if (n !== s.imageCount) this.host.imagesCounted?.(n);
+          s.imageCount = n;
           if (s.mode === 'images') s.tab?.refresh();
         },
         () => {
@@ -620,7 +642,7 @@ export class TranscriptMode {
     const live = () => this.s === s;
     return {
       feed: this.host.feed(s.id),
-      tabs: () => this.tabsFor(s)?.create() ?? null,
+      lead: () => this.host.lead?.('images') ?? null,
       jump: (ref) => {
         if (live()) void this.jump(ref);
       },
@@ -708,11 +730,8 @@ export class TranscriptMode {
     this.visible(s); // #187: before its questions (a mandatory one opens the sheet only while it is on the screen)
     // #140: the transcript opened: its commands are asked for (the popup asks again when it opens).
     if (hasTranscript(s.harness)) void this.catalogs.get(s.id).refresh();
-    const strip = this.tabsFor(s);
-    if (strip) {
-      s.view.attachTabs(strip.create());
-      this.tabsChanged(s);
-    }
+    const lead = this.host.lead?.('transcript');
+    if (lead) s.view.attachLead(lead);
     // #126: what the watch sent while the module loaded goes in after the view's first frame (two tasks, not one long
     // one); the view says it is opening till then.
     const view = s.view;
@@ -736,6 +755,10 @@ export class TranscriptMode {
     s.cueKey = '';
     this.cue(s, true);
     if (s.mode === 'transcript') this.focus();
+    if (s.promptLater) {
+      s.promptLater = false;
+      this.focusPrompt();
+    }
     if (s.reveal) void this.revealNow(s);
   }
 
@@ -1114,6 +1137,8 @@ export class TranscriptMode {
       return;
     }
     s.focusLater = false;
+    if (this.host.focusHeld?.()) return;
+    if (s.mode === 'runs') return this.host.runs?.focus();
     const view = s.mode === 'images' ? s.tab : (s.child?.view ?? (s.child ? null : s.view));
     if (view) view.focus();
     else if (typeof b.focus === 'function') b.focus({ preventScroll: true });
@@ -1122,6 +1147,29 @@ export class TranscriptMode {
   /** Enter in transcript mode: to the prompt box (a child's view has none). */
   focusPrompt(): void {
     if (this.s?.mode === 'transcript' && !this.s.child) this.s.view?.focusPrompt();
+  }
+
+  /**
+   * #216: the files drawer's Enter: a file chip for `path` (a folder's with `dir`) into the seated worker's prompt box, at
+   * its remembered caret (in place of a selection), and a space after it, as the box's own `@` completion inserts one;
+   * then the conversation (its worker's: a child's has no box), the box's keyboard with `focus` (else the keyboard stays
+   * where it is: the drawer, for the next one). Null when it went in, else why not, the draft untouched: a prompt on its
+   * way (or being checked) leaves the box read only, and an ask or the screen's question disables it (as the view does).
+   */
+  insertFileRef(path: string, dir: boolean, focus = true): string | null {
+    const s = this.s;
+    if (!s) return 'You are not at a laptop.';
+    if (this.drafts.sending(s.id).busy || s.pending.some((p) => p.state === 'sending') || this.prompting.has(s.id) || this.checking || this.reviewing) return 'A prompt is on its way: the prompt box takes the reference once it is sent.';
+    if (s.ask || s.question) return `${s.name} is waiting for your answer: answer the questions first (in Chat, or in the terminal), then add the reference.`;
+    const draft = this.drafts.get(s.id, s.name);
+    const sel = draft.selection;
+    draft.insertParts(sel.anchor, sel.focus, [{ kind: 'file', path, dir }, ' ']);
+    this.closeChild();
+    if (s.mode !== 'transcript') this.setMode('transcript');
+    if (!focus) return null;
+    if (s.view) this.focusPrompt();
+    else s.promptLater = true;
+    return null;
   }
 
   // ---- #26: a native child's conversation -----------------------------------------------
@@ -1486,11 +1534,14 @@ export class TranscriptMode {
     return this.s?.pending ?? [];
   }
 
-  /** The watch ended for good (`worker_removed`, `asleep`, the connection): the overlay goes back to the terminal. */
+  /**
+   * The watch ended for good (`worker_removed`, `asleep`, the connection): the overlay goes back to the terminal.
+   * #216: not from Runs, which reads no conversation (an older bridge's `unknown_command` leaves it up).
+   */
   stop(id: string): void {
     const s = this.s;
     if (s?.id !== id) return;
-    if (s.mode !== 'terminal') this.setMode('terminal', false);
+    if (s.mode !== 'terminal' && s.mode !== 'runs') this.setMode('terminal', false);
   }
 
   /** The worker's blocked question (from the store; null when it is not blocked). */

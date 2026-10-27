@@ -129,6 +129,8 @@ import { PromptSecretsFlow, type Go } from './ui/secretsFlow';
 import { RevokeSecretsDialog } from './ui/revokeSecrets';
 import { ManualCredentialDialog } from './ui/manualCredential';
 import { ManualProcessesDialog } from './ui/manualProcesses';
+import { mountRunTerminal, RunTerminalBroker } from './ui/runTerminal';
+import { FilesDrawer } from './laptop/filesDrawer';
 import { AttentionChip, type AttentionChipHost } from './ui/manualAttention';
 import { AttentionEpisodes, attentionAction, attentionLabel, openAttention, shortCommand, type RunAttention } from './world/manualProcess';
 import { CommandCatalogs } from './laptop/commandCatalog';
@@ -271,9 +273,17 @@ export class App {
   readonly revokeSecrets: RevokeSecretsDialog;
   readonly manualCredential: ManualCredentialDialog;
   readonly manualProcesses: ManualProcessesDialog;
+  /** #216: which surface (the processes dialog, the seat's Runs view) holds a manual run's terminal. */
+  readonly runTerminals: RunTerminalBroker;
   private manualCredentialLatest = '';
   /** #213: the run whose password dialog Respond asked for (from anywhere), till its request goes. */
   private manualRespond = '';
+  /**
+   * #216: the runs started from this tab with the password dialog (a Run you just pressed): their requests open the
+   * dialog by themselves, as before. Any other request of the seated worker's runs waits on the needs-you line's Respond
+   * instead of covering the seat (the line says it in every view).
+   */
+  private readonly manualStarted = new Set<string>();
   /** #213: a manual run asks for you: in the top bar (every run), and in the seat's bar (this worker's, the others'). */
   private readonly attentionHost: AttentionChipHost = {
     respond: (id) => this.respondManual(id),
@@ -281,7 +291,6 @@ export class App {
     list: (from) => this.manualProcesses.open(null, from),
   };
   private readonly attentionTop = new AttentionChip(this.attentionHost, { names: true, label: 'Manual runs asking for you', cls: 'mpa--top' });
-  private readonly attentionOwn = new AttentionChip({ ...this.attentionHost, list: (from) => { const id = this.laptops.seated; if (id) this.manualProcesses.open(id, from); } }, { names: false, label: 'This worker’s manual runs asking for you', cls: 'mpa--own' });
   private readonly attentionOthers = new AttentionChip(this.attentionHost, { names: true, label: 'Other workers’ manual runs asking for you', cls: 'mpa--others' });
   /** #213: the episodes announced once (a toast, a desktop notification), by id: a reconnect's snapshot repeats none. */
   private readonly attentionEpisodes = new AttentionEpisodes(sessionStore());
@@ -699,7 +708,7 @@ export class App {
           this.sendZone(); // #66
         },
         onEvent: (e) => this.onWorldEvent(e),
-        onConn: (m) => { if (!this.manualProcesses.onConn(m)) this.laptops.onConn(m); },
+        onConn: (m) => { if (!this.runTerminals.onConn(m)) this.laptops.onConn(m); },
         onBoard: (m) => this.onBoard(m),
         onScreen: (m) => this.screen.onMessage(m), // M13 screen
         onHost: (m) => this.rack.onMessage(m), // #74 server rack
@@ -720,7 +729,7 @@ export class App {
           }
           // M5: a dropped connection took every watch with it; the next live one watches again.
           this.laptops.setConnected(s.phase === 'live');
-          if (s.phase === 'live' && !wasLive) this.manualProcesses.reconnect();
+          if (s.phase === 'live' && !wasLive) this.runTerminals.reconnect(); // #216: the dialog's and the Runs view's run terminals
           if ((s.phase === 'live') !== wasLive) this.syncAttention(); // #213: no Respond without a connection
           this.screen.setConnected(s.phase === 'live'); // M13: a new connection is told whether this game shares
           this.hud.setConn(s, this.fixture, Date.now());
@@ -898,7 +907,8 @@ export class App {
       send: (t, args) => this.send(t, args).finally(() => this.laptops.syncSecretFiles()),
     });
     this.manualCredential = new ManualCredentialDialog(o.host, (args) => this.client.request('manual_process.credential', args), (msg) => this.hud.toast(msg, 5200, 'error'));
-    this.manualProcesses = new ManualProcessesDialog(o.host, { store: this.store, send: (t, args) => this.send(t, args), input: (args) => this.client.request('terminal.input', args), watch: (t, args) => this.sendWatch(t, args), changed: () => this.syncManualProcesses(), external: (url) => this.external(url), respond: (id) => this.respondManual(id) });
+    this.runTerminals = new RunTerminalBroker((t, args) => this.sendWatch(t, args));
+    this.manualProcesses = new ManualProcessesDialog(o.host, { runs: this.runTerminals, store: this.store, send: (t, args) => this.send(t, args), input: (args) => this.client.request('terminal.input', args), watch: (t, args) => this.sendWatch(t, args), changed: () => this.syncManualProcesses(), external: (url) => this.external(url), respond: (id) => this.respondManual(id) });
     // #223: a literal handoff, and the cabinet it goes into.
     const copy = (text: string) => copyText(text);
     this.handoffDialog = new HandoffDialog(o.host, {
@@ -949,6 +959,13 @@ export class App {
       manualRun: (from) => { const id = this.laptops.seated; if (id) { this.manualProcesses.open(id, from); this.manualProcesses.entry(id); } },
       processes: (from) => { const id = this.laptops.seated; if (id) this.manualProcesses.open(id, from); },
       review: () => this.laptops.revealCommandRequest(), // #213
+      // #216: the rail (Files, Host) and the needs-you line (Respond, Open terminal, +N more).
+      files: () => this.laptops.toggleFiles(),
+      host: (from) => this.manualProcesses.open(null, from),
+      respond: (id) => this.respondManual(id),
+      openRun: (id) => this.laptops.openRun(id),
+      runs: () => this.laptops.showRuns(),
+      refocus: () => this.laptops.focusSeat(),
       revoke: (from) => {
         const id = this.laptops.seated;
         if (id) this.revokeSecrets.open(id, from);
@@ -965,6 +982,16 @@ export class App {
         seat: this.seatBar,
         seatChanged: () => this.syncManualProcesses(),
         manualEntry: (id, command, cwd) => this.manualProcesses.entry(id, command, cwd),
+        respond: (id) => this.respondManual(id), // #216: the Runs view's Respond
+        // #216: the Runs view's run terminal (the dialog's component, through the same broker: the dialog takes precedence).
+        runTerminal: (p, o) =>
+          mountRunTerminal({ broker: this.runTerminals, input: (args) => this.client.request('terminal.input', args), watch: (t, args) => this.sendWatch(t, args), external: (url) => this.external(url) }, p, {
+            surface: 'seat',
+            releaseFocus: o.release,
+            onKey: o.onKey,
+            placeholder: (takeBack) => h('div', { class: 'seat-runs-held' }, h('p', {}, 'This run’s terminal is open in the processes dialog.'), h('button', { class: 'btn', onclick: () => takeBack() }, 'Show it here')),
+          }),
+        filesDrawer: (deps) => new FilesDrawer(deps), // #216
         // #176: the seated workspace covers the window (no bar over the scene): the monitor's glass is placed between the top bar and the edge.
         insets: () => ({ top: parseFloat(this.hud.root.style.getPropertyValue('--topbar-bottom')) || 70, bottom: 18 }),
         external: (url) => this.external(url), // #176: the seated terminal's links
@@ -1059,7 +1086,7 @@ export class App {
     addFloorButton(this.hud, (b) => this.openAddFloor(b)); // #58, before Presets
     this.scheduleButtons(); // #64 schedules
     this.hud.mountAttention(this.attentionTop.el); // #213
-    this.seatBar.mountAttention(this.attentionOwn.el, this.attentionOthers.el);
+    this.seatBar.mountAttention(this.attentionOthers.el); // #216: this worker's runs have the needs-you line
     const manualAll = h('button', { class: 'btn', 'data-action': 'manual-processes.all', 'aria-haspopup': 'dialog', onclick: () => this.manualProcesses.open(null) }, 'All manual processes');
     this.hud.addTopbarButton(manualAll, 'buildings', () => true);
     this.m6Buttons = m6StartButtons(this.hud, { run: () => this.openStartRun(), presets: (b) => this.openPresets(b), off: () => runUnsupported(hireHost) });
@@ -1115,10 +1142,13 @@ export class App {
     this.manualProcesses.refresh();
     this.laptops.syncSecretFiles();
     const scope = this.manualProcesses.scope;
-    const seated = this.laptops.seated;
     // #213: Respond (the chips, a list row, a toast, a notification) asks for one run's dialog from anywhere.
     if (this.manualRespond && !this.store.manualProcesses.get(this.manualRespond)?.credential) this.manualRespond = '';
-    const candidates = this.store.manualProcesses.all().filter((p) => p.credential && (p.id === this.manualRespond || p.worker === seated || scope === null || (scope !== undefined && p.worker === scope)));
+    for (const id of this.manualStarted) {
+      const p = this.store.manualProcesses.get(id);
+      if (this.store.manualProcesses.known && (!p || ['exited', 'stopped', 'failed'].includes(p.state))) this.manualStarted.delete(id);
+    }
+    const candidates = this.store.manualProcesses.all().filter((p) => p.credential && (p.id === this.manualRespond || this.manualStarted.has(p.id) || scope === null || (scope !== undefined && p.worker === scope)));
     candidates.sort((a, b) => Number(b.id === this.manualRespond) - Number(a.id === this.manualRespond) || Number(`${b.id}:${b.credential?.request}` === this.manualCredentialLatest) - Number(`${a.id}:${a.credential?.request}` === this.manualCredentialLatest) || (b.credential?.attempt ?? 0) - (a.credential?.attempt ?? 0) || b.created_at - a.created_at);
     this.manualCredential.refresh(candidates[0]);
     this.syncAttention();
@@ -1141,7 +1171,7 @@ export class App {
     const list = this.conn.phase === 'live' ? openAttention(this.store.manualProcesses.all()) : [];
     const seated = this.laptops.seated;
     this.attentionTop.set(list);
-    this.attentionOwn.set(seated ? list.filter((r) => r.process.worker === seated) : []);
+    this.seatBar.needsYou(seated ? list.filter((r) => r.process.worker === seated) : []); // #216
     this.attentionOthers.set(seated ? list.filter((r) => r.process.worker !== seated) : []);
     this.seatBar.attention(seated ? list.filter((r) => r.process.worker === seated).length : 0, seated ? list.filter((r) => r.process.worker !== seated).length : 0);
     // Not live: no episode update (the reconnect's snapshot brings no new episode), only the alerts go.
@@ -2109,6 +2139,14 @@ export class App {
     this.sent.push(entry);
     const r = await this.client.request(t, args);
     entry.result = r;
+    // #216: a run started here with the password dialog: its request opens the dialog by itself (see `manualStarted`).
+    if (t === 'manual_process.start' && r.ok && (args as CommandArgs['manual_process.start']).askpass) {
+      const id = (r.data as { process?: { id?: unknown } } | null)?.process?.id;
+      if (typeof id === 'string' && id) {
+        this.manualStarted.add(id);
+        this.syncManualProcesses();
+      }
+    }
     if (!r.ok && r.code === 'unknown_command') this.unsupported.add(t);
     if (!r.ok && r.code === 'unknown_command') this.m6Buttons.sync();
     return r;

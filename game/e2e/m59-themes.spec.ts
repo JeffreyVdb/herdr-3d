@@ -543,9 +543,10 @@ for (const [w, h] of [
     await page.keyboard.press('Control+Escape');
     await expect(tx).toBeHidden();
     await frames(page, 5);
-    const term = await controlsInside(page, '.seat-head', '.seat');
-    expect(term.outside, 'seat bar controls outside the bar or the window (terminal mode)').toEqual([]);
-    expect(term.count).toBeGreaterThanOrEqual(7); // (#172: two swatches, not three)
+    // #216: the terminal's controls are its strip's (two swatches, A−, the level, A+).
+    const term = await controlsInside(page, '.seat-term-strip', '.seat-term-strip');
+    expect(term.outside, 'the terminal strip’s controls outside the strip or the window (terminal mode)').toEqual([]);
+    expect(term.count).toBeGreaterThanOrEqual(5); // (#172: two swatches, not three)
     await expect(page.locator('.seat-zoom-level')).toHaveText('100%');
     await expect(page.locator('.seat-zoom-level')).toBeVisible();
     await page.locator('.seat [aria-label="Larger terminal text"]').click();

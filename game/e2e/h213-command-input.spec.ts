@@ -158,7 +158,7 @@ test('input: wording by certainty, Open terminal, the seat chips, several runs, 
   await boot(page, `input-${Date.now()}`);
   const a = await start(page, pebble.id, 'i-1', 'read -p "Name? " name');
   const chip = page.locator('.mpa--top');
-  await expect(page.locator('.mpa')).toHaveCount(3);
+  await expect(page.locator('.mpa')).toHaveCount(2); // #216: the top bar's and the other workers' (this worker's: the needs-you line)
   await expect(chip).toBeHidden();
   await attention(page, a, 'uncertain');
   await expect(chip.locator('.mpa-tape')).toHaveText('May be waiting for input');
@@ -193,7 +193,8 @@ test('input: wording by certainty, Open terminal, the seat chips, several runs, 
   // Seated at Pebble: its run beside its process control, Zippy's in the notices row too.
   await sit(page, pebble.id);
   await expect(page.locator('.seat-processes')).toHaveAttribute('data-attn', '');
-  await expect(page.locator('.mpa--own .mpa-tape')).toHaveText('Waiting for input');
+  // #216: this worker's run is the needs-you line (the chip's place), its words by certainty.
+  await expect(page.locator('.seat-needs .seat-needs-who')).toHaveText('Pebble’s run is waiting for input');
   await expect(page.locator('.mpa--others .mpa-what')).toHaveText('Zippy · sudo id');
   await snap(page, 'attention-seat');
   await page.keyboard.press('Escape'); await frames(page, 5);
@@ -317,9 +318,10 @@ for (const ui of ['quiet', 'ubuntu']) {
       await snap(page, `attention-seat-${ui}-${width === 390 ? '390' : 'desktop'}`);
       await expect(page.locator('.mpa--others .mpa-what')).toBeVisible();
       expect(await shows('.mpa--others', 'Zippy · sudo')).toBe(true);
-      expect(await shows('.mpa--own', 'read')).toBe(true);
+      await expect(page.locator('.seat-needs .seat-needs-cmd')).toBeVisible(); // #216: the needs-you line
+      expect(await page.locator('.seat-needs .seat-needs-cmd').evaluate((e) => e.textContent!.startsWith('read') && e.clientWidth > 24)).toBe(true);
       expect(await inView(page.locator('.mpa--others .mpa-act'))).toBe(true);
-      expect(await inView(page.locator('.mpa--own .mpa-act'))).toBe(true);
+      expect(await inView(page.locator('.seat-needs .seat-needs-btn').first())).toBe(true);
       await noOverflow(page);
     }
     clean();

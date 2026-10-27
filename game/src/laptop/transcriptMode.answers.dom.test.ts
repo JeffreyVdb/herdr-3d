@@ -18,7 +18,7 @@ async function harness() {
   let host: TranscriptRenderHost | null = null;
   const mount: MountTranscript = (_box, h) => {
     host = h;
-    return { setItems() {}, applyUpdates() {}, setBlocked() {}, setAsk() {}, setFollowup() {}, setCodex() {}, setUsage() {}, setActivity() {}, setPending() {}, attachTabs() {}, hasItem: () => false, scrollToItem: () => false, focus() {}, focusPrompt() {}, destroy() {} } as never;
+    return { setItems() {}, applyUpdates() {}, setBlocked() {}, setAsk() {}, setFollowup() {}, setCodex() {}, setUsage() {}, setActivity() {}, setPending() {}, attachLead() {}, hasItem: () => false, scrollToItem: () => false, focus() {}, focusPrompt() {}, destroy() {} } as never;
   };
   const tx = new TranscriptMode({
     feed: () => null,

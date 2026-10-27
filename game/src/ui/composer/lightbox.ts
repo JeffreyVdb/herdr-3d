@@ -11,8 +11,9 @@
  * and not after a drag that ended there). What the editor showed before is given back by `onClosed`.
  */
 
-import { h, ICON, icon } from '../dom';
+import { h } from '../dom';
 import { inPalette } from '../dismiss';
+import { duotone } from '../duotone';
 
 let open = 0;
 
@@ -87,7 +88,7 @@ const DRAG_PX = 4;
  */
 export function openPreview(host: HTMLElement, img: PreviewImage, release: () => void, onClosed: () => void): Preview {
   const id = `cmp-lb-${++ids}`;
-  const closeBtn = h('button', { class: 'cmp-lb-close', 'aria-label': 'Close preview' }, icon(ICON.close));
+  const closeBtn = h('button', { class: 'cmp-lb-close', 'aria-label': 'Close preview' }, duotone('x'));
   const pic = h('img', { class: 'cmp-lb-img', alt: `${img.label}: ${img.name}`, draggable: 'false' });
   if (img.url) pic.src = img.url;
   const stage = h('div', { class: 'cmp-lb-stage' }, pic);

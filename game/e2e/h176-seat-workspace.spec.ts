@@ -70,7 +70,7 @@ test('sitting opens the full-window workspace; the PTY gets the fitted grid and 
   await expect.poll(async () => (await simTerm(page, id)).control?.cols).toBe(t0.grid!.cols);
   // The status and the view switch are there; no zoom chip while the seat owns the pane.
   await expect(page.locator('.seat-status')).toBeVisible();
-  await expect(page.locator('.seat-mode').getByRole('button', { name: 'Terminal' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.seat-rail').getByRole('tab', { name: 'Terminal' })).toHaveAttribute('aria-selected', 'true'); // #216: the rail
   expect(await page.evaluate(() => window.__h3d.seat().fullscreen)).toBeNull();
   await shot(page, 'h176-seated-1280');
 
@@ -248,7 +248,7 @@ test('narrow windows: whose laptop it is gives way, never Stand up; its whole bu
   const clean = watchErrors(page);
   await page.setViewportSize({ width: 560, height: 800 });
   await sitAt(page);
-  await page.locator('.seat-mode').getByRole('button', { name: 'Terminal' }).click();
+  await page.locator('.seat-rail').getByRole('tab', { name: 'Terminal' }).click(); // #216: the rail
   await expect(page.locator('.seat-status')).toBeVisible();
   // Stand up's centre is Stand up, it shares no pixel with the line's tapes, the line's parts stay inside the line and
   // the header inside the window.

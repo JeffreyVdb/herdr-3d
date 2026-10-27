@@ -226,8 +226,11 @@ export const BINDINGS = [
   { id: 'secrets.edges', group: 'dialogs', scope: 'dialog', keys: [code('ArrowLeft'), code('ArrowRight'), code('ArrowLeft', { shift: true }), code('ArrowRight', { shift: true })], show: [['← →'], ['Shift', '← →']], label: 'In the secrets review, on a match: move its end, or (with Shift) its start, by one character', readonly: true },
   { id: 'secrets.mark', group: 'dialogs', scope: 'dialog', keys: [code('KeyM'), code('Delete')], show: [['M'], ['Delete']], label: 'In the secrets review: mark the text selected in the prompt as a secret; Delete takes a mark you made away', readonly: true },
   // ---- at a laptop (laptop/keys.ts; no help key here) ---------------------------------------------
-  { id: 'seat.stand', group: 'laptop', scope: 'seated', keys: [code('Escape')], label: 'Stand up (from a subagent’s conversation: back to its worker’s first)', readonly: true },
-  { id: 'seat.view', group: 'laptop', scope: 'seated', keys: [code('Escape', { ctrl: true })], label: 'Terminal or conversation', readonly: true },
+  { id: 'seat.stand', group: 'laptop', scope: 'seated', keys: [code('Escape')], label: 'Stand up (the files drawer closes first; from a subagent’s conversation: back to its worker’s first)', readonly: true },
+  { id: 'seat.view', group: 'laptop', scope: 'seated', keys: [code('Escape', { ctrl: true })], label: 'The terminal, or the view you looked at last (Chat, Images or Runs); in a run’s terminal it first hands the keyboard back to the runs', readonly: true },
+  // #216: by physical key (Ctrl+Shift+1 is Ctrl+! on a US layout), Ctrl on a Mac too; the terminals never get them.
+  { id: 'seat.views', group: 'laptop', scope: 'seated', keys: [1, 2, 3, 4].map((n) => code(`Digit${n}`, { ctrl: true, shift: true })), show: [['Ctrl', 'Shift', '1…4']], label: 'Terminal, Chat, Images or Runs, from every view (the terminals too)', readonly: true },
+  { id: 'seat.files', group: 'laptop', scope: 'seated', keys: [code('KeyE', { ctrl: true, shift: true })], label: 'The files drawer: Enter puts an @ reference to a file in the prompt box, Esc closes it', readonly: true },
   { id: 'seat.palette', group: 'laptop', scope: 'seated', keys: [code('KeyP', { mod: true })], label: 'The command palette (the terminal no longer gets Ctrl+P; ↑ is still previous history)', readonly: true },
   { id: 'seat.dictate', group: 'laptop', scope: 'seated', keys: [code('Space', { mod: true, shift: true })], label: 'The dictation bar (the terminal does not get this chord)', readonly: true },
   { id: 'seat.overview', group: 'laptop', scope: 'seated', keys: [code('KeyO')], label: 'The floor overview, over the conversation (Esc comes back)', readonly: true },

@@ -86,10 +86,10 @@ const tick = async () => {
   for (let i = 0; i < 8; i++) await Promise.resolve();
 };
 
-function mount(f: Fake | null, tabs: HTMLElement | null = null): { root: HTMLElement; view: ImagesTabView; host: ImagesTabHost } {
+function mount(f: Fake | null, lead: HTMLElement | null = null): { root: HTMLElement; view: ImagesTabView; host: ImagesTabHost } {
   const root = document.createElement('div');
   document.body.append(root);
-  const host: ImagesTabHost = { feed: f?.feed ?? null, tabs: () => tabs, jump: (r) => f?.jumped.push(r) };
+  const host: ImagesTabHost = { feed: f?.feed ?? null, lead: () => lead, jump: (r) => f?.jumped.push(r) };
   return { root, view: mountImagesTab(root, host), host };
 }
 
@@ -233,13 +233,13 @@ describe('the images tab', () => {
     expect(seen).toEqual(['i']);
   });
 
-  it('puts the mode’s tab strip in its bar and cleans up on destroy', async () => {
-    const strip = document.createElement('div');
-    strip.className = 'seat-tabs';
+  it('puts the view’s lead (#216: its icon) first in its bar and cleans up on destroy', async () => {
+    const strip = document.createElement('span');
+    strip.className = 'seat-lead';
     const f = fakeFeed([shot]);
     const { root, view } = mount(f, strip);
     await tick();
-    expect(root.querySelector('.imgs-bar .seat-tabs')).toBe(strip);
+    expect(root.querySelector('.imgs-bar')?.firstElementChild).toBe(strip);
     view.destroy();
     expect(root.querySelector('.imgs')).toBeNull();
     view.destroy(); // twice is fine

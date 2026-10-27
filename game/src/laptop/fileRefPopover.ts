@@ -1,7 +1,8 @@
 import { isMac } from '../input/shortcuts';
-import { h, icon } from '../ui/dom';
+import { h } from '../ui/dom';
 import { isAbsolutePath, resolveFileRef } from './fileRef';
 import { zoomKey } from './keys';
+import { duotone } from '../ui/duotone';
 
 /**
  * #31: the popover of a file reference in the transcript (`.tx-file-ref`, an inert anchor whose path the sanitiser kept in
@@ -29,9 +30,6 @@ const PAD = 6;
 const GAP = 4;
 /** How long the button says "Copied". */
 const COPIED_MS = 2000;
-
-const ICON_COPY = '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>';
-const ICON_CHECK = '<path d="M5 12.5l4.5 4.5L19 7.5"/>';
 
 let ids = 0;
 
@@ -320,7 +318,7 @@ export class FileRefPopover {
 
   private setState(state: 'idle' | 'copied' | 'failed', keepStatus = false): void {
     this.el.dataset.state = state;
-    this.btnIcon.replaceChildren(icon(state === 'copied' ? ICON_CHECK : ICON_COPY));
+    this.btnIcon.replaceChildren(duotone(state === 'copied' ? 'check' : 'copy'));
     this.btnText.textContent = state === 'copied' ? 'Copied' : 'Copy file path';
     const key = isMac() ? '⌘C' : 'Ctrl+C';
     if (state === 'copied') this.status.textContent = 'File path copied to the clipboard.';

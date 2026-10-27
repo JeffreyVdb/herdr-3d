@@ -3,7 +3,7 @@ import type { CommandResult } from '../net/client';
 import type { ImageRef, TranscriptItem } from '../net/protocol';
 import type { ImageFeed } from './imageFeed';
 import type { ImagesTabHost, ImagesTabView, MountImagesTab } from './imagesTab';
-import { distinctImages, TranscriptMode, type MountTranscript, type ReadMode, type SeatMode, type SeatTabs, type TranscriptRenderHost } from './transcriptMode';
+import { distinctImages, TranscriptMode, type MountTranscript, type ReadMode, type SeatMode, type TranscriptRenderHost } from './transcriptMode';
 import { TranscriptWatches, watchAck } from './transcriptWatches';
 
 // The third seat mode (M16 phase 2): the images tab next to the conversation, in one overlay, without a DOM.
@@ -46,7 +46,7 @@ class FakeView {
   setUsage(): void {}
   setActivity(): void {}
   setPending(): void {}
-  attachTabs(): void {
+  attachLead(): void {
     this.tabs++;
   }
   hasItem(id: string): boolean {
@@ -120,9 +120,8 @@ function harness(o: { feed?: ReturnType<typeof fakeFeed> | null; images?: boolea
   const panes: FakeBox[] = [];
   const views: FakeView[] = [];
   const tabs: FakeTab[] = [];
-  const stripUpdates: Array<[ReadMode, number | null]> = [];
-  let strips = 0;
-  let stripsDisposed = 0;
+  const counted: Array<number | null> = [];
+  const leads: ReadMode[] = [];
   const sent: Array<{ t: string; args: Record<string, unknown>; resolve: (r: CommandResult) => void }> = [];
   const status: Array<[string, string | null]> = [];
   const modes: SeatMode[] = [];
@@ -147,23 +146,18 @@ function harness(o: { feed?: ReturnType<typeof fakeFeed> | null; images?: boolea
       : {
           imagesRenderer: () => Promise.resolve(mountTab),
           pane: () => new FakeBox(panes) as unknown as HTMLElement,
-          tabs: (): SeatTabs => ({
-            create: () => {
-              strips++;
-              return {} as HTMLElement;
-            },
-            update: (m, n) => stripUpdates.push([m, n]),
-            dispose: () => {
-              stripsDisposed++;
-            },
-          }),
+          lead: (m) => {
+            leads.push(m);
+            return {} as HTMLElement;
+          },
+          imagesCounted: (n) => counted.push(n),
         }),
     overlay: () => new FakeBox(layer) as unknown as HTMLElement,
     storage: storage as unknown as Storage,
     status: (kind, text) => status.push([kind, text]),
     modeChanged: (m) => modes.push(m),
   });
-  return { tx, layer, panes, views, tabs, sent, status, modes, storage, feed, stripUpdates, strips: () => strips, stripsDisposed: () => stripsDisposed };
+  return { tx, layer, panes, views, tabs, sent, status, modes, storage, feed, counted, leads };
 }
 
 describe('the images mode', () => {
@@ -184,7 +178,8 @@ describe('the images mode', () => {
     await flush();
     expect(h.tx.mode).toBe('transcript');
     expect(h.views).toHaveLength(1);
-    expect(h.views[0]?.tabs).toBe(1); // it got its strip
+    expect(h.views[0]?.tabs).toBe(1); // #216: its strip got its lead (the view's icon)
+    expect(h.leads).toEqual(['transcript']); // (the fake tab asks for none)
     expect(h.layer).toHaveLength(1);
     expect(h.panes).toHaveLength(2);
     expect(h.panes.map((p) => p.hidden)).toEqual([true, false]); // the tab's pane hidden, the conversation's shown
@@ -310,7 +305,7 @@ describe('the images mode', () => {
       await vi.advanceTimersByTimeAsync(400);
       expect(feed.list).toHaveBeenCalledTimes(2);
       expect(h.tx.imageCount).toBe(2);
-      expect(h.stripUpdates.at(-1)).toEqual(['transcript', 2]);
+      expect(h.counted).toEqual([2]); // #216: the rail's count, told when it changes
       // Standing up drops the listener and any timer.
       feed.fire();
       h.tx.stand();
@@ -457,8 +452,7 @@ describe('sit / read / stand cycles with the images tab', () => {
     expect(c.tabsMounted).toBeGreaterThan(0);
     expect(h.views.every((v) => v.destroyed)).toBe(true);
     expect(h.tabs.every((t) => t.destroyed)).toBe(true);
-    expect(h.strips()).toBeGreaterThan(0);
-    expect(h.stripsDisposed()).toBeGreaterThan(0);
+    expect(h.leads.length).toBeGreaterThan(0);
     expect(tw.count).toBe(0);
   });
 

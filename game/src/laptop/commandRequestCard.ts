@@ -1,7 +1,8 @@
 import type { CommandArgs, CommandRequest, RequestedCommand } from '../net/protocol';
 import type { CommandResult } from '../net/client';
 import { askpassEligible, askpassForm, newManualOp } from '../ui/manualProcesses';
-import { h, icon, ICON, replaceKeepingFocus } from '../ui/dom';
+import { h, replaceKeepingFocus } from '../ui/dom';
+import { duotone, type DuotoneName } from '../ui/duotone';
 import './commandRequestCard.css';
 
 export interface CommandRequestCardHost {
@@ -18,8 +19,8 @@ export interface CommandRequestCardHost {
 const operations = new Map<string, string>();
 
 /** A button with its icon before its label (the label is what a screen reader names it, unless `label` says more). */
-function iconButton(cls: string, ic: string, text: string, attrs: Record<string, string | boolean | ((e: Event) => void) | undefined>): HTMLButtonElement {
-  return h('button', { class: cls, ...attrs }, icon(ic), h('span', { class: 'mp-btn-text' }, text));
+function iconButton(cls: string, ic: DuotoneName, text: string, attrs: Record<string, string | boolean | ((e: Event) => void) | undefined>): HTMLButtonElement {
+  return h('button', { class: cls, ...attrs }, duotone(ic), h('span', { class: 'mp-btn-text' }, text));
 }
 
 /**
@@ -105,11 +106,11 @@ export class CommandRequestCard {
     const many = r.commands.length > 1;
     const lone = !many && !r.commands[0]?.variants?.length;
     const head = h('header', { class: 'mp-request-head' },
-      h('h3', { class: 'mp-request-title', id: this.titleId }, h('span', { class: 'mp-request-icon' }, icon(ICON.terminal)), h('span', {}, 'Command Preview'), name ? h('span', { class: 'mp-request-from' }, `from ${name}`) : null),
+      h('h3', { class: 'mp-request-title', id: this.titleId }, h('span', { class: 'mp-request-icon' }, duotone('terminal')), h('span', {}, 'Command Preview'), name ? h('span', { class: 'mp-request-from' }, `from ${name}`) : null),
       h('p', { class: 'mp-request-ask' }, many ? `Run these ${r.commands.length} commands?` : 'Run this command?'));
-    const dismiss = iconButton('btn mp-dismiss', ICON.close, this.busy === 'dismiss' ? 'Dismissing…' : 'Dismiss', { 'data-key': 'dismiss', 'aria-disabled': this.busy ? 'true' : undefined, 'aria-label': 'Dismiss this request', onclick: () => void this.dismiss() });
+    const dismiss = iconButton('btn mp-dismiss', 'x', this.busy === 'dismiss' ? 'Dismissing…' : 'Dismiss', { 'data-key': 'dismiss', 'aria-disabled': this.busy ? 'true' : undefined, 'aria-label': 'Dismiss this request', onclick: () => void this.dismiss() });
     const blocks = r.commands.map((c, index) => this.command(c, index, many, lone ? dismiss : null));
-    const alert = h('p', { class: 'mp-alert', role: 'alert' }, this.message ? icon(ICON.alert) : null, this.message);
+    const alert = h('p', { class: 'mp-alert', role: 'alert' }, this.message ? duotone('alert') : null, this.message);
     replaceKeepingFocus(this.el, [head, ...blocks, ...(lone ? [] : [h('footer', { class: 'mp-request-foot' }, dismiss)]), alert], 'dismiss');
     for (const pre of this.el.querySelectorAll<HTMLElement>('.mp-well pre')) { scrollable(pre); this.overflow?.observe(pre); }
   }
@@ -124,9 +125,9 @@ export class CommandRequestCard {
     const runText = (command: string, idle: string) => (this.busy === `run:${index}:${command}` ? 'Starting…' : idle);
     const copyKey = `copy:${index}:`;
     const actions = h('div', { class: 'mp-actions' },
-      iconButton('btn btn--primary', ICON.play, runText(c.command, 'Run'), { 'data-key': `run:${index}:`, disabled, 'aria-disabled': held, ...(many ? { 'aria-label': `Run command${which}` } : {}), onclick: () => void this.start(index, c.command) }),
-      bridge ? iconButton('btn', ICON.pencil, 'Edit and run…', { 'data-key': `edit:${index}`, 'aria-disabled': held, 'aria-haspopup': 'dialog', ...(many ? { 'aria-label': `Edit and run command${which}…` } : {}), onclick: () => { if (!this.busy) this.host.edit(c.command, c.cwd); } }) : null,
-      iconButton('btn', ICON.copy, this.copied.has(copyKey) ? 'Copied' : 'Copy', { 'data-key': copyKey, 'aria-label': this.copied.has(copyKey) ? `Copied command${which}` : `Copy command${which}`, onclick: () => this.copy(copyKey, c.command) }),
+      iconButton('btn btn--primary', 'play', runText(c.command, 'Run'), { 'data-key': `run:${index}:`, disabled, 'aria-disabled': held, ...(many ? { 'aria-label': `Run command${which}` } : {}), onclick: () => void this.start(index, c.command) }),
+      bridge ? iconButton('btn', 'pencil', 'Edit and run…', { 'data-key': `edit:${index}`, 'aria-disabled': held, 'aria-haspopup': 'dialog', ...(many ? { 'aria-label': `Edit and run command${which}…` } : {}), onclick: () => { if (!this.busy) this.host.edit(c.command, c.cwd); } }) : null,
+      iconButton('btn', 'copy', this.copied.has(copyKey) ? 'Copied' : 'Copy', { 'data-key': copyKey, 'aria-label': this.copied.has(copyKey) ? `Copied command${which}` : `Copy command${which}`, onclick: () => this.copy(copyKey, c.command) }),
       dismiss);
     const variants = (c.variants ?? []).map((v, vi) => {
       const key = `copy:${index}:${vi}`;
@@ -135,8 +136,8 @@ export class CommandRequestCard {
         well(v.command, `${v.label} command`),
         this.option(v.command),
         h('div', { class: 'mp-actions' },
-          iconButton('btn', ICON.play, runText(v.command, `Run ${v.label}`), { 'data-key': `run:${index}:${vi}`, disabled, 'aria-disabled': held, onclick: () => void this.start(index, v.command) }),
-          iconButton('btn', ICON.copy, this.copied.has(key) ? 'Copied' : 'Copy', { 'data-key': key, 'aria-label': `Copy ${v.label} command`, onclick: () => this.copy(key, v.command) })));
+          iconButton('btn', 'play', runText(v.command, `Run ${v.label}`), { 'data-key': `run:${index}:${vi}`, disabled, 'aria-disabled': held, onclick: () => void this.start(index, v.command) }),
+          iconButton('btn', 'copy', this.copied.has(key) ? 'Copied' : 'Copy', { 'data-key': key, 'aria-label': `Copy ${v.label} command`, onclick: () => this.copy(key, v.command) })));
     });
     return h('div', { class: 'mp-request-command', role: many ? 'group' : null, 'aria-label': many ? `Command${which}` : null },
       many ? h('p', { class: 'mp-request-n' }, `Command${which}`) : null,
@@ -145,7 +146,7 @@ export class CommandRequestCard {
         h('dt', {}, 'Machine:'), h('dd', {}, machine),
         h('dt', {}, 'Folder:'), h('dd', {}, c.cwd || 'the agent’s folder', h('span', { class: 'mp-meta-note' }, c.cwd_named ? ' (named in the reply)' : ' (agent’s folder)'))),
       c.why ? h('p', { class: 'mp-why' }, c.why) : null,
-      bridge ? null : h('p', { class: 'mp-warning' }, icon(ICON.alert), h('span', {}, `The agent asked to run this on ${c.host_text || 'an unknown machine'}. This bridge cannot run it here: copy it to run it there.`)),
+      bridge ? null : h('p', { class: 'mp-warning' }, duotone('alert'), h('span', {}, `The agent asked to run this on ${c.host_text || 'an unknown machine'}. This bridge cannot run it here: copy it to run it there.`)),
       bridge ? this.option(c.command) : null,
       actions,
       ...variants);

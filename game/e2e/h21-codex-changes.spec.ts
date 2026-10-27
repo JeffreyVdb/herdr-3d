@@ -127,7 +127,7 @@ test('older Codex changes page in once, with their line numbers; a reload restor
   await expect(tx.locator(`[data-id="${OLD_PATCH}"]`)).toHaveCount(0);
   // "Jump to message" from the chart at the start pages them in.
   const box = page.locator('.seat-transcript');
-  await box.locator('.tx-bar .seat-tab[data-mode="images"]').click();
+  await page.locator('.seat-rail').getByRole('tab', { name: /^Images/ }).click(); // #216: the rail
   const input = box.locator('.imgs .imgs-group[data-origin="input"] .imgs-item');
   await expect(input).toHaveCount(1);
   await input.first().locator('.imgs-tile').click();

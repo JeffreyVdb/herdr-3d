@@ -1,8 +1,9 @@
 import './imagesTab.css';
 import type { ImageRef } from '../net/protocol';
-import { h, ICON, icon } from '../ui/dom';
+import { h, icon } from '../ui/dom';
 import { originLabel, openImageLightbox, unavailableText, type Lightbox } from '../ui/imageLightbox';
 import type { ImageFeed } from './imageFeed';
+import { duotone } from '../ui/duotone';
 
 /**
  * M16 phase 2: every image of the session in the seated overlay's third mode. Two groups, **Input** (what you attached to
@@ -15,8 +16,8 @@ import type { ImageFeed } from './imageFeed';
 export interface ImagesTabHost {
   /** This worker's images (null: nothing can be fetched; every image shows as not available). */
   feed: ImageFeed | null;
-  /** A fresh Conversation | Images strip for this view's bar (null: none). */
-  tabs(): HTMLElement | null;
+  /** #216: what leads this view's bar (its icon; null: none). */
+  lead(): Element | null;
   /** "Jump to message": the conversation, at the item the image is in. */
   jump(ref: ImageRef): void;
 }
@@ -133,8 +134,8 @@ class ImagesTab implements ImagesTabView {
   ) {
     this.countEl = h('span', { class: 'imgs-count-total' });
     const bar = h('div', { class: 'imgs-bar' }, h('span', { class: 'imgs-title' }, 'Images'), this.countEl);
-    const tabs = host.tabs();
-    if (tabs) bar.append(tabs);
+    const lead = host.lead();
+    if (lead) bar.prepend(lead);
     this.status = h('div', { class: 'imgs-status', role: 'status', 'aria-live': 'polite' });
     const section = (g: 'input' | 'agent', title: string, hint: string) => {
       const count = h('span', { class: 'imgs-h-n' });
@@ -301,7 +302,7 @@ class ImagesTab implements ImagesTabView {
       const img = h('img', { class: 'imgs-img', alt: '', draggable: 'false', loading: 'lazy', decoding: 'async' });
       face = h('span', { class: 'imgs-face imgs-pending' }, img);
     } else if (binary) {
-      face = h('span', { class: 'imgs-face imgs-chip' }, icon(ICON.image), h('span', { class: 'imgs-chip-t' }, 'binary'), h('span', { class: 'imgs-chip-s' }, size(r.bytes)));
+      face = h('span', { class: 'imgs-face imgs-chip' }, duotone('image'), h('span', { class: 'imgs-chip-t' }, 'binary'), h('span', { class: 'imgs-chip-s' }, size(r.bytes)));
     } else {
       face = this.goneFace(r);
     }
@@ -321,7 +322,7 @@ class ImagesTab implements ImagesTabView {
     return h(
       'span',
       { class: 'imgs-face imgs-gone' },
-      icon(ICON.image),
+      duotone('image'),
       h('span', { class: 'imgs-gone-t' }, 'Not available'),
       r.path ? h('code', { class: 'imgs-gone-path', title: r.path }, r.path) : h('span', { class: 'imgs-gone-why' }, unavailableText(r)),
     );

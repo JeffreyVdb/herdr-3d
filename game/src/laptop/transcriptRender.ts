@@ -14,7 +14,7 @@ import { FollowupCard, type FollowupMessage, type FollowupResult } from './follo
 import type { FollowupDraft } from './followupDrafts';
 import type { ImageFeed } from './imageFeed';
 import { imageRuns, imagesOf, isImageOnly, isImagePart, isOmittedPart, Thumbs } from './transcriptImages';
-import { h, icon, ICON } from '../ui/dom';
+import { h, icon } from '../ui/dom';
 import { handoffRow } from '../world/handoff';
 import { suggestionFor, suggestionWhen } from '../world/scheduleSuggest';
 import { browserZone } from '../world/daylight';
@@ -32,7 +32,7 @@ import { repoSource, type RepoSearchHost } from './repoSearch';
 import { atSource } from './atSource';
 import type { Source } from '../ui/composer/complete';
 import { SendGate } from './transcriptDrafts';
-import { zoomKey } from './keys';
+import { seatChord, zoomKey } from './keys';
 import { fileRefPath } from './fileRef';
 import { clipboardCopy, FILE_REF, FileRefPopover, markFileRefs } from './fileRefPopover';
 import { chipSecretRefs } from '../ui/secretChips';
@@ -41,6 +41,7 @@ import { ChildBar, type ChildViewHost, type ChildViewState } from './transcriptC
 import { reviewKey } from '../ui/secretsFlow';
 import { loadingOutline } from './transcriptLoading';
 import { keyName } from '../input/shortcuts';
+import { duotone, type DuotoneName } from '../ui/duotone';
 
 /**
  * M16: a worker's conversation as DOM, drawn over the laptop screen while you sit there (the seated view's
@@ -187,8 +188,8 @@ export interface TranscriptView {
    * stays on. `working`: the worker works on (its effective status, not a real block), the card's "still working".
    */
   setCodex(worker: string, codex: WorkerCodex | null, working: boolean): void;
-  /** The mode's tab strip (Conversation | Images), put in the bar after the title. */
-  attachTabs(tabs: HTMLElement): void;
+  /** #216: what leads the bar (the view's icon), put before the title. */
+  attachLead(lead: Element): void;
   /** Is the item in the timeline (loaded)? */
   hasItem(id: string): boolean;
   /** Scrolls to an item and flashes it; false when it is not loaded (the caller pages older items first). */
@@ -306,10 +307,6 @@ const HL_CONFIG: Config = {
 
 /** #223: ids for the Handoff button's note. */
 let handoffIds = 0;
-/** #198: the "Hire with handoff" button's person and plus. */
-const HIRE_PERSON = '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 19.5c.8-3.4 3.4-5.2 6.5-5.2s5.7 1.8 6.5 5.2M18.5 7.5v6M15.5 10.5h6"/>';
-/** #64 schedules: the follow-up button's clock. */
-const CLOCK = '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>';
 
 let mdPurifier: Purifier | null | undefined;
 let hlPurifier: Purifier | null | undefined;
@@ -448,21 +445,22 @@ function setMarkdown(el: HTMLElement, md: string): void {
 // ---------------------------------------------------------------------------------------------------------------
 // Icons (24×24 strokes, the HUD's family)
 
+// #216: the seat's duotone set (ui/duotone.ts), by the names the transcript uses.
 const TX_ICON = {
-  terminal: ICON.terminal,
-  edit: '<path d="M5 19l1-4.2L15.8 5a1.8 1.8 0 0 1 2.6 0l.6.6a1.8 1.8 0 0 1 0 2.6L9.2 18z"/><path d="M13.8 7l3.2 3.2"/>',
-  file: '<path d="M7 3.5h7l4 4v13H7z"/><path d="M14 3.5v4h4M9.5 12h6M9.5 15.5h6"/>',
-  search: '<circle cx="10.5" cy="10.5" r="5.5"/><path d="M14.5 14.5l5 5"/>',
-  globe: '<circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c2.5 2.5 2.5 13.5 0 16M12 4c-2.5 2.5-2.5 13.5 0 16"/>',
-  agent: '<circle cx="9" cy="9" r="3"/><path d="M3.5 19c.6-3 2.8-4.5 5.5-4.5s4.9 1.5 5.5 4.5"/><circle cx="17" cy="8" r="2.3"/><path d="M16 13.2c2.6-.3 4.2 1.2 4.6 4"/>',
-  list: '<path d="M9 7h11M9 12h11M9 17h11M4.5 7h.01M4.5 12h.01M4.5 17h.01"/>',
-  tool: '<path d="M14.5 5.5a4 4 0 0 0-5 5L4 16v4h4l5.5-5.5a4 4 0 0 0 5-5l-2.5 2.5-2.5-.5-.5-2.5z"/>',
-  chevron: '<path d="M9.5 7l5 5-5 5"/>',
-  brain: '<path d="M9 5a3 3 0 0 0-3 3 3 3 0 0 0-1.5 5.3A3 3 0 0 0 9 18.5V5zM15 5a3 3 0 0 1 3 3 3 3 0 0 1 1.5 5.3A3 3 0 0 1 15 18.5V5z"/>',
-  image: '<rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M5 17l4.5-4 3 2.5 3-3L19 16"/>',
-};
+  terminal: 'terminal',
+  edit: 'pencil',
+  file: 'fileText',
+  search: 'search',
+  globe: 'globe',
+  agent: 'agent',
+  list: 'list',
+  tool: 'tool',
+  chevron: 'chevronRight',
+  brain: 'brain',
+  image: 'image',
+} as const satisfies Record<string, DuotoneName>;
 
-function toolIcon(name: string): string {
+function toolIcon(name: string): DuotoneName {
   const n = name.toLowerCase();
   if (/bash|shell|exec|command|terminal|run/.test(n)) return TX_ICON.terminal;
   if (/edit|write|patch|notebook/.test(n)) return TX_ICON.edit;
@@ -1513,7 +1511,7 @@ class Transcript implements TranscriptView {
     this.reviewBtn = h(
       'button',
       { class: 'tx-review', 'aria-label': 'Review secrets', title: `Review secrets: look over the prompt’s possible secrets now, and mark one the scan missed (${keyName('dialog.secrets')})`, onclick: () => this.submit(true) },
-      icon(ICON.lock),
+      duotone('lock'),
     );
     this.form = h('div', { class: 'tx-prompt' }, this.composer.element, this.reviewBtn, this.sendBtn);
     const secrets = host.secrets ?? null;
@@ -1587,7 +1585,7 @@ class Transcript implements TranscriptView {
     const tools = h('label', { class: 'tx-check', title: 'Hide tool calls (subagents, questions, images and code changes stay)' }, this.toolsBox, h('span', {}, 'Hide tools'), this.toolsCount);
     // #171: on by default; off, each changed file is one line (path and counts) you can still open.
     this.changesBox = h('input', { type: 'checkbox', class: 'tx-chg-box', onchange: () => (this.prefs.showChanges = this.changesBox.checked) });
-    const changes = h('label', { class: 'tx-check tx-check-changes', title: 'Show code changes: the diff of each file the agent changed (off: one line per file)' }, this.changesBox, h('span', { class: 'tx-check-ic', 'aria-hidden': 'true' }, icon(TX_ICON.edit)), h('span', {}, 'Code changes'));
+    const changes = h('label', { class: 'tx-check tx-check-changes', title: 'Show code changes: the diff of each file the agent changed (off: one line per file)' }, this.changesBox, h('span', { class: 'tx-check-ic', 'aria-hidden': 'true' }, duotone(TX_ICON.edit)), h('span', {}, 'Code changes'));
     this.busy = h('button', { class: 'tx-busy', hidden: true, onclick: () => this.showHiddenTools() });
     this.themeBtns = THEMES.map((t) =>
       h(
@@ -1811,7 +1809,7 @@ class Transcript implements TranscriptView {
         ? h(
             'button',
             { class: 'tx-handoff-btn', 'data-key': 'handoff', 'aria-describedby': note, title: 'File this reply in the cabinet, exactly as written', onclick: () => this.host.onHandoff?.(c) },
-            icon(ICON.folder),
+            duotone('folder'),
             'Handoff',
           )
         : null,
@@ -1820,7 +1818,7 @@ class Transcript implements TranscriptView {
         ? h(
             'button',
             { class: 'tx-hire-handoff-btn', 'data-key': 'hire-handoff', title: 'File a handoff from this conversation, then hire a new agent that reads it and does your task', onclick: () => this.host.onHireHandoff?.(c) },
-            icon(HIRE_PERSON),
+            duotone('hire'),
             'Hire with handoff',
           )
         : null,
@@ -1832,7 +1830,7 @@ class Transcript implements TranscriptView {
         ? h(
             'button',
             { class: 'tx-sched-btn', 'data-key': 'schedule', title: 'Hire a fresh worker later that goes on from this reply', onclick: () => this.host.onScheduleFollowup?.(c) },
-            icon(CLOCK),
+            duotone('clock'),
             'Schedule follow-up…',
           )
         : null,
@@ -1863,7 +1861,7 @@ class Transcript implements TranscriptView {
         title: `Suggested by the agent: “${s.title}”. Opens the schedule form, prefilled; nothing is scheduled until you save.`,
         onclick: () => this.host.onScheduleFollowup?.(c, s),
       },
-      icon(CLOCK),
+      duotone('clock'),
       h('span', { class: 'tx-sched-label' }, 'Schedule follow-up'),
       h('span', { class: 'tx-sched-when', 'data-passed': String(when.passed) }, when.passed ? `suggested ${when.when}, passed` : when.when),
       when.utc && !when.passed ? h('span', { class: 'tx-sched-utc' }, `(${when.utc})`) : null,
@@ -1892,7 +1890,7 @@ class Transcript implements TranscriptView {
               });
             },
           },
-          icon(ICON.close),
+          duotone('x'),
         )
       : null;
     return h('span', { class: 'tx-sched-chip', role: 'group', 'aria-label': 'Suggested follow-up' }, open, dismiss);
@@ -1945,7 +1943,7 @@ class Transcript implements TranscriptView {
       const row = h(
         'div',
         { class: 'tx-activity', 'data-kind': cue.kind },
-        h('span', { class: 'tx-activity-label' }, icon(cue.kind === 'working' ? TX_ICON.edit : TX_ICON.brain), word),
+        h('span', { class: 'tx-activity-label' }, duotone(cue.kind === 'working' ? TX_ICON.edit : TX_ICON.brain), word),
         h('span', { class: 'tx-activity-time tx-tick', 'data-since': String(cue.since) }, this.elapsed(cue.since)),
       );
       if (this.activityRow) this.activityRow.replaceWith(row);
@@ -1990,9 +1988,9 @@ class Transcript implements TranscriptView {
     this.scroller.focus({ preventScroll: true });
   }
 
-  attachTabs(tabs: HTMLElement): void {
+  attachLead(lead: Element): void {
     if (this.destroyed) return;
-    this.titleEl.after(tabs);
+    this.titleEl.before(lead);
   }
 
   hasItem(id: string): boolean {
@@ -2248,14 +2246,14 @@ class Transcript implements TranscriptView {
       .join('\n\n');
     const row = h('li', { class: 'tx-item tx-thinking' });
     if (!text.trim()) {
-      row.append(h('span', { class: 'tx-chip tx-chip-mute', title: 'The reasoning is encrypted: nothing to show' }, icon(TX_ICON.brain), 'reasoning'));
+      row.append(h('span', { class: 'tx-chip tx-chip-mute', title: 'The reasoning is encrypted: nothing to show' }, duotone(TX_ICON.brain), 'reasoning'));
       return row;
     }
     // Often the agent's own narration (Claude Code writes it as a thinking block, Codex as a reasoning summary): shown
     // as it is, dimmed, not behind a click. Not a tool row, so "Hide tool calls" leaves it.
     const body = h('div', { class: 'tx-thinking-body tx-md' });
     setMarkdown(body, text);
-    row.append(h('span', { class: 'tx-thinking-tag' }, icon(TX_ICON.brain), 'summary'), body);
+    row.append(h('span', { class: 'tx-thinking-tag' }, duotone(TX_ICON.brain), 'summary'), body);
     return row;
   }
 
@@ -2275,14 +2273,14 @@ class Transcript implements TranscriptView {
     const head = h(
       'button',
       { class: term ? 'tx-tool-row tx-tool-row-term' : 'tx-tool-row', 'aria-expanded': 'false' },
-      h('span', { class: 'tx-tool-icon' }, icon(toolIcon(String(t.name ?? '')))),
+      h('span', { class: 'tx-tool-icon' }, duotone(toolIcon(String(t.name ?? '')))),
       h('span', { class: 'tx-tool-name' }, String(t.name ?? 'tool')),
       h('span', { class: 'tx-tool-sum' }, String(t.input_summary ?? '')),
       term,
       stat ? statEl(stat.add, stat.del) : null,
       h('span', { class: 'tx-tool-status' }, STATUS_TEXT[status] ?? status),
       dur,
-      h('span', { class: 'tx-caret' }, icon(TX_ICON.chevron)),
+      h('span', { class: 'tx-caret' }, duotone(TX_ICON.chevron)),
     );
     const body = h('div', { class: 'tx-tool-body' });
     const ex = this.expander(`${scope}/${it.id}`, (open) => {
@@ -2388,7 +2386,7 @@ class Transcript implements TranscriptView {
     const head = h(
       'button',
       { class: 'tx-chg-head', title: to ? `${path} → ${to}` : path },
-      h('span', { class: 'tx-caret' }, icon(TX_ICON.chevron)),
+      h('span', { class: 'tx-caret' }, duotone(TX_ICON.chevron)),
       h('span', { class: to ? 'tx-diff-path tx-chg-from' : 'tx-diff-path' }, path),
       to ? h('span', { class: 'tx-diff-path tx-chg-to' }, h('span', { class: 'tx-chg-arrow' }, '→ '), to) : null,
       op ? h('span', { class: 'tx-chg-op', 'data-op': String(d.op) }, op) : null,
@@ -2497,12 +2495,12 @@ class Transcript implements TranscriptView {
     const head = h(
       'button',
       { class: 'tx-tool-row', 'aria-expanded': 'false' },
-      h('span', { class: 'tx-tool-icon' }, icon(TX_ICON.agent)),
+      h('span', { class: 'tx-tool-icon' }, duotone(TX_ICON.agent)),
       h('span', { class: 'tx-tool-name tx-collab-verb' }, verb),
       sum,
       t ? h('span', { class: 'tx-tool-status' }, STATUS_TEXT[status] ?? status) : null,
       t ? this.toolDuration(it, status) : null,
-      h('span', { class: 'tx-caret' }, icon(TX_ICON.chevron)),
+      h('span', { class: 'tx-caret' }, duotone(TX_ICON.chevron)),
     );
     head.title = `${verb} ${sum.textContent ?? ''}`.trim();
     const prompt = text(c.prompt);
@@ -2656,12 +2654,12 @@ class Transcript implements TranscriptView {
     const head = h(
       'button',
       { class: 'tx-sub-row', 'aria-expanded': String(ex.open), onclick: () => ex.toggle(head) },
-      h('span', { class: 'tx-tool-icon' }, icon(TX_ICON.agent)),
+      h('span', { class: 'tx-tool-icon' }, duotone(TX_ICON.agent)),
       h('span', { class: 'tx-tool-name' }, 'Subagent'),
       h('span', { class: 'tx-tool-sum' }, String(s.description ?? '')),
       h('span', { class: 'tx-tool-status' }, String(s.status ?? '')),
       this.subDuration(it, String(s.status ?? '')),
-      h('span', { class: 'tx-caret' }, icon(TX_ICON.chevron)),
+      h('span', { class: 'tx-caret' }, duotone(TX_ICON.chevron)),
     );
     body.hidden = !ex.open;
     if (ex.open) this.fillSub(body, agentId, String(s.status ?? ''), key);
@@ -3236,7 +3234,8 @@ class Transcript implements TranscriptView {
   private onInputKey(e: KeyboardEvent): void {
     // Esc is the shell's as everywhere in the seated view (a bare one stands you up, Ctrl/Cmd+Esc goes back to the
     // terminal), and the text zoom (#59) works from here too; every other key typed here is the prompt's.
-    if (e.key === 'Escape' || zoomKey(e)) return;
+    // #216: the seat's chords (a view, the files drawer) too.
+    if (e.key === 'Escape' || zoomKey(e) || seatChord(e)) return;
     e.stopPropagation();
     // #108: the review of the prompt's secrets, now.
     if (reviewKey(e) && this.host.secrets?.on) {

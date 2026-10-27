@@ -111,8 +111,10 @@ Every key goes to the terminal or the conversation, except these. Esc stands you
 
 | Keys | Does |
 | --- | --- |
-| `Esc` | Stand up (from a subagent’s conversation: back to its worker’s first) |
-| `Ctrl` + `Esc` | Terminal or conversation |
+| `Esc` | Stand up (the files drawer closes first; from a subagent’s conversation: back to its worker’s first) |
+| `Ctrl` + `Esc` | The terminal, or the view you looked at last (Chat, Images or Runs); in a run’s terminal it first hands the keyboard back to the runs |
+| `Ctrl` + `Shift` + `1…4` | Terminal, Chat, Images or Runs, from every view (the terminals too) |
+| `Ctrl` + `Shift` + `E` | The files drawer: Enter puts an @ reference to a file in the prompt box, Esc closes it |
 | `Ctrl/⌘` + `P` | The command palette (the terminal no longer gets Ctrl+P; ↑ is still previous history) |
 | `Ctrl/⌘` + `Shift` + `Space` | The dictation bar (the terminal does not get this chord) |
 | `O` | The floor overview, over the conversation (Esc comes back) |

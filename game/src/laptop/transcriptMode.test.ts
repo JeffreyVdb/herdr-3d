@@ -68,7 +68,7 @@ class FakeView {
   setLoading(on: boolean): void {
     this.loadings.push(on);
   }
-  attachTabs(): void {}
+  attachLead(): void {}
   hasItem(): boolean {
     return false;
   }
@@ -515,6 +515,32 @@ describe('TranscriptMode', () => {
     h.tx.stop('a');
     expect(h.tx.mode).toBe('terminal');
     expect(h.storage.getItem('h3d.seat.terminal')).toBeNull();
+  });
+
+  it('#216: the watch failing (an older bridge) leaves the Runs view up, restored or picked; Chat still falls back', async () => {
+    const runs: string[] = [];
+    const pane = { show: () => runs.push('show'), hide: () => runs.push('hide'), focus: () => runs.push('focus') };
+    const storage = new MemStorage();
+    storage.setItem('h3d.seat.runs', JSON.stringify(['a']));
+    const h = harness({ storage, extra: { runs: pane } });
+    // Restored on sitting, even where the conversation cannot be read.
+    h.tx.sit('a', 'Ada', false);
+    expect(h.tx.mode).toBe('runs');
+    h.tx.stop('a');
+    expect(h.tx.mode).toBe('runs');
+    expect(runs).not.toContain('hide');
+    expect(storage.getItem('h3d.seat.runs')).toBe(JSON.stringify(['a']));
+    // Picked from the conversation: the failure that comes after leaves it too.
+    h.tx.sit('b', 'Bo');
+    await flush();
+    h.tx.setMode('runs');
+    h.tx.stop('b');
+    expect(h.tx.mode).toBe('runs');
+    expect(h.tx.reading).toBe('runs');
+    // The conversation does fall back.
+    h.tx.setMode('transcript');
+    h.tx.stop('b');
+    expect(h.tx.mode).toBe('terminal');
   });
 
   it('standing up while the render module loads mounts nothing', async () => {
@@ -1191,6 +1217,32 @@ describe('#141: the prompt box’s draft and file search', () => {
     expect(h.views[2]?.host.draft).toBe(d);
     expect(d?.disposed).toBe(false);
     expect(d?.snapshot().files.map((f) => f.path)).toEqual(['src/a.ts']);
+  });
+
+  it('#216: the files drawer’s reference goes in at the caret, not while a question disables the box (the draft as it was)', async () => {
+    const h = harness();
+    h.tx.sit('a', 'Ada', true, 'claude');
+    await flush();
+    const d = h.views[0]!.host.draft!;
+    d.insertParts(0, 0, ['see world']);
+    d.setSelection({ anchor: 4, focus: 9 });
+    h.tx.setMode('terminal');
+    const text = () => d.snapshot().segments.map((g) => (g.kind === 'file' ? `{${g.path}}` : g.kind === 'text' ? g.text : '<img>')).join('');
+    const q: Question = { kind: 'permission', text: 'Allow?', excerpt: ['x'], choices: [{ n: 1, label: 'Yes' }], hash: 'h1' };
+    for (const wait of [() => h.tx.asked({ tool_use_id: 'toolu_q', since: 1, questions: [] } as unknown as Ask), () => h.tx.blocked(q)]) {
+      wait();
+      const why = h.tx.insertFileRef('src/a.ts', false, false);
+      expect(why).toMatch(/Ada is waiting for your answer/);
+      expect(text()).toBe('see world');
+      expect(d.selection).toEqual({ anchor: 4, focus: 9 });
+      expect(h.tx.mode).toBe('terminal');
+      h.tx.asked(null);
+      h.tx.blocked(null);
+    }
+    // The box takes it again: in place of the selection, a space after it, and the conversation shows it.
+    expect(h.tx.insertFileRef('src/a.ts', false, false)).toBeNull();
+    expect(text()).toBe('see {src/a.ts} ');
+    expect(h.tx.mode).toBe('transcript');
   });
 
   it('a reload brings back the text and the file chips (images do not survive it)', async () => {
