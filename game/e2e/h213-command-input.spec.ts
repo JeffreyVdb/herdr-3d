@@ -158,7 +158,7 @@ test('input: wording by certainty, Open terminal, the seat chips, several runs, 
   await boot(page, `input-${Date.now()}`);
   const a = await start(page, pebble.id, 'i-1', 'read -p "Name? " name');
   const chip = page.locator('.mpa--top');
-  await expect(page.locator('.mpa')).toHaveCount(3);
+  await expect(page.locator('.mpa')).toHaveCount(2); // #216: the top bar's and the other workers' (this worker's: the needs-you line)
   await expect(chip).toBeHidden();
   await attention(page, a, 'uncertain');
   await expect(chip.locator('.mpa-tape')).toHaveText('May be waiting for input');

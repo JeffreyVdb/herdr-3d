@@ -333,9 +333,24 @@
   :root:has(.limits:not([hidden])) .seat-main > .seat-content {
     margin: 0 4px 0 0;
   }
-  .seat-term-strip .seat-strip-name,
-  .seat-term-strip .seat-strip-sub {
+  /* The header's run chips give way to the rail's Runs (its count, its Run a command…). */
+  .seat[data-rail] .seat-manual-run,
+  .seat[data-rail] .seat-processes {
     display: none;
+  }
+  /* The terminal's strip keeps its controls: its icon, name, size and the controls' key give way. */
+  .seat-term-strip .seat-strip-ic,
+  .seat-term-strip .seat-strip-name,
+  .seat-term-strip .seat-strip-sub,
+  .seat-term-strip .seat-look-label {
+    display: none;
+  }
+  .seat-term-strip {
+    padding: 0 6px;
+  }
+  .seat-term-strip .seat-look {
+    min-width: 0;
+    gap: 4px 6px;
   }
   /* A phone: two rows, who asks over the command and the actions. */
   .seat-needs {

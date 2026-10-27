@@ -349,7 +349,7 @@ export class SeatBar implements SeatView {
     this.hostBtn.hidden = !h.host;
     this.hostBtn.addEventListener('click', () => h.host?.(this.hostBtn));
     tool(this.leaveBtn, 'door', 'Leave');
-    this.leaveBtn.setAttribute('aria-label', 'Stand up');
+    this.leaveBtn.setAttribute('aria-label', 'Leave the laptop');
     this.leaveBtn.title = 'Stand up (Esc)';
     this.leaveBtn.addEventListener('click', () => h.stand());
     const sep = el('div', 'seat-rail-sep');

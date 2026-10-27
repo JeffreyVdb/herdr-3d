@@ -63,7 +63,7 @@ test('the rail and every chord swap the four views from the terminal, keeping it
   await expect(rail.getByRole('tab')).toHaveText(['Terminal', 'Chat', 'Images', 'Runs']);
   await expect(page.locator('.seat-rail').getByRole('button', { name: 'Files' })).toHaveAttribute('aria-pressed', 'false');
   await expect(page.locator('.seat-rail').getByRole('button', { name: /^Runs on / })).toBeVisible();
-  await expect(page.locator('.seat-rail').getByRole('button', { name: 'Stand up' })).toBeVisible();
+  await expect(page.locator('.seat-rail').getByRole('button', { name: 'Leave the laptop' })).toBeVisible();
   const before = await box(page);
   const sent = await resizes(page);
   await snap(page, 'terminal-quiet-1280');
@@ -72,7 +72,9 @@ test('the rail and every chord swap the four views from the terminal, keeping it
   const k0 = await keys();
   await page.keyboard.type('ls');
   await expect.poll(keys).toBeGreaterThan(k0);
-  await page.waitForTimeout(600); // the keys typed while the first was on its way go in one batch
+  // The keys typed while the first was on its way go in one batch: settled once the count stops moving.
+  let seen = -1;
+  await expect.poll(async () => { const n = await keys(); const same = n === seen; seen = n; return same; }, { intervals: [400] }).toBe(true);
   // Each chord, from the terminal and from each view: by physical key (Ctrl+Shift+1 is Ctrl+! by `key`).
   for (const [digit, want] of [['2', 'transcript'], ['3', 'images'], ['4', 'runs'], ['1', 'terminal'], ['4', 'runs'], ['2', 'transcript'], ['1', 'terminal']] as const) {
     const k1 = await keys();

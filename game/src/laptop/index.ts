@@ -1385,6 +1385,8 @@ export class Laptops {
     // pane its Tab); Esc there hands the keyboard back to the view that is up instead of standing you up.
     if (k.action === 'look') {
       e.preventDefault();
+      // #216: they are the terminal's strip's now: from another view, the terminal first (they are not covered then).
+      if (this.transcript.mode !== 'terminal') this.pickMode('terminal');
       this.host.seat.focusLook?.();
       return true;
     }

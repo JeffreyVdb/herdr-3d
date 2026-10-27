@@ -87,7 +87,7 @@ test('the Images tab: Input and Agent, deduped, lightbox, jump to message, live,
   await seatMode(page, 'transcript');
   const box = page.locator('.seat-transcript');
   await expect(box.locator('.tx .tx-bar .seat-lead')).toBeVisible();
-  await expect(page.locator('.seat-rail').getByRole('tab', { selected: true })).toHaveText('Chat');
+  await expect(page.locator('.seat-rail').getByRole('tab', { selected: true })).toHaveAttribute('data-mode', 'transcript');
   await expect.poll(async () => (await txState(page)).imageCount).toBeGreaterThan(0);
   await expect(page.locator('.seat-rail').getByRole('tab', { name: /^Images, \d+ images?$/ })).toBeVisible();
   await page.locator('.seat-rail').getByRole('tab', { name: /^Images/ }).click();
