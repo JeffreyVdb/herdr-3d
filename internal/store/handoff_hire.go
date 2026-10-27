@@ -4,8 +4,11 @@ package store
 // task, its secrets review, the desk it holds) lives only in the bridge's
 // memory; the agent request or LLM job it follows keeps a small marker
 // (where it was to hire and for whom, never the task, a secret or review
-// data) from its insert until the hire ended, so a bridge that restarts
-// meanwhile can say the hire was interrupted. It never hires for it.
+// data) from its insert on, so a bridge that restarts meanwhile can say
+// the hire was interrupted. It never hires for it. When the hire ends the
+// marker says how (state, code, reason) and stays: the request had a hire
+// (a resumed one sends nobody home on its own), and a replay of its op is
+// compared with it.
 
 import (
 	"context"
@@ -13,15 +16,15 @@ import (
 	"encoding/json"
 )
 
-// migrationHandoffHire adds the marker column to both tables ("": none, or
-// the hire ended).
+// migrationHandoffHire adds the marker column to both tables ("": none).
 const migrationHandoffHire = `ALTER TABLE handoff_request ADD COLUMN hire TEXT NOT NULL DEFAULT '';
 	ALTER TABLE handoff_llm_job ADD COLUMN hire TEXT NOT NULL DEFAULT '';`
 
 // HandoffHireMarker is what a pending handoff hire keeps in the store: the
 // target floor and desk, the label, harness, model and effort asked for,
 // the client's origin, the source worker's name, whether the source goes
-// home after it, and when it was accepted (unix ms).
+// home after it, and when it was accepted (unix ms); once it ended, its
+// state, code and reason (the record's).
 type HandoffHireMarker struct {
 	Floor      string `json:"floor"`
 	Desk       int    `json:"desk"`
@@ -33,7 +36,13 @@ type HandoffHireMarker struct {
 	WorkerName string `json:"worker_name"`
 	SendHome   bool   `json:"send_home,omitempty"`
 	StartedAt  int64  `json:"started_at"`
+	State      string `json:"state,omitempty"`
+	Code       string `json:"code,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
+
+// Ended reports whether the marker's hire ended.
+func (m HandoffHireMarker) Ended() bool { return m.State != "" }
 
 // Modes of a marked row (HandoffHireRow.Mode).
 const (
@@ -41,7 +50,7 @@ const (
 	HandoffHireLLM   = "llm"
 )
 
-// HandoffHireRow is a request or job whose hire had not ended: its op,
+// HandoffHireRow is a request or job a restart publishes a hire for: its op,
 // mode, source worker, its own state and the handoff it was filed as (0:
 // none yet), and the marker.
 type HandoffHireRow struct {
@@ -69,11 +78,14 @@ func markerOf(s string) *HandoffHireMarker {
 	return &m
 }
 
-// HandoffHireRows are the requests and jobs still marked, oldest first.
+// HandoffHireRows are the requests and jobs whose hire had not ended, and
+// the pending agent requests whose hire ended (they resume), oldest first.
 func (s *Store) HandoffHireRows(ctx context.Context) ([]HandoffHireRow, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT op, 'agent', worker_uuid, state, handoff_id, hire, created_at FROM handoff_request WHERE hire != ''
-		UNION ALL SELECT op, 'llm', worker_uuid, state, handoff_id, hire, created_at FROM handoff_llm_job WHERE hire != ''
-		ORDER BY 7, 1`)
+	const open = `hire != '' AND (CASE WHEN json_valid(hire) THEN json_extract(hire, '$.state') END) IS NULL`
+	rows, err := s.db.QueryContext(ctx, `SELECT op, 'agent', worker_uuid, state, handoff_id, hire, created_at FROM handoff_request
+		WHERE `+open+` OR (hire != '' AND state = ?)
+		UNION ALL SELECT op, 'llm', worker_uuid, state, handoff_id, hire, created_at FROM handoff_llm_job WHERE `+open+`
+		ORDER BY 7, 1`, HandoffRequestPending)
 	if err != nil {
 		return nil, err
 	}
@@ -96,12 +108,13 @@ func (s *Store) HandoffHireRows(ctx context.Context) ([]HandoffHireRow, error) {
 	return out, rows.Err()
 }
 
-// ClearHandoffHire drops op's marker (its hire ended), on whichever table
-// has it.
-func (s *Store) ClearHandoffHire(ctx context.Context, op string) error {
-	if _, err := s.db.ExecContext(ctx, `UPDATE handoff_request SET hire = '' WHERE op = ? AND hire != ''`, op); err != nil {
+// EndHandoffHire replaces op's marker with m (its hire ended: m says how),
+// on whichever table has one.
+func (s *Store) EndHandoffHire(ctx context.Context, op string, m HandoffHireMarker) error {
+	text := markerText(&m)
+	if _, err := s.db.ExecContext(ctx, `UPDATE handoff_request SET hire = ? WHERE op = ? AND hire != ''`, text, op); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE handoff_llm_job SET hire = '' WHERE op = ? AND hire != ''`, op)
+	_, err := s.db.ExecContext(ctx, `UPDATE handoff_llm_job SET hire = ? WHERE op = ? AND hire != ''`, text, op)
 	return err
 }

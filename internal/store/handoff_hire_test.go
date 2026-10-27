@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"path/filepath"
 	"reflect"
@@ -12,9 +13,9 @@ import (
 )
 
 // #219: a handoff's pending hire leaves a marker on its agent request or
-// LLM job (never its task) that survives a restart until it is cleared, so
-// a restarted bridge finds the hires it interrupted; a row without one is
-// not listed.
+// LLM job (never its task) that survives a restart, so a restarted bridge
+// finds the hires it interrupted; once the hire ended it says how; a row
+// without one is not listed.
 func TestHandoffHireMarker(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "world.db")
@@ -52,8 +53,8 @@ func TestHandoffHireMarker(t *testing.T) {
 	if got, err := st.HandoffLLMJobByOp(ctx, "op-b"); err != nil || !reflect.DeepEqual(got, jb) {
 		t.Fatalf("op-b = %+v, %v", got, err)
 	}
-	// A filed request keeps its marker until it is cleared: the hire after
-	// it may have been running.
+	// A filed request is listed until its hire ended: the hire after it may
+	// have been running.
 	ra.State, ra.HandoffID = store.HandoffRequestFiled, 7
 	if err := st.UpdateHandoffRequest(ctx, ra); err != nil {
 		t.Fatal(err)
@@ -64,21 +65,52 @@ func TestHandoffHireMarker(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(rows, want) {
 		t.Fatalf("rows = %+v, %v", rows, err)
 	}
-	for _, op := range []string{"op-a", "op-b", "op-n", "nope"} {
-		if err := st.ClearHandoffHire(ctx, op); err != nil {
+	// Ended, the marker says how and stays; a pending request's is still
+	// listed (it resumes), the others are not.
+	end := func(m *store.HandoffHireMarker) store.HandoffHireMarker {
+		e := *m
+		e.State, e.Code, e.Reason = "failed", "floor_gone", "The floor of Desk 3 is gone; nobody was hired."
+		return e
+	}
+	ea, eb := end(ma), end(mb)
+	for op, m := range map[string]store.HandoffHireMarker{"op-a": ea, "op-b": eb, "op-n": ea, "nope": ea} {
+		if err := st.EndHandoffHire(ctx, op, m); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if rows, err := st.HandoffHireRows(ctx); err != nil || len(rows) != 0 {
-		t.Fatalf("after clearing: %+v, %v", rows, err)
+		t.Fatalf("after ending: %+v, %v", rows, err)
 	}
-	if got, _ := st.HandoffLLMJobByOp(ctx, "op-b"); got.Hire != nil {
-		t.Fatalf("op-b kept its marker: %+v", got)
+	if got, _ := st.HandoffLLMJobByOp(ctx, "op-b"); got.Hire == nil || *got.Hire != eb || !got.Hire.Ended() {
+		t.Fatalf("op-b's marker: %+v", got.Hire)
+	}
+	if got, _ := st.HandoffRequestByOp(ctx, "op-n"); got.Hire != nil {
+		t.Fatalf("op-n got a marker: %+v", got.Hire)
+	}
+	ra.State = store.HandoffRequestPending
+	if err := st.UpdateHandoffRequest(ctx, ra); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = st.HandoffHireRows(ctx)
+	if err != nil || len(rows) != 1 || rows[0].Op != "op-a" || rows[0].Marker != ea {
+		t.Fatalf("a pending request's ended hire: %+v, %v", rows, err)
+	}
+	// A marker that does not decode is listed (as an empty one), never an
+	// error.
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(ctx, `UPDATE handoff_llm_job SET hire = '{bad' WHERE op = 'op-b'`); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := st.HandoffHireRows(ctx); err != nil || len(rows) != 2 {
+		t.Fatalf("with a bad marker: %+v, %v", rows, err)
 	}
 	// The marker is what it says: no task, no review.
-	b, _ := st.HandoffRequestByOp(ctx, "op-a")
-	if b.Hire != nil || strings.Contains(markerJSON(ma), "prompt") || strings.Contains(markerJSON(ma), "secrets") {
-		t.Fatalf("marker = %s", markerJSON(ma))
+	if j := markerJSON(&ea); strings.Contains(j, "prompt") || strings.Contains(j, "secrets") {
+		t.Fatalf("marker = %s", j)
 	}
 }
 

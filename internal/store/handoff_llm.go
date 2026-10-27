@@ -95,7 +95,7 @@ type HandoffLLMJob struct {
 	HandoffID                       int64 // 0: none
 	CreatedAt, UpdatedAt            int64 // unix ms
 	// Hire (#219) is the marker of the hire that follows its filing (nil:
-	// none, or it ended).
+	// none; it says how the hire ended once it did).
 	Hire *HandoffHireMarker
 }
 

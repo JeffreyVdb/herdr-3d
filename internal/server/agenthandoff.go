@@ -619,9 +619,6 @@ func (h *Hub) failAgentHandoffAs(ctx context.Context, ah *agentHandoff, code, re
 	h.log.Info("agent handoff failed", "worker", ah.req.WorkerID, "op", ah.req.Op, "reason", reason)
 	h.publishAgentHandoff(ah.req.WorkerID)
 	h.handoffHireFailed(ctx, ah.req.Op, code, reason)
-	if ah.hire && h.hh.byOp[ah.req.Op] != nil { // #219: its hire ended with it (a restart's interrupted one too)
-		h.clearHandoffMarker(ctx, ah.req.Op)
-	}
 }
 
 // agentTookOver fails a worker's running request when a person prompts,
