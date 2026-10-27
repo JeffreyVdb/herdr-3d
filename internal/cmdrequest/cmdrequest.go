@@ -66,7 +66,8 @@ func Gate(score float64, reply string) Decision {
 var ErrMalformed = errors.New("malformed extraction answer")
 
 // Result is an extraction's validated commands and how many of the
-// model's entries were dropped, by reason (Rejections' keys).
+// model's entries were dropped, or (account_host) kept but moved to the bridge,
+// by reason (Rejections' keys).
 type Result struct {
 	Commands []Command
 	Rejected map[string]int
