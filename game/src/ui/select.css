@@ -1,0 +1,17 @@
+/* Keep the native select interaction, with an inset chevron across our surfaces. */
+:is(.desk-dlg select, .panel select, .settings-field select, .mcp-select):not([multiple]):not([size]) {
+  appearance: none;
+  padding-inline-end: 36px;
+  background-image: linear-gradient(45deg, transparent 40%, currentColor 40% 60%, transparent 60%), linear-gradient(135deg, transparent 40%, currentColor 40% 60%, transparent 60%);
+  background-position: right 16px center, right 11px center;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+
+@media (forced-colors: active) {
+  :is(.desk-dlg select, .panel select, .settings-field select, .mcp-select):not([multiple]):not([size]) {
+    appearance: auto;
+    background-image: none;
+    padding-inline-end: 10px;
+  }
+}

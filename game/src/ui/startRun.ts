@@ -612,7 +612,7 @@ export class StartRunDialog {
     );
 
     const busy = this.state === 'starting' || this.state === 'preparing' || this.state === 'failed';
-    const nodes: Node[] = [this.ticketField()];
+    const nodes: Node[] = [h('div', { class: 'run-writing' }, this.ticketField(), this.extraEl)];
     const notices: Node[] = [];
     const options = this.options();
 
@@ -627,7 +627,7 @@ export class StartRunDialog {
     preset.addEventListener('change', () => this.pickPreset(preset.value));
     const edit = h('button', { class: 'btn btn--sm', 'data-key': 'presets', title: 'Create, edit and delete team presets', onclick: (e: Event) => this.host.openPresets(e.currentTarget as HTMLElement) }, icon(ICON.pencil), h('span', {}, 'Presets'));
     const last = this.f.preset && fv?.floor.last_preset === this.f.preset ? 'Last run here' : null;
-    nodes.push(
+    const placement = h('div', { class: 'run-placement' },
       h(
         'div',
         { class: 'dd-grid dd-grid--run' },
@@ -641,6 +641,7 @@ export class StartRunDialog {
         ),
       ),
     );
+    const setup: Node[] = [placement];
 
     // The orchestrator itself.
     if (this.f.orch) {
@@ -648,7 +649,12 @@ export class StartRunDialog {
       const p = this.preset()?.roles.orch;
       const same = !!p && p.harness === o.harness && p.model === o.model && p.effort === o.effort;
       const note = same ? h('span', { class: 'tape tape--note', title: 'The orchestrator of the chosen preset' }, 'Preset') : null;
-      nodes.push(
+      // The run uses both the orchestrator's and the team preset's harnesses.
+      const roles = this.preset()?.roles;
+      const inline = planLimits(this.host.store.limits, [o, ...(roles ? Object.values(roles) : [])].map((r) => ({ harness: r.harness, model: r.model })), this.host.now());
+      const limits = h('div', { class: 'dd-plan-limits', 'data-hook': 'plan-limits' }, inline);
+      limits.hidden = !inline;
+      setup.push(
         h(
           'div',
           { class: 'dd-agent', role: 'group', 'aria-label': 'Orchestrator' },
@@ -660,10 +666,11 @@ export class StartRunDialog {
                 chips('orch-effort', 'Effort', effortsFor(options, o.harness, o.model), o.effort, (v) => this.pickOrch({ effort: v })),
               ]
             : [this.noModels(o.harness)]),
+          limits,
           ...this.profileNodes(),
         ),
       );
-    } else nodes.push(h('div', { class: 'dd-skeleton', 'aria-hidden': 'true' }, h('i'), h('i')));
+    } else setup.push(h('div', { class: 'dd-skeleton', 'aria-hidden': 'true' }, h('i'), h('i')));
 
     const label = h('input', { id: 'run-label', 'data-key': 'label', autocomplete: 'off', spellcheck: 'false', maxlength: 64, placeholder: this.prep?.label || 'ORCH|…' });
     label.value = this.f.label;
@@ -671,8 +678,7 @@ export class StartRunDialog {
       this.f.label = label.value;
       this.renderActions();
     });
-    nodes.push(
-      this.extraEl,
+    placement.append(
       h(
         'div',
         { class: 'dd-grid' },
@@ -691,7 +697,7 @@ export class StartRunDialog {
         this.f.worktree = box.checked;
         this.render();
       });
-      nodes.push(
+      placement.append(
         h(
           'div',
           { class: 'dd-worktree', 'data-on': on ? 'true' : 'false', 'data-off': g.usable ? null : 'true' },
@@ -715,14 +721,7 @@ export class StartRunDialog {
           ),
         );
     }
-    // M10: the plan limits of every harness the run uses: the orchestrator's and the team preset's.
-    if (this.f.orch) {
-      const roles = this.preset()?.roles;
-      const inline = planLimits(this.host.store.limits, [this.f.orch, ...(roles ? Object.values(roles) : [])].map((r) => ({ harness: r.harness, model: r.model })), this.host.now());
-      nodes.push(h('div', { class: 'dd-plan-limits', 'data-hook': 'plan-limits' }, inline));
-      if (!inline) (nodes[nodes.length - 1] as HTMLElement).hidden = true;
-    }
-    nodes.push(this.promptField());
+    nodes.push(h('div', { class: 'run-setup' }, ...setup), this.promptField());
     if (this.prep) notices.push(this.capacityBlock());
     const taken = this.state === 'ready' ? this.takenBy() : null;
     if (taken) {

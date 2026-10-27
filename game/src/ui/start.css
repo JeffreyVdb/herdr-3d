@@ -154,8 +154,35 @@
   color: var(--error-text);
   font-weight: 700;
 }
+.run-writing {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+}
+.run-setup {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+}
+.run-setup > .dd-agent, .run-setup > .dd-skeleton {
+  box-sizing: border-box;
+  min-width: 0;
+}
+.run-placement {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
 .dd-grid.dd-grid--run {
-  grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.6fr);
+  grid-template-columns: minmax(0, 10rem) minmax(0, 20rem);
+  align-items: start;
+}
+.desk-dlg--run .lm-inline .lm-wins {
+  flex-direction: column;
+  align-items: flex-start;
+  flex-basis: 100%;
 }
 .dd-agent-title {
   margin: 0;
@@ -404,6 +431,12 @@
   }
   .dd-tab {
     padding: 0 8px;
+  }
+}
+
+@media (max-width: 900px) {
+  .run-writing, .run-setup {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

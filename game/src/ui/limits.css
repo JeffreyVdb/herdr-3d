@@ -510,6 +510,10 @@
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
+.lm-inline .lm-wins {
+  min-width: 0;
+  max-width: 100%;
+}
 .lm-warn {
   margin: 0;
   padding: 5px 8px;
