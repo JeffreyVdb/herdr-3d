@@ -21,7 +21,7 @@ import type { DictationSummary } from './ui/dictation';
 import type { SecretsReviewSummary } from './ui/secretsReview';
 import type { RevokeSecretsSummary } from './ui/revokeSecrets';
 import type { ManualCredentialSummary } from './ui/manualCredential';
-import type { HireInterpretation } from './net/protocol';
+import type { HandoffHire, HireInterpretation } from './net/protocol';
 import type { HandoffDialogSummary } from './ui/handoffDialog';
 import type { CabinetSummary } from './ui/cabinet';
 import type { SchedulesOpen, SchedulesSummary } from './ui/schedules';
@@ -329,7 +329,9 @@ export interface H3DDebug {
   /** #95: each hire's first prompt as the simulated worker got it, in order (`sim.first_prompts`; fixture server only). */
   simFirstPrompts(): Promise<Array<{ id: string; floor: string; prompt: string }>>;
   /** #223: the fixture bridge's handoff plays: `sim.final`, `sim.prompt_turn`, `sim.handoff_fail`. */
-  simHandoff(t: 'sim.final' | 'sim.prompt_turn' | 'sim.handoff_fail' | 'sim.agent_turn' | 'sim.agent_skill' | 'sim.cache' | 'sim.handoff_llm' | 'sim.llm_finish', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  simHandoff(t: 'sim.final' | 'sim.prompt_turn' | 'sim.handoff_fail' | 'sim.agent_turn' | 'sim.agent_skill' | 'sim.cache' | 'sim.handoff_llm' | 'sim.llm_finish' | 'sim.handoff_hire', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  /** #219: the pending handoff hires as the world has them (`known`: the bridge sends them), and this browser's id. */
+  handoffHires(): { known: boolean; origin: string; records: HandoffHire[] };
   /** #90: the follow-up questions feature's state as the bridge last sent it (null: none). */
   followups(): FollowupsState | null;
   /** #110: pack up on request's settings and state as the bridge sent them (null: none). */
@@ -627,6 +629,7 @@ const h3d: H3DDebug = {
   handoffDialog: () => app?.handoffDialog.summary() ?? null,
   cabinet: () => app?.cabinet.summary() ?? null,
   filing: () => app?.filingStates() ?? { drawers: null, walks: [] },
+  handoffHires: () => ({ known: app?.store.handoffHires.known ?? false, origin: app?.handoffHires.origin ?? '', records: app?.store.handoffHires.all() ?? [] }),
   openHandoff: (id) => app?.openHandoff(id, false),
   openCabinet: (floor) => app?.openCabinet(floor ?? app.hereFloor()),
   schedules: () => app?.schedules.summary() ?? null,

@@ -459,6 +459,51 @@ export class SecretsSim {
     return `pending:${++pendingSerial}`;
   }
 
+  /** #219: a handoff hire's pending owner and hand-over, by the `hire` object the gate rewrote. */
+  private readonly handoffHires = new WeakMap<object, { owner: string; tok: Handover | null }>();
+
+  /**
+   * #219: `worker.handoff`'s `hire.prompt` through the gate as `worker.hire`'s prompt is (its review, or the
+   * interpreter's hand-over for that exact task): `hire` rewritten in place. True: something to undo or claim.
+   */
+  private gateHandoffHire(hire: Obj, one: Protect): boolean {
+    const review = hire.secrets;
+    const pending = hire.secrets_pending;
+    delete hire.secrets;
+    delete hire.secrets_pending;
+    const named = (e: unknown) => (e instanceof Error && typeof (e as Error & { code?: unknown }).code === 'string' ? this.h.error((e as Error & { code: string }).code, `hire.prompt: ${e.message}`) : e);
+    try {
+      const prompt = typeof hire.prompt === 'string' ? hire.prompt : '';
+      const tok = pending !== undefined ? this.pendingFor(pending, null) : null;
+      if (tok?.claimed) throw this.h.error('secrets_review_stale', 'secrets_pending: another hire claimed it: review it again');
+      const own = this.newOwner();
+      const p = review === undefined && tok?.texts.has(prompt) ? null : one(prompt, review, own);
+      if (p) hire.prompt = p.text;
+      if (!p && !tok) return false;
+      this.handoffHires.set(hire, { owner: own, tok });
+      return true;
+    } catch (e) {
+      throw named(e);
+    }
+  }
+
+  /** #219: the hire made from `hire` took its task's files (and its hand-over). */
+  claimHandoffHire(hire: object, worker: string): void {
+    const h = this.handoffHires.get(hire);
+    if (!h) return;
+    this.handoffHires.delete(hire);
+    this.reown(h.owner, worker);
+    if (h.tok) this.claim(h.tok, worker);
+  }
+
+  /** #219: a handoff hire that ended without a hire (or a replay that used none of its text): its files go. */
+  releaseHandoffHire(hire: object): void {
+    const h = this.handoffHires.get(hire);
+    if (!h) return;
+    this.handoffHires.delete(hire);
+    this.release(h.owner);
+  }
+
   /** A schedule's fire with the switch on (docs/protocol.md "A schedule's fire"): why it fails, or null (it fires). */
   storedFire(id: string, prompt: string): string | null {
     if (!this.supported || !this.sw.enabled) return null;
@@ -608,6 +653,8 @@ export class SecretsSim {
     if (t === 'worker.wrapup' && pending !== undefined && !this.wrapupHandover) throw this.h.error('bad_request', 'bad args: json: unknown field "secrets_pending"');
     if (!this.sw.enabled) {
       if (review !== undefined || pending !== undefined) throw this.h.error('secrets_review_stale', 'secrets review: the switch is off');
+      // #219: so is a handoff hire's task review.
+      if (t === 'worker.handoff' && isObj(a.hire) && (a.hire.secrets !== undefined || a.hire.secrets_pending !== undefined)) throw this.h.error('secrets_review_stale', 'hire.prompt: secrets review: the switch is off');
       return null;
     }
     delete a.secrets;
@@ -760,10 +807,13 @@ export class SecretsSim {
             if (review !== undefined) throw this.h.error('bad_request', 'bad request: a literal handoff has no text to review');
             return null;
           }
+          // #219: the hire's task, its own review (`hire.secrets`, `hire.secrets_pending`), its files a pending owner's
+          // until the hire, then the new worker's (`claimHandoffHire`); a refusal names `hire.prompt`.
+          const hire = isObj(a.hire) ? this.gateHandoffHire(a.hire, one) : false;
           const instruction = typeof a.instruction === 'string' ? a.instruction : '';
           if (!instruction.trim()) {
             if (review !== undefined) throw this.h.error('secrets_review_required', 'instruction: a review of a text the command does not send');
-            return null;
+            return hire ? { ack: (d) => d, fail: undo } : null;
           }
           const p = one(instruction, review, typeof a.worker === 'string' ? a.worker : '');
           if (p) a.instruction = p.text;

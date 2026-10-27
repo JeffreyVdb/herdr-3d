@@ -256,6 +256,10 @@ worker.
 `handoff_llm` (#9) is the LLM handoffs' state (see [LLM handoffs](#llm-handoffs)), left out by a bridge without the AI
 service or a handoff directory, or from before #9; a worker's job is its own `llm_handoff`.
 
+`handoff_hires` (#219) are the handoffs' pending hires and the ones that ended in the last 10 minutes (see [Hire with
+handoff in the background](#hire-with-handoff-in-the-background)): always present (`[]` when none) on a bridge that
+takes `worker.handoff`'s `hire`; a client sends `hire` only to a bridge whose snapshot has the key.
+
 `activity` (#98) is "Classify unknown commands"' state (see [Activity](#activity)), left out by a bridge without the AI
 service or from before #98; a worker's own `activity` is in the worker.
 
@@ -905,6 +909,8 @@ and remember the last `seq` applied.
 | `repo_discovery.update` | `roots`, `interval_minutes`, `status` | #54: repository discovery's settings or a scan's status changed (a scan started, progressed, ended); flat in the event. `status.revision` moves only when the discovered repositories did (see [Repository discovery](#repository-discovery)) |
 | `handoff.added` | `floor_id`, `session`, `handoff`, `handoff_count` | #223: a handoff was filed: its file is complete and indexed (#58: `floor_id` is its floor, `session` that floor's session; before #58 `session` was the floor, which it still is for a real floor; `handoff_count` the floor's count now; see [Handoffs](#handoffs)) |
 | `handoff.removed` | `floor_id`, `session`, `handoff_id`, `handoff_count` | #223: a handoff was deleted (its file is in the trash) |
+| `handoff_hire.upsert` | `handoff_hire` | #219: a handoff's pending hire was accepted or changed (its state, its filed path, its outcome, its send home); the whole record (see [Hire with handoff in the background](#hire-with-handoff-in-the-background)) |
+| `handoff_hire.removed` | `op` | #219: an ended pending hire left `handoff_hires` (10 minutes after it ended, or more than 50 ended ones) |
 | `schedule.upsert` | `schedule` | #62: a schedule was created or updated, or its state changed (a fire began, waits, ended); the whole schedule (see [Scheduled agents](#scheduled-agents)) |
 | `schedule.removed` | `id`, `floor_id` | #62: a schedule left the view: cancelled, dismissed, or a `done` one pruned beyond its floor's last 50 |
 | `hire_preset.upsert` | `hire_preset` | #93: a hire preset was created or changed; the whole preset (see [Hire presets](#hire-presets)) |
@@ -1044,6 +1050,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.handoff_preview` | `{"worker", "candidate"}` (#224 `mode: "agent"`, #9 `mode: "llm"`: see [Ask the agent](#ask-the-agent), [LLM handoffs](#llm-handoffs)) | `{"candidate", "text", "truncated"?, "title", "provenance", "can_send_home", "send_home_blocked"?}` (see [Handoffs](#handoffs)) | — |
 | `worker.handoff` | `{"worker", "mode": "literal", "session", "candidate", "revision", "send_home"?, "op"}` | `{"handoff", "existing"?, "send_home"?: "started" \| "skipped", "send_home_reason"?}` | `handoff.added` (before the ack) when filed; `worker.removed` later when sent home |
 | `worker.handoff` (#9) | `{"worker", "mode": "llm", "session", "candidate", "revision", "instruction"?, "send_home"?, "op", "secrets"?: SecretsReview}` | `{"job", "existing"?}` at once; the job follows on `Worker.llm_handoff` (see [LLM handoffs](#llm-handoffs)) | `worker.upsert` (the job), `handoff.added` when filed, `worker.removed` later when sent home |
+| `worker.handoff` (#219) | modes `agent` and `llm` as above, with `"hire": WorkerHandoffHire` (`worker.hire`'s args, `prompt` the task without the path line, and `"origin"?`) | the mode's ack with `"handoff_hire"`: the pending hire (see [Hire with handoff in the background](#hire-with-handoff-in-the-background)) | `handoff_hire.upsert` (waiting, before the ack), later its outcome; the hire's `worker.upsert`s; `worker.removed` when sent home after the hire |
 | `handoff.list` | `{"floor", "q"?, "limit"?: 1–500}` | `{"floor", "handoffs": [HandoffEntry…]}` | — |
 | `handoff.get` | `{"id"}` | `{"handoff", "body", "llm"?}` (#9: an LLM handoff's provenance) | — |
 | `handoff.delete` | `{"id", "confirm": true}` | `{"handoff"}`; the file goes to the trash | `handoff.removed` (before the ack) |
@@ -5786,6 +5793,103 @@ fit the budget; the transcript changed; a subagent's or an empty one).
 front matter. The audit row of `worker.handoff` keeps the instruction's length only (in every mode); an LLM job's
 result has the model, host, prompt version, sizes (payload, sent, answer, document), the elapsed time, the outcome
 code, the redaction counts, the coverage numbers and the call's sanitized diagnostics; never text.
+
+#### Hire with handoff in the background
+
+#219, after #198. In modes `agent` and `llm`, `worker.handoff` may carry the hire that follows the filing: the bridge
+holds the desk, hires once the handoff is filed and publishes the pending hire and its outcome, so the client's review
+can close at once and a reload, a closed tab or another browser does not lose it. Mode `literal` files at once and
+keeps #198's flow (the client files, then sends `worker.hire`); a `hire` with it is `bad_request`.
+
+```json
+{"t":"worker.handoff","req_id":"9","args":{"worker":"a58752ea-…","mode":"agent","op":"ho-k4…","send_home":true,
+ "hire":{"floor":"herdr-3d","desk_index":4,"harness":"claude","model":"claude-opus-5-5","effort":"high","label":"Ada",
+ "prompt":"Finish the review comments, then open the PR.","herdr_instructions":true,"origin":"b-3f9c…"}}}
+{"t":"ack","req_id":"9","data":{"request":{"op":"ho-k4…","state":"pending","started_at":1790859600000,"send_home":true},
+ "handoff_hire":{"op":"ho-k4…","worker":"a58752ea-…","worker_name":"Pixel","mode":"agent","floor":"herdr-3d","desk_index":4,
+ "label":"Ada","harness":"claude","model":"claude-opus-5-5","effort":"high","origin":"b-3f9c…","state":"waiting","send_home":true,
+ "started_at":1790859600000}}}
+{"t":"handoff_hire.upsert","seq":812,"handoff_hire":{"op":"ho-k4…",…,"state":"hired","handoff":14,
+ "path":"/home/u/handoff/herdr-3d/20261027-1612-pixel-review-comments.md","hired":"0c5e…","prompted":true,
+ "delivery":"accepted","send_home_result":"started","ended_at":1790859731000}}
+```
+
+**`hire`** (`WorkerHandoffHire`) is every field of `worker.hire`'s args with the same meaning (`session`/`floor`,
+`desk_index`, `harness`, `model`, `effort`, `label`?, `cwd`?, `worktree`?, `herdr_instructions`?, `codex_profile`?,
+`secrets`?, `secrets_pending`?), `prompt` the human's task **without** the path line (required, not blank), and
+`origin`? (1–80 characters of `[A-Za-z0-9_-]`, opaque: the browser that announces the outcome). Strict as every args
+type: a bridge from before #219 refuses the field.
+
+1. **Acceptance**, before the ack, with `worker.hire`'s and `worker.handoff`'s own refusal codes: the hire's shape
+   (catalog tuple, a harness that can start, the profile); the floor (an asleep virtual floor is woken first, as for
+   `worker.hire`); the label, cwd and worktree checks; the desk on the floor, nobody's, not being hired into and not
+   held; the caps counting the workers, the hires in flight and the other pending hires' desks, **not** the source
+   worker when `send_home` (it leaves right after); the task's size with 1,024 bytes for the path and the herdr
+   instructions (`bad_request`); with prompt secrets reviewed, the task's own review in `hire.secrets` /
+   `hire.secrets_pending` (`secrets_review_required`, `secrets_stale`), separate from the instruction's top-level
+   `secrets`. The task's protected files are a pending owner's, held in memory with the task only. Then the handoff
+   starts exactly as without `hire`, and when its request or job is made the pending hire is created: `waiting`, the
+   desk held, `handoff_hire.upsert`. The ack (`WorkerHandoffRequestResult` / `WorkerHandoffJobResult`) carries
+   `handoff_hire`, the record; a refusal of the handoff before its ack (no skill, `busy`, …) holds nothing.
+2. **The desk hold.** While a record is `waiting` (or `hiring` before the hire took the desk) its `(floor,
+   desk_index)` is held: `worker.hire` from any client, `run.start`, another pending hire and a schedule's fire refuse
+   it with `desk_taken` and "Desk N is held for <source>'s handoff hire." (N 1-based), a schedule picks another desk,
+   a workspace opened in herdr is seated elsewhere, and the floor's `desks` grows to the held desk. The hire takes the
+   hold in the step that starts it; every end releases it.
+3. **Filed: the hire.** Once the request or job is filed, on the hub and exactly once, the record moves `waiting →
+   hiring` (`handoff`, `path`: the filed entry's final path, what `handoff.get` answers, never a `.pending` one) and the
+   bridge checks again: the task's review still holds (`secrets_stale`), the composed task's size (`too_long`), then
+   `worker.hire`'s checks with the desk, its occupancy and the caps (workers and hires in flight, this hold not
+   counted, the source not counted when `send_home`; a floor asleep by then is a hire failure: nothing wakes it). The
+   first prompt is #198's, exactly:
+   `First read the handoff here: <path> and then follow these instructions:\n\n<task>` (the task's blank lines before
+   and after dropped, nothing else changed), then the herdr hiring instructions when asked, as `worker.hire` sends them.
+   Only the task is translated for the harness (#39, as a plain hire's task is): the line with the path and the herdr
+   lines go as they are.
+   The hire is `worker.hire`'s, audited as a `worker.hire` row of the client that asked (`req_id` `handoff:<op>`, the
+   task by its length), answered to nobody. A refusal or a failed hire ends the record `failed` with the path set: the
+   handoff stays in the cabinet. A hire that started ends it `hired` with `hired`, `prompted`, `delivery`,
+   `prompt_error` as `HireResult` has them; an uncertain delivery (`unknown`) is reported, never retried.
+4. **Send home** (`send_home`) runs only after `hired` with `prompted: true`, through #223's send home; otherwise it is
+   skipped ("The new agent was not hired; <source> stays."). `send_home_result` / `send_home_reason` are on the record
+   (on every record that asked for it and ended without a hire, before the filing too) and on the source's
+   `agent_handoff` / `llm_handoff`.
+5. **No handoff, no hire.** The handoff failing (`handoff_failed`, its reason), timing out (`timeout`), cancelled
+   (`cancelled`, state `cancelled`), the source worker gone before it filed, or (agent mode) its session gone away
+   (`source_gone`; an LLM job already filing still files and hires), the target floor gone (`floor_gone`; a later
+   filing does not hire): the record ends with that code and a reason sentence, its task's files released (a
+   `hire.interpret` hand-over's too: it does not go back to pending), the desk free. **`worker.handoff_cancel {worker, op}`**
+   (the review's Cancel request and the F dialog's) cancels the request or job and its pending hire in the same step;
+   once filing began it is `busy` as before and the hire follows; once filed the hire is not cancelled.
+6. **Replays.** The same op with the same arguments answers its request or job (`existing: true`) and the record;
+   with another `hire`, none, or other arguments (agent mode included; the reviews' decisions and the hand-over are
+   arguments, the scans' revisions are not) it is `bad_request` ("This request was already sent with other
+   settings."); an op that had no hire, given one, too. Two identical requests sent at once both get the request, one
+   of them as `existing`, and only one is sent. After a restart, or once the record left the world, the arguments are
+   compared on what the marker keeps (the source, the mode, `send_home`, the floor, the desk, the label, the harness,
+   the model, the effort, the origin); the ack then carries the restored record, or no `handoff_hire` once it left. A
+   request refused at acceptance (`secrets_review_required`, `secrets_stale`, …) leaves nothing: the same op, reviewed
+   again, is a new request. Repeated filing callbacks, reconnects and `since_seq` replays never start a second hire:
+   only the hub's `waiting → hiring` does.
+7. **Restart.** The record, the task and the hold live in the bridge's memory. The agent request or LLM job row keeps
+   a marker (`hire`: floor, desk, label, harness, model, effort, origin, the source's name, send home, accepted at,
+   and while the hire waits the ids of the pending owners of its task's protected files; never the task, a secret or
+   review data). When the record ends the marker says how (`state`, `code`, `reason`) and stays: the request had a
+   hire, so a resumed one never sends its source home on its own, and a replay is compared with it. A bridge that
+   starts with a marker whose hire had not ended publishes the record `failed` with `interrupted` (the marker then says
+   so), releases its task's files, holds no desk and never hires for it; a pending agent request whose hire ended
+   (before the restart, or interrupted by an earlier one) is published as it ended. A resumed agent request that files
+   later sets the record's `path` and skips the send home.
+
+**`HandoffHire`** `{op, worker, worker_name, mode, floor, desk_index, label?, harness, model, effort, origin?, state,
+code?, reason?, handoff?, path?, hired?, prompted?, delivery?, prompt_error?, send_home?, send_home_result?,
+send_home_reason?, started_at, ended_at?}`: `state` `waiting`, `hiring`, `hired`, `failed` or `cancelled`; `code` one
+of `handoff_failed`, `timeout`, `cancelled`, `source_gone`, `floor_gone`, `desk_taken`, `capacity`, `too_long`,
+`secrets_stale`, `hire_failed`, `interrupted`; `reason` one sentence, shown as is. `failed` with `path`: filed, not
+hired. Never the task, the instruction, a secret or review data. Retention: an ended record stays 10 minutes after
+`ended_at`, then `handoff_hire.removed`; at most 50 ended ones (the oldest go first); `waiting` and `hiring` ones
+always stay. The audit row of `worker.handoff` has the hire's fields with the task by its length, its review by its
+counts and a hand-over (`secrets_pending`) by its presence, never its token (as `worker.hire`'s row has them).
 
 ### Scheduled agents
 

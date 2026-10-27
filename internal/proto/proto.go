@@ -175,10 +175,13 @@ type Snapshot struct {
 type World struct {
 	Host            string          `json:"host"`
 	ManualProcesses []ManualProcess `json:"manual_processes"`
-	Buildings       []Building      `json:"buildings"`
-	Unassigned      []string        `json:"unassigned"`
-	Floors          []Floor         `json:"floors"`
-	Workers         []Worker        `json:"workers"`
+	// #219: the pending handoff hires and the recently ended ones. Always
+	// present ([] when none) on a bridge that takes worker.handoff's hire.
+	HandoffHires []HandoffHire `json:"handoff_hires"`
+	Buildings    []Building    `json:"buildings"`
+	Unassigned   []string      `json:"unassigned"`
+	Floors       []Floor       `json:"floors"`
+	Workers      []Worker      `json:"workers"`
 	// HireOptions are the harness/model/effort choices the bridge accepts
 	// (floor.settings.set default_hire, and hiring later).
 	HireOptions *HireOptions `json:"hire_options,omitempty"`
@@ -702,6 +705,10 @@ type Event struct {
 	Child      *Child `json:"child,omitempty"`
 	WorkerID   string `json:"worker_id,omitempty"`
 	Generation uint64 `json:"generation,omitempty"`
+	// #219: HandoffHire is set on handoff_hire.upsert; Op names the record
+	// on handoff_hire.removed.
+	HandoffHire *HandoffHire `json:"handoff_hire,omitempty"`
+	Op          string       `json:"op,omitempty"`
 }
 
 // Command is a client request. Args depend on T (see the *Args types).

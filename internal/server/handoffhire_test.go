@@ -1,0 +1,1143 @@
+package server_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/ai"
+	"github.com/JeffreyVdb/herdr-3d/internal/harness"
+	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/server"
+	"github.com/JeffreyVdb/herdr-3d/internal/store"
+	"github.com/JeffreyVdb/herdr-3d/internal/world"
+)
+
+// #219 Hire with handoff in the background: worker.handoff's hire, against
+// the agent handoffs' bridge (w1 Claude, w2 Codex, w3 a shell, at desks
+// 0-2) and the LLM handoffs' one. The fake agent writes the reserved file
+// and its turn; the hire is the hire bridge's fake floor.
+
+// hhTask is a task with blank lines around it (the first prompt drops
+// them) and a marker that must be nowhere but in the new worker's prompt.
+const (
+	hhMarker = "HHTASK-7f3c"
+	hhTask   = "\n \n  Fix the " + hhMarker + " issue\n\n- keep it\n\n  \n"
+	hhBody   = "  Fix the " + hhMarker + " issue\n\n- keep it"
+)
+
+// hhArgs is worker.handoff in mode agent with a hire of a Claude worker at
+// desk for task.
+func hhArgs(worker, op string, desk int, task string) proto.WorkerHandoffArgs {
+	h := hireArgs(desk)
+	h.Prompt = task
+	return proto.WorkerHandoffArgs{Worker: worker, Mode: proto.HandoffModeAgent, Op: op,
+		Hire: &proto.WorkerHandoffHire{WorkerHireArgs: h, Origin: "tab-1"}}
+}
+
+// handoffHire waits until op's record satisfies ok and returns it.
+func (b *bridge) handoffHire(op string, ok func(proto.HandoffHire) bool) proto.HandoffHire {
+	b.t.Helper()
+	var got proto.HandoffHire
+	b.world(func(w proto.World) bool {
+		for _, r := range w.HandoffHires {
+			if r.Op == op && ok(r) {
+				got = r
+				return true
+			}
+		}
+		return false
+	})
+	return got
+}
+
+func hhState(state string) func(proto.HandoffHire) bool {
+	return func(r proto.HandoffHire) bool { return r.State == state }
+}
+
+// hhCreates counts the workspaces the hire bridge made.
+func hhCreates(fl *fakeFloor) int {
+	n := 0
+	for _, c := range fl.Calls() {
+		if strings.HasPrefix(c, "create ") || strings.HasPrefix(c, "worktree ") {
+			n++
+		}
+	}
+	return n
+}
+
+// fileAgent plays the agent: it writes the reserved file and ends its turn.
+func (ab *agBridge) fileAgent(t *testing.T, pane string) {
+	t.Helper()
+	text, path, _ := ab.mustRequest(t, pane)
+	writeDoc(t, path, agentDoc)
+	appendTo(t, ab.claude, claudeTurn(text, "Wrote the handoff."))
+}
+
+// The agent's handoff with a hire: acked with the record (waiting, the desk
+// held); another client sees the hold and cannot hire into the desk, nor
+// can another pending hire; once filed the new worker is hired with #198's
+// first prompt (the filed path, then the task, its blank lines around it
+// dropped), once; a replay answers the record, another hire is refused;
+// the task is in no record, event, ack, row or audit.
+func TestHandoffHireAgentHires(t *testing.T) {
+	t.Parallel()
+	ab := startAgentBridge(t, "", "", "", nil)
+	c := ab.connect(proto.Hello{Client: "tab-a"})
+	c.snapshot()
+	id := ab.ids["w1"]
+	name := workersOf(ab.world(func(proto.World) bool { return true }), "s")["w1"].Name
+	args := hhArgs(id, "op-h", 5, hhTask)
+	_, m := c.command(proto.CmdWorkerHandoff, "h1", args)
+	res := ackData[proto.WorkerHandoffRequestResult](t, m)
+	if r := res.HandoffHire; r == nil || r.State != proto.HandoffHireWaiting || r.Op != "op-h" || r.Worker != id || r.WorkerName != name ||
+		r.Mode != proto.HandoffModeAgent || r.Floor != "s" || r.DeskIndex != 5 || r.Origin != "tab-1" || r.Harness != "claude" ||
+		r.StartedAt == 0 || r.EndedAt != 0 || res.Request.State != proto.AgentHandoffPending {
+		t.Fatalf("ack %s", m.raw)
+	}
+
+	other := ab.connect(proto.Hello{Client: "tab-b"})
+	snap := other.snapshot().World
+	if len(snap.HandoffHires) != 1 || snap.HandoffHires[0].State != proto.HandoffHireWaiting || floorOf(snap, "s").Desks < 6 {
+		t.Fatalf("the other client sees %+v, %d desks", snap.HandoffHires, floorOf(snap, "s").Desks)
+	}
+	_, em := other.command(proto.CmdWorkerHire, "x", hireArgs(5))
+	if e := errorOf(em); e.Code != proto.ErrDeskTaken || e.Message != "Desk 6 is held for "+name+"'s handoff hire." {
+		t.Fatalf("a hire into the held desk: %s", em.raw)
+	}
+	other.mustError(proto.CmdWorkerHandoff, hhArgs(ab.ids["w2"], "op-2", 5, "x"), proto.ErrDeskTaken)
+	if hhCreates(ab.fl) != 0 {
+		t.Fatal("hired before the handoff was filed")
+	}
+
+	ab.fileAgent(t, "w1:p1")
+	rec := ab.handoffHire("op-h", hhState(proto.HandoffHireHired))
+	all, _ := ab.st.AllHandoffs(context.Background())
+	if len(all) != 1 {
+		t.Fatalf("%d handoffs", len(all))
+	}
+	filed := all[0]
+	if rec.Path != filed.Path || rec.Handoff != filed.ID || rec.Hired == "" || rec.Prompted == nil || !*rec.Prompted ||
+		rec.Delivery != "accepted" || rec.EndedAt == 0 || rec.Code != "" || strings.Contains(rec.Path, ".pending") {
+		t.Fatalf("hired %+v (filed %+v)", rec, filed)
+	}
+	hired := ab.world(func(w proto.World) bool {
+		return slices.ContainsFunc(w.Workers, func(w proto.Worker) bool { return w.ID == rec.Hired })
+	})
+	var ws string
+	for _, w := range hired.Workers {
+		if w.ID == rec.Hired {
+			ws = w.WorkspaceID
+			if w.DeskIndex != 5 {
+				t.Fatalf("hired at desk %d", w.DeskIndex)
+			}
+		}
+	}
+	want := "First read the handoff here: " + filed.Path + " and then follow these instructions:\n\n" + hhBody
+	if got := sentPrompt(t, ab.hireBridge, ws+":p1"); got != want {
+		t.Fatalf("first prompt\n%q, want\n%q", got, want)
+	}
+
+	// The same request again: its request and record, nothing again.
+	_, m = c.command(proto.CmdWorkerHandoff, "h2", args)
+	if r := ackData[proto.WorkerHandoffRequestResult](t, m); !r.Existing || r.HandoffHire == nil || r.HandoffHire.State != proto.HandoffHireHired {
+		t.Fatalf("replay %s", m.raw)
+	}
+	// Other settings, or none, under the op: refused.
+	moved := args
+	h := *args.Hire
+	h.DeskIndex = ptr(4)
+	moved.Hire = &h
+	c.mustError(proto.CmdWorkerHandoff, moved, proto.ErrBadRequest)
+	plain := args
+	plain.Hire = nil
+	c.mustError(proto.CmdWorkerHandoff, plain, proto.ErrBadRequest)
+	// A reconnect replaying the events from before the hire hires nothing.
+	since := c.welcome.ServerSeq
+	re := ab.connect(proto.Hello{Client: "tab-a", SinceSeq: &since, Epoch: c.welcome.Epoch})
+	re.seq = since
+	seen := false
+	for !seen {
+		ev := re.event()
+		seen = ev.T == proto.EvHandoffHireUpsert && ev.HandoffHire.State == proto.HandoffHireHired
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := hhCreates(ab.fl); n != 1 {
+		t.Fatalf("%d hires", n)
+	}
+	if _, _, _, n := ab.requested("w1:p1"); n != 1 {
+		t.Fatalf("%d handoff requests", n)
+	}
+
+	// The task is the new worker's prompt only.
+	log, _ := ab.st.AuditLog(context.Background())
+	var rows strings.Builder
+	for _, e := range log {
+		rows.WriteString(e.Cmd + " " + e.Args + " " + e.Error + " " + e.Result + "\n")
+	}
+	req, _ := ab.st.HandoffRequestByOp(context.Background(), "op-h")
+	rb, _ := json.Marshal(req)
+	for where, text := range map[string]string{"a client": c.heard.String() + other.heard.String() + re.heard.String(),
+		"the audit log": rows.String(), "the request's row": string(rb)} {
+		if strings.Contains(text, hhMarker) {
+			t.Errorf("%s holds the task", where)
+		}
+	}
+	if !strings.Contains(rows.String(), `"prompt_bytes"`) || !strings.Contains(rows.String(), "worker.hire") {
+		t.Errorf("no hire audit row: %s", rows.String())
+	}
+	if req.Hire == nil || req.Hire.State != proto.HandoffHireHired {
+		t.Errorf("the marker after the hire: %+v", req.Hire)
+	}
+}
+
+// No handoff, no hire: the turn ends without the file, the request times
+// out, is cancelled (the record at once, in the cancel's step), the source
+// leaves, the target floor goes. Each ends the record with its code, the
+// hold released.
+func TestHandoffHireAgentNoHire(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, state, code string
+		tweak             func(*server.Options)
+		end               func(t *testing.T, ab *agBridge, c *client, id string)
+	}{
+		{name: "no file", state: proto.HandoffHireFailed, code: proto.HandoffHireHandoffFailed,
+			end: func(t *testing.T, ab *agBridge, c *client, id string) {
+				text, _, _ := ab.mustRequest(t, "w1:p1")
+				appendTo(t, ab.claude, claudeTurn(text, "I could not write it."))
+			}},
+		{name: "timeout", state: proto.HandoffHireFailed, code: proto.HandoffHireTimeout,
+			tweak: func(o *server.Options) { o.AgentHandoffTimeout = 500 * time.Millisecond },
+			end:   func(*testing.T, *agBridge, *client, string) {}},
+		{name: "cancel", state: proto.HandoffHireCancelled, code: proto.HandoffHireCancelledCode,
+			end: func(t *testing.T, ab *agBridge, c *client, id string) {
+				evs, m := c.command(proto.CmdWorkerHandoffCancel, "x", proto.WorkerHandoffCancelArgs{Worker: id, Op: "op-n"})
+				if m.env.T != proto.TAck || !slices.ContainsFunc(evs, func(ev proto.Event) bool {
+					return ev.T == proto.EvHandoffHireUpsert && ev.HandoffHire.State == proto.HandoffHireCancelled
+				}) {
+					t.Fatalf("cancel: %s, events %+v", m.raw, evs)
+				}
+			}},
+		{name: "source gone", state: proto.HandoffHireFailed, code: proto.HandoffHireSourceGone,
+			end: func(t *testing.T, ab *agBridge, c *client, id string) {
+				ab.fl.close("w1")
+			}},
+		{name: "floor gone", state: proto.HandoffHireFailed, code: proto.HandoffHireFloorGone,
+			end: func(t *testing.T, ab *agBridge, c *client, id string) {
+				ab.publish(world.FloorGone{Session: "s", Gen: world.NextGen()})
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ab := startAgentBridge(t, "", "", "", tc.tweak)
+			c := ab.connect(proto.Hello{})
+			c.snapshot()
+			id := ab.ids["w1"]
+			c.mustAck(proto.CmdWorkerHandoff, hhArgs(id, "op-n", 5, hhTask))
+			tc.end(t, ab, c, id)
+			rec := ab.handoffHire("op-n", func(r proto.HandoffHire) bool { return r.Ended() })
+			if rec.State != tc.state || rec.Code != tc.code || rec.Reason == "" || rec.Hired != "" || rec.Path != "" || rec.EndedAt == 0 {
+				t.Fatalf("record %+v", rec)
+			}
+			if tc.name == "floor gone" {
+				return
+			}
+			// The desk is free again.
+			if _, m := c.command(proto.CmdWorkerHire, "after", hireArgs(5)); m.env.T != proto.TAck {
+				t.Fatalf("the desk is still held: %s", m.raw)
+			}
+			if n := hhCreates(ab.fl); n != 1 {
+				t.Fatalf("%d hires", n)
+			}
+		})
+	}
+}
+
+// Checks after filing are the hire's: a floor that filled up while the
+// handoff was written refuses it (capacity), and the record keeps the
+// filed handoff's path: it stays in the cabinet, nobody is hired, the
+// source is not sent home.
+func TestHandoffHireRefusedAfterFiling(t *testing.T) {
+	t.Parallel()
+	ab := startAgentBridge(t, "", "", "", func(o *server.Options) {
+		o.Caps = server.Caps{FloorSoft: 4, FloorHard: 4, HostSoft: 10, HostHard: 10}
+	})
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	id := ab.ids["w1"]
+	args := hhArgs(id, "op-c", 5, hhTask)
+	args.SendHome = true
+	c.mustAck(proto.CmdWorkerHandoff, args) // 3 workers + 1, the source not counted: room
+	// Workers opened in herdr meanwhile fill the floor; none is seated at
+	// the held desk.
+	ab.fl.create("/home/u/ext", "ext", nil)
+	ab.fl.create("/home/u/ext2", "ext2", nil)
+	ab.fl.publish()
+	w := ab.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 5 })
+	for _, ws := range []string{"w4", "w5"} {
+		if d := workersOf(w, "s")[ws].DeskIndex; d == 5 {
+			t.Fatal("a newcomer was seated at the held desk")
+		}
+	}
+	ab.fileAgent(t, "w1:p1")
+	rec := ab.handoffHire("op-c", func(r proto.HandoffHire) bool { return r.Ended() })
+	all, _ := ab.st.AllHandoffs(context.Background())
+	if rec.State != proto.HandoffHireFailed || rec.Code != proto.HandoffHireCapacity || len(all) != 1 || rec.Path != all[0].Path ||
+		rec.Handoff != all[0].ID || rec.SendHomeResult != proto.HandoffSendSkipped || !strings.Contains(rec.SendHomeReason, "not hired") {
+		t.Fatalf("record %+v", rec)
+	}
+	if hhCreates(ab.fl) != 0 {
+		t.Fatal("hired")
+	}
+	wv := upsertFor(c, id, agentState(proto.AgentHandoffFiled))
+	if wv.AgentHandoff.SendHomeResult != proto.HandoffSendSkipped {
+		t.Fatalf("the source's view %+v", wv.AgentHandoff)
+	}
+	if _, ok := workersOf(ab.world(func(proto.World) bool { return true }), "s")["w1"]; !ok {
+		t.Fatal("the source was sent home")
+	}
+}
+
+// Send home after a hire: a full floor takes the hire (the source is not
+// counted, at acceptance and at launch); the new worker is hired first,
+// then the source goes home. When the new worker did not get its task the
+// source stays.
+func TestHandoffHireSendHome(t *testing.T) {
+	t.Parallel()
+	ab := startAgentBridge(t, "", "", "", func(o *server.Options) {
+		o.Caps = server.Caps{FloorSoft: 3, FloorHard: 3, HostSoft: 10, HostHard: 10}
+	})
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	id := ab.ids["w1"]
+	ab.fl.setProcs("w1:p1", running("claude", wrapSess))
+	args := hhArgs(id, "op-s", 5, hhTask)
+	c.mustError(proto.CmdWorkerHandoff, args, proto.ErrCapacity) // without send home the floor is full
+	args.SendHome = true
+	c.mustAck(proto.CmdWorkerHandoff, args)
+	ab.fileAgent(t, "w1:p1")
+	hiredFirst := false
+	for {
+		ev := c.event()
+		if ev.T == proto.EvHandoffHireUpsert && ev.HandoffHire.State == proto.HandoffHireHired {
+			if ev.HandoffHire.SendHomeResult != proto.HandoffSendStarted {
+				t.Fatalf("record %+v", ev.HandoffHire)
+			}
+			hiredFirst = true
+		}
+		if ev.T == proto.EvWorkerRemoved && ev.ID == id {
+			if !hiredFirst {
+				t.Fatal("sent home before the hire")
+			}
+			break
+		}
+	}
+
+	// The task not delivered: hired, the source stays.
+	ab2 := startAgentBridge(t, "", "", "", nil)
+	c2 := ab2.connect(proto.Hello{})
+	c2.snapshot()
+	ab2.fl.typeErrs = []error{errors.New("typing failed"), errors.New("typing failed")}
+	args2 := hhArgs(ab2.ids["w1"], "op-s2", 5, hhTask)
+	args2.SendHome = true
+	c2.mustAck(proto.CmdWorkerHandoff, args2)
+	ab2.fileAgent(t, "w1:p1")
+	rec := ab2.handoffHire("op-s2", func(r proto.HandoffHire) bool { return r.Ended() })
+	if rec.State != proto.HandoffHireHired || rec.Prompted == nil || *rec.Prompted || rec.PromptError == "" ||
+		rec.SendHomeResult != proto.HandoffSendSkipped || !strings.Contains(rec.SendHomeReason, "stays") {
+		t.Fatalf("record %+v", rec)
+	}
+	if _, ok := workersOf(ab2.world(func(proto.World) bool { return true }), "s")["w1"]; !ok {
+		t.Fatal("the source was sent home")
+	}
+}
+
+// Acceptance refuses what a hire would refuse before the ack, nothing
+// held, nothing sent: a literal handoff's hire, a blank task, a bad origin,
+// a desk a worker sits at, a task too long with room for the path.
+func TestHandoffHireAcceptance(t *testing.T) {
+	t.Parallel()
+	ab := startAgentBridge(t, "", "", "", nil)
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	id := ab.ids["w1"]
+	lit := hhArgs(id, "op-l", 5, "x")
+	lit.Mode = proto.HandoffModeLiteral
+	c.mustError(proto.CmdWorkerHandoff, lit, proto.ErrBadRequest)
+	c.mustError(proto.CmdWorkerHandoff, hhArgs(id, "op-b", 5, " \n "), proto.ErrBadRequest)
+	origin := hhArgs(id, "op-o", 5, "x")
+	origin.Hire.Origin = "no spaces allowed"
+	c.mustError(proto.CmdWorkerHandoff, origin, proto.ErrBadRequest)
+	c.mustError(proto.CmdWorkerHandoff, hhArgs(id, "op-d", 1, "x"), proto.ErrDeskTaken) // w2's
+	long := strings.Repeat("y", 32<<10-500)                                             // fits a prompt, not with the path's room
+	c.mustError(proto.CmdWorkerHandoff, hhArgs(id, "op-t", 5, long), proto.ErrBadRequest)
+	if _, _, _, n := ab.requested("w1:p1"); n != 0 {
+		t.Fatal("a refused request was sent")
+	}
+	if w := ab.world(func(proto.World) bool { return true }); len(w.HandoffHires) != 0 {
+		t.Fatalf("records %+v", w.HandoffHires)
+	}
+}
+
+// A restart while the handoff is written: the record is published failed,
+// interrupted; no desk is held; the resumed request still files, the
+// record learns its path, and nobody is hired nor sent home.
+func TestHandoffHireRestart(t *testing.T) {
+	t.Parallel()
+	ab := startAgentBridge(t, "", "", "", nil)
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	id := ab.ids["w1"]
+	args := hhArgs(id, "op-r", 5, hhTask)
+	args.SendHome = true
+	c.mustAck(proto.CmdWorkerHandoff, args)
+	text, path, _ := ab.mustRequest(t, "w1:p1")
+	if r, _ := ab.st.HandoffRequestByOp(context.Background(), "op-r"); r.Hire == nil || r.Hire.Desk != 5 || r.Hire.Origin != "tab-1" {
+		t.Fatalf("marker %+v", r.Hire)
+	}
+	ab.stop()
+	ab2 := startAgentBridge(t, ab.db, ab.dir, ab.hdir, nil)
+	c2 := ab2.connect(proto.Hello{})
+	snap := c2.snapshot().World
+	if len(snap.HandoffHires) != 1 || snap.HandoffHires[0].Code != proto.HandoffHireInterrupted ||
+		snap.HandoffHires[0].State != proto.HandoffHireFailed || snap.HandoffHires[0].DeskIndex != 5 {
+		t.Fatalf("after the restart %+v", snap.HandoffHires)
+	}
+	// The resumed request's marker says the hire was interrupted: a
+	// second restart meanwhile says the same.
+	if r, _ := ab2.st.HandoffRequestByOp(context.Background(), "op-r"); r.Hire == nil || r.Hire.Code != proto.HandoffHireInterrupted {
+		t.Fatalf("the pending request's marker %+v", r.Hire)
+	}
+	ab2.stop()
+	ab2 = startAgentBridge(t, ab.db, ab.dir, ab.hdir, nil)
+	c2 = ab2.connect(proto.Hello{})
+	if hh := c2.snapshot().World.HandoffHires; len(hh) != 1 || hh[0].Code != proto.HandoffHireInterrupted {
+		t.Fatalf("after a second restart %+v", hh)
+	}
+	writeDoc(t, path, agentDoc)
+	appendTo(t, ab2.claude, claudeTurn(text, "Done."))
+	rec := ab2.handoffHire("op-r", func(r proto.HandoffHire) bool { return r.Path != "" })
+	if rec.State != proto.HandoffHireFailed || rec.Code != proto.HandoffHireInterrupted || rec.SendHomeResult != proto.HandoffSendSkipped {
+		t.Fatalf("filed after the restart %+v", rec)
+	}
+	upsertFor(c2, id, agentState(proto.AgentHandoffFiled))
+	if r, _ := ab2.st.HandoffRequestByOp(context.Background(), "op-r"); r.Hire == nil || r.Hire.Code != proto.HandoffHireInterrupted {
+		t.Fatalf("the marker after filing %+v", r.Hire)
+	}
+	if _, m := c2.command(proto.CmdWorkerHire, "free", hireArgs(5)); m.env.T != proto.TAck {
+		t.Fatalf("the desk is held after the restart: %s", m.raw)
+	}
+	if n := hhCreates(ab2.fl); n != 1 { // that hire only
+		t.Fatalf("%d hires", n)
+	}
+	if _, ok := workersOf(ab2.world(func(proto.World) bool { return true }), "s")["w1"]; !ok {
+		t.Fatal("the source was sent home")
+	}
+	// Filed, the request is no longer listed: a third restart publishes
+	// nothing for it.
+	ab2.stop()
+	ab2 = startAgentBridge(t, ab.db, ab.dir, ab.hdir, nil)
+	c2 = ab2.connect(proto.Hello{})
+	if hh := c2.snapshot().World.HandoffHires; len(hh) != 0 {
+		t.Fatalf("after a third restart %+v", hh)
+	}
+}
+
+// An ended record stays for the keep, then handoff_hire.removed.
+func TestHandoffHireRetention(t *testing.T) {
+	t.Parallel()
+	ab := startAgentBridge(t, "", "", "", func(o *server.Options) { o.HandoffHireKeep = 300 * time.Millisecond })
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	id := ab.ids["w1"]
+	c.mustAck(proto.CmdWorkerHandoff, hhArgs(id, "op-k", 5, hhTask))
+	c.mustAck(proto.CmdWorkerHandoffCancel, proto.WorkerHandoffCancelArgs{Worker: id, Op: "op-k"})
+	ev := eventWhere(c, func(ev proto.Event) bool { return ev.T == proto.EvHandoffHireRemoved })
+	if ev.Op != "op-k" {
+		t.Fatalf("removed %+v", ev)
+	}
+	if w := ab.world(func(proto.World) bool { return true }); w.HandoffHires == nil || len(w.HandoffHires) != 0 {
+		t.Fatalf("records %+v", w.HandoffHires)
+	}
+}
+
+// The task's secrets review is applied at acceptance: without one the
+// request is refused before anything is sent; with one the task's files
+// are a pending owner's, released on a cancel, and the hire's prompt
+// carries references after the path line.
+func TestHandoffHireSecrets(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	ab := startAgentBridge(t, "", "", "", func(o *server.Options) { o.SecretsDir = dir })
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	id := ab.ids["w1"]
+	args := hhArgs(id, "op-x", 5, routeText)
+	_, m := c.command(proto.CmdWorkerHandoff, "x0", args)
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired {
+		t.Fatalf("no review: %s", m.raw)
+	}
+	if _, _, _, n := ab.requested("w1:p1"); n != 0 {
+		t.Fatal("sent without the task's review")
+	}
+	args.Hire.Secrets = routeReview(t, c)
+	c.mustAck(proto.CmdWorkerHandoff, args)
+	waitFor(t, "the task's files", func() bool { return len(protectedFiles(t, dir)) == 2 })
+	c.mustAck(proto.CmdWorkerHandoffCancel, proto.WorkerHandoffCancelArgs{Worker: id, Op: "op-x"})
+	waitFor(t, "the task's files released", func() bool { return len(protectedFiles(t, dir)) == 0 })
+
+	args.Op, args.Hire.Secrets = "op-y", routeReview(t, c)
+	c.mustAck(proto.CmdWorkerHandoff, args)
+	var text, path string
+	eventually(t, "the second request", func() bool {
+		var n int
+		text, path, _, n = ab.requested("w1:p1")
+		return n == 2
+	})
+	writeDoc(t, path, agentDoc)
+	appendTo(t, ab.claude, claudeTurn(text, "Done."))
+	rec := ab.handoffHire("op-y", hhState(proto.HandoffHireHired))
+	var ws string
+	for _, w := range ab.world(func(proto.World) bool { return true }).Workers {
+		if w.ID == rec.Hired {
+			ws = w.WorkspaceID
+		}
+	}
+	sent := sentPrompt(t, ab.hireBridge, ws+":p1")
+	head, task, _ := strings.Cut(sent, "\n\n")
+	if head != "First read the handoff here: "+rec.Path+" and then follow these instructions:" {
+		t.Fatalf("sent %q", sent)
+	}
+	checkRouteSent(t, task)
+	traceFree(t, ab.st, ab.db, []*client{c}, routeSentinel)
+}
+
+// LLM mode: acked with the record, hired once the job filed; a cancel
+// while the model writes cancels the record at once and nobody is hired; a
+// failed job fails it; a replay with another hire is refused.
+func TestHandoffHireLLM(t *testing.T) {
+	t.Parallel()
+	lb := newLLMBridge(t, yes(), nil)
+	c := lb.connect(proto.Hello{})
+	c.snapshot()
+	cand := lb.candidate(t, c)
+	id := lb.ids["w1"]
+	llmHire := func(op string, desk int) proto.WorkerHandoffArgs {
+		a := llmArgs(id, cand, op)
+		h := hireArgs(desk)
+		h.Prompt = hhTask
+		a.Hire = &proto.WorkerHandoffHire{WorkerHireArgs: h, Origin: "tab-1"}
+		return a
+	}
+	out, release := blockLLM(lb)
+	_, m := c.command(proto.CmdWorkerHandoff, "l1", llmHire("op-l1", 5))
+	res := ackData[proto.WorkerHandoffJobResult](t, m)
+	if res.HandoffHire == nil || res.HandoffHire.State != proto.HandoffHireWaiting || res.HandoffHire.Mode != proto.HandoffModeLLM {
+		t.Fatalf("ack %s", m.raw)
+	}
+	<-out
+	other := llmHire("op-l1", 4)
+	c.mustError(proto.CmdWorkerHandoff, other, proto.ErrBadRequest)
+	_, m = c.command(proto.CmdWorkerHandoff, "l1b", llmHire("op-l1", 5))
+	if r := ackData[proto.WorkerHandoffJobResult](t, m); !r.Existing || r.HandoffHire == nil {
+		t.Fatalf("replay %s", m.raw)
+	}
+	evs, m := c.command(proto.CmdWorkerHandoffCancel, "lc", proto.WorkerHandoffCancelArgs{Worker: id, Op: "op-l1"})
+	if m.env.T != proto.TAck || !slices.ContainsFunc(evs, func(ev proto.Event) bool {
+		return ev.T == proto.EvHandoffHireUpsert && ev.HandoffHire.State == proto.HandoffHireCancelled
+	}) {
+		t.Fatalf("cancel %s %+v", m.raw, evs)
+	}
+	release()
+	upsertFor(c, id, llmJobState(store.HandoffJobCancelled))
+	if hhCreates(lb.fl) != 0 {
+		t.Fatal("hired after a cancel")
+	}
+
+	// Filed: hired with the filed path.
+	lb.llm.llm.Func = nil
+	_, m = c.command(proto.CmdWorkerHandoff, "l2", llmHire("op-l2", 5))
+	ackData[proto.WorkerHandoffJobResult](t, m)
+	rec := lb.handoffHire("op-l2", func(r proto.HandoffHire) bool { return r.Ended() })
+	all, _ := lb.st.AllHandoffs(context.Background())
+	if rec.State != proto.HandoffHireHired || len(all) != 1 || rec.Path != all[0].Path || rec.Hired == "" {
+		t.Fatalf("record %+v", rec)
+	}
+
+	// The model fails: nobody hired, the handoff's reason.
+	lb.llm.llm.Func = func(context.Context, ai.Request) (string, error) {
+		return "", &ai.Error{Kind: ai.KindTimeout, Msg: "slow"}
+	}
+	c.mustAck(proto.CmdWorkerHandoff, llmHire("op-l3", 6))
+	rec = lb.handoffHire("op-l3", func(r proto.HandoffHire) bool { return r.Ended() })
+	if rec.State != proto.HandoffHireFailed || rec.Code != proto.HandoffHireTimeout || !strings.Contains(rec.Reason, "did not answer") {
+		t.Fatalf("record %+v", rec)
+	}
+	if n := hhCreates(lb.fl); n != 1 {
+		t.Fatalf("%d hires", n)
+	}
+
+	// The source leaves while the model writes: nobody hired.
+	out, release = blockLLM(lb)
+	defer release()
+	c.mustAck(proto.CmdWorkerHandoff, llmHire("op-l4", 6))
+	<-out
+	lb.fl.close("w1")
+	rec = lb.handoffHire("op-l4", func(r proto.HandoffHire) bool { return r.Ended() })
+	if rec.State != proto.HandoffHireFailed || rec.Code != proto.HandoffHireSourceGone || rec.WorkerName == "" {
+		t.Fatalf("record %+v", rec)
+	}
+	if n := hhCreates(lb.fl); n != 1 {
+		t.Fatalf("%d hires", n)
+	}
+	lb.noLeak(t, c)
+}
+
+// A schedule's fire takes the first free desk that no pending handoff
+// hire holds.
+func TestHandoffHireScheduleSkipsHeldDesk(t *testing.T) {
+	t.Parallel()
+	ab := startAgentBridge(t, "", "", "", nil)
+	ab.publish(world.Listed{Sessions: []string{"s"}})
+	waitFor(t, "the runner's list", func() bool { return ab.hub.FloorsKnown(context.Background()) })
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdWorkerHandoff, hhArgs(ab.ids["w1"], "op-q", 3, hhTask)) // desks 0-2 are taken: 3 is the first free one
+	sp := spec(time.Now().Add(time.Hour))
+	_, m := c.command(proto.CmdScheduleCreate, "create", sp)
+	s := ackData[proto.Schedule](t, m)
+	c.mustAck(proto.CmdScheduleRunNow, proto.ScheduleArgs{ID: s.ID})
+	var hired *proto.Worker
+	for {
+		ev := c.event()
+		if ev.T == proto.EvWorkerUpsert && ev.Worker.HiredAt != 0 {
+			hired = ev.Worker
+		}
+		if ev.T == proto.EvScheduleUpsert && ev.Schedule.ID == s.ID && ev.Schedule.State == proto.ScheduleDone {
+			break
+		}
+	}
+	if hired == nil || hired.DeskIndex != 4 {
+		t.Fatalf("the schedule hired %+v", hired)
+	}
+}
+
+// A-R1: the target floor goes while the handoff is written, then the
+// bridge restarts before it is filed: the resumed request still knows it
+// had a hire, so its filing hires nobody and sends nobody home (§1.5: only
+// after a hire whose task went); the restart says how the hire ended.
+func TestReviewFloorGoneRestart(t *testing.T) {
+	t.Parallel()
+	ab := startAgentBridge(t, "", "", "", nil)
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	id := ab.ids["w1"]
+	args := hhArgs(id, "op-fg", 5, hhTask)
+	args.SendHome = true
+	c.mustAck(proto.CmdWorkerHandoff, args)
+	text, path, _ := ab.mustRequest(t, "w1:p1")
+	ab.publish(world.FloorGone{Session: "s", Gen: world.NextGen()})
+	ab.handoffHire("op-fg", hhState(proto.HandoffHireFailed))
+	ab.stop()
+
+	ab2 := startAgentBridge(t, ab.db, ab.dir, ab.hdir, nil)
+	c2 := ab2.connect(proto.Hello{})
+	if hh := c2.snapshot().World.HandoffHires; len(hh) != 1 || hh[0].State != proto.HandoffHireFailed || hh[0].Code != proto.HandoffHireFloorGone {
+		t.Fatalf("after the restart %+v", hh)
+	}
+	writeDoc(t, path, agentDoc)
+	appendTo(t, ab2.claude, claudeTurn(text, "Done."))
+	wv := upsertFor(c2, id, agentState(proto.AgentHandoffFiled))
+	if wv.AgentHandoff.SendHomeResult != proto.HandoffSendSkipped {
+		t.Fatalf("the send home after filing: %+v", wv.AgentHandoff)
+	}
+	rec := ab2.handoffHire("op-fg", func(r proto.HandoffHire) bool { return r.Path != "" })
+	if rec.State != proto.HandoffHireFailed || rec.Code != proto.HandoffHireFloorGone || rec.SendHomeResult != proto.HandoffSendSkipped {
+		t.Fatalf("filed after the restart %+v", rec)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if _, ok := workersOf(ab2.world(func(proto.World) bool { return true }), "s")["w1"]; !ok {
+		t.Fatal("the source was sent home")
+	}
+	if n := hhCreates(ab2.fl); n != 0 {
+		t.Fatalf("%d hires", n)
+	}
+}
+
+// A-R2: the same request again after a restart answers its request and
+// the interrupted record; other settings under the op are still refused.
+func TestReviewRestartReplay(t *testing.T) {
+	t.Parallel()
+	ab := startAgentBridge(t, "", "", "", nil)
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	args := hhArgs(ab.ids["w1"], "op-rr", 5, hhTask)
+	c.mustAck(proto.CmdWorkerHandoff, args)
+	ab.mustRequest(t, "w1:p1")
+	ab.stop()
+
+	ab2 := startAgentBridge(t, ab.db, ab.dir, ab.hdir, nil)
+	c2 := ab2.connect(proto.Hello{})
+	c2.snapshot()
+	_, m := c2.command(proto.CmdWorkerHandoff, "again", args)
+	if m.env.T != proto.TAck {
+		t.Fatalf("the same request after the restart: %s", m.raw)
+	}
+	if r := ackData[proto.WorkerHandoffRequestResult](t, m); !r.Existing || r.HandoffHire == nil ||
+		r.HandoffHire.Code != proto.HandoffHireInterrupted || r.Request.State != proto.AgentHandoffPending {
+		t.Fatalf("replay %s", m.raw)
+	}
+	moved := args
+	h := *args.Hire
+	h.DeskIndex = ptr(4)
+	moved.Hire = &h
+	c2.mustError(proto.CmdWorkerHandoff, moved, proto.ErrBadRequest)
+	plain := args
+	plain.Hire = nil
+	c2.mustError(proto.CmdWorkerHandoff, plain, proto.ErrBadRequest)
+	if _, _, _, n := ab2.requested("w1:p1"); n != 0 {
+		t.Fatalf("%d handoff requests after the restart", n)
+	}
+	if n := hhCreates(ab2.fl); n != 0 {
+		t.Fatalf("%d hires", n)
+	}
+}
+
+// A-R2: the same request again once its ended record left the world
+// answers its request (no record to show); other settings are refused.
+func TestReviewPrunedReplay(t *testing.T) {
+	t.Parallel()
+	ab := startAgentBridge(t, "", "", "", func(o *server.Options) { o.HandoffHireKeep = 300 * time.Millisecond })
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	id := ab.ids["w1"]
+	args := hhArgs(id, "op-pr", 5, hhTask)
+	c.mustAck(proto.CmdWorkerHandoff, args)
+	c.mustAck(proto.CmdWorkerHandoffCancel, proto.WorkerHandoffCancelArgs{Worker: id, Op: "op-pr"})
+	eventWhere(c, func(ev proto.Event) bool { return ev.T == proto.EvHandoffHireRemoved && ev.Op == "op-pr" })
+	_, m := c.command(proto.CmdWorkerHandoff, "again", args)
+	if m.env.T != proto.TAck {
+		t.Fatalf("the same request after its record left: %s", m.raw)
+	}
+	if r := ackData[proto.WorkerHandoffRequestResult](t, m); !r.Existing || r.HandoffHire != nil || r.Request.State != proto.AgentHandoffFailed {
+		t.Fatalf("replay %s", m.raw)
+	}
+	moved := args
+	h := *args.Hire
+	h.DeskIndex = ptr(4)
+	moved.Hire = &h
+	c.mustError(proto.CmdWorkerHandoff, moved, proto.ErrBadRequest)
+	if _, _, _, n := ab.requested("w1:p1"); n != 1 {
+		t.Fatalf("%d handoff requests", n)
+	}
+	if w := ab.world(func(proto.World) bool { return true }); len(w.HandoffHires) != 0 {
+		t.Fatalf("records %+v", w.HandoffHires)
+	}
+}
+
+// replyTo reads c's messages until the reply to reqID.
+func replyTo(c *client, reqID string) msg {
+	c.t.Helper()
+	for {
+		if m := c.next(); (m.env.T == proto.TAck || m.env.T == proto.TError) && m.env.ReqID == reqID {
+			return m
+		}
+	}
+}
+
+// A-R3: two clients send the same request before either reads its reply
+// (the second's gate overlaps the first's): both are acked, one as the
+// existing request; one request goes to the agent and one submission's
+// files stay.
+func TestReviewConcurrentReplay(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	ab := startAgentBridge(t, "", "", "", func(o *server.Options) { o.SecretsDir = dir })
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	id := ab.ids["w1"]
+	c1 := ab.connect(proto.Hello{})
+	c1.snapshot()
+	c2 := ab.connect(proto.Hello{})
+	c2.snapshot()
+	for i := range 5 {
+		args := hhArgs(id, fmt.Sprintf("op-cc%d", i), 5, routeText)
+		args.Hire.Secrets = routeReview(t, c)
+		b, _ := json.Marshal(args)
+		c1.send(proto.Command{T: proto.CmdWorkerHandoff, ReqID: "a", Args: b})
+		c2.send(proto.Command{T: proto.CmdWorkerHandoff, ReqID: "b", Args: b})
+		ma, mb := replyTo(c1, "a"), replyTo(c2, "b")
+		if ma.env.T != proto.TAck || mb.env.T != proto.TAck {
+			t.Fatalf("the same request twice at once: %s / %s", ma.raw, mb.raw)
+		}
+		ra, rb := ackData[proto.WorkerHandoffRequestResult](t, ma), ackData[proto.WorkerHandoffRequestResult](t, mb)
+		if ra.Existing == rb.Existing || ra.HandoffHire == nil || rb.HandoffHire == nil {
+			t.Fatalf("acks %s / %s", ma.raw, mb.raw)
+		}
+		eventually(t, "the request", func() bool { _, _, _, n := ab.requested("w1:p1"); return n == i+1 })
+		waitFor(t, "one submission's files", func() bool { return len(protectedFiles(t, dir)) == 2 })
+		time.Sleep(50 * time.Millisecond)
+		if _, _, _, n := ab.requested("w1:p1"); n != i+1 {
+			t.Fatalf("%d handoff requests", n)
+		}
+		if w := ab.world(func(proto.World) bool { return true }); len(w.HandoffHires) != i+1 {
+			t.Fatalf("records %+v", w.HandoffHires)
+		}
+		c.mustAck(proto.CmdWorkerHandoffCancel, proto.WorkerHandoffCancelArgs{Worker: id, Op: args.Op})
+		waitFor(t, "the files released", func() bool { return len(protectedFiles(t, dir)) == 0 })
+	}
+	traceFree(t, ab.st, ab.db, []*client{c, c1, c2}, routeSentinel)
+}
+
+// hhInterpreted is a request whose task is hire.interpret's, answered as
+// reviewed (its hand-over: secrets_pending, two files protected).
+func hhInterpreted(t *testing.T, ab *agBridge, c *client, op string) proto.WorkerHandoffArgs {
+	t.Helper()
+	text := "Hire a Claude Code agent on Haiku 5.5 to " + previewText
+	v := interpretCmd(t, c, "interpret", proto.HireInterpretArgs{Text: text, Secrets: reviewOf(t, c, text, "c3", "c4")})
+	if v.Hire == nil || v.SecretsPending == "" || v.Protected != 2 {
+		t.Fatalf("preview %+v", v)
+	}
+	a := hhArgs(ab.ids["w1"], op, 5, v.Hire.Task.Value)
+	a.Hire.Model, a.Hire.Effort, a.Hire.SecretsPending = "claude-haiku-5-5", "high", v.SecretsPending
+	return a
+}
+
+func hhInterpretOpts(dir string) func(*server.Options) {
+	return func(o *server.Options) {
+		cat := hiCatalog
+		o.HireOptions = &cat
+		o.HireIntentRoles = &hiRoles{state: ai.StateReady, llm: hireTaskLLM()}
+		o.SecretsDir = dir
+	}
+}
+
+// A-R4: a pending hire on hire.interpret's hand-over that ends without a
+// hire (a cancel) releases the hand-over's files.
+func TestReviewBSecretHandoverCancel(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	ab := startAgentBridge(t, "", "", "", hhInterpretOpts(dir))
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	a := hhInterpreted(t, ab, c, "op-ho")
+	c.mustAck(proto.CmdWorkerHandoff, a)
+	if n := len(protectedFiles(t, dir)); n != 2 {
+		t.Fatalf("%d protected files", n)
+	}
+	c.mustAck(proto.CmdWorkerHandoffCancel, proto.WorkerHandoffCancelArgs{Worker: a.Worker, Op: a.Op})
+	ab.handoffHire(a.Op, hhState(proto.HandoffHireCancelled))
+	waitFor(t, "the hand-over's files released", func() bool { return len(protectedFiles(t, dir)) == 0 })
+}
+
+// A-R5: a restart releases the task's files of the hires it interrupted
+// (its own review's, and a hand-over's).
+func TestReviewBSecretsRestart(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	tweak := func(o *server.Options) {
+		hhInterpretOpts(dir)(o)
+		o.SecretsSweep = 20 * time.Millisecond
+	}
+	ab := startAgentBridge(t, "", "", "", tweak)
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	a := hhArgs(ab.ids["w1"], "op-sr", 5, routeText)
+	a.Hire.Model, a.Hire.Effort, a.Hire.Secrets = "claude-haiku-5-5", "high", routeReview(t, c)
+	c.mustAck(proto.CmdWorkerHandoff, a)
+	waitFor(t, "the task's files", func() bool { return len(protectedFiles(t, dir)) == 2 })
+	ab.stop()
+
+	ab2 := startAgentBridge(t, ab.db, ab.dir, ab.hdir, tweak)
+	c2 := ab2.connect(proto.Hello{})
+	c2.snapshot()
+	ab2.handoffHire(a.Op, hhState(proto.HandoffHireFailed))
+	waitFor(t, "the task's files released", func() bool { return len(protectedFiles(t, dir)) == 0 })
+
+	// A hand-over's files too (the request is another worker's: w1 has
+	// one pending).
+	c2.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	b := hhInterpreted(t, ab2, c2, "op-sr2")
+	b.Worker, b.Hire.DeskIndex = ab2.ids["w2"], ptr(6)
+	c2.mustAck(proto.CmdWorkerHandoff, b)
+	waitFor(t, "the hand-over's files", func() bool { return len(protectedFiles(t, dir)) == 2 })
+	ab2.stop()
+	ab3 := startAgentBridge(t, ab.db, ab.dir, ab.hdir, tweak)
+	c3 := ab3.connect(proto.Hello{})
+	c3.snapshot()
+	ab3.handoffHire(b.Op, hhState(proto.HandoffHireFailed))
+	waitFor(t, "the hand-over's files released", func() bool { return len(protectedFiles(t, dir)) == 0 })
+}
+
+// A-R6: the handoff's audit row keeps the hire's hand-over by its
+// presence only, never its token, and its review by its counts.
+func TestReviewBSecretTokenAudit(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	ab := startAgentBridge(t, "", "", "", hhInterpretOpts(dir))
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	a := hhInterpreted(t, ab, c, "op-ta")
+	c.mustAck(proto.CmdWorkerHandoff, a)
+	b := hhArgs(ab.ids["w2"], "op-tb", 6, routeText)
+	b.Hire.Model, b.Hire.Effort, b.Hire.Secrets = "claude-haiku-5-5", "high", routeReview(t, c)
+	c.mustAck(proto.CmdWorkerHandoff, b)
+	rows, _ := ab.st.AuditLog(context.Background())
+	n := 0
+	for _, row := range rows {
+		if row.Cmd != proto.CmdWorkerHandoff {
+			continue
+		}
+		n++
+		if strings.Contains(row.Args, a.Hire.SecretsPending) || strings.Contains(row.Args, `"candidate"`) {
+			t.Fatalf("the handoff's audit row %s", row.Args)
+		}
+		if !strings.Contains(row.Args, `"secrets_pending":true`) && !strings.Contains(row.Args, `"protect":2`) {
+			t.Fatalf("the hire's review is not in the audit row %s", row.Args)
+		}
+	}
+	if n != 2 {
+		t.Fatalf("%d handoff audit rows", n)
+	}
+}
+
+// A-R7: the source's session goes away while its agent writes (the
+// target is another floor): the hire ends, source gone, the desk freed.
+func TestReviewBSourceSessionGone(t *testing.T) {
+	t.Parallel()
+	ab := startAgentBridge(t, "", "", "", nil)
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	ab.floor("other", true)
+	ab.world(func(w proto.World) bool { _, ok := floorByID(w, "other"); return ok })
+	a := hhArgs(ab.ids["w1"], "op-sg", 2, hhTask)
+	a.Hire.Floor, a.Hire.Session = "other", ""
+	c.mustAck(proto.CmdWorkerHandoff, a)
+	ab.mustRequest(t, "w1:p1")
+	ab.publish(world.FloorGone{Session: "s", Gen: world.NextGen()})
+	rec := ab.handoffHire(a.Op, func(r proto.HandoffHire) bool { return r.Ended() })
+	if rec.State != proto.HandoffHireFailed || rec.Code != proto.HandoffHireSourceGone {
+		t.Fatalf("record %+v", rec)
+	}
+	if w := ab.world(func(proto.World) bool { return true }); slices.ContainsFunc(w.HandoffHires, func(r proto.HandoffHire) bool {
+		return !r.Ended()
+	}) {
+		t.Fatalf("a desk is still held: %+v", w.HandoffHires)
+	}
+	h := hireArgs(2) // the fake session shows no new workspace: past the hold, the hire itself fails
+	h.Floor, h.Session = "other", ""
+	if _, m := c.command(proto.CmdWorkerHire, "free", h); codeOf(m) == proto.ErrDeskTaken {
+		t.Fatalf("the desk is still held: %s", m.raw)
+	}
+}
+
+// hhTranslator translates as Codex's harness does, with a skill "grill".
+type hhTranslator struct{ fakePrompts }
+
+func (*hhTranslator) TranslateCached(kind, catalogDir, checkout, text string) string {
+	return harness.Translate(kind, text, []proto.CommandEntry{{Name: "grill", Kind: proto.CommandKindSkill}}, nil)
+}
+
+// A-R8: a Codex hire's first prompt translates the task alone: the line
+// with the filed handoff's path goes verbatim, even when the path reads
+// like a skill call.
+func TestReviewBPromptPath(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "parent ", "grill notes", "handoffs")
+	ab := startAgentBridge(t, "", "", dir, func(o *server.Options) { o.Prompts = &hhTranslator{} })
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	a := hhArgs(ab.ids["w1"], "op-pp", 5, "Do the task /grill")
+	a.Hire.Harness, a.Hire.Model, a.Hire.Effort, a.Hire.HerdrInstructions = "codex", "gpt-6-astra", "ultra", true
+	c.mustAck(proto.CmdWorkerHandoff, a)
+	ab.fileAgent(t, "w1:p1")
+	r := ab.handoffHire(a.Op, hhState(proto.HandoffHireHired))
+	if !strings.Contains(r.Path, "/grill notes/") {
+		t.Fatalf("path %q", r.Path)
+	}
+	w := ab.world(func(w proto.World) bool {
+		return slices.ContainsFunc(w.Workers, func(w proto.Worker) bool { return w.ID == r.Hired })
+	})
+	var ws string
+	for _, wk := range w.Workers {
+		if wk.ID == r.Hired {
+			ws = wk.WorkspaceID
+		}
+	}
+	got := sentPrompt(t, ab.hireBridge, ws+":p1")
+	want := "First read the handoff here: " + r.Path + " and then follow these instructions:\n\nDo the task $grill\n\n" + herdrLines("s")
+	if got != want {
+		t.Fatalf("sent\n%q, want\n%q", got, want)
+	}
+}
+
+// A-R9: a request cancelled while its skill is looked up (its row stored
+// after the cancel) keeps the cancel: a restart publishes no interrupted
+// hire for it.
+func TestReviewBCancelBeforeRowRestart(t *testing.T) {
+	t.Parallel()
+	ab := startAgentBridge(t, "", "", "", nil)
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	gate := make(chan struct{})
+	ab.cat.mu.Lock()
+	ab.cat.gate, ab.cat.entered = gate, make(chan struct{}, 1)
+	entered := ab.cat.entered
+	ab.cat.mu.Unlock()
+	a := hhArgs(ab.ids["w1"], "op-cb", 5, hhTask)
+	c.send(proto.Command{T: proto.CmdWorkerHandoff, ReqID: "start", Args: mustRaw(a)})
+	<-entered
+	other := ab.connect(proto.Hello{})
+	other.snapshot()
+	other.mustAck(proto.CmdWorkerHandoffCancel, proto.WorkerHandoffCancelArgs{Worker: a.Worker, Op: a.Op})
+	close(gate)
+	eventually(t, "the failed row", func() bool {
+		r, err := ab.st.HandoffRequestByOp(context.Background(), a.Op)
+		return err == nil && r.State == store.HandoffRequestFailed
+	})
+	if r, _ := ab.st.HandoffRequestByOp(context.Background(), a.Op); r.Hire == nil || r.Hire.State != proto.HandoffHireCancelled {
+		t.Fatalf("the stored marker %+v", r.Hire)
+	}
+	ab.stop()
+	ab2 := startAgentBridge(t, ab.db, ab.dir, ab.hdir, nil)
+	c2 := ab2.connect(proto.Hello{})
+	if hh := c2.snapshot().World.HandoffHires; len(hh) != 0 {
+		t.Fatalf("after the restart %+v", hh)
+	}
+}
+
+// A-R10: the task's review decisions are part of the request: the same op
+// with other decisions is refused, the first ones stay. A request refused
+// at the review (required, stale) leaves nothing: the same op sent again,
+// reviewed, is accepted.
+func TestReviewBChangedSecretDecisions(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	ab := startAgentBridge(t, "", "", "", func(o *server.Options) { o.SecretsDir = dir })
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	a := hhArgs(ab.ids["w1"], "op-cd", 5, routeText)
+	stale := reviewOf(t, c, routeText, "c3")
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	a.Hire.Secrets = stale
+	c.mustError(proto.CmdWorkerHandoff, a, proto.ErrSecretsReviewStale)
+	a.Hire.Secrets = reviewOf(t, c, routeText, "c1", "c2", "c3")
+	c.mustAck(proto.CmdWorkerHandoff, a)
+	again := a
+	h := *a.Hire
+	h.Secrets = routeReview(t, c)
+	again.Hire = &h
+	c.mustError(proto.CmdWorkerHandoff, again, proto.ErrBadRequest)
+	_, m := c.command(proto.CmdWorkerHandoff, "same", a)
+	if r := ackData[proto.WorkerHandoffRequestResult](t, m); !r.Existing {
+		t.Fatalf("the same request: %s", m.raw)
+	}
+}
+
+// A-R11: a hire that asked for the send home and ends before the filing
+// says the send home is skipped, and why.
+func TestReviewBSendHomeFailureOutcome(t *testing.T) {
+	t.Parallel()
+	ab := startAgentBridge(t, "", "", "", nil)
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	a := hhArgs(ab.ids["w1"], "op-hf", 5, hhTask)
+	a.SendHome = true
+	c.mustAck(proto.CmdWorkerHandoff, a)
+	c.mustAck(proto.CmdWorkerHandoffCancel, proto.WorkerHandoffCancelArgs{Worker: a.Worker, Op: a.Op})
+	r := ab.handoffHire(a.Op, hhState(proto.HandoffHireCancelled))
+	if r.SendHomeResult != proto.HandoffSendSkipped || !strings.Contains(r.SendHomeReason, "stays") {
+		t.Fatalf("record %+v", r)
+	}
+}
+
+// A-R12: an interrupted hire's marker keeps its task files' pending owners
+// until a start released them: a bridge that stops again while starting
+// (the marker said interrupted, the files not yet released) releases them
+// on its next start, also for a request that settled meanwhile; the
+// marker then has no owner, and says interrupted.
+func TestReviewDoubleRestartSecretCleanup(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	tweak := func(o *server.Options) {
+		o.SecretsDir = dir
+		o.SecretsSweep = 20 * time.Millisecond
+	}
+	ctx := context.Background()
+	ab := startAgentBridge(t, "", "", "", tweak)
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	a := hhArgs(ab.ids["w1"], "op-dra", 5, routeText)
+	a.Hire.Secrets = routeReview(t, c)
+	c.mustAck(proto.CmdWorkerHandoff, a)
+	b := hhArgs(ab.ids["w2"], "op-drb", 6, routeText)
+	b.Hire.Secrets = routeReview(t, c)
+	c.mustAck(proto.CmdWorkerHandoff, b)
+	waitFor(t, "the tasks' files", func() bool { return len(protectedFiles(t, dir)) == 4 })
+	for _, op := range []string{a.Op, b.Op} {
+		eventually(t, "the request "+op, func() bool {
+			_, err := ab.st.HandoffRequestByOp(ctx, op)
+			return err == nil
+		})
+	}
+	ab.stop()
+
+	// A start that stops before Run: the markers say interrupted, the
+	// files are not released yet.
+	st, err := store.Open(ctx, ab.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub, err := server.NewHub(ctx, st, server.Options{Log: quietLog(), Handoffs: hoService(t, ab.hdir, ab.db), SecretsDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub.StopBeforeRun()
+	for _, op := range []string{a.Op, b.Op} {
+		r, err := st.HandoffRequestByOp(ctx, op)
+		if err != nil || r.Hire == nil || r.Hire.Code != proto.HandoffHireInterrupted || len(r.Hire.Owners) != 1 {
+			t.Fatalf("%s's marker after a start without Run: %+v, %v", op, r.Hire, err)
+		}
+	}
+	// b's request settles meanwhile: it no longer resumes.
+	rb, _ := st.HandoffRequestByOp(ctx, b.Op)
+	rb.State = store.HandoffRequestFailed
+	if err := st.UpdateHandoffRequest(ctx, rb); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	if n := len(protectedFiles(t, dir)); n != 4 {
+		t.Fatalf("%d protected files before the next start", n)
+	}
+
+	ab2 := startAgentBridge(t, ab.db, ab.dir, ab.hdir, tweak)
+	c2 := ab2.connect(proto.Hello{})
+	c2.snapshot()
+	ab2.handoffHire(a.Op, hhState(proto.HandoffHireFailed))
+	waitFor(t, "the tasks' files released", func() bool { return len(protectedFiles(t, dir)) == 0 })
+	for _, op := range []string{a.Op, b.Op} {
+		eventually(t, op+"'s marker without its owners", func() bool {
+			r, err := ab2.st.HandoffRequestByOp(ctx, op)
+			return err == nil && r.Hire != nil && len(r.Hire.Owners) == 0 && r.Hire.Code == proto.HandoffHireInterrupted
+		})
+	}
+	if hh := ab2.world(func(proto.World) bool { return true }).HandoffHires; len(hh) != 1 || hh[0].Op != a.Op ||
+		hh[0].Code != proto.HandoffHireInterrupted {
+		t.Fatalf("after the restart %+v", hh)
+	}
+}

@@ -13,6 +13,11 @@ import { BOX_TAPE } from '../palette';
 import { followupLine, followupOf, questionsCount } from '../../world/followup';
 // #157: a shared Codex worker's async questions.
 import { askingText, asyncLine } from '../../world/codexQuestions';
+// #219: a handoff hire on its way.
+import { handoffHireLine } from '../../world/handoffHire';
+
+/** #219: the tape of a worker whose handoff hires someone once it is filed (its line says where). */
+export const HANDOFF_TAPE = 'HANDOFF';
 
 /**
  * What a worker's speech bubble says: its name, status and task; M5: a
@@ -51,5 +56,12 @@ export function cardOf(v: WorkerView, focus = false): CardData {
   const wrap = wrapUpOf(v.worker);
   if (wrap?.state === 'armed' && v.display !== 'needs_you' && v.display !== 'asleep') card.tape = { text: WRAPPING_UP, color: BOX_TAPE, box: true };
   else if (wrap?.state === 'needs_you' && !card.ask) card.task = needsYouLine(wrap);
+  // #219: its handoff hires someone once filed: the task line says where, so nobody hires into that desk (a question
+  // or a wrap-up goes first).
+  const hh = v.handoffHire;
+  if (hh && !card.ask && !card.tape && v.display !== 'asleep') {
+    card.task = handoffHireLine(hh);
+    if (v.display !== 'needs_you') card.tape = { text: HANDOFF_TAPE, color: BOX_TAPE };
+  }
   return card;
 }

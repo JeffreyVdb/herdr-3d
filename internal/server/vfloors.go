@@ -231,6 +231,7 @@ func (h *Hub) floorDelete(ctx context.Context, a proto.FloorDeleteArgs) error {
 	}
 	delete(h.vfloors, v.ID)
 	delete(h.floors, v.ID)
+	h.handoffHireFloorGone(ctx, v.ID) // #219
 	delete(h.desks, v.ID)
 	delete(h.names, v.ID)
 	delete(h.settings, v.ID)

@@ -1,4 +1,5 @@
 import { hireFailure, mcpSummary } from '../world/startup';
+import type { HandoffHireAnnouncer } from './handoffHires';
 import type { HireFailure } from '../net/protocol';
 import type { CommandResult } from '../net/client';
 import type { CodexProfile, CommandArgs, CommandName, HireAck, HireGit, HireOptions, HirePrepare, HirePreset } from '../net/protocol';
@@ -105,6 +106,10 @@ export interface HireHost extends DialogHost {
   beep?(): void;
   /** #210: a background hire's undelivered first task into the new worker's Prompt (P) note (`HireCoordinatorHost.holdTask`). */
   holdTask?: HireCoordinatorHost['holdTask'];
+  /** #219: who says how a handoff hire the bridge makes ended (absent: the review hires after filing itself, as #198). */
+  handoffHires?: HandoffHireAnnouncer;
+  /** #219 B-R6: a timer (absent: `setTimeout`): a handoff request that got no answer is asked again after a while. */
+  later?(fn: () => void, ms: number): void;
   /** #198: the hire's review back to its handoff step (step 1), with the plan, the task and the hire's choices as they are. */
   handoffBack?(plan: HandoffPlan, task: string, carry: HireCarry): void;
   /** #39: the app's lists of commands and skills (shared with the transcript); absent: the dialog keeps its own. */

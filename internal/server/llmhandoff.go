@@ -84,7 +84,13 @@ type llmJob struct {
 	// rev is the reviewer its instruction's review was made under (#108;
 	// nil: none).
 	rev *promptsecret.Reviewer
+	// hire (#219): a pending hire follows its filing (its record decides
+	// the send home).
+	hire bool
 }
+
+// llmWorkerLeft is why a job stopped when its worker left.
+const llmWorkerLeft = "the worker left while the handoff was being written; nothing was filed"
 
 type llmStop struct{ state, code, msg string }
 
@@ -236,7 +242,7 @@ func (h *Hub) forgetLLMHandoff(id string) {
 		return
 	}
 	if !j.settled() {
-		h.stopLLMJob(j, store.HandoffJobFailed, proto.ErrHandoffLLMStale, "the worker left while the handoff was being written; nothing was filed")
+		h.stopLLMJob(j, store.HandoffJobFailed, proto.ErrHandoffLLMStale, llmWorkerLeft)
 	}
 	if !j.filing {
 		delete(h.llm.byWorker, id)
@@ -482,9 +488,11 @@ type llmReport struct {
 // stored and audited, answered at once; the work runs off the hub goroutine
 // and the job is followed on Worker.LLMHandoff. started (#108; nil: none)
 // is told when the job starts (not for an existing op's answer, nor when
-// it could not be stored).
+// it could not be stored). hire (#219; nil: none) is the pending hire that
+// follows the filing: registered with the job (its review undone when the
+// job could not be stored), the caller's to undo on a refusal.
 func (h *Hub) startLLMHandoff(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHandoffArgs, rev *promptsecret.Reviewer,
-	started func()) error {
+	started func(), hire *handoffHire) error {
 	svc := h.llm.svc
 	switch {
 	case svc == nil:
@@ -502,7 +510,7 @@ func (h *Hub) startLLMHandoff(ctx context.Context, c *Client, cmd proto.Command,
 			return fmt.Errorf("%w: op %q was used for another handoff", handoff.ErrOpReused, a.Op)
 		}
 		h.audit(ctx, c, cmd, nil)
-		h.reply(c, cmd, proto.WorkerHandoffJobResult{Job: prev.view(), Existing: true}, nil)
+		h.reply(c, cmd, proto.WorkerHandoffJobResult{Job: prev.view(), Existing: true, HandoffHire: h.handoffHireView(a.Op)}, nil)
 		return nil
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return err
@@ -521,7 +529,10 @@ func (h *Hub) startLLMHandoff(ctx context.Context, c *Client, cmd proto.Command,
 	model, host := llmRecipient(h.llm.roles)
 	j := &llmJob{model: model, host: host, row: store.HandoffLLMJob{Op: a.Op, WorkerID: w.ID, Floor: workerFloor(w), AgentSession: w.AgentSession,
 		Candidate: hc.c.ID, ArgsHash: hash, Config: svc.Fingerprint(), PromptVersion: handoffllm.PromptVersion, SendHome: a.SendHome,
-		State: store.HandoffJobRunning, CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli()}, rev: rev}
+		State: store.HandoffJobRunning, CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli()}, rev: rev, hire: hire != nil}
+	if hire != nil { // #219: its row carries the hire's marker
+		j.row.Hire = hire.marker()
+	}
 	// The audit row first, then the job row, then nothing that can fail
 	// before the job runs: a stored running job always has its goroutine.
 	// When either insert fails nothing is stored, nothing was sent, and the
@@ -537,6 +548,9 @@ func (h *Hub) startLLMHandoff(ctx context.Context, c *Client, cmd proto.Command,
 		if e := h.st.AuditEnd(ctx, auditID, err, nil); e != nil {
 			h.log.Error("audit log write failed", "err", e)
 		}
+		if hire != nil { // never registered: its task's review goes
+			h.dropHireSecrets(ctx, hire.sec)
+		}
 		h.reply(c, cmd, nil, err) // its audit row is the one begun
 		return nil
 	}
@@ -548,7 +562,10 @@ func (h *Hub) startLLMHandoff(ctx context.Context, c *Client, cmd proto.Command,
 	}
 	h.llm.byWorker[w.ID] = j
 	h.publishLLMHandoff(w.ID)
-	h.reply(c, cmd, proto.WorkerHandoffJobResult{Job: j.view()}, nil)
+	if hire != nil {
+		h.addHandoffHire(hire)
+	}
+	h.reply(c, cmd, proto.WorkerHandoffJobResult{Job: j.view(), HandoffHire: h.handoffHireView(a.Op)}, nil)
 	h.log.Info("LLM handoff started", "worker", w.ID, "op", a.Op, "model", clip(model), "host", clip(host))
 	facts := handoffllm.Facts{Now: now, Floor: h.workerFloorName(w), Worker: w.Name, Label: w.Label, Harness: harnessOf(w), Model: w.Model,
 		Session: hc.c.Session, Candidate: hc.c.ID, Through: hc.c.Through, Cwd: checkoutOf(w), ReportedBranch: w.Branch}
@@ -679,7 +696,7 @@ func (h *Hub) runLLMHandoff(jctx, hctx context.Context, j *llmJob, hc *handoffCa
 			case j.stop != nil || jctx.Err() != nil:
 				stale = context.Canceled
 			case w == nil:
-				j.stop = &llmStop{store.HandoffJobFailed, proto.ErrHandoffLLMStale, "the worker left while the handoff was being written; nothing was filed"}
+				j.stop = &llmStop{store.HandoffJobFailed, proto.ErrHandoffLLMStale, llmWorkerLeft}
 				stale = context.Canceled
 			case w.AgentSession != j.row.AgentSession:
 				j.stop = &llmStop{store.HandoffJobFailed, proto.ErrHandoffLLMStale, "the worker's agent session changed while the handoff was being written; nothing was filed"}
@@ -796,7 +813,18 @@ func (h *Hub) settleLLMJob(ctx context.Context, j *llmJob, filed store.Handoff, 
 		e := entryOf(filed)
 		h.emit(proto.Event{T: proto.EvHandoffAdded, Session: h.sessionOf(filed.Floor), FloorID: filed.Floor, Handoff: &e, HandoffCount: &n})
 		h.log.Info("LLM handoff filed", "worker", j.row.WorkerID, "op", j.row.Op, "handoff", filed.ID, "path", filed.Path, "bytes", rep.DocBytes)
-		if j.row.SendHome {
+		// #219: a pending hire hires first; its record decides the send
+		// home.
+		if !h.handoffHireFiled(ctx, j.row.Op, j.hire, filed, func(result, why string) {
+			if !j.row.SendHome {
+				return
+			}
+			j.homeResult, j.homeWhy = result, why
+			rep.SendHome, rep.Reason = result, why
+			if h.llm.byWorker[j.row.WorkerID] == j && h.workers[j.row.WorkerID] != nil {
+				h.publishLLMHandoff(j.row.WorkerID)
+			}
+		}) && j.row.SendHome {
 			j.homeResult, j.homeWhy = h.handoffSendHome(ctx, by, j.row.WorkerID, filed.ID)
 			rep.SendHome, rep.Reason = j.homeResult, j.homeWhy
 		}
@@ -805,6 +833,16 @@ func (h *Hub) settleLLMJob(ctx context.Context, j *llmJob, filed store.Handoff, 
 		rep.Outcome = j.row.Code
 		aerr = errors.New(j.row.Code)
 		h.log.Warn("LLM handoff not filed", "worker", j.row.WorkerID, "op", j.row.Op, "code", j.row.Code)
+		code := proto.HandoffHireHandoffFailed // #219: its pending hire ends with it
+		switch {
+		case j.row.State == store.HandoffJobCancelled:
+			code = proto.HandoffHireCancelledCode
+		case j.row.Message == llmWorkerLeft:
+			code = proto.HandoffHireSourceGone
+		case j.row.Code == string(ai.KindTimeout):
+			code = proto.HandoffHireTimeout
+		}
+		h.handoffHireFailed(ctx, j.row.Op, code, j.row.Message)
 	}
 	if serr := h.st.UpdateHandoffLLMJob(ctx, j.row); serr != nil {
 		h.log.Error("saving the LLM handoff job failed", "op", j.row.Op, "err", serr)
@@ -834,6 +872,7 @@ func (h *Hub) llmHandoffCancel(ctx context.Context, c *Client, cmd proto.Command
 		return true, fmt.Errorf("%w: the handoff is being filed", errBusy)
 	case !j.settled():
 		h.stopLLMJob(j, store.HandoffJobCancelled, "cancelled", "cancelled; nothing was filed")
+		h.handoffHireCancel(ctx, a.Op) // #219: its pending hire with it, now
 	default:
 		delete(h.llm.byWorker, a.Worker)
 		h.publishLLMHandoff(a.Worker)

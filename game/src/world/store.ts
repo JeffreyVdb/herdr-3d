@@ -4,6 +4,7 @@ import type {
   FloorSettings,
   FloorSuggested,
   FloorTransition,
+  HandoffHire,
   HireOptions,
   Snapshot,
   Worker,
@@ -44,6 +45,7 @@ import { NotifyBook } from './notifySettings';
 import { HandoffBook } from './handoff';
 import { ScheduleBook } from './schedule';
 import { ManualProcessBook } from './manualProcess';
+import { HandoffHireBook } from './handoffHire';
 import { ChildBook } from './children';
 import { floorGroups, FloorListBook } from './floorList';
 import { LimitBook } from './limits';
@@ -70,6 +72,8 @@ export interface WorkerView {
   crew?: CrewView | null;
   /** #157: how many of a shared Codex worker's async questions want an answer (it works on meanwhile; 0: none). */
   asks?: number;
+  /** #219: its pending handoff hire (it is the source), for its card's line. */
+  handoffHire?: HandoffHire | null;
 }
 
 export interface Counts {
@@ -262,6 +266,8 @@ export class WorldStore {
   readonly notifySettings = new NotifyBook(); // #11
   readonly handoffs = new HandoffBook(); // #223
   readonly manualProcesses = new ManualProcessBook();
+  /** #219: pending handoff hires (`known` false from a bridge without them). */
+  readonly handoffHires = new HandoffHireBook();
   host = '';
   readonly schedules = new ScheduleBook(); // #64 schedules
   /** #22 native child agents, per worker and generation (`known` false from a bridge before #22: none). */
@@ -326,6 +332,7 @@ export class WorldStore {
     this.handoffs.reset(s.world.handoffs); // #223
     this.host = typeof s.world.host === 'string' ? s.world.host : '';
     this.manualProcesses.reset(s.world.manual_processes);
+    this.handoffHires.reset(s.world.handoff_hires); // #219
     this.schedules.reset(s.world.schedules, s.world.schedule_herdr_instructions); // #64 schedules (a bridge before #62 sends none), #127
     this.children.reset(s.world.children, s.world.workers.filter((w) => w && typeof w.id === 'string')); // #22 (none before #22)
     this.hirePresets.reset(s.world.hire_presets, s.world.herdr_instructions); // #93 (a bridge before #93 sends none), #95
@@ -517,6 +524,17 @@ export class WorldStore {
       case 'manual_process.removed':
         this.manualProcesses.removed(e.id);
         break;
+      // #219: the target desk's hold and the source's card follow the record.
+      case 'handoff_hire.upsert': {
+        const was = this.handoffHires.upsert(e.handoff_hire);
+        if (was !== null) for (const r of [was, e.handoff_hire]) if (r) this.touchHandoffHire(c, r);
+        break;
+      }
+      case 'handoff_hire.removed': {
+        const was = this.handoffHires.removed(e.op);
+        if (was) this.touchHandoffHire(c, was);
+        break;
+      }
       case 'schedule.upsert':
         this.schedules.upsert(e.schedule);
         break;
@@ -607,7 +625,18 @@ export class WorldStore {
       display: (crew?.needsYou || ask || followup || wrapStuck) && !asleep ? 'needs_you' : !asleep && isWaiting(w) ? 'waiting' : displayStatus(effectiveStatus(w), asleep),
       crew,
       asks: asleep ? 0 : asyncAttention(w),
+      handoffHire: this.handoffHires.forWorker(id) ?? null,
     };
+  }
+
+  /** #219: a handoff hire changed: its target floor's desks and its source worker's card. */
+  private touchHandoffHire(c: Change, r: HandoffHire): void {
+    c.floors.add(r.floor);
+    const src = this.workers.get(r.worker);
+    if (src) {
+      c.workers.add(src.id);
+      c.floors.add(src.floor);
+    }
   }
 
   /** #58: the name a person sees for a floor id, also once the floor is gone (a `v-` id never shows). */

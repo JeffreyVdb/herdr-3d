@@ -96,6 +96,8 @@ import { LimitsWidget } from './ui/limits';
 import { InboxChip, type InboxEntry } from './ui/inbox';
 import { HirePrefs } from './ui/hirePrefs';
 import { HireCoordinator } from './ui/hireCoordinator';
+import { HandoffHireAnnouncer } from './ui/handoffHires';
+import { pendingHire } from './world/handoffHire';
 import { HireModelPrefs } from './ui/hireModelPrefs';
 import { HirePins } from './ui/hirePins';
 import { harnessModelsSection } from './ui/harnessModelsSection';
@@ -265,6 +267,10 @@ export class App {
   readonly hireReview: HireReviewDialog;
   /** #210: every hire on its way, from Hire to its outcome. */
   readonly hires: HireCoordinator;
+  /** #219: says how a handoff hire the bridge made for this browser ended, once. */
+  readonly handoffHires: HandoffHireAnnouncer;
+  /** #219: the desks the bridge held for handoff hires, as last shown (`floor:desk`): one that ends is given back. */
+  private bridgeHeld = new Set<string>();
   readonly sendHome: SendHomeDialog;
   /** #108: the review of a prompt's possible secrets, and the send flow every composer goes through. */
   readonly secretsReview: SecretsReviewDialog;
@@ -730,6 +736,7 @@ export class App {
           // M5: a dropped connection took every watch with it; the next live one watches again.
           this.laptops.setConnected(s.phase === 'live');
           if (s.phase === 'live' && !wasLive) this.runTerminals.reconnect(); // #216: the dialog's and the Runs view's run terminals
+          if (s.phase === 'live' && !wasLive) this.hireReview.online(); // #219 B-R6: handoff requests that got no answer are asked again
           if ((s.phase === 'live') !== wasLive) this.syncAttention(); // #213: no Respond without a connection
           this.screen.setConnected(s.phase === 'live'); // M13: a new connection is told whether this game shares
           this.hud.setConn(s, this.fixture, Date.now());
@@ -826,6 +833,15 @@ export class App {
       workerView: (id) => this.store.workerView(id),
       holdTask: (id, text, from) => this.prompt.holdTask(id, text, from instanceof PromptDraft ? from : undefined),
     });
+    // #219: one announcer for the handoff hires the bridge makes: the review that sent one, or a reload, hands it over.
+    this.handoffHires = new HandoffHireAnnouncer({
+      records: () => this.store.handoffHires.all(),
+      toast: dialogHost.toast,
+      beep: () => this.audio.playUi('spawned'),
+      floorName: (id) => this.store.floorName(id),
+      workerView: (id) => this.store.workerView(id),
+      holdTask: (id, text) => this.prompt.holdTask(id, text),
+    });
     // #93: the desk dialogs' third tab; "Save as preset…" opens its editor over the hire form.
     const presetsAt = (s: string, d: number) => {
       this.hirePresets.open(s, d);
@@ -864,6 +880,7 @@ export class App {
       ...hireHost,
       hirePrefs: this.hirePrefs,
       hires: this.hires,
+      handoffHires: this.handoffHires, // #219
       goTo: (id) => this.goToNewHire(id),
       // #198: a hire with a handoff whose task did not reach the new worker: the composed task goes to their Prompt (P) note.
       holdTask: (id, text, from) => this.prompt.holdTask(id, text, from instanceof PromptDraft ? from : undefined),
@@ -1254,6 +1271,8 @@ export class App {
     if (this.store.hirePresets.known) this.hirePins.prune((id) => this.store.hirePresets.get(id) !== null);
     this.hire.refresh();
     this.hireReview.refresh();
+    this.handoffHires.sync(); // #219: after the review, which says the outcome of the op it is open on
+    this.syncHandoffHolds();
     this.sendHome.refresh();
     this.revokeSecrets.refresh(); // #108 round 4
     this.syncManualProcesses();
@@ -1780,7 +1799,9 @@ export class App {
     const o = this.office;
     if (!o) return;
     let packing: Set<number> | null = null;
-    for (const r of this.reserved.all()) {
+    // #219: and the desks the bridge holds for a handoff hire, for every client.
+    const bridge = [...this.store.handoffHires.held(o.id)].map((desk) => ({ floor: o.id, desk }));
+    for (const r of [...this.reserved.all(), ...bridge]) {
       if (o.id !== r.floor || o.seat(r.desk)) continue;
       packing ??= this.packingDesks(o.id);
       if (!packing.has(r.desk)) o.setAway(r.desk, RESERVED);
@@ -1797,7 +1818,28 @@ export class App {
 
   /** #53: what a walk's desk shows: as the walk says, and a desk it gave back that a hire is on its way to stays reserved. */
   private walkAway(o: OfficeView, d: DeskAway): AwaySeat | null {
-    return d.away ?? (this.reserved.has(d.floor, d.desk) && !o.seat(d.desk) ? RESERVED : null);
+    return d.away ?? ((this.reserved.has(d.floor, d.desk) || !!this.store.handoffHires.holding(d.floor, d.desk)) && !o.seat(d.desk) ? RESERVED : null);
+  }
+
+  /**
+   * #219: the bridge's handoff hire holds changed: a desk it no longer holds shows as it is again (unless a hire of
+   * this page or a walk still holds it, or someone sits there now); the ones it holds show as reserved.
+   */
+  private syncHandoffHolds(): void {
+    const now = new Set<string>();
+    for (const r of this.store.handoffHires.all()) if (pendingHire(r)) now.add(`${r.floor}:${r.desk_index}`);
+    const o = this.office;
+    for (const k of this.bridgeHeld) {
+      if (now.has(k)) continue;
+      const at = k.lastIndexOf(':');
+      const floor = k.slice(0, at);
+      const desk = Number(k.slice(at + 1));
+      if (o?.id !== floor || this.reserved.has(floor, desk) || o.seat(desk)) continue;
+      const walking = this.arrivals.info(performance.now() / 1000).some((a) => a.floor === floor && a.desk === desk);
+      if (!walking) o.setAway(desk, null);
+    }
+    this.bridgeHeld = now;
+    this.applyReserve();
   }
 
   /**
@@ -1807,6 +1849,8 @@ export class App {
    */
   heldDesks(floor: string): Set<number> {
     const out = this.reserved.desks(floor);
+    // #219: a desk the bridge holds for a handoff hire is nobody else's.
+    for (const d of this.store.handoffHires.held(floor)) out.add(d);
     for (const a of this.arrivals.info(performance.now() / 1000)) if (a.floor === floor && a.kind === 'in') out.add(a.desk);
     return out;
   }

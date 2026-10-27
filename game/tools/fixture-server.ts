@@ -106,12 +106,20 @@ export interface FixtureOptions {
   log?: (msg: string) => void;
 }
 
-function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string, sim: SimOptions | null, logoKey: string | null, seedLogos = false, wbKey: string | null = null): void {
+/**
+ * #219: `simkeep=<key>`: the simulated world of the key's first connection, kept for the next ones of the same fixture
+ * (a reload finds the bridge as it left it: workers, handoff requests, pending hires). Never disposed.
+ */
+const keptWorlds = new Map<string, SimWorld>();
+
+function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string, sim: SimOptions | null, logoKey: string | null, seedLogos = false, wbKey: string | null = null, keep: string | null = null): void {
   const send = (m: unknown) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(m));
   let greeted = false;
   const timers: ReturnType<typeof setTimeout>[] = [];
   // #26: a children fixture's children are the simulated world's from the start (it plays no recorded events).
-  const world = sim ? new SimWorld(rec.snapshot, { ...sim, childEvents: rec.events.filter((e) => typeof e.t === 'string' && e.t.startsWith('child.')) }) : null;
+  const kept = sim && keep !== null ? keptWorlds.get(keep) : undefined;
+  const world = kept ?? (sim ? new SimWorld(rec.snapshot, { ...sim, childEvents: rec.events.filter((e) => typeof e.t === 'string' && e.t.startsWith('child.')) }) : null);
+  if (world && keep !== null && !kept) keptWorlds.set(keep, world);
   // M3d: /logo requests with the same `simlogo=<key>` belong to this world.
   if (world && seedLogos) world.seedLogos();
   const unregister = world && logoKey !== null ? registerLogoWorld(logoKey, world) : null;
@@ -121,7 +129,7 @@ function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string, sim: Si
     timers.forEach(clearTimeout);
     unregister?.();
     unregisterWb?.();
-    world?.dispose();
+    if (keep === null) world?.dispose();
   });
   ws.on('message', (data) => {
     let m: { t?: unknown; proto?: unknown; req_id?: unknown };
@@ -277,6 +285,8 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             // #9: LLM handoffs with no endpoint: the feature's state and the jobs' outcome (tools/fixture-handoff.ts).
             ...(q.get('simhandoffllm') ? { handoffLlm: q.get('simhandoffllm') as string } : {}),
             ...(q.get('simhandoffllmout') ? { handoffLlmOut: q.get('simhandoffllmout') as string } : {}),
+            // #219: the bridge hires after an agent or LLM handoff itself (`world.handoff_hires`; tools/fixture-handoffhire.ts).
+            ...(q.get('simhandoffhires') === '1' ? { handoffHires: true } : {}),
             // #247: demo-m5's floors set up for `@r:`, the shared switch shared by the key's connections (tools/fixture-repos.ts).
             ...(q.get('simrepos') ? { repos: q.get('simrepos') as string } : {}),
             // #93: the hire presets shared by the key's connections, kept across reloads like a bridge's (tools/fixture-hirepreset.ts).
@@ -289,7 +299,7 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
         : null;
     wss.handleUpgrade(req, socket, head, (ws) => {
       o.log?.(`fixture ${name}: client connected (${sim ? `simulating, step ${sim.stepMs} ms` : `play=${mode}`})`);
-      play(ws, rec, mode, epoch, sim, q.get('simlogo'), q.get('simlogos') === '1', q.get('wb_key'));
+      play(ws, rec, mode, epoch, sim, q.get('simlogo'), q.get('simlogos') === '1', q.get('wb_key'), q.get('simkeep') ? `${name}:${q.get('simkeep')}` : null);
     });
     return true;
   };

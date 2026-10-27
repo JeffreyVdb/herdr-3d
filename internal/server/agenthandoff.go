@@ -99,6 +99,9 @@ type agentHandoff struct {
 	// Filed: the handoff and how the send home went.
 	handoff           *store.Handoff
 	sendHome, homeWhy string
+	// hire (#219): a pending hire follows its filing (its record decides
+	// the send home).
+	hire bool
 }
 
 // agentHandoffState is the hub's part (hub goroutine).
@@ -160,7 +163,8 @@ func (h *Hub) loadAgentHandoffs(ctx context.Context) error {
 	}
 	keep := map[string]bool{}
 	for _, r := range rows {
-		ah := &agentHandoff{req: r, at: time.UnixMilli(r.CreatedAt), state: proto.AgentHandoffPending, lines: -1, by: "handoff"}
+		ah := &agentHandoff{req: r, at: time.UnixMilli(r.CreatedAt), state: proto.AgentHandoffPending, lines: -1, by: "handoff",
+			hire: r.Hire != nil}
 		h.ah.byOp[r.Op] = ah
 		h.ah.byWorker[r.WorkerID] = ah
 		switch {
@@ -268,6 +272,9 @@ type agentAsk struct {
 	// rev (#108, nil: none) is the instruction's review, checked again
 	// right before the request's prompt goes (review B2, pass 2).
 	rev *promptsecret.Reviewer
+	// hire (#219, nil: none) is the pending hire that follows its filing,
+	// registered as the request is made.
+	hire *handoffHire
 }
 
 // agentInstruction is an instruction as sent: trimmed, the default when
@@ -375,6 +382,10 @@ func (h *Hub) startAgentHandoff(ctx context.Context, c *Client, cmd proto.Comman
 		checking: true, client: c, cmd: cmd, auditID: auditID, answer: a.answer, settle: a.settle, rev: a.rev, by: c.name, lines: -1}
 	h.ah.byOp[a.op] = ah
 	h.ah.byWorker[w.ID] = ah
+	if a.hire != nil { // #219: its row carries the hire's marker
+		ah.hire, ah.req.Hire = true, a.hire.marker()
+		h.addHandoffHire(a.hire)
+	}
 	h.publishAgentHandoff(w.ID)
 	h.log.Info("agent handoff starting", "client", c.name, "req_id", cmd.ReqID, "worker", w.ID, "op", a.op)
 	kind, dir, floor, svc := w.AgentKind, checkoutOf(w), w.Session, h.ho.svc
@@ -582,6 +593,12 @@ func (h *Hub) saveAgentHandoff(ctx context.Context, ah *agentHandoff) {
 // worker stays, and its reserved file (if the agent wrote one) goes to the
 // trash.
 func (h *Hub) failAgentHandoff(ctx context.Context, ah *agentHandoff, reason string) {
+	h.failAgentHandoffAs(ctx, ah, proto.HandoffHireHandoffFailed, reason)
+}
+
+// failAgentHandoffAs is failAgentHandoff, its pending hire (#219) ended
+// with code (cancelled, timeout, source_gone, handoff_failed).
+func (h *Hub) failAgentHandoffAs(ctx context.Context, ah *agentHandoff, code, reason string) {
 	if !ah.pending() && ah.state != "" {
 		return
 	}
@@ -601,6 +618,7 @@ func (h *Hub) failAgentHandoff(ctx context.Context, ah *agentHandoff, reason str
 	}
 	h.log.Info("agent handoff failed", "worker", ah.req.WorkerID, "op", ah.req.Op, "reason", reason)
 	h.publishAgentHandoff(ah.req.WorkerID)
+	h.handoffHireFailed(ctx, ah.req.Op, code, reason)
 }
 
 // agentTookOver fails a worker's running request when a person prompts,
@@ -624,7 +642,7 @@ func (h *Hub) forgetAgentHandoff(ctx context.Context, id string) {
 		return
 	}
 	if ah.state == proto.AgentHandoffStarting || ah.state == proto.AgentHandoffPending {
-		h.failAgentHandoff(ctx, ah, "the worker is gone")
+		h.failAgentHandoffAs(ctx, ah, proto.HandoffHireSourceGone, "the worker is gone")
 		h.endAgentStart(ctx, ah, fmt.Errorf("%w: %q is gone", errUnknownWorker, id))
 	}
 	if ah.state != proto.AgentHandoffFiling {
@@ -663,7 +681,7 @@ func (h *Hub) agentSeen(ctx context.Context, u agentUpdate) {
 		h.failAgentHandoff(ctx, ah, "a person took over")
 		return
 	case now.Sub(ah.at) >= h.opts.AgentHandoffTimeout:
-		h.failAgentHandoff(ctx, ah, "no handoff within "+h.opts.AgentHandoffTimeout.String())
+		h.failAgentHandoffAs(ctx, ah, proto.HandoffHireTimeout, "no handoff within "+h.opts.AgentHandoffTimeout.String())
 		return
 	case !st.Prompted || !st.Ended:
 		ah.lines, ah.idleAt = -1, time.Time{}
@@ -805,7 +823,14 @@ func (h *Hub) adoptAgentHandoff(ctx context.Context, ah *agentHandoff, w *proto.
 				h.emit(proto.Event{T: proto.EvHandoffAdded, Session: h.sessionOf(filed.Floor), FloorID: filed.Floor, Handoff: &e, HandoffCount: &n})
 				h.log.Info("agent handoff filed", "worker", ah.req.WorkerID, "op", ah.req.Op, "handoff", filed.ID, "path", filed.Path)
 			}
-			if ah.req.SendHome {
+			// #219: a pending hire hires first; its record decides the
+			// send home.
+			if !h.handoffHireFiled(ctx, ah.req.Op, ah.hire, filed, func(result, why string) {
+				if ah.req.SendHome {
+					ah.sendHome, ah.homeWhy = result, why
+					h.publishAgentHandoff(ah.req.WorkerID)
+				}
+			}) && ah.req.SendHome {
 				ah.sendHome, ah.homeWhy = h.handoffSendHome(ctx, ah.by, ah.req.WorkerID, filed.ID)
 			}
 			h.publishAgentHandoff(ah.req.WorkerID)
@@ -847,7 +872,7 @@ func (h *Hub) startAgentHandoffCancel(ctx context.Context, c *Client, cmd proto.
 	case ah.state == proto.AgentHandoffFiling:
 		return fmt.Errorf("%w: the handoff is being filed", errBusy)
 	case ah.pending():
-		h.failAgentHandoff(ctx, ah, "cancelled")
+		h.failAgentHandoffAs(ctx, ah, proto.HandoffHireCancelledCode, "cancelled")
 		h.endAgentStart(ctx, ah, fmt.Errorf("%w: the handoff request was cancelled", errInvalidState))
 	default:
 		delete(h.ah.byWorker, a.Worker)

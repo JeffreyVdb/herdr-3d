@@ -770,18 +770,27 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 		if json.Unmarshal(cmd.Args, &a) != nil {
 			return redacted(cmd.Args)
 		}
+		var hire json.RawMessage // #219: the hire's task by its length, as worker.hire's
+		if a.Hire != nil {
+			var raw struct {
+				Hire json.RawMessage `json:"hire"`
+			}
+			_ = json.Unmarshal(cmd.Args, &raw)
+			hire = auditTexts(raw.Hire, "prompt")
+		}
 		return mustJSON(struct {
-			Worker           string        `json:"worker"`
-			Mode             string        `json:"mode"`
-			Session          string        `json:"session,omitempty"`
-			Candidate        string        `json:"candidate,omitempty"`
-			Revision         string        `json:"revision,omitempty"`
-			InstructionBytes int           `json:"instruction_bytes,omitempty"`
-			SendHome         bool          `json:"send_home,omitempty"`
-			Op               string        `json:"op"`
-			Secrets          *secretsAudit `json:"secrets,omitempty"` // #108 round 2
+			Worker           string          `json:"worker"`
+			Mode             string          `json:"mode"`
+			Session          string          `json:"session,omitempty"`
+			Candidate        string          `json:"candidate,omitempty"`
+			Revision         string          `json:"revision,omitempty"`
+			InstructionBytes int             `json:"instruction_bytes,omitempty"`
+			SendHome         bool            `json:"send_home,omitempty"`
+			Op               string          `json:"op"`
+			Secrets          *secretsAudit   `json:"secrets,omitempty"` // #108 round 2
+			Hire             json.RawMessage `json:"hire,omitempty"`
 		}{clip(a.Worker), clip(a.Mode), clip(a.Session), clip(a.Candidate), clip(a.Revision), len(a.Instruction), a.SendHome, clip(a.Op),
-			auditReviews(a.Secrets)})
+			auditReviews(a.Secrets), hire})
 	case proto.CmdManualProcessCredential:
 		var a proto.ManualProcessCredentialArgs
 		if json.Unmarshal(cmd.Args, &a) != nil {
@@ -1009,9 +1018,10 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 }
 
 // auditTexts is a command's args with each named text field as its length
-// ("<name>_bytes") and its review (`secrets`: one, or one per field) as
-// the decisions' counts (#108 round 2): never a typed text nor a range.
-// Args that do not read as an object are redacted.
+// ("<name>_bytes"), its review (`secrets`: one, or one per field) as the
+// decisions' counts (#108 round 2) and a hand-over (`secrets_pending`) by
+// its presence: never a typed text, a range nor a token. Args that do not
+// read as an object are redacted.
 func auditTexts(raw json.RawMessage, texts ...string) json.RawMessage {
 	var m map[string]json.RawMessage
 	if json.Unmarshal(raw, &m) != nil || m == nil {
@@ -1028,6 +1038,13 @@ func auditTexts(raw json.RawMessage, texts ...string) json.RawMessage {
 		}
 		delete(m, k)
 		m[k+"_bytes"] = mustJSON(len(s))
+	}
+	if v, ok := m["secrets_pending"]; ok {
+		var token string
+		if json.Unmarshal(v, &token) != nil {
+			return redacted(raw)
+		}
+		m["secrets_pending"] = mustJSON(token != "")
 	}
 	if v, ok := m["secrets"]; ok {
 		var many proto.SecretsReviews

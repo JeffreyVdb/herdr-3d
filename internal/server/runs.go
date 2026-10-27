@@ -387,6 +387,7 @@ func (h *Hub) seatNearOrch(f *floorState, desks map[string]int, obs []world.Work
 			used[op.desk] = true
 		}
 	}
+	h.heldDesks(f.id, used) // #219
 	moved := map[string]bool{}
 	// An orchestrator with no desk yet, first seen together with its
 	// freelancers, takes the lowest free desk before they are placed, so

@@ -267,6 +267,13 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
   `make dev`, then `?ws=%2Ffixture%2Fdemo-m5%3Fplay%3Dnone%26sim%3D1%26simusage%3D0%26simhandoffllm%3Dready%26simhandoffllmout%3Dslow&floor=herdr-3d`
   (a worker needs a completed reply first: `window.__h3d.simHandoff('sim.final', {id, text})`).
   `go run ./cmd/handoff-spike FILE.jsonl…` is the spike's dry run (numbers only); `--send` costs money.
+- #219: "Hire with handoff" in the background: `game/src/ui/hireReview.bghandoff.dom.test.ts` (the review's bridge
+  path), `game/src/ui/handoffHires.test.ts` (who says the outcome, once: origin, announced ops, reload), and
+  `game/e2e/h219-handoff-background.spec.ts` against the fixture bridge (`tools/fixture-handoffhire.ts`, rules at its
+  top: `simhandoffhires=1` sends `world.handoff_hires` and hires after `sim.agent_turn` / `sim.llm_finish`;
+  `sim.handoff_hire {fail?}` refuses the next launch, `{hold: true}` keeps requests with a hire as behind the secrets
+  gate (no answer, no record) until `{release: true}`; without it the game hires after filing, as #198).
+  `simkeep=<key>` keeps a simulated world for the key's next connections, so a reload finds the bridge as it was.
 - #11: `go test ./internal/notify/...` never reaches Telegram: an `httptest` Bot API (`getMe`, `sendMessage`,
   `getUpdates` with offsets) and `notify.FakeClock` (the settle, the backoff and a code's expiry with no real sleep);
   `go test ./internal/server -run Notify` drives the hub with `notify.FakeChannel`. The inbox vectors are rewritten by

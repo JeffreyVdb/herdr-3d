@@ -296,8 +296,12 @@ func TestExecRunnerTermsTheGroupBeforeKilling(t *testing.T) {
 	}
 	dir := t.TempDir()
 	lock := filepath.Join(dir, "db.lck")
+	ready := filepath.Join(dir, "ready")
 	script := filepath.Join(dir, "fake.sh")
-	body := "#!" + sh + "\ntrap 'rm -f \"$CU_LOCK\"; exit 0' TERM\n: > \"$CU_LOCK\"\nsleep 30 &\nwait\n"
+	// Let the child publish readiness after resetting its inherited TERM trap.
+	// Signalling earlier can miss the fork or hit the child before it resets
+	// the trap, leaving sleep alive with the stdout pipe open.
+	body := "#!" + sh + "\ntrap 'rm -f \"$CU_LOCK\"; exit 0' TERM\n: > \"$CU_LOCK\"\n(trap - TERM; : > \"$CU_READY\"; exec sleep 30) &\nwait\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -305,15 +309,15 @@ func TestExecRunnerTermsTheGroupBeforeKilling(t *testing.T) {
 	defer cancel()
 	go func() {
 		for {
-			if _, err := os.Stat(lock); err == nil {
+			if _, err := os.Stat(ready); err == nil {
 				break
 			}
-			time.Sleep(5 * time.Millisecond)
+			time.Sleep(time.Microsecond)
 		}
 		cancel()
 	}()
 	start := time.Now()
-	_, _, err = ExecRunner{}.Run(ctx, script, append(os.Environ(), "CU_LOCK="+lock))
+	_, _, err = ExecRunner{}.Run(ctx, script, append(os.Environ(), "CU_LOCK="+lock, "CU_READY="+ready))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want the context's", err)
 	}

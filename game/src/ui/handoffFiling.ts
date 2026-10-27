@@ -1,10 +1,10 @@
 import type { CommandResult } from '../net/client';
-import type { AgentHandoff, AgentHandoffAck, CommandArgs, HandoffAck, HandoffCandidate, HandoffEntry, HandoffGetAck, LLMHandoff, LLMHandoffAck, Worker } from '../net/protocol';
+import type { AgentHandoff, AgentHandoffAck, CommandArgs, HandoffAck, HandoffCandidate, HandoffEntry, HandoffGetAck, HandoffHire, LLMHandoff, LLMHandoffAck, Worker, WorkerHandoffHire } from '../net/protocol';
 import { jobText } from '../world/handoffLlm';
 import type { ReviewChoice } from '../world/hireReview';
 import type { HandoffMode } from './handoffDialog';
 import { failureText } from './messages';
-import type { Go, PromptSecretsFlow } from './secretsFlow';
+import type { Go, PromptSecretsFlow, SecretsRequest } from './secretsFlow';
 
 /**
  * #198: one handoff filed for "Hire with handoff", from the request to the filed entry and its final path. No DOM: the
@@ -13,6 +13,11 @@ import type { Go, PromptSecretsFlow } from './secretsFlow';
  * bridge), follows `Worker.agent_handoff` / `Worker.llm_handoff` with that op only (never `handoff.added`, never the
  * next handoff that appears), and reads the entry with `handoff.get`: never an interim or `.pending` path. It resolves
  * once; what comes after (a repeated update, a late ack) changes nothing.
+ *
+ * #219 `hire` (an agent's or LLM's handoff, on a bridge with `handoff_hires`): the request carries the hire, and the
+ * bridge hires once it is filed. The filing then ends on the bridge's ack (`accepted`, its record): the review follows
+ * the record, never the request, and never sends `worker.hire` itself. The task's own secrets review goes with it
+ * (`hire.secrets`), refused and reviewed again apart from the instruction's: a refusal that names `hire…` is the task's.
  */
 
 /** What step 1 chose: the source worker and how its handoff is made. The new agent's task is not in it (AC3). */
@@ -56,7 +61,18 @@ export type FilingOutcome =
    */
   | { kind: 'failed'; message: string; retry: boolean; stale?: boolean }
   /** Stopped waiting (the review closed or opened again): nothing is said here, and nothing is hired from it. */
-  | { kind: 'gone' };
+  | { kind: 'gone' }
+  /** #219: the bridge took the request and its hire: the record (`waiting`) it hires from once filed. */
+  | { kind: 'accepted'; record: HandoffHire };
+
+/** #219: the hire the request carries, and the review of its task (null: none: the switch off, or the hand-over covers it). */
+export interface FilingHire {
+  args: WorkerHandoffHire;
+  review: { flow: PromptSecretsFlow; req: SecretsRequest; go: Go } | null;
+}
+
+/** #108: the refusals a review answers by reviewing again (secretsFlow's `AGAIN`). */
+const REVIEW_AGAIN = new Set(['secrets_review_stale', 'secrets_review_required']);
 
 export interface HandoffFilingHost {
   send<T extends 'worker.handoff' | 'worker.handoff_cancel' | 'handoff.get'>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
@@ -87,6 +103,8 @@ export class HandoffFiling {
     readonly op: string,
     /** The submission is still the one that asked (the review open, the same opening). */
     private readonly live: () => boolean,
+    /** #219: the hire the bridge makes once it is filed (absent: the review hires itself, #198). */
+    private readonly hire: FilingHire | null = null,
   ) {
     this.out = new Promise((r) => (this.settle = r));
   }
@@ -172,20 +190,56 @@ export class HandoffFiling {
     }
     if (p.mode === 'llm' && !p.candidate) return this.end({ kind: 'failed', message: `${p.name} has no completed turn to hand off now.`, retry: false, stale: true });
     const instruction = p.instruction.trim();
-    const args = (g: Go): CommandArgs['worker.handoff'] => {
-      const extra = { op, ...(instruction ? { instruction } : {}), ...home, ...(g.secrets ? { secrets: g.secrets } : {}) };
+    const args = (g: Go, hg: Go | null): CommandArgs['worker.handoff'] => {
+      const hire = this.hire ? { hire: { ...this.hire.args, ...(hg?.secrets ? { secrets: hg.secrets } : {}) } } : {};
+      const extra = { op, ...(instruction ? { instruction } : {}), ...home, ...(g.secrets ? { secrets: g.secrets } : {}), ...hire };
       const c = p.candidate as HandoffCandidate;
       return p.mode === 'agent' ? { worker: p.worker, mode: 'agent', ...extra } : { worker: p.worker, mode: 'llm', session: c.session, candidate: c.id, revision: c.revision, ...extra };
     };
-    const r = await this.reviewed(instruction, (g) => this.host.send('worker.handoff', args(g)));
+    const reviewsInstruction = !!this.host.secrets && !!instruction;
+    const r = await this.reviewed(instruction, (g) => this.withHire(reviewsInstruction, (hg) => this.host.send('worker.handoff', args(g, hg))));
     if (!r || !this.answered(r) || !r.ok) return;
-    const now: AgentHandoff | LLMHandoff = p.mode === 'agent' ? (r.data as AgentHandoffAck).request : (r.data as LLMHandoffAck).job;
+    const ack = r.data as AgentHandoffAck | LLMHandoffAck;
+    const now: AgentHandoff | LLMHandoff = p.mode === 'agent' ? (ack as AgentHandoffAck).request : (ack as LLMHandoffAck).job;
     if (now.op !== op) return this.end({ kind: 'failed', message: `${p.name} is already writing another handoff: nothing was sent. Hire from it in the cabinet once it is filed.`, retry: false });
+    // #219: the bridge hires from here on; the review follows its record.
+    if (this.hire) {
+      const rec = ack.handoff_hire;
+      if (rec && rec.op === op) return this.end({ kind: 'accepted', record: rec });
+      return this.end({ kind: 'failed', message: `herdr-world took ${p.name}’s handoff request without the hire: nobody is hired from it. Once it is filed, hire from it in the cabinet.`, retry: false });
+    }
     this.phase = 'waiting';
     this.host.moved?.();
     this.follow(now);
     // An update may have come before the ack.
     this.feed();
+  }
+
+  /**
+   * #219: `send` with the hire's task review (none: as it is). A refusal to review again that names the task (`hire…`),
+   * or any while the instruction has no review of its own, reviews the task again here; else it goes back to the
+   * instruction's review (`reviewed`). The task's newest review is kept for a resend of the instruction.
+   */
+  private async withHire(instructionReviewed: boolean, send: (hg: Go | null) => Promise<CommandResult>): Promise<CommandResult> {
+    const h = this.hire?.review;
+    if (!h) return send(null);
+    let theirs: CommandResult | null = null;
+    const d = await h.flow.deliver(h.req, h.go, async (hg) => {
+      const r = await send(hg);
+      if (!r.ok && REVIEW_AGAIN.has(r.code) && instructionReviewed && !/^hire\b/.test(r.message)) {
+        theirs = r;
+        return { ok: false, code: 'instruction_review', message: r.message } as CommandResult;
+      }
+      return r;
+    });
+    if (theirs) return theirs;
+    if (d.kind === 'kept') {
+      if (d.why === 'gone') this.end({ kind: 'gone' });
+      else this.end({ kind: 'failed', message: d.why === 'cancel' ? 'Not sent: the review of the task was cancelled. Nothing was filed and nobody was hired.' : d.message, retry: false });
+      return { ok: false, code: 'secrets_kept', message: d.message } as CommandResult;
+    }
+    h.go = d.go;
+    return d.result;
   }
 
   /** The answer to `worker.handoff`: false (and ended) when it was refused or never came. */
