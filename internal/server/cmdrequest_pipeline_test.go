@@ -359,6 +359,55 @@ func TestCommandRequestPipelineAmbiguousHost(t *testing.T) {
 		Source: &proto.ManualSource{Kind: "suggestion", Key: req.Key, Index: 0}}, proto.ErrStale)
 }
 
+// #220: the model calls the ticket's "as your user" another machine; the
+// bridge keeps the command, byte for byte, on the bridge, and its exact
+// bytes start (no password dialog: `! sudo` is not eligible). A machine
+// the reply names still never runs here.
+func TestCommandRequestPipelineAccountHost(t *testing.T) {
+	const command = "! sudo tailscale serve --bg --https=8216 http://127.0.0.1:45215"
+	b, err := os.ReadFile(filepath.Join("..", "cmdrequest", "testdata", "reply-220-account.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply := string(b)
+	pb := startPipelineBridge(t)
+	pb.models.score.Store(0.9)
+	pb.models.answer.Store(`{"commands":[{"command":"! sudo tailscale serve --bg --https=8216 http://127.0.0.1:45215","host":"other","host_text":"your user"}]}`)
+	pb.say(t, "account", reply)
+	w := upsertFor(pb.c, pb.id, func(w *proto.Worker) bool { return w.CommandRequest != nil })
+	req := w.CommandRequest
+	if got := req.Commands[0]; len(req.Commands) != 1 || got.Command != command || got.Host != "bridge" || got.HostText != "" || len(got.Variants) != 0 {
+		t.Fatalf("request: %+v", req)
+	}
+	if lines := pb.settle(t, 1); !hasAll(lines[0], "extract=ok", "commands=1", "rejected=account_host:1", "persisted=true", "published=true") {
+		t.Fatalf("diagnostics: %s", lines[0])
+	}
+	_, m := pb.c.command(proto.CmdManualProcessStart, "run", proto.ManualProcessStartArgs{Op: "account-220", Worker: pb.id, Cwd: pb.dir,
+		Command: command, Source: &proto.ManualSource{Kind: "suggestion", Key: req.Key, Index: 0}})
+	if m.env.T != proto.TAck {
+		t.Fatalf("start: %s", m.raw)
+	}
+	if p := ackData[proto.ManualProcessResult](t, m).Process; p.Command != command || p.Launched != "" || p.Source.Kind != "suggestion" {
+		t.Fatalf("process: %+v", p)
+	}
+	pb.assertQuietLog(t, *w, command, "tailscale serve", "your user")
+
+	// A named machine: shown, never run on the bridge.
+	other := startPipelineBridge(t)
+	other.models.score.Store(0.9)
+	other.models.answer.Store(`{"commands":[{"command":"pwd","host":"other","host_text":"your Mac"}]}`)
+	other.say(t, "mac", "On your Mac, run `pwd` as your user and tell me what it prints.")
+	req = upsertFor(other.c, other.id, func(w *proto.Worker) bool { return w.CommandRequest != nil }).CommandRequest
+	if got := req.Commands[0]; got.Host != "other" || got.HostText != "your Mac" {
+		t.Fatalf("request: %+v", req)
+	}
+	if lines := other.settle(t, 1); !hasAll(lines[0], "commands=1", `rejected=""`) {
+		t.Fatalf("diagnostics: %s", lines[0])
+	}
+	other.c.mustError(proto.CmdManualProcessStart, proto.ManualProcessStartArgs{Op: "mac-220", Worker: other.id, Cwd: other.dir, Command: "pwd",
+		Source: &proto.ManualSource{Kind: "suggestion", Key: req.Key, Index: 0}}, proto.ErrStale)
+}
+
 // Model failures: a transient one is retried twice (only the command
 // request's look), then recorded as failed so a restart does not ask again;
 // one that recovers publishes on the retry.

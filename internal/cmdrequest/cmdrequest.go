@@ -38,7 +38,7 @@ type Request struct {
 	Commands []Command `json:"commands"`
 }
 
-const prompt = `Extract only shell commands this final reply explicitly asks the human to run themselves. Exclude commands already run, documentation, examples, alternatives and quoted errors. Return only JSON {"commands":[{"command":"...","cwd":"...","host":"bridge|other|unknown","host_text":"...","why":"..."}]}. Return an empty array if none. command, cwd and host_text must be exact substrings of the reply, preserving all whitespace, quoting and newlines. Use bridge for the agent's machine or when no machine is named, other for a named different machine (host_text must quote its name), unknown for ambiguity. cwd and why are optional. Never invent a command.`
+const prompt = `Extract only shell commands this final reply explicitly asks the human to run themselves. Exclude commands already run, documentation, examples, alternatives and quoted errors. Return only JSON {"commands":[{"command":"...","cwd":"...","host":"bridge|other|unknown","host_text":"...","why":"..."}]}. Return an empty array if none. command, cwd and host_text must be exact substrings of the reply, preserving all whitespace, quoting and newlines. Use bridge for the agent's machine or when no machine is named, other for a named different machine (host_text must quote that machine's name), unknown for ambiguity. An account, user or privilege ("as your user", "under your account", "as root", "with sudo") is not a machine: never put it in host_text; such a command is bridge unless a different machine is named. cwd and why are optional. Never invent a command.`
 
 // Decision is the gate's verdict on a reply (#213).
 type Decision struct {
@@ -171,6 +171,12 @@ func ParseReport(reply, answer string) (Result, error) {
 		if c.Host == "other" && c.HostText == "" {
 			reject("host_text")
 			continue
+		}
+		// #220: an account or privilege is not a machine; the entry is kept,
+		// on the bridge, and counted.
+		if c.Host == "other" && accountHost(c.HostText) {
+			c.Host, c.HostText = "bridge", ""
+			reject("account_host")
 		}
 		if len(c.Why) > 120 || (c.Why != "" && !strings.Contains(reply, c.Why)) {
 			c.Why = ""
