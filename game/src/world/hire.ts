@@ -341,7 +341,7 @@ export function hireArgs(floor: string, desk: number, f: HireForm, git: HireGit 
   const cwd = f.cwd.trim();
   if (cwd) a.cwd = cwd;
   if (git) a.worktree = f.worktree && worktreeUsable(git);
-  if (f.prompt.trim()) a.prompt = f.prompt;
+  if (f.prompt.trim()) a.prompt = f.prompt.trimEnd();
   return a;
 }
 

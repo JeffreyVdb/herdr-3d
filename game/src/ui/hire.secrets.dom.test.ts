@@ -92,7 +92,7 @@ describe('HireDialog and prompt secrets (#108 round 4)', () => {
 
   it('a first task with a secret: the review first (nothing hired, no desk held), Confirm hires with the review the bridge takes', async () => {
     const t = setup();
-    await typed(t, TASK);
+    await typed(t, `${TASK}\n\n  `);
     t.press('hire');
     await flush();
     expect(t.b.open()).toMatchObject({ target: 'default at Desk 1', action: 'Confirm and send', counts: { found: 1 } });

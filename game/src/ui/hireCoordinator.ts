@@ -196,7 +196,7 @@ export class HireCoordinator {
       const added = req.added ?? 0;
       const r = await req.prompt.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES - added });
       if (!r.ok) return { kind: 'not_sent', result: r, message: notSentText(r, req.background ? ` at Desk ${req.desk + 1}` : '', added) };
-      args.prompt = r.text;
+      args.prompt = r.text.trimEnd();
       revision = r.revision;
     }
     // The foreground's hold, as the dialog always took it: once the images are up, for `worker.hire`.
