@@ -1922,6 +1922,7 @@ func (h *Hub) syncFloorWorkers(ctx context.Context, f *floorState, obs []world.W
 			used[op.desk] = true // reserved
 		}
 	}
+	h.heldDesks(floor, used) // #219
 	var evs []proto.Event
 	order := make([]string, 0, len(obs))
 	for i, w := range obs {

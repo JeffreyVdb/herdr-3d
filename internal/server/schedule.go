@@ -284,11 +284,7 @@ func (h *Hub) freeDesk(floor string, f *floorState) (int, bool) {
 			taken[op.desk] = true
 		}
 	}
-	for _, r := range h.hh.byOp { // #219: held for a handoff's hire
-		if r.holds() && r.rec.Floor == floor {
-			taken[r.rec.DeskIndex] = true
-		}
-	}
+	h.heldDesks(floor, taken) // #219
 	for d := range h.deskCount(floor, f) {
 		if !taken[d] {
 			return d, true

@@ -121,6 +121,16 @@ func (h *Hub) deskHold(floor string, desk int) *handoffHire {
 	return nil
 }
 
+// heldDesks marks floor's held desks in used: a newcomer is seated at
+// none of them, a schedule picks none.
+func (h *Hub) heldDesks(floor string, used map[int]bool) {
+	for _, r := range h.hh.byOp {
+		if r.holds() && r.rec.Floor == floor {
+			used[r.rec.DeskIndex] = true
+		}
+	}
+}
+
 // deskHeld refuses a hire into a held desk (nil: not held).
 func (h *Hub) deskHeld(floor string, desk int) error {
 	if r := h.deskHold(floor, desk); r != nil {
@@ -165,6 +175,7 @@ func handoffHireHash(a proto.WorkerHandoffArgs) string {
 	var hire any
 	if a.Hire != nil {
 		x := *a.Hire
+		x.Floor, x.Session = floorArg(x.Floor, x.Session), ""
 		x.Secrets, x.SecretsPending = nil, ""
 		hire = x
 	}
