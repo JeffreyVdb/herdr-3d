@@ -8,7 +8,8 @@ package store
 // the hire was interrupted. It never hires for it. When the hire ends the
 // marker says how (state, code, reason) and stays: the request had a hire
 // (a resumed one sends nobody home on its own), and a replay of its op is
-// compared with it.
+// compared with it. An interrupted hire's marker keeps its task files'
+// pending owners until a start released them.
 
 import (
 	"context"
@@ -25,7 +26,8 @@ const migrationHandoffHire = `ALTER TABLE handoff_request ADD COLUMN hire TEXT N
 // the client's origin, the source worker's name, whether the source goes
 // home after it, when it was accepted (unix ms), the pending owners of its
 // task's protected files (ids: a restart releases them); once it ended,
-// its state, code and reason (the record's), and no owner.
+// its state, code and reason (the record's), and no owner, but an
+// interrupted one's until they were released (HandoffHireReleased).
 type HandoffHireMarker struct {
 	Floor      string   `json:"floor"`
 	Desk       int      `json:"desk"`
@@ -80,13 +82,16 @@ func markerOf(s string) *HandoffHireMarker {
 	return &m
 }
 
-// HandoffHireRows are the requests and jobs whose hire had not ended, and
-// the pending agent requests whose hire ended (they resume), oldest first.
+// HandoffHireRows are the requests and jobs whose hire had not ended, the
+// pending agent requests whose hire ended (they resume), and those whose
+// marker still has owners (not released yet), oldest first.
 func (s *Store) HandoffHireRows(ctx context.Context) ([]HandoffHireRow, error) {
-	const open = `hire != '' AND (CASE WHEN json_valid(hire) THEN json_extract(hire, '$.state') END) IS NULL`
+	const open = `(CASE WHEN json_valid(hire) THEN json_extract(hire, '$.state') END) IS NULL`
+	const owned = `(CASE WHEN json_valid(hire) THEN json_extract(hire, '$.owners') END) IS NOT NULL`
 	rows, err := s.db.QueryContext(ctx, `SELECT op, 'agent', worker_uuid, state, handoff_id, hire, created_at FROM handoff_request
-		WHERE `+open+` OR (hire != '' AND state = ?)
-		UNION ALL SELECT op, 'llm', worker_uuid, state, handoff_id, hire, created_at FROM handoff_llm_job WHERE `+open+`
+		WHERE hire != '' AND (`+open+` OR `+owned+` OR state = ?)
+		UNION ALL SELECT op, 'llm', worker_uuid, state, handoff_id, hire, created_at FROM handoff_llm_job
+		WHERE hire != '' AND (`+open+` OR `+owned+`)
 		ORDER BY 7, 1`, HandoffRequestPending)
 	if err != nil {
 		return nil, err
@@ -118,5 +123,16 @@ func (s *Store) EndHandoffHire(ctx context.Context, op string, m HandoffHireMark
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE handoff_llm_job SET hire = ? WHERE op = ? AND hire != ''`, text, op)
+	return err
+}
+
+// HandoffHireReleased drops the owners from op's marker (their files were
+// released), on whichever table has one.
+func (s *Store) HandoffHireReleased(ctx context.Context, op string) error {
+	const drop = ` SET hire = json_remove(hire, '$.owners') WHERE op = ? AND hire != '' AND json_valid(hire)`
+	if _, err := s.db.ExecContext(ctx, `UPDATE handoff_request`+drop, op); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE handoff_llm_job`+drop, op)
 	return err
 }
