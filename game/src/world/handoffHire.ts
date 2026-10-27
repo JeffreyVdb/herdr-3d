@@ -39,10 +39,13 @@ export class HandoffHireBook {
   /** The bridge sends them (the snapshot had the key): `worker.handoff` may carry `hire`. */
   known = false;
   version = 0;
+  /** World snapshots so far (a reconnect's included): one without an op the bridge was asked for means it never took it. */
+  snapshots = 0;
   private readonly byOp = new Map<string, HandoffHire>();
 
   reset(list: HandoffHire[] | undefined): void {
     this.known = Array.isArray(list);
+    this.snapshots++;
     this.byOp.clear();
     for (const r of Array.isArray(list) ? list : []) if (validHandoffHire(r)) this.byOp.set(r.op, r);
     this.version++;

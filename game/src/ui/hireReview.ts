@@ -187,6 +187,8 @@ interface BridgeHire {
   task: string;
   /** The bridge took it (its ack, or its record seen): Cancel request can name the op. */
   accepted: boolean;
+  /** Its send got no answer and no record has come yet: it may have been taken (its record, or the next snapshot, says). */
+  unanswered: boolean;
 }
 
 type GivenBack = Extract<HireOutcome, { kind: 'failed' | 'unknown' }>;
@@ -348,6 +350,7 @@ export class HireReviewDialog {
         this.filing = null;
         this.state = 'ready';
         if (bg.accepted) this.host.toast(this.bgText(bg), 'info');
+        else if (bg.unanswered) this.host.toast(this.unansweredText(bg), 'warn');
         this.host.handoffHires?.sync();
       }
       // #198: closed while the handoff is made: no agent is hired from it, ever; the bridge still files it.
@@ -1182,7 +1185,7 @@ export class HireReviewDialog {
     // #198: the agent's request or the LLM's job can be cancelled while it runs (a literal save is one quick request).
     const f = this.filing;
     const stop = bg
-      ? h('button', { class: 'btn btn--danger-quiet', 'data-key': 'cancel-request', disabled: !bg.accepted, title: bg.accepted ? 'Cancels the request and the hire: nothing is filed, nobody is hired' : 'Wait for herdr-world to take the request', onclick: () => void this.cancelHandoffHire() }, 'Cancel request')
+      ? h('button', { class: 'btn btn--danger-quiet', 'data-key': 'cancel-request', disabled: !bg.accepted && !bg.unanswered, title: bg.accepted || bg.unanswered ? 'Cancels the request and the hire: nothing is filed, nobody is hired' : 'Wait for herdr-world to take the request', onclick: () => void this.cancelHandoffHire() }, 'Cancel request')
       : this.state === 'filing' && f && f.plan.mode !== 'literal'
         ? h('button', { class: 'btn btn--danger-quiet', 'data-key': 'cancel-request', title: 'Cancels the request: nothing is filed, nobody is hired', onclick: () => void this.cancelFiling() }, 'Cancel request')
         : null;
@@ -1460,12 +1463,22 @@ export class HireReviewDialog {
     return `Writing ${bg.plan.name}’s handoff. ${bg.who} is hired at Desk ${bg.desk + 1} once it is filed.`;
   }
 
+  /** The toast of a handoff hire left running whose request got no answer: it may run, or the task comes back. */
+  private unansweredText(bg: Pick<BridgeHire, 'plan' | 'who' | 'desk'>): string {
+    return `herdr-world did not answer about ${bg.plan.name}’s handoff request. If it took it, ${bg.who} is hired at Desk ${bg.desk + 1} once it is filed; if not, your task comes back.`;
+  }
+
+  /** A request that got no answer, and the bridge does not have it: nothing came of it. */
+  private notTakenText(plan: HandoffPlan): string {
+    return `herdr-world does not have ${plan.name}’s handoff request: nothing was filed and nobody was hired. Hire again sends it again.`;
+  }
+
   /** The status line while the bridge's handoff hire runs (`r`: its record now). */
   private bgProgress(bg: BridgeHire, r: HandoffHire | undefined): string {
     if (r?.state === 'hiring') return `Filed${r.path ? ` ${r.path}` : ''}. Hiring ${bg.who} at Desk ${bg.desk + 1}…`;
     const p = bg.plan;
     const then = `then ${bg.who} is hired at Desk ${bg.desk + 1}.`;
-    if (!bg.accepted) return `Sending the request to herdr-world… ${then}`;
+    if (!bg.accepted) return bg.unanswered ? `No answer from herdr-world yet: it may have taken the request. Waiting to see it… ${then}` : `Sending the request to herdr-world… ${then}`;
     return p.mode === 'agent' ? `Asking ${p.name}’s agent… it is filed once its turn ends with the handoff written; ${then}` : `The LLM${p.llmModel ? ` (${p.llmModel})` : ''} is writing the handoff… ${then}`;
   }
 
@@ -1517,8 +1530,13 @@ export class HireReviewDialog {
         this.bgDrafts.delete(reviewed.draft);
         this.drop(reviewed.draft);
       },
+      // Closed while its send went unanswered, and the bridge never took it: the task comes back, for the same op.
+      notTaken: () => {
+        const why = this.notTakenText(plan);
+        this.giveBack({ ...reviewed, planOp: op }, { kind: 'failed', code: 'handoff', message: why }, why, why);
+      },
     });
-    const bg: BridgeHire = { op, plan, floor, desk, who, task, accepted: false };
+    const bg: BridgeHire = { op, plan, floor, desk, who, task, accepted: false, unanswered: false };
     const f = new HandoffFiling(
       {
         send: (t, a) => this.host.send(t, a),
@@ -1537,9 +1555,22 @@ export class HireReviewDialog {
     this.render();
     const o = await f.run();
     if (this.filing === f) this.filing = null;
-    // An answer that never came may still have been taken: the world's record for the op says so.
-    const seen = o.kind === 'failed' && o.retry ? this.host.store.handoffHires.get(op) : undefined;
-    if (o.kind === 'accepted' || seen) {
+    // An answer that never came may still have been taken: the world's record for the op says so (now, or once it
+    // comes); a snapshot without it, that it was not. Until then the op is followed, and no other request is sent.
+    const unanswered = o.kind === 'failed' && o.retry;
+    if (unanswered && !this.host.store.handoffHires.get(op)) {
+      bg.unanswered = true;
+      announcer.unanswered(op);
+      if (this.bg !== bg || !live()) {
+        if (this.bg === bg) this.bg = null;
+        this.host.toast(this.unansweredText(bg), 'warn');
+        announcer.sync();
+        return;
+      }
+      this.followRecord();
+      return;
+    }
+    if (o.kind === 'accepted' || unanswered) {
       bg.accepted = true;
       if (this.bg !== bg || !live()) {
         // Closed while it was sent: it runs on; say so now that it is taken.
@@ -1556,18 +1587,15 @@ export class HireReviewDialog {
       this.followRecord();
       return;
     }
-    // Not taken: nobody is hired from this press.
+    // Not taken (refused): nobody is hired from this press.
     if (this.bg === bg) this.bg = null;
-    const retry = o.kind === 'failed' && o.retry;
-    if (!retry) {
-      announcer.claim(op);
-      if (op === this.planOp) this.planOp = newOp();
-    }
+    announcer.claim(op);
+    if (op === this.planOp) this.planOp = newOp();
     if (o.kind === 'gone') return;
     const message = o.kind === 'failed' ? o.message : 'Nobody was hired.';
     if (!live()) {
       // Closed while it was sent, and refused: the task comes back.
-      this.giveBack({ ...reviewed, planOp: retry ? op : this.planOp }, { kind: 'failed', code: 'handoff', message }, message, message);
+      this.giveBack({ ...reviewed, planOp: this.planOp }, { kind: 'failed', code: 'handoff', message }, message, message);
       return;
     }
     this.state = 'ready';
@@ -1581,7 +1609,13 @@ export class HireReviewDialog {
     const bg = this.bg;
     if (!bg || this.state !== 'filing') return;
     const r = this.host.store.handoffHires.get(bg.op);
-    if (r) bg.accepted = true;
+    if (r) {
+      bg.accepted = true;
+      bg.unanswered = false;
+    } else if (bg.unanswered && this.host.handoffHires?.lost(bg.op)) {
+      this.notTaken(bg);
+      return;
+    }
     if (!r || pendingHire(r)) {
       this.setStatus(this.bgProgress(bg, r));
       this.render();
@@ -1620,14 +1654,32 @@ export class HireReviewDialog {
     this.focusFirst();
   }
 
-  /** #219: Cancel request: the request and its hire, cancelled together by the bridge; its record then says how it ended. */
+  /** #219: the request got no answer, and the bridge does not have it: the review is as it was, for the same op. */
+  private notTaken(bg: BridgeHire): void {
+    this.bg = null;
+    this.host.handoffHires?.release(bg.op);
+    this.state = 'ready';
+    this.setStatus(`${this.notTakenText(bg.plan)} Your task and settings are still here.`, true);
+    this.render();
+    this.focusFirst();
+  }
+
+  /**
+   * #219: Cancel request: the request and its hire, cancelled together by the bridge; its record then says how it ended.
+   * A request that got no answer can be cancelled too: a bridge that does not know its op says so (`invalid_state`).
+   */
   private async cancelHandoffHire(): Promise<void> {
     const bg = this.bg;
-    if (!bg || !bg.accepted || this.state !== 'filing') return;
+    if (!bg || (!bg.accepted && !bg.unanswered) || this.state !== 'filing') return;
     this.setStatus(`Cancelling ${bg.plan.name}’s handoff request and the hire…`);
     this.render();
     const r = await this.host.send('worker.handoff_cancel', { worker: bg.plan.worker, op: bg.op });
     if (this.bg !== bg) return;
+    if (!r.ok && !bg.accepted && r.code === 'invalid_state' && !this.host.store.handoffHires.get(bg.op)) {
+      this.notTaken(bg);
+      return;
+    }
+    if (!r.ok && r.code === 'busy') bg.accepted = true;
     if (!r.ok) {
       const filing = r.code === 'busy' ? ` It is being filed already; ${bg.who} is hired at Desk ${bg.desk + 1} once it is.` : '';
       this.setStatus(`${failureText('worker.handoff_cancel', r.code, r.message, { worker: bg.plan.name })}${filing}`, true);

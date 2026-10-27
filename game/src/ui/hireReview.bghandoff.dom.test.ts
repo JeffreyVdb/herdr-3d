@@ -81,6 +81,7 @@ function setup(o: { background?: boolean; secrets?: PromptSecretsFlow; known?: b
     holdTask: (id, text) => (holds.push([id, text]), true),
     storage: localStorage,
     later: (fn) => void timers.push(fn),
+    snapshots: () => book.snapshots,
   });
   const host = {
     store,
@@ -142,10 +143,17 @@ function setup(o: { background?: boolean; secrets?: PromptSecretsFlow; known?: b
     const data = kind === 'agent' ? { request: { op, state: 'pending', started_at: 0 } as AgentHandoff, handoff_hire: rec } : { job: { op, state: 'running', started_at: 0, updated_at: 0 }, handoff_hire: rec };
     await answer('worker.handoff', { ok: true, data } as CommandResult);
   };
+  /** A reconnect's snapshot: the store's records as the bridge has them, then the app's two listeners. */
+  const snapshot = async (list: HandoffHire[] = []) => {
+    book.reset(list);
+    rv.refresh();
+    announcer.sync();
+    await flush();
+  };
   const flushTimers = () => {
     while (timers.length) timers.shift()?.();
   };
-  return { rv, sent, of, last, answer, record, open, submit, accept, toasts, goTos, holds, beeps: () => beeps, announcer, book, held, flushTimers, uploads, draft, workers };
+  return { rv, sent, of, last, answer, record, open, submit, accept, toasts, goTos, holds, beeps: () => beeps, announcer, book, held, flushTimers, uploads, draft, workers, snapshot };
 }
 
 const q = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel);
@@ -456,5 +464,95 @@ describe('HireReviewDialog: hire with handoff in the background (#219)', () => {
     await old.open({ sendHome: true });
     q<HTMLInputElement>('[data-key="effort:high"]')!.click();
     expect(old.rv.summary()!.blocker).toBe('Over the hard cap: send someone home first.');
+  });
+  it('B-R3: no answer, its record later: the review keeps following the op (progress, Cancel request), never a second request', async () => {
+    const e = setup();
+    const { op } = await e.submit();
+    await e.answer('worker.handoff', { ok: false, code: 'timeout', message: 'herdr-world did not answer worker.handoff within 30 s' });
+    const s = e.rv.summary()!;
+    expect(s).toMatchObject({ state: 'filing', error: false, handoff: { op, bridge: { op, accepted: false } } });
+    expect(s.status).toBe('No answer from herdr-world yet: it may have taken the request. Waiting to see it… then Nibble is hired at Desk 2.');
+    expect(s.status).not.toMatch(/nobody was hired|not hired/i);
+    expect(q<HTMLButtonElement>('[data-key="cancel-request"]')!.disabled).toBe(false);
+    q<HTMLButtonElement>('[data-key="hire"]')!.click();
+    await flush();
+    expect(e.of('worker.handoff')).toHaveLength(1);
+    // The bridge took it after all: its record comes, and how it ends is said here.
+    await e.record({ op });
+    expect(e.rv.summary()).toMatchObject({ state: 'filing', handoff: { bridge: { op, accepted: true } } });
+    await e.record({ op, state: 'hired', path: PATH, hired: 'N', prompted: true });
+    expect(e.rv.isOpen).toBe(false);
+    expect(e.toasts).toEqual([{ text: 'Hired Nibble at Desk 2. Here they come.', kind: 'info' }]);
+    e.flushTimers();
+    e.announcer.sync();
+    expect(e.toasts).toHaveLength(1);
+    expect(e.of('worker.hire')).toHaveLength(0);
+  });
+
+  it('B-R3: no answer, and the next snapshot does not have it: nobody was hired; Hire again sends the same op', async () => {
+    const e = setup();
+    const { op } = await e.submit();
+    await e.answer('worker.handoff', { ok: false, code: 'disconnected', message: 'the connection to herdr-world closed' });
+    expect(e.rv.summary()?.state).toBe('filing');
+    // A world update without the record says nothing yet; a snapshot without it does.
+    e.rv.refresh();
+    expect(e.rv.summary()?.state).toBe('filing');
+    await e.snapshot([]);
+    expect(e.rv.summary()).toMatchObject({ state: 'ready', error: true, status: 'herdr-world does not have Pixel’s handoff request: nothing was filed and nobody was hired. Hire again sends it again. Your task and settings are still here.' });
+    expect(e.rv.summary()?.form.prompt).toBe(TASK);
+    q<HTMLButtonElement>('[data-key="hire"]')!.click();
+    await flush();
+    expect(e.of('worker.handoff')).toHaveLength(2);
+    expect(e.last('worker.handoff').args.op).toBe(op);
+  });
+
+  it('B-R3: no answer, Cancel request: the bridge that does not know the op says so; busy means it has it', async () => {
+    const e = setup();
+    const { op } = await e.submit();
+    await e.answer('worker.handoff', { ok: false, code: 'timeout', message: 'timeout' });
+    q<HTMLButtonElement>('[data-key="cancel-request"]')!.click();
+    await flush();
+    expect(e.last('worker.handoff_cancel').args).toEqual({ worker: 'A', op });
+    await e.answer('worker.handoff_cancel', { ok: false, code: 'invalid_state', message: `invalid state: Pixel has no handoff request "${op}"` });
+    expect(e.rv.summary()).toMatchObject({ state: 'ready', error: true });
+    expect(e.rv.summary()?.status).toContain('herdr-world does not have Pixel’s handoff request');
+    const b = setup();
+    document.querySelectorAll('dialog').forEach((d, i) => i === 0 && d.remove());
+    const { op: op2 } = await b.submit();
+    await b.answer('worker.handoff', { ok: false, code: 'timeout', message: 'timeout' });
+    q<HTMLButtonElement>('[data-key="cancel-request"]')!.click();
+    await flush();
+    await b.answer('worker.handoff_cancel', { ok: false, code: 'busy', message: 'busy: the handoff is being filed' });
+    expect(b.rv.summary()).toMatchObject({ state: 'filing', handoff: { bridge: { op: op2, accepted: true } } });
+  });
+
+  it('B-R3: no answer, then closed: a record that comes is said as usual; none in the next snapshot gives the task back', async () => {
+    const e = setup();
+    const { op } = await e.submit();
+    await e.answer('worker.handoff', { ok: false, code: 'timeout', message: 'timeout' });
+    q<HTMLButtonElement>('[data-key="background"]')!.click();
+    expect(e.rv.isOpen).toBe(false);
+    expect(e.toasts).toEqual([{ text: 'herdr-world did not answer about Pixel’s handoff request. If it took it, Nibble is hired at Desk 2 once it is filed; if not, your task comes back.', kind: 'warn' }]);
+    await e.record({ op });
+    await e.record({ op, state: 'hired', path: PATH, hired: 'N', prompted: true });
+    expect(e.toasts.at(-1)).toEqual({ text: SPAWNED_TEXT, kind: 'info' });
+
+    document.body.replaceChildren();
+    localStorage.clear();
+    const b = setup();
+    const { op: op2 } = await b.submit();
+    await b.answer('worker.handoff', { ok: false, code: 'disconnected', message: 'closed' });
+    q<HTMLButtonElement>('[data-key="background"]')!.click();
+    await b.snapshot([]);
+    expect(b.rv.isOpen).toBe(true);
+    const s = b.rv.summary()!;
+    expect(s.form.prompt).toBe(TASK);
+    expect(s.handoff?.op).toBe(op2);
+    expect(s.status).toContain('herdr-world does not have Pixel’s handoff request: nothing was filed and nobody was hired.');
+    // Said once: a later snapshot gives nothing back again.
+    b.rv.close();
+    await b.snapshot([]);
+    b.flushTimers();
+    expect(b.rv.isOpen).toBe(false);
   });
 });

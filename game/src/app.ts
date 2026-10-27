@@ -840,6 +840,7 @@ export class App {
       floorName: (id) => this.store.floorName(id),
       workerView: (id) => this.store.workerView(id),
       holdTask: (id, text) => this.prompt.holdTask(id, text),
+      snapshots: () => this.store.handoffHires.snapshots,
     });
     // #93: the desk dialogs' third tab; "Save as preset…" opens its editor over the hire form.
     const presetsAt = (s: string, d: number) => {
