@@ -271,7 +271,8 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
   path), `game/src/ui/handoffHires.test.ts` (who says the outcome, once: origin, announced ops, reload), and
   `game/e2e/h219-handoff-background.spec.ts` against the fixture bridge (`tools/fixture-handoffhire.ts`, rules at its
   top: `simhandoffhires=1` sends `world.handoff_hires` and hires after `sim.agent_turn` / `sim.llm_finish`;
-  `sim.handoff_hire {fail?}` refuses the next launch; without it the game hires after filing, as #198).
+  `sim.handoff_hire {fail?}` refuses the next launch, `{hold: true}` keeps requests with a hire as behind the secrets
+  gate (no answer, no record) until `{release: true}`; without it the game hires after filing, as #198).
   `simkeep=<key>` keeps a simulated world for the key's next connections, so a reload finds the bridge as it was.
 - #11: `go test ./internal/notify/...` never reaches Telegram: an `httptest` Bot API (`getMe`, `sendMessage`,
   `getUpdates` with offsets) and `notify.FakeClock` (the settle, the backoff and a code's expiry with no real sleep);

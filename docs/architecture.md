@@ -516,8 +516,10 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   #219: for an agent's or LLM's handoff on a bridge with `world.handoff_hires`, the bridge hires instead (`protocol.md`
   "Hire with handoff in the background"): the review reviews the task's secrets, sends one `worker.handoff` with `hire`
   and follows the op's record (`world/handoffHire.ts`); closed, `ui/handoffHires.ts` (one per app, the browser's
-  `origin`) says how it ended, once, and gives the task back. A send that got no answer is followed until its record
-  comes or a world snapshot without it shows the bridge never took it (then the task comes back, for the same op).
+  `origin`) says how it ended, once, and gives the task back. A send that got no answer may still start (the bridge
+  reviews its secrets off the hub first), so neither a snapshot without the op nor Cancel request's `invalid_state`
+  counts: the review sends the very same request again (same op, same args) on each new connection and after a while,
+  until its record comes or the bridge answers it (taken: followed; refused: the task comes back, for the same op).
   Every client holds the desk and shows the source card's line; a literal handoff, or a bridge without them, keeps
   #198's flow.
 - **Ask the agent** (#224, part 2 of #11; `protocol.md` "Ask the agent"): `worker.handoff` mode `agent` and the composer's
