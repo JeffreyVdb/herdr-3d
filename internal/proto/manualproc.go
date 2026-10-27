@@ -21,6 +21,36 @@ type ManualCredential struct {
 	Attempt   int    `json:"attempt"`
 	ExpiresAt int64  `json:"expires_at"`
 }
+
+// ManualAttention is one episode of a run asking for the user (#213): the
+// askpass credential request (kind credential, confidence authenticated), or
+// a process observation of the run's own tty (kind input, confirmed or
+// uncertain). It never carries terminal text; Reason is a short code.
+type ManualAttention struct {
+	ID         string `json:"id"`
+	Kind       string `json:"kind"`
+	Confidence string `json:"confidence"`
+	Reason     string `json:"reason"`
+	Since      int64  `json:"since"`
+	ExpiresAt  int64  `json:"expires_at,omitempty"`
+}
+
+// The attention kinds, confidences, reasons and input detection levels.
+const (
+	AttentionCredential    = "credential"
+	AttentionInput         = "input"
+	AttentionAuthenticated = "authenticated"
+	AttentionConfirmed     = "confirmed"
+	AttentionUncertain     = "uncertain"
+	AttentionAskpass       = "askpass"
+	AttentionTTYRead       = "tty_read"
+	AttentionTTYWait       = "tty_wait"
+	AttentionSudoTerminal  = "sudo_terminal"
+	InputDetectionFull     = "full"
+	InputDetectionHints    = "hints"
+	InputDetectionNone     = "none"
+)
+
 type ManualEffect struct {
 	Kind           string `json:"kind"`
 	Endpoint       string `json:"endpoint"`
@@ -50,9 +80,12 @@ type ManualProcess struct {
 	CleanupNote string            `json:"cleanup_note,omitempty"`
 	Effects     []ManualEffect    `json:"effects,omitempty"`
 	Credential  *ManualCredential `json:"credential,omitempty"`
-	CreatedAt   int64             `json:"created_at"`
-	StartedAt   int64             `json:"started_at"`
-	EndedAt     int64             `json:"ended_at"`
+	// #213: live only, never stored; recomputed after a bridge restart.
+	Attention      *ManualAttention `json:"attention,omitempty"`
+	InputDetection string           `json:"input_detection,omitempty"`
+	CreatedAt      int64            `json:"created_at"`
+	StartedAt      int64            `json:"started_at"`
+	EndedAt        int64            `json:"ended_at"`
 }
 
 func init() {
