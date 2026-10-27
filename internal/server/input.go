@@ -1018,9 +1018,10 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 }
 
 // auditTexts is a command's args with each named text field as its length
-// ("<name>_bytes") and its review (`secrets`: one, or one per field) as
-// the decisions' counts (#108 round 2): never a typed text nor a range.
-// Args that do not read as an object are redacted.
+// ("<name>_bytes"), its review (`secrets`: one, or one per field) as the
+// decisions' counts (#108 round 2) and a hand-over (`secrets_pending`) by
+// its presence: never a typed text, a range nor a token. Args that do not
+// read as an object are redacted.
 func auditTexts(raw json.RawMessage, texts ...string) json.RawMessage {
 	var m map[string]json.RawMessage
 	if json.Unmarshal(raw, &m) != nil || m == nil {
@@ -1037,6 +1038,13 @@ func auditTexts(raw json.RawMessage, texts ...string) json.RawMessage {
 		}
 		delete(m, k)
 		m[k+"_bytes"] = mustJSON(len(s))
+	}
+	if v, ok := m["secrets_pending"]; ok {
+		var token string
+		if json.Unmarshal(v, &token) != nil {
+			return redacted(raw)
+		}
+		m["secrets_pending"] = mustJSON(token != "")
 	}
 	if v, ok := m["secrets"]; ok {
 		var many proto.SecretsReviews

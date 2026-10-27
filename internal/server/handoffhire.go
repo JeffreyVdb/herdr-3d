@@ -17,9 +17,10 @@ package server
 // clients see (World.HandoffHires, handoff_hire.upsert / .removed; never the
 // task, the instruction, a secret or review data), the protected task and
 // its review, the desk hold. The agent request or LLM job keeps a marker
-// (store.HandoffHireMarker) until the hire ended, so a restarted bridge
-// says the hire was interrupted; it never hires for an op from before the
-// restart, and holds no desk for it.
+// (store.HandoffHireMarker; once the hire ended, how), so a restarted
+// bridge says the hire was interrupted, a resumed request sends nobody
+// home on its own, and a replay of the op is still compared; it never
+// hires for an op from before the restart, and holds no desk for it.
 
 import (
 	"context"
@@ -69,20 +70,32 @@ var (
 // lines before and after dropped (game/src/world/handoff.ts, the same test
 // vectors).
 func hireWithHandoffTask(path, task string) string {
-	body := trailBlank.ReplaceAllString(leadBlank.ReplaceAllString(task, ""), "")
-	return "First read the handoff here: " + path + " and then follow these instructions:\n\n" + body
+	return handoffPathLine(path) + handoffTaskBody(task)
+}
+
+// handoffPathLine is the first task's line with the path, and the blank
+// line after it.
+func handoffPathLine(path string) string {
+	return "First read the handoff here: " + path + " and then follow these instructions:\n\n"
+}
+
+// handoffTaskBody is the task without its blank lines before and after.
+func handoffTaskBody(task string) string {
+	return trailBlank.ReplaceAllString(leadBlank.ReplaceAllString(task, ""), "")
 }
 
 // handoffHire is a pending handoff hire (hub goroutine): the record clients
 // see, the identity of the request that made it (replays), the hire's args
 // (Prompt: the task after its review, without the path line; no review
-// fields), its review (nil: none), who asked, and whether the hire began
-// (launched: the desk is the hire's now, no longer the hold's).
+// fields), its review (nil: none) and the pending owners of its task's
+// files (its review's, a hand-over's), who asked, and whether the hire
+// began (launched: the desk is the hire's now, no longer the hold's).
 type handoffHire struct {
 	rec      proto.HandoffHire
 	hash     string
 	args     proto.WorkerHireArgs
 	sec      *hireSecrets
+	owners   []string
 	by       string
 	launched bool
 }
@@ -93,15 +106,51 @@ func (r *handoffHire) holds() bool {
 	return r.rec.State == proto.HandoffHireWaiting || (r.rec.State == proto.HandoffHireHiring && !r.launched)
 }
 
+// marker is what r's request or job keeps of it: once it ended, how.
 func (r *handoffHire) marker() *store.HandoffHireMarker {
-	return &store.HandoffHireMarker{Floor: r.rec.Floor, Desk: r.rec.DeskIndex, Label: r.rec.Label, Harness: r.rec.Harness,
+	m := &store.HandoffHireMarker{Floor: r.rec.Floor, Desk: r.rec.DeskIndex, Label: r.rec.Label, Harness: r.rec.Harness,
 		Model: r.rec.Model, Effort: r.rec.Effort, Origin: r.rec.Origin, WorkerName: r.rec.WorkerName, SendHome: r.rec.SendHome,
 		StartedAt: r.rec.StartedAt}
+	if r.rec.Ended() {
+		m.State, m.Code, m.Reason = r.rec.State, r.rec.Code, r.rec.Reason
+	} else {
+		m.Owners = r.owners
+	}
+	return m
 }
 
-// handoffHireState is the hub's part (hub goroutine).
+// markedHire is the record a marker stands for, of op's request or job
+// (mode, source worker): as it ended, else waiting.
+func markedHire(op, mode, worker string, m store.HandoffHireMarker) proto.HandoffHire {
+	r := proto.HandoffHire{Op: op, Worker: worker, WorkerName: m.WorkerName, Mode: mode, Floor: m.Floor, DeskIndex: m.Desk,
+		Label: m.Label, Harness: m.Harness, Model: m.Model, Effort: m.Effort, Origin: m.Origin, State: proto.HandoffHireWaiting,
+		SendHome: m.SendHome, StartedAt: m.StartedAt}
+	if m.Ended() {
+		r.State, r.Code, r.Reason = m.State, m.Code, m.Reason
+	}
+	return r
+}
+
+// sameHire reports whether a asks for the hire rec is, as far as what is
+// kept of it tells (a restored record, or a pruned one's marker: no
+// request identity): the source, the mode, the send home, the desk and
+// the hire's settings.
+func sameHire(rec proto.HandoffHire, a proto.WorkerHandoffArgs) bool {
+	if a.Hire == nil || a.Hire.DeskIndex == nil {
+		return false
+	}
+	x := a.Hire
+	return rec.Worker == a.Worker && rec.Mode == a.Mode && rec.SendHome == a.SendHome && rec.Floor == floorArg(x.Floor, x.Session) &&
+		rec.DeskIndex == *x.DeskIndex && rec.Label == x.Label && rec.Harness == x.Harness && rec.Model == x.Model &&
+		rec.Effort == x.Effort && rec.Origin == x.Origin
+}
+
+// handoffHireState is the hub's part (hub goroutine): the records, and the
+// pending owners of the task files of the hires a restart interrupted
+// (released once the files are open, Run).
 type handoffHireState struct {
-	byOp map[string]*handoffHire
+	byOp    map[string]*handoffHire
+	orphans []string
 }
 
 // deskHeldError refuses a hire into a desk a pending handoff hire holds,
@@ -170,62 +219,82 @@ func (h *Hub) publishHandoffHire(r *handoffHire) {
 }
 
 // handoffHireHash identifies a request with a hire (a replay must match it;
-// never stored).
+// never stored): its args, the reviews by their decisions (not the scan's
+// revision: a scan again decides the same), the hand-over by its token.
 func handoffHireHash(a proto.WorkerHandoffArgs) string {
+	decisions := func(r *proto.SecretsReview) []proto.SecretDecision {
+		if r == nil {
+			return nil
+		}
+		return r.Decisions
+	}
 	var hire any
 	if a.Hire != nil {
 		x := *a.Hire
 		x.Floor, x.Session = floorArg(x.Floor, x.Session), ""
-		x.Secrets, x.SecretsPending = nil, ""
-		hire = x
+		x.Secrets = nil
+		hire = []any{x, decisions(a.Hire.Secrets)}
 	}
-	b, _ := json.Marshal([]any{a.Worker, a.Mode, a.Session, a.Candidate, a.Revision, strings.TrimSpace(a.Instruction), a.SendHome, hire})
+	b, _ := json.Marshal([]any{a.Worker, a.Mode, a.Session, a.Candidate, a.Revision, strings.TrimSpace(a.Instruction), a.SendHome, hire,
+		decisions(a.Secrets)})
 	s := sha256.Sum256(b)
 	return hex.EncodeToString(s[:])
 }
 
-// handoffOpKnown reports whether op names an agent request or an LLM job.
-func (h *Hub) handoffOpKnown(ctx context.Context, op string) (bool, error) {
-	if h.ah.byOp[op] != nil {
-		return true, nil
+// handoffOpHire reports whether op names an agent request or an LLM job
+// (known), and the record its marker stands for (nil: it had no hire).
+func (h *Hub) handoffOpHire(ctx context.Context, op string) (rec *proto.HandoffHire, known bool, err error) {
+	of := func(mode, worker string, m *store.HandoffHireMarker) (*proto.HandoffHire, bool, error) {
+		if m == nil {
+			return nil, true, nil
+		}
+		r := markedHire(op, mode, worker, *m)
+		return &r, true, nil
+	}
+	if ah := h.ah.byOp[op]; ah != nil {
+		return of(proto.HandoffModeAgent, ah.req.WorkerID, ah.req.Hire)
 	}
 	if h.ho.svc != nil {
-		if _, err := h.st.HandoffRequestByOp(ctx, op); err == nil {
-			return true, nil
+		if r, err := h.st.HandoffRequestByOp(ctx, op); err == nil {
+			return of(proto.HandoffModeAgent, r.WorkerID, r.Hire)
 		} else if !errors.Is(err, store.ErrNotFound) {
-			return false, err
+			return nil, false, err
 		}
 	}
-	if _, err := h.llmJobOf(ctx, op); err == nil {
-		return true, nil
+	if j, err := h.llmJobOf(ctx, op); err == nil {
+		return of(proto.HandoffModeLLM, j.row.WorkerID, j.row.Hire)
 	} else if !errors.Is(err, store.ErrNotFound) {
-		return false, err
+		return nil, false, err
 	}
-	return false, nil
+	return nil, false, nil
 }
 
 // handoffHireReplay answers a worker.handoff whose op is known (replay
 // true): the same request with a pending hire answers it as without one
-// (its ack carries the record), another one is refused. A request without
-// a hire of an op that had none is not this one's (false).
+// (its ack carries the record), another one is refused. A record restored
+// after a restart, or an op whose record was pruned, has no identity of
+// its request: what is kept of its hire is compared. A request without a
+// hire of an op that had none is not this one's (false).
 func (h *Hub) handoffHireReplay(ctx context.Context, a proto.WorkerHandoffArgs) (replay bool, err error) {
 	if r := h.hh.byOp[a.Op]; r != nil {
-		if r.hash != handoffHireHash(a) {
-			return true, errHireOtherArgs
+		if r.hash == "" && sameHire(r.rec, a) || r.hash != "" && r.hash == handoffHireHash(a) {
+			return true, nil
 		}
-		return true, nil
+		return true, errHireOtherArgs
 	}
 	if a.Hire == nil {
 		return false, nil
 	}
-	known, err := h.handoffOpKnown(ctx, a.Op)
-	if err != nil {
+	rec, known, err := h.handoffOpHire(ctx, a.Op)
+	switch {
+	case err != nil:
 		return true, err
-	}
-	if known {
+	case !known:
+		return false, nil
+	case rec == nil || !sameHire(*rec, a):
 		return true, errHireOtherArgs
 	}
-	return false, nil
+	return true, nil
 }
 
 // answerHandoffHireReplay answers the same request again (its identity
@@ -274,6 +343,12 @@ func (h *Hub) startHandoffHire(ctx context.Context, c *Client, cmd proto.Command
 		return err
 	}
 	if waking, err := h.wakeForHire(ctx, c, cmd, hire.Floor, func(ctx context.Context) error {
+		// The same request may have been accepted while the floor woke.
+		if replay, err := h.handoffHireReplay(ctx, a); err != nil {
+			return err
+		} else if replay {
+			return h.answerHandoffHireReplay(ctx, c, cmd, a)
+		}
 		return h.acceptHandoffHire(ctx, c, cmd, a)
 	}); waking || err != nil {
 		return err
@@ -368,6 +443,12 @@ func (h *Hub) acceptHandoffHire(ctx context.Context, c *Client, cmd proto.Comman
 			return err
 		}
 	}
+	undo := func(ctx context.Context, g handoffGate) {
+		if g.instr {
+			h.unprotect(ctx, g.p)
+		}
+		h.dropHireSecrets(ctx, g.sec)
+	}
 	startGated(h, ctx, c, cmd, rev, func(ctx context.Context) (handoffGate, error) {
 		g := handoffGate{instr: instr, sec: &hireSecrets{rev: rev, token: hire.SecretsPending}}
 		if instr {
@@ -391,18 +472,23 @@ func (h *Hub) acceptHandoffHire(ctx context.Context, c *Client, cmd proto.Comman
 		}
 		g.sec.ps = ps
 		return g, nil
-	}, func(ctx context.Context, g handoffGate) {
-		if g.instr {
-			h.unprotect(ctx, g.p)
-		}
-		h.dropHireSecrets(ctx, g.sec)
-	}, func(ctx context.Context, g handoffGate) error {
+	}, undo, func(ctx context.Context, g handoffGate) error {
 		// The hub moved on while the gate ran: the op, the desk and the
-		// caps again, in the step that holds the desk.
+		// caps again, in the step that holds the desk. The same request
+		// accepted meanwhile (sent twice at once) answers this one; what
+		// this gate made goes.
 		if replay, err := h.handoffHireReplay(ctx, a); err != nil {
 			return err
 		} else if replay {
-			return errHireOtherArgs
+			if err := h.answerHandoffHireReplay(ctx, c, cmd, a); err != nil {
+				return err
+			}
+			h.wg.Add(1)
+			go func() {
+				defer h.wg.Done()
+				undo(context.WithoutCancel(ctx), g)
+			}()
+			return nil
 		}
 		if err := h.handoffHireChecks(a); err != nil {
 			return err
@@ -437,7 +523,16 @@ func (h *Hub) newHandoffHire(c *Client, a proto.WorkerHandoffArgs, sec *hireSecr
 	if w := h.workers[a.Worker]; w != nil {
 		name = w.Name
 	}
-	return &handoffHire{hash: handoffHireHash(a), args: hire, sec: sec, by: c.name,
+	var owners []string
+	if sec != nil {
+		if sec.owner.Kind != "" && protectedCount(sec.ps) > 0 {
+			owners = append(owners, sec.owner.ID)
+		}
+		if o, ok := h.pendingOwner(sec.token); ok && sec.token != "" {
+			owners = append(owners, o.ID)
+		}
+	}
+	return &handoffHire{hash: handoffHireHash(a), args: hire, sec: sec, owners: owners, by: c.name,
 		rec: proto.HandoffHire{Op: a.Op, Worker: a.Worker, WorkerName: name, Mode: a.Mode, Floor: hire.Floor, DeskIndex: *hire.DeskIndex,
 			Label: hire.Label, Harness: hire.Harness, Model: hire.Model, Effort: hire.Effort, Origin: a.Hire.Origin,
 			State: proto.HandoffHireWaiting, SendHome: a.SendHome, StartedAt: h.opts.Now().UnixMilli()}}
@@ -453,20 +548,26 @@ func (h *Hub) addHandoffHire(r *handoffHire) {
 }
 
 // endHandoffHire ends r (hub goroutine): state with code and reason, its
-// task's review undone unless the hire took it, its marker cleared, the
-// hold released.
+// task's review undone unless the hire took it, its marker saying how it
+// ended, the hold released.
 func (h *Hub) endHandoffHire(ctx context.Context, r *handoffHire, state, code, reason string) {
 	if r.rec.Ended() {
 		return
 	}
 	held := r.holds()
 	r.rec.State, r.rec.Code, r.rec.Reason, r.rec.EndedAt = state, code, clipReason(reason), h.opts.Now().UnixMilli()
+	if state != proto.HandoffHireHired {
+		h.skipHandoffHome(r, nil) // asked for, nobody hired: the source stays
+	}
 	if !r.launched {
 		h.dropHireSecrets(ctx, r.sec)
 	}
+	if state != proto.HandoffHireHired && r.sec != nil && r.sec.token != "" {
+		h.dropPending(r.sec.token) // a hand-over goes with it (§1.3), not back to pending
+	}
 	r.sec = nil
 	r.args.Prompt = "" // the task is not kept past its end
-	h.clearHandoffMarker(ctx, r.rec.Op)
+	h.endHandoffMarker(ctx, r)
 	h.publishHandoffHire(r)
 	if held {
 		h.syncLayout()
@@ -475,10 +576,21 @@ func (h *Hub) endHandoffHire(ctx context.Context, r *handoffHire, state, code, r
 	h.trimHandoffHires()
 }
 
-// clearHandoffMarker drops op's restart marker: its hire ended.
-func (h *Hub) clearHandoffMarker(ctx context.Context, op string) {
-	if err := h.st.ClearHandoffHire(ctx, op); err != nil {
-		h.log.Error("clearing the handoff hire's marker failed", "op", op, "err", err)
+// endHandoffMarker says in r's marker how it ended: stored, and on its
+// request or job in memory (an agent request's row may not be stored yet:
+// it is inserted with this marker).
+func (h *Hub) endHandoffMarker(ctx context.Context, r *handoffHire) {
+	m := r.marker()
+	if ah := h.ah.byOp[r.rec.Op]; ah != nil && ah.hire {
+		ah.req.Hire = m
+	}
+	for _, j := range h.llm.byWorker {
+		if j.row.Op == r.rec.Op && j.hire {
+			j.row.Hire = m
+		}
+	}
+	if err := h.st.EndHandoffHire(ctx, r.rec.Op, *m); err != nil {
+		h.log.Error("saving the handoff hire's end failed", "op", r.rec.Op, "err", err)
 	}
 }
 
@@ -532,9 +644,8 @@ func (h *Hub) handoffHireCancel(ctx context.Context, op string) {
 func (h *Hub) handoffHireFiled(ctx context.Context, op string, marked bool, filed store.Handoff,
 	sendHome func(result, why string)) (handled bool) {
 	r := h.hh.byOp[op]
-	if r == nil {
+	if r == nil { // its record left the world: it ended
 		if marked {
-			h.clearHandoffMarker(ctx, op)
 			if sendHome != nil {
 				sendHome(proto.HandoffSendSkipped, "The new agent was not hired; the worker stays.")
 			}
@@ -544,7 +655,6 @@ func (h *Hub) handoffHireFiled(ctx context.Context, op string, marked bool, file
 	switch r.rec.State {
 	case proto.HandoffHireWaiting:
 	case proto.HandoffHireFailed, proto.HandoffHireCancelled: // it ended first: filed, not hired
-		h.clearHandoffMarker(ctx, op) // an interrupted one's request kept it until now
 		if r.rec.Path == "" {
 			r.rec.Handoff, r.rec.Path = filed.ID, filed.Path
 		}
@@ -560,7 +670,8 @@ func (h *Hub) handoffHireFiled(ctx context.Context, op string, marked bool, file
 	return true
 }
 
-// skipHandoffHome records the send home skipped (asked, no hire).
+// skipHandoffHome records the send home skipped (asked, no hire); sendHome
+// (nil: none yet, before the filing) tells the request or job.
 func (h *Hub) skipHandoffHome(r *handoffHire, sendHome func(result, why string)) {
 	if !r.rec.SendHome {
 		return
@@ -597,7 +708,12 @@ func (h *Hub) launchHandoffHire(ctx context.Context, r *handoffHire, sendHome fu
 			len(full.Prompt), herdr.MaxPrompt))
 		return
 	}
-	a.Prompt = hireWithHandoffTask(r.rec.Path, a.Prompt)
+	// The task alone is the user's (#39: translated for the harness); the
+	// path line and the herdr lines go as they are.
+	line, body := handoffPathLine(r.rec.Path), handoffTaskBody(a.Prompt)
+	a.Prompt = line + body
+	lines := strings.TrimPrefix(full.Prompt, a.Prompt)
+	compose := func(tr func(string) string) string { return line + tr(body) + lines }
 	leaving := ""
 	if r.rec.SendHome {
 		leaving = r.rec.Worker
@@ -614,7 +730,7 @@ func (h *Hub) launchHandoffHire(ctx context.Context, r *handoffHire, sendHome fu
 	watch := &hireWatch{leaving: leaving, settled: func(ctx context.Context, id string, res *proto.HireResult, delivery string, err error) {
 		h.handoffHireSettled(ctx, r, id, res, delivery, err, sendHome)
 	}}
-	if err := h.startInternalHire(ctx, r.by, cmd, a, watch, r.sec); err != nil {
+	if err := h.beginInternalHire(ctx, r.by, cmd, full, compose, watch, r.sec); err != nil {
 		r.launched = false
 		code := proto.HandoffHireHireFailed
 		switch {
@@ -680,6 +796,35 @@ func (h *Hub) handoffHireFloorGone(ctx context.Context, floors ...string) {
 	}
 }
 
+// handoffHireSourcesGone fails the waiting hires of the agent requests
+// whose source sits on floors (gone with their session): the request
+// cannot go on without its agent (an LLM job still files, and hires).
+func (h *Hub) handoffHireSourcesGone(ctx context.Context, floors ...string) {
+	for _, op := range h.sortedHandoffHires() {
+		r := h.hh.byOp[op]
+		if w := h.workers[r.rec.Worker]; w != nil && r.rec.Mode == proto.HandoffModeAgent && slices.Contains(floors, w.Floor) {
+			h.handoffHireFailed(ctx, op, proto.HandoffHireSourceGone, "")
+		}
+	}
+}
+
+// releaseInterruptedSecrets releases the task files of the hires a restart
+// interrupted (Run, the files open), off the hub goroutine.
+func (h *Hub) releaseInterruptedSecrets(ctx context.Context) {
+	owners := h.hh.orphans
+	h.hh.orphans = nil
+	if len(owners) == 0 {
+		return
+	}
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		for _, id := range owners {
+			h.releaseOwner(ctx, secretfiles.Owner{Kind: secretfiles.OwnerPending, ID: id})
+		}
+	}()
+}
+
 func (h *Hub) sortedHandoffHires() []string {
 	ops := make([]string, 0, len(h.hh.byOp))
 	for op := range h.hh.byOp {
@@ -728,11 +873,12 @@ func (h *Hub) removeHandoffHire(op string) {
 }
 
 // loadHandoffHires reads the hires a restart interrupted (NewHub, after the
-// agent requests and LLM jobs): each marked request or job is published as
-// failed, interrupted, with its handoff's path when it was filed; nothing
-// is hired for it and no desk held. Its marker is cleared, but a pending
-// agent request's, which resumes, keeps it until it settles: a second
-// restart meanwhile says the same, and its filing still sends nobody home.
+// agent requests and LLM jobs): each request or job whose hire had not
+// ended is published as failed, interrupted, with its handoff's path when
+// it was filed, and its marker says so; nothing is hired for it and no
+// desk held. A pending agent request, which resumes, is published as its
+// hire ended (interrupted by an earlier restart too) until it settles: its
+// filing then sets the path and sends nobody home.
 func (h *Hub) loadHandoffHires(ctx context.Context) error {
 	rows, err := h.st.HandoffHireRows(ctx)
 	if err != nil {
@@ -741,13 +887,20 @@ func (h *Hub) loadHandoffHires(ctx context.Context) error {
 	now := h.opts.Now().UnixMilli()
 	for _, row := range rows {
 		m := row.Marker
-		r := &handoffHire{by: handoffHireClient, rec: proto.HandoffHire{Op: row.Op, Worker: row.WorkerID, WorkerName: m.WorkerName,
-			Mode: row.Mode, Floor: m.Floor, DeskIndex: m.Desk, Label: m.Label, Harness: m.Harness, Model: m.Model, Effort: m.Effort,
-			Origin: m.Origin, State: proto.HandoffHireFailed, Code: proto.HandoffHireInterrupted, SendHome: m.SendHome,
-			StartedAt: m.StartedAt, EndedAt: now,
-			Reason: "The bridge restarted while the handoff was being written; nobody was hired: hire again from the handoff once it is filed."}}
+		r := &handoffHire{by: handoffHireClient, rec: markedHire(row.Op, row.Mode, row.WorkerID, m)}
+		r.rec.EndedAt = now
+		if !m.Ended() {
+			h.hh.orphans = append(h.hh.orphans, m.Owners...)
+			r.rec.State, r.rec.Code = proto.HandoffHireFailed, proto.HandoffHireInterrupted
+			r.rec.Reason = "The bridge restarted while the handoff was being written; nobody was hired: hire again from the handoff once it is filed."
+			if row.HandoffID != 0 {
+				r.rec.Reason = "The bridge restarted while the new agent was being hired: check the floor before hiring again from the handoff."
+			}
+			if err := h.st.EndHandoffHire(ctx, row.Op, *r.marker()); err != nil {
+				return err
+			}
+		}
 		if row.HandoffID != 0 {
-			r.rec.Reason = "The bridge restarted while the new agent was being hired: check the floor before hiring again from the handoff."
 			r.rec.Handoff = row.HandoffID
 			if e, err := h.st.HandoffByID(ctx, row.HandoffID); err == nil {
 				r.rec.Path = e.Path
@@ -757,13 +910,7 @@ func (h *Hub) loadHandoffHires(ctx context.Context) error {
 			r.rec.SendHomeResult, r.rec.SendHomeReason = proto.HandoffSendSkipped, "The new agent was not hired; "+m.WorkerName+" stays."
 		}
 		h.hh.byOp[row.Op] = r
-		h.log.Info("handoff hire interrupted by the restart", "op", row.Op, "floor", m.Floor, "desk", m.Desk)
-		if row.Mode == store.HandoffHireAgent && row.State == store.HandoffRequestPending {
-			continue // kept until the resumed request settles
-		}
-		if err := h.st.ClearHandoffHire(ctx, row.Op); err != nil {
-			return err
-		}
+		h.log.Info("handoff hire restored after the restart", "op", row.Op, "code", r.rec.Code, "floor", m.Floor, "desk", m.Desk)
 	}
 	h.trimHandoffHires()
 	return nil
