@@ -526,10 +526,13 @@ describe('HandoffDialog: hire intent', () => {
     const h = hired(e);
     const d = new HandoffDialog(document.body, h.host as never);
     e.w.floor = 'herdr-3d';
+    Object.assign(e.w, { harness: 'codex', model: 'gpt-6-luna' });
     d.open('A', { seated: true, intent: 'hire' });
     await e.flush();
     expect(document.getElementById('ho-title')?.textContent).toBe('Hire with a handoff from Pixel');
     expect(document.querySelector('label[for="ho-task"]')?.textContent).toBe('Task for the new agent required');
+    // The new agent's harness and model are chosen next: the source's to start with, not a given.
+    expect(document.querySelector('[data-hook="ho-next-agent"]')?.textContent).toBe('Next you choose the new agent’s harness and model: Pixel’s (codex · gpt-6-luna) to start with, or any other.');
     expect(task().required).toBe(true);
     expect(e.q('continue').textContent).toBe('Continue to hire');
     expect(e.q('continue').getAttribute('aria-disabled')).toBe('true');

@@ -246,7 +246,7 @@ describe('HireDialog: completion in the First task (#39)', () => {
     await flush();
     await flush();
     const hire = of('worker.hire')[0]!.args;
-    expect(hire).toMatchObject({ cwd: '/home/other', prompt: '/other-skill ' });
+    expect(hire).toMatchObject({ cwd: '/home/other', prompt: '/other-skill' });
     expect(hire.cwd).toBe(of('hire.commands')[1]!.args.cwd);
     expect(of('hire.prepare')[0]!.settled).toBe(false);
   });
@@ -293,7 +293,7 @@ describe('HireDialog: completion in the First task (#39)', () => {
     await flush();
     await flush();
     const hire = of('worker.hire')[0]!.args;
-    expect(hire.prompt).toBe('/home-skill ');
+    expect(hire.prompt).toBe('/home-skill');
     expect(hire).not.toHaveProperty('cwd');
   });
 
@@ -315,6 +315,6 @@ describe('HireDialog: completion in the First task (#39)', () => {
     press('Enter');
     await flush();
     await flush();
-    expect(of('worker.hire')[0]!.args).toMatchObject({ cwd: '/home/test', worktree: false, prompt: '/plain-skill ' });
+    expect(of('worker.hire')[0]!.args).toMatchObject({ cwd: '/home/test', worktree: false, prompt: '/plain-skill' });
   });
 });

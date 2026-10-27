@@ -526,8 +526,7 @@ export class HandoffDialog {
   /** #224: the three ways to file, each saying what happens and who receives what. */
   private modeNodes(): Node[] {
     if (this.state === 'filing' || this.state === 'pending' || this.state === 'filed') return [];
-    const w = this.host.store.workers.get(this.id);
-    const who = [w?.harness || w?.agent_kind, w?.model].filter(Boolean).join(' · ');
+    const who = this.sourceAgent();
     const llmOff = llmModeWhy(this.host.store.handoffLlm.state, this.host.store.handoffLlm.known);
     const llmModel = this.host.store.ai.state?.llm.model;
     const choices: Array<{ v: HandoffMode; label: string; hint: string; off?: boolean }> = [
@@ -572,14 +571,25 @@ export class HandoffDialog {
     return out;
   }
 
-  /** #198: the new agent's task: required, and apart from the instruction (which says what goes in the handoff). */
+  /** The source worker's harness and model ("codex · gpt-6-luna"; "" when neither is known). */
+  private sourceAgent(): string {
+    const w = this.host.store.workers.get(this.id);
+    return [w?.harness || w?.agent_kind, w?.model].filter(Boolean).join(' · ');
+  }
+
+  /**
+   * #198: the new agent's task: required, and apart from the instruction (which says what goes in the handoff). Its
+   * hint says the new agent's harness and model are chosen next: the source's to start with, any other on the review.
+   */
   private taskNode(): Node {
+    const who = this.sourceAgent();
     return h(
       'div',
       { class: 'dd-field ho-task' },
       h('label', { for: 'ho-task' }, 'Task for the new agent ', h('span', { class: 'dd-required' }, 'required')),
       this.taskEl,
       h('p', { class: 'field-hint', id: 'ho-task-hint' }, 'The new agent first reads the filed handoff, then does this. It goes only to the new agent, never to ', this.name, ' or the LLM.'),
+      h('p', { class: 'field-hint', 'data-hook': 'ho-next-agent' }, `Next you choose the new agent’s harness and model: ${who ? `${this.name}’s (${who}) to start with, or any other` : 'any of them'}.`),
     );
   }
 
