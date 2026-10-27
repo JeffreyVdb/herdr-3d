@@ -132,6 +132,22 @@ describe('HirePresetsDialog (#93)', () => {
     expect(document.activeElement?.getAttribute('data-key')).toBe(`use:${s.groups.floor[0]?.id}`);
   });
 
+  it('fuzzy searches preset names across both scopes and clears on Escape', () => {
+    const { dlg } = setup([preset('Deploy release', 'web'), preset('Daily report', null), preset('Other', 'web')]);
+    dlg.open('web', 0);
+    const search = document.querySelector<HTMLInputElement>('#hp-search')!;
+    expect(search).not.toBeNull();
+    search.focus();
+    type('#hp-search', 'dpr');
+    expect([...document.querySelectorAll('.hp-row h4')].map((el) => el.textContent)).toEqual(['Deploy release', 'Daily report']);
+    expect(document.activeElement?.id).toBe('hp-search');
+    type('#hp-search', 'zzzz');
+    expect(document.querySelector('[data-hook="hp-no-matches"]')).not.toBeNull();
+    document.querySelector<HTMLInputElement>('#hp-search')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(document.querySelector<HTMLInputElement>('#hp-search')!.value).toBe('');
+    expect(document.querySelectorAll('.hp-row')).toHaveLength(3);
+  });
+
   it('has an empty state that creates, and an older bridge’s unavailable state', () => {
     let { dlg } = setup([]);
     dlg.open('web', 0);

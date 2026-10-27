@@ -4,6 +4,7 @@ import type { HireOptions, HirePreset, HirePresetCheckAck } from '../net/protoco
 import { modelsFor, offeredOptions, resolveVisibleChoice } from '../world/hire';
 import { draftBlocker, draftFrom, exactProblem, nudgeWanted, pickExact, presetChoiceText, presetSpec, promptPreview, type ExactProblem, type HirePresetDraft } from '../world/hirePresets';
 import { labelsOf } from '../world/modelLabel';
+import { rankByName } from '../world/rank';
 import { effortsFor } from '../world/settings';
 import { backdropPolicy } from './dismiss';
 import { deskTabs, PIN_ICON, pinIdOf, PRESET_ICON } from './deskTabs';
@@ -133,6 +134,7 @@ export class HirePresetsDialog {
   private opening = 0;
   /** The editor's model filter (a long list); a harness switch clears it. */
   private modelQuery = '';
+  private searchQuery = '';
   /** #95: per preset id, the prompt "Save as is" was answered for and saved with: its editors don't ask again for it. */
   private readonly declined = new Map<string, string>();
 
@@ -210,6 +212,7 @@ export class HirePresetsDialog {
     this.returnTo = null;
     this.opening++;
     this.view = { kind: 'list', confirm: null, replacing: null };
+    this.searchQuery = '';
     this.setStatus('');
     this.busy = false;
     this.render();
@@ -374,11 +377,37 @@ export class HirePresetsDialog {
           ),
         );
       else {
-        nodes.push(this.group('floor', 'This floor', `Only on ${this.floorName()}`, floor, 'None on this floor yet.', v));
-        nodes.push(this.group('global', 'Global', 'On every floor of every building', global, 'No global presets yet.', v));
+        const search = h('input', { id: 'hp-search', 'data-key': 'search', type: 'search', placeholder: 'Search preset names', autocomplete: 'off', value: this.searchQuery });
+        search.addEventListener('input', () => {
+          this.searchQuery = search.value;
+          this.renderList(v);
+        });
+        search.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' && search.value) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.searchQuery = '';
+            this.renderList(v);
+          }
+        });
+        nodes.push(h('div', { class: 'dd-field hp-search' }, h('label', { for: 'hp-search' }, 'Search presets'), search));
+        const query = this.searchQuery.trim();
+        const matching = (items: HirePreset[]) => rankByName(items, query, (p) => p.name, { subsequence: true }).map((r) => r.item);
+        const floorMatches = matching(floor);
+        const globalMatches = matching(global);
+        if (query && !floorMatches.length && !globalMatches.length) {
+          nodes.push(h('p', { class: 'pp-empty', 'data-hook': 'hp-no-matches', role: 'status' }, 'No presets match your search.'));
+        } else {
+          nodes.push(this.group('floor', 'This floor', `Only on ${this.floorName()}`, floorMatches, query ? 'No matching presets on this floor.' : 'None on this floor yet.', v));
+          nodes.push(this.group('global', 'Global', 'On every floor of every building', globalMatches, query ? 'No matching global presets.' : 'No global presets yet.', v));
+        }
       }
     }
+    const activeSearch = document.activeElement instanceof HTMLInputElement && document.activeElement.id === 'hp-search' ? document.activeElement : null;
+    const selection = activeSearch ? [activeSearch.selectionStart, activeSearch.selectionEnd] as const : null;
     replaceKeepingFocus(this.body, nodes, 'new');
+    const newSearch = this.body.querySelector<HTMLInputElement>('#hp-search');
+    if (selection && newSearch) newSearch.setSelectionRange(selection[0], selection[1]);
     const close = h('button', { type: 'button', class: 'btn', 'data-key': 'done', onclick: () => this.close() }, 'Close');
     const add = h('button', { type: 'button', class: 'btn btn--primary', 'data-key': 'new', 'aria-disabled': off ? 'true' : null, title: off ?? 'Create a hire preset', onclick: () => !off && this.edit(null) }, icon(ICON.plus), h('span', {}, 'New preset'));
     replaceKeepingFocus(this.actions, [close, add]);

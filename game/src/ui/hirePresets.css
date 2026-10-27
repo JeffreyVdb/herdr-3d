@@ -4,10 +4,6 @@
  * that card, folded corner and all; each row reads name, then the exact model, then how its first task starts.
  */
 
-.desk-dlg--hire-presets {
-  width: min(640px, calc(100vw - 32px));
-}
-
 .dd-plate--preset {
   min-width: 48px;
   background: var(--well-deep);
@@ -21,6 +17,25 @@
 }
 
 /* ---- the list: this floor's, then the global ones ---------------------------------------- */
+
+.desk-dlg--hire-presets .dd-body {
+  align-content: start;
+}
+.hp-search {
+  max-width: 32rem;
+}
+.hp-search input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--well);
+}
+.hp-search input:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 1px;
+}
 
 .hp-group + .hp-group {
   margin-top: 18px;
