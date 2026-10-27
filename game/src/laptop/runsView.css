@@ -1,7 +1,9 @@
 /*
- * #216: the Runs view (runsView.ts), a pane of the seat's overlay: its strip, then a column that scrolls only when it
- * must (a phone, a long card): the request card, the run rows (their own scroll past a few), the picked run's header and
- * its terminal filling the rest. Tokens of the UI theme; no transforms (the run's xterm measures its box).
+ * #216: the Runs view (runsView.ts), a pane of the seat's overlay: its strip, then a column: the request card, the run
+ * rows, the picked run's header and its terminal filling the rest. The terminal keeps a usable height first: when the
+ * column is short (900×700 with a card and a few runs) the card yields down to a compact head (the rest scrolls inside
+ * it), then the rows down to two (their own scroll); only past that does the column scroll (Open terminal brings the
+ * terminal into view then). Tokens of the UI theme; no transforms (the run's xterm measures its box).
  */
 .seat-runs {
   display: flex;
@@ -40,8 +42,13 @@
   scrollbar-color: var(--scroll-thumb) transparent;
 }
 .seat-runs-body > .mp-request {
-  flex: none;
+  flex: 0 1 auto;
+  min-height: 112px;
   margin: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
 }
 .seat-runs-status {
   flex: none;
@@ -53,14 +60,15 @@
   display: none;
 }
 
-/* The rows: compact, one line each; the list scrolls by itself past about five. */
+/* The rows: compact, one line each; the list scrolls by itself past about five, or past two in a short column (it
+   yields only once the card is down to its compact height; runsView.ts sets --seat-runs-min to two rows' worth). */
 .seat-runs-list {
-  flex: none;
+  flex: 0 0.001 auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
   max-height: 232px;
-  min-height: 0;
+  min-height: calc(min(var(--seat-runs-n, 0), 2) * 46px - min(var(--seat-runs-n, 0), 1) * 6px + 4px);
   margin: 0;
   padding: 2px;
   overflow: auto;
@@ -328,6 +336,7 @@
 }
 :root[data-ui-theme='ubuntu'] .seat-runs-list {
   gap: 10px;
+  min-height: calc(min(var(--seat-runs-n, 0), 2) * 50px - min(var(--seat-runs-n, 0), 1) * 10px + 12px);
   padding: 6px;
 }
 :root[data-ui-theme='ubuntu'] .seat-run-pick:focus-visible {

@@ -23,10 +23,10 @@ const views = (page: Page) => page.evaluate(() => window.__h3d.seatViews());
 const resizes = (page: Page) => page.evaluate(() => window.__h3d.watchLog().filter((e) => e.t === 'terminal.resize' && !String((e.args as { id: string }).id).startsWith('mp:')).length);
 const focused = () => (document.activeElement as HTMLElement | null)?.className ?? '';
 
-async function boot(page: Page, key: string, o: { request?: string; ui?: 'quiet' | 'ubuntu'; terminal?: string[] } = {}): Promise<void> {
+async function boot(page: Page, key: string, o: { request?: string; ui?: 'quiet' | 'ubuntu'; terminal?: string[]; sim?: string } = {}): Promise<void> {
   if (o.ui) await page.addInitScript((ui) => localStorage.setItem('h3d.theme.ui', ui), o.ui);
   await page.addInitScript(() => localStorage.setItem('h3d.monitors', 'terminal'));
-  await openGame(page, 'demo-m5', '&prints=0&open=none', `play=none&sim=1&simms=150&simusage=0&simlimits=ok&simmanual=${key}${o.request ? `&simcmdreq=${o.request}` : ''}`);
+  await openGame(page, 'demo-m5', '&prints=0&open=none', `play=none&sim=1&simms=150&simusage=0&simlimits=ok&simmanual=${key}${o.request ? `&simcmdreq=${o.request}` : ''}${o.sim ?? ''}`);
   await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
   await frames(page, 3);
   if (o.terminal) await leftInTerminal(page, ...o.terminal);
@@ -314,6 +314,126 @@ test('the files drawer: the worker’s tree, the filter, Enter puts a file chip 
   await expect(drawer).toHaveAttribute('data-open', 'false');
   clean();
 });
+
+test('the files drawer while the worker asks: nothing goes in, the drawer says why; once answered, it goes in', async ({ page }) => {
+  test.setTimeout(180_000);
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 900, height: 700 });
+  await boot(page, `files-ask-${Date.now()}`, { terminal: [zippy.id] });
+  await sit(page, zippy.id);
+  const ask = { tool_use_id: 'toolu_h216_ask', agent: 'claude', questions: [{ header: 'Color', question: 'Which color?', multi: false, other: false, options: [{ label: 'Red', description: 'Warm' }, { label: 'Blue', description: 'Cool' }] }] };
+  expect((await page.evaluate((a) => window.__h3d.simAsk({ id: a.id, ask: a.ask }), { id: zippy.id, ask })).ok).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__h3d.seat().ask)).not.toBeNull();
+  await page.keyboard.press('Control+Shift+KeyE');
+  const drawer = page.locator('.fdr');
+  await expect(drawer).toHaveAttribute('data-open', 'true');
+  const readme = drawer.getByRole('treeitem', { name: /README\.md/i }).first();
+  await readme.focus();
+  await page.keyboard.press('Enter');
+  const said = drawer.locator('.fdr-said');
+  await expect(said).toBeVisible();
+  await expect(said).toHaveText(/Zippy is waiting for your answer/);
+  expect(await contrast(page, '.fdr-said')).toBeGreaterThanOrEqual(4.5);
+  expect(await mode(page)).toBe('terminal'); // no view swap, no "Added"
+  expect(await page.evaluate(() => window.__h3d.seat().note)).not.toMatch(/Added/);
+  await snap(page, 'drawer-refused-quiet-900');
+  // Answered (the ask goes): the next Enter puts the chip in.
+  await page.evaluate((id) => window.__h3d.simAsk({ id, ask: null }), zippy.id);
+  await expect.poll(() => page.evaluate(() => window.__h3d.seat().ask)).toBeNull();
+  await readme.focus();
+  await page.keyboard.press('Enter');
+  await expect.poll(() => mode(page)).toBe('transcript');
+  await expect(said).toBeHidden();
+  await expect(page.locator('.seat-transcript .tx-prompt .cmp-chip, .seat-transcript .tx-prompt [data-chip]')).toHaveCount(1);
+  clean();
+});
+
+test('an older bridge (no transcripts): a Runs view restored on sitting stays up with its terminal; Chat says why', async ({ page }) => {
+  test.setTimeout(180_000);
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await boot(page, `old-${Date.now()}`, { sim: '&simfail=no_m16' });
+  await page.evaluate((id) => localStorage.setItem('h3d.seat.runs', JSON.stringify([id])), zippy.id);
+  await start(page, zippy.id, 'o-1', 'pnpm vitest run src/laptop');
+  await sit(page, zippy.id);
+  await expect.poll(() => mode(page)).toBe('runs');
+  // The conversation's watch is refused (unknown_command): Runs stays, its terminal too, and nothing says error.
+  await expect.poll(() => page.evaluate(() => window.__h3d.watchLog().some((c) => c.t === 'transcript.watch' && c.result?.code === 'unknown_command'))).toBe(true);
+  await frames(page, 20);
+  await page.waitForTimeout(500);
+  expect(await mode(page)).toBe('runs');
+  await expect(page.locator('.seat-runs .xterm-rows')).toBeVisible();
+  expect(await page.evaluate(() => window.__h3d.seat().state)).not.toBe('error');
+  // Chat cannot open here (it says why) and Runs stays; Ctrl+Esc goes to the terminal and back to Runs.
+  await page.keyboard.press('Control+Shift+Digit2');
+  await expect.poll(() => page.evaluate(() => window.__h3d.seat().state)).toBe('error');
+  expect(await mode(page)).toBe('runs');
+  await page.keyboard.press('Control+Escape');
+  await expect.poll(() => mode(page)).toBe('terminal');
+  await page.keyboard.press('Control+Escape');
+  await expect.poll(() => mode(page)).toBe('runs');
+  await expect(page.locator('.seat-runs .xterm-rows')).toBeVisible();
+  clean();
+});
+
+/** What of the Runs view is in sight (px high, inside its scrolling body and the window): its run terminal, its card; the picked row whole? */
+const sight = (page: Page) =>
+  page.evaluate(() => {
+    const body = document.querySelector('.seat-runs-body')!.getBoundingClientRect();
+    const list = document.querySelector('.seat-runs-list')!.getBoundingClientRect();
+    const top = Math.max(body.top, 0);
+    const bottom = Math.min(body.bottom, innerHeight);
+    const seen = (r: DOMRect) => Math.round(Math.max(0, Math.min(r.bottom, bottom) - Math.max(r.top, top)));
+    const term = document.querySelector('.seat-runs-term')!.getBoundingClientRect();
+    const row = document.querySelector('.seat-run--on')!.getBoundingClientRect();
+    const card = document.querySelector('.seat-runs .mp-request');
+    return { term: seen(term), termH: Math.round(term.height), card: card ? seen(card.getBoundingClientRect()) : 0, row: row.top >= Math.max(top, list.top) - 1 && row.bottom <= Math.min(bottom, list.bottom) + 1 };
+  });
+
+for (const ui of ['quiet', 'ubuntu'] as const) {
+  test(`${ui}: Open terminal with the request card and three runs shows the run's terminal whole at 900×700, 1280×800 and on a phone`, async ({ page }) => {
+    test.setTimeout(180_000);
+    const clean = watchErrors(page);
+    await page.setViewportSize({ width: 900, height: 700 });
+    await boot(page, `fit-${ui}-${Date.now()}`, { ui, request: 'sudo', terminal: [zippy.id] });
+    await sit(page, zippy.id);
+    await start(page, zippy.id, 'f-1', 'echo b');
+    await start(page, zippy.id, 'f-2', 'echo c');
+    const asking = await start(page, zippy.id, 'f-3', 'read -p "Name? " name');
+    await attention(page, asking, 'confirmed');
+    for (const size of [{ width: 900, height: 700 }, { width: 1280, height: 800 }, { width: 390, height: 844 }]) {
+      await page.keyboard.press('Control+Shift+Digit1');
+      await expect.poll(() => mode(page)).toBe('terminal');
+      await page.setViewportSize(size);
+      await frames(page, 6);
+      await page.waitForTimeout(300);
+      await page.locator('.seat-needs').getByRole('button', { name: /^Open the terminal of/ }).click();
+      await expect.poll(() => mode(page)).toBe('runs');
+      await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains('mp-terminal-input') ?? false)).toBe(true);
+      await expect(page.locator('.seat-runs .mp-request')).toBeVisible();
+      await expect(page.locator('.seat-runs .seat-run')).toHaveCount(3);
+      await page.waitForTimeout(300);
+      const s = await sight(page);
+      await snap(page, `runs-open-${ui}-${size.width}`);
+      // The focused terminal is on the screen, whole, at a usable height; the picked row shows; the card does too (in part).
+      expect(s.term, `${size.width}: ${JSON.stringify(s)}`).toBeGreaterThanOrEqual(150);
+      expect(s.term, `${size.width}: ${JSON.stringify(s)}`).toBeGreaterThanOrEqual(s.termH - 1);
+      expect(s.row, `${size.width}: ${JSON.stringify(s)}`).toBe(true);
+      if (size.width > 560) expect(s.card, `${size.width}: ${JSON.stringify(s)}`).toBeGreaterThanOrEqual(80);
+      // A row's own Open terminal (another run) takes the same path.
+      const other = page.locator('.seat-runs .seat-run').nth(2);
+      await other.getByRole('button', { name: /^Open the terminal of/ }).click();
+      await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains('mp-terminal-input') ?? false)).toBe(true);
+      await page.waitForTimeout(300);
+      const t = await sight(page);
+      expect(t.term, `${size.width} row: ${JSON.stringify(t)}`).toBeGreaterThanOrEqual(Math.min(150, t.termH));
+      expect(t.term, `${size.width} row: ${JSON.stringify(t)}`).toBeGreaterThanOrEqual(t.termH - 1);
+      expect(t.row, `${size.width} row: ${JSON.stringify(t)}`).toBe(true);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    clean();
+  });
+}
 
 /** The contrast of an element's text (or `prop`) on the first opaque background behind it (WCAG 2 relative luminance). */
 async function contrast(page: Page, selector: string): Promise<number> {

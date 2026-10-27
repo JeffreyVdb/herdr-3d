@@ -36,6 +36,14 @@ export interface RunsViewHost {
   now?(): number;
 }
 
+/** Scrolls `box` the least that shows `el` whole (its top, when it is taller than the box). */
+function intoSight(box: HTMLElement, el: HTMLElement): void {
+  const b = box.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  if (r.bottom > b.bottom) box.scrollTop += Math.min(r.bottom - b.bottom, r.top - b.top);
+  else if (r.top < b.top) box.scrollTop -= b.top - r.top;
+}
+
 const ended = (p: ManualProcess) => p.state === 'exited' || p.state === 'stopped' || p.state === 'failed';
 /** As the dialog's: a live run can be stopped, and an ended one whose cleanup is needed or failed. */
 const stoppable = (p: ManualProcess) => !ended(p) || p.cleanup === 'needed' || p.cleanup === 'failed';
@@ -76,6 +84,7 @@ export class RunsView {
   private readonly panel = h('section', { class: 'seat-runs-panel' });
   private readonly panelHead = h('div', { class: 'seat-runs-head' });
   private readonly termBox = h('div', { class: 'seat-runs-term' });
+  private readonly body: HTMLElement;
   private readonly card: CommandRequestCard;
   private selected: string | null = null;
   private term: RunTerminalLike | null = null;
@@ -95,8 +104,8 @@ export class RunsView {
     const run: HTMLButtonElement = h('button', { class: 'btn seat-runs-new', 'data-action': 'manual-entry', 'aria-haspopup': 'dialog', onclick: () => host.runCommand(run) }, duotone('play'), h('span', {}, 'Run a command…'));
     const strip = h('div', { class: 'seat-strip seat-runs-strip' }, duotone('play', 'seat-strip-ic'), h('span', { class: 'seat-strip-name' }, 'Runs'), this.sub, run);
     this.panel.append(this.panelHead, this.termBox);
-    const body = h('div', { class: 'seat-runs-body' }, this.card.el, this.status, this.list, this.panel);
-    this.el = h('div', { class: 'seat-pane seat-runs', role: 'region', 'aria-label': `${host.name()}’s runs`, tabindex: '-1' }, strip, body);
+    this.body = h('div', { class: 'seat-runs-body' }, this.card.el, this.status, this.list, this.panel);
+    this.el = h('div', { class: 'seat-pane seat-runs', role: 'region', 'aria-label': `${host.name()}’s runs`, tabindex: '-1' }, strip, this.body);
     this.el.hidden = true;
     this.status.hidden = true;
     this.list.addEventListener('keydown', (e) => this.onListKey(e));
@@ -138,6 +147,8 @@ export class RunsView {
     if (this.selected && !runs.some((p) => p.id === this.selected)) this.selected = null;
     this.selected ??= runs[0]?.id ?? null;
     const rows = runs.map((p) => this.row(p));
+    // How many rows the list keeps in sight in a short column (runsView.css: two at most).
+    this.list.style.setProperty('--seat-runs-n', String(rows.length));
     replaceKeepingFocus(this.list, rows.length ? rows : [h('li', { class: 'seat-runs-empty' }, `No manual runs for ${this.host.name()} yet: run a command, or the one the agent asks for.`)], undefined, { keepScroll: true });
     this.renderPanel();
     this.tick();
@@ -244,8 +255,21 @@ export class RunsView {
   private focusTerm(): boolean {
     this.term?.focus();
     const done = !!this.term && document.activeElement instanceof Node && this.el.contains(document.activeElement) && document.activeElement !== this.el;
-    if (done) this.termFocus = false;
+    if (done) {
+      this.termFocus = false;
+      this.reveal();
+    }
     return done;
+  }
+
+  /**
+   * The picked row into its list's sight, and the terminal into the column's, where they scroll (the terminal's input is
+   * a clipped 1 px element: focusing it scrolls nothing by itself). Only these two boxes move, never the page.
+   */
+  private reveal(): void {
+    const row = this.list.querySelector<HTMLElement>('.seat-run--on');
+    if (row) intoSight(this.list, row);
+    intoSight(this.body, this.panel);
   }
 
   get selectedId(): string | null {
