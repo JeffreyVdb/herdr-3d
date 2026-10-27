@@ -1,0 +1,9 @@
+Created [hello_world_server.py](/home/jeff/repos/jeffreyvdb/herdr-3d/tools/hello_world_server.py). To launch it through Herdr from the repository root on port 80, use:
+
+```sh
+sudo -k python3 tools/hello_world_server.py 80
+```
+
+`sudo -k` ignores cached credentials for this invocation, so it should prompt for your password unless your sudo configuration permits passwordless execution. The server listens on localhost; test it with `curl http://127.0.0.1/` and stop it with Ctrl+C.
+
+I verified the HTTP response on an unprivileged port. The Herdr password prompt itself remains to be tested.

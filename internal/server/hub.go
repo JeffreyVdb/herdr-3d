@@ -321,6 +321,10 @@ type Options struct {
 	CommandRequestsEnabled     *bool
 	ScheduleSuggestionsEnabled *bool
 	ScheduleSuggestRoles       schedsuggest.Roles
+	// CommandRequestRetry is the wait before a command request's first
+	// retry after a transient model error (#213; default
+	// DefaultCommandRequestRetry, doubled for the second).
+	CommandRequestRetry time.Duration
 	// #110 pack up on request: PackupEnabled is the environment's toggle
 	// (HERDR_WORLD_PACKUP_ENABLED; nil: not set), PackupTimeout bounds a
 	// packup.detect's models (default packup.DetectTimeout), PackupRoles the models
@@ -718,6 +722,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	}
 	if opts.AgentHandoffGrace <= 0 {
 		opts.AgentHandoffGrace = DefaultAgentHandoffGrace
+	}
+	if opts.CommandRequestRetry <= 0 { // #213
+		opts.CommandRequestRetry = DefaultCommandRequestRetry
 	}
 	if opts.FollowupDebounce <= 0 {
 		opts.FollowupDebounce = DefaultFollowupDebounce
