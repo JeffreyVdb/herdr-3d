@@ -7,7 +7,7 @@ import { secretFilesText } from '../world/revokeSecrets';
 import type { RunAttention } from '../world/manualProcess';
 import { duotone, type DuotoneName } from './duotone';
 import { NeedsYouLine } from './needsYou';
-import type { SeatView } from '../laptop';
+import type { SeatRerun, SeatView } from '../laptop';
 import { FILES_KEY, LOOK_KEY } from '../laptop/keys';
 import type { FullscreenChip } from '../laptop/fullscreen';
 import type { SeatMode } from '../laptop/transcriptMode';
@@ -69,6 +69,9 @@ export class SeatBar implements SeatView {
   readonly input: HTMLTextAreaElement;
   private readonly tape = el('span', 'seat-tape');
   private readonly note = el('span', 'seat-note');
+  /** Run elsewhere: the other runs of the seated worker's message. */
+  private readonly rerunsEl = el('span', 'seat-reruns');
+  private rerunsKey = '';
   private readonly keys = el('div', 'seat-keys');
   private readonly standBtn = el('button', 'seat-stand');
   /** #216: the rail (the views as tabs, the files toggle, Host and Leave) and the stage beside it. */
@@ -171,6 +174,8 @@ export class SeatBar implements SeatView {
       live?(): void;
       /** #176: the terminal's selected text, for a copy ('' or none: the browser's own copy). */
       selection?(): string;
+      /** Run elsewhere: a chip of another run of the message: sit at that worker's laptop (none: no chips). */
+      rerun?(id: string): void;
     },
     private readonly prefs: ViewPrefs | null = null,
   ) {
@@ -182,6 +187,12 @@ export class SeatBar implements SeatView {
     this.note.setAttribute('aria-live', 'polite');
     const line = el('div', 'seat-line');
     line.append(this.tape, this.note);
+    if (handlers.rerun) {
+      this.rerunsEl.hidden = true;
+      this.rerunsEl.setAttribute('role', 'group');
+      this.rerunsEl.setAttribute('aria-label', 'Other runs of this message');
+      line.append(this.rerunsEl);
+    }
     if (handlers.revoke) {
       const revoke = handlers.revoke;
       this.secretsBtn.type = 'button';
@@ -700,6 +711,33 @@ export class SeatBar implements SeatView {
   }
 
   /** #176: the worker's status on its tape (null: none to show). */
+  /** Run elsewhere: a chip per other run of the seated worker's message (its name, model and status); a click sits there. */
+  reruns(list: readonly SeatRerun[]): void {
+    const key = JSON.stringify(list);
+    if (key === this.rerunsKey) return;
+    this.rerunsKey = key;
+    this.rerunsEl.hidden = list.length === 0;
+    this.rerunsEl.replaceChildren(
+      ...list.map((r) => {
+        const b = el('button', 'seat-rerun');
+        b.type = 'button';
+        b.dataset.key = `rerun:${r.id}`;
+        const name = el('span', 'seat-rerun-name');
+        name.textContent = r.name;
+        const model = el('span', 'seat-rerun-model');
+        model.textContent = r.model;
+        const dot = el('span', 'seat-rerun-dot');
+        dot.dataset.display = r.display;
+        b.append(duotone('fork'), name, model, dot);
+        const what = r.original ? 'runs the message this worker repeats' : 'runs this message too';
+        b.title = `${r.name} ${what}${r.model ? ` on ${r.model}` : ''}. Sit at its laptop.`;
+        b.setAttribute('aria-label', `${r.name}, ${r.display.replace('_', ' ')}, ${what}${r.model ? ` on ${r.model}` : ''}: sit at its laptop`);
+        b.addEventListener('click', () => this.handlers.rerun?.(r.id));
+        return b;
+      }),
+    );
+  }
+
   workerStatus(display: Display | null): void {
     this.statusTape.hidden = !display;
     if (!display) return;

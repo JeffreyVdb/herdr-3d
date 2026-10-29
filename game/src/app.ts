@@ -30,6 +30,7 @@ import { Hud, type PlanLabel, type ToastAction, type ToastKind } from './ui/hud'
 import { h, icon } from './ui/dom';
 import { HireDialog, presetPrefill, type HirePrefill } from './ui/hire';
 import { carriedSeed, HireReviewDialog } from './ui/hireReview';
+import { RerunPicker } from './ui/rerunPicker';
 import { Panels } from './ui/panels';
 import { SendHomeDialog } from './ui/sendHome';
 import { HandoffDialog, type HandoffHirePrefill } from './ui/handoffDialog';
@@ -265,6 +266,8 @@ export class App {
   readonly hire: HireDialog;
   /** #212: the review of a dictated hire (phase 4 opens it with the interpretation). */
   readonly hireReview: HireReviewDialog;
+  /** Run elsewhere: the picker over the seat for a message you wrote (its Hire opens `hire` over the seat). */
+  readonly rerunPicker: RerunPicker;
   /** #210: every hire on its way, from Hire to its outcome. */
   readonly hires: HireCoordinator;
   /** #219: says how a handoff hire the bridge made for this browser ended, once. */
@@ -917,6 +920,16 @@ export class App {
       },
     });
     this.sendHome = new SendHomeDialog(o.host, dialogHost);
+    this.rerunPicker = new RerunPicker(o.host, {
+      store: this.store,
+      modelPrefs: this.hireModelPrefs,
+      desk: (floor) => {
+        const why = this.whyNoHire(floor);
+        const desk = why ? null : this.nearestFreeDesk(floor);
+        return desk === null ? { why: why ?? `No free desk on ${this.store.floorName(floor)} right now.` } : { desk };
+      },
+      hire: (floor, desk, prefill) => this.hireFromSeat(floor, desk, prefill),
+    });
     // #108 round 5: the removal of a worker's protected files, from the seat bar's chip.
     this.revokeSecrets = new RevokeSecretsDialog(o.host, {
       ...dialogHost,
@@ -983,6 +996,7 @@ export class App {
       openRun: (id) => this.laptops.openRun(id),
       runs: () => this.laptops.showRuns(),
       refocus: () => this.laptops.focusSeat(),
+      rerun: (id) => void this.goToWorker(id), // Run elsewhere: the chip of another run of the message
       revoke: (from) => {
         const id = this.laptops.seated;
         if (id) this.revokeSecrets.open(id, from);
@@ -1020,6 +1034,7 @@ export class App {
         overview: () => this.openOverview(false), // #118
         handoff: (id) => this.openHandoff(id, true), // #223
         hireHandoff: (id, c) => this.openHireHandoff(id, true, c), // #198
+        rerun: (id, text, first, anchor, images) => void this.rerunPicker.open({ worker: id, text, first, anchor, images }), // Run elsewhere
         scheduleFollowup: (id, c, sug) => this.openFollowup(id, c, sug), // #64 schedules, #66 its suggestion
         catalogs, // #39
       },
@@ -1277,6 +1292,7 @@ export class App {
     this.revokeSecrets.refresh(); // #108 round 4
     this.syncManualProcesses();
     this.laptops.syncSecretFiles();
+    this.laptops.syncReruns(); // Run elsewhere
     this.handoffDialog.refresh(); // #223
     this.noteAgentHandoffs(); // #224
     this.cabinet.refresh();
@@ -1882,6 +1898,19 @@ export class App {
     return this.hireReview.open(floor as string, interp, d, undefined, handover);
   }
 
+  /**
+   * Run elsewhere: the Hire dialog over the seat, at `desk` of `floor` (the picker's), with its prefill (`go` hires once
+   * the floor is checked). You stay at the laptop; once it closes the seat has the keys again.
+   */
+  private hireFromSeat(floor: string, desk: number, prefill: HirePrefill): void {
+    const d = this.hireSeat(desk, floor);
+    if (d === null) return;
+    this.hire.open(floor, d, prefill);
+    this.hire.onceClosed(() => {
+      if (this.laptops.seated) this.laptops.focusSeat();
+    });
+  }
+
   /** The desk a hire opens for on a floor (the one you are on unless `s` says), or null with a toast saying why not. */
   private hireSeat(desk?: number, s: string | null = this.hereFloor()): number | null {
     const seat = resolveHireDesk(s, s ? this.store.floorView(s) : null, s ? this.heldDesks(s) : new Set(), desk);
@@ -2142,7 +2171,7 @@ export class App {
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
     if (this.deskGames.isOpen) return true;
-    return this.manualProcesses.isOpen || this.manualCredential.isOpen || this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.secretsReview.isOpen || this.revokeSecrets.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.hirePresets.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen || this.mcpPage.isOpen;
+    return this.manualProcesses.isOpen || this.manualCredential.isOpen || this.hire.isOpen || this.rerunPicker.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.secretsReview.isOpen || this.revokeSecrets.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.hirePresets.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen || this.mcpPage.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -4400,7 +4429,7 @@ export class App {
     // #118: the overview opened from the transcript (O) keeps the seat: Esc closes it back onto the conversation.
     // #108: so does the review of a prompt's secrets (from the prompt box or a paste): Confirm sends from the seat.
     // Round 4: and the confirmation that removes the seated worker's protected files (the seat bar's chip opens it).
-    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.handoffDialog.keepsSeat && !this.scheduleForm.keepsSeat && !this.overview.isOpen && !this.secretsReview.isOpen && !this.revokeSecrets.keepsSeat && !this.manualCredential.isOpen && !this.manualProcesses.keepsSeat) || this.hud.sheetOpen || this.transitioning;
+    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.handoffDialog.keepsSeat && !this.scheduleForm.keepsSeat && !this.overview.isOpen && !this.secretsReview.isOpen && !this.revokeSecrets.keepsSeat && !this.manualCredential.isOpen && !this.manualProcesses.keepsSeat && !this.rerunPicker.keepsSeat && !this.hire.keepsSeat) || this.hud.sheetOpen || this.transitioning;
     this.laptops.frame({ now: performance.now(), office: this.office, onFloor, camera: this.fpCam, walker: this.walker, blocked });
     if (this.orphaned && !this.laptops.seated && !this.transitioning) {
       this.orphaned = false;

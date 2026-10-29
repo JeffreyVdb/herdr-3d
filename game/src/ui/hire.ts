@@ -159,6 +159,17 @@ export interface HirePrefill {
   preset?: { id: string; name: string; scope: 'floor' | 'global'; instructions?: boolean; profile?: string };
   /** #93: the player chose to replace the desk's unsent first task with `prompt`: the new text is the desk's draft at once. */
   replaceDraft?: true;
+  /** Run elsewhere: the folder to check first (the original worker's), instead of the floor's default. */
+  cwd?: string;
+  /** Run elsewhere: the worker whose message `prompt` repeats (`worker.hire`'s `rerun_of`, to a bridge that takes it). */
+  rerunOf?: string;
+  /**
+   * Run elsewhere: Hire as soon as the floor is checked, as if pressed. Anything that would stop a pressed Hire (a blocker,
+   * the secrets review, the question about other agents) stops this one the same way, in the dialog.
+   */
+  go?: true;
+  /** Run elsewhere: opened from a seat, which it keeps (`keepsSeat`): you are still at the laptop when it closes. */
+  seated?: true;
 }
 
 /**
@@ -740,6 +751,16 @@ export class HireDialog {
     return this.dialog.open;
   }
 
+  /** Run elsewhere: opened from a seat (`HirePrefill.seated`), it leaves you seated. */
+  get keepsSeat(): boolean {
+    return this.dialog.open && this.prefill.seated === true;
+  }
+
+  /** Called once when the dialog closes (the seat takes the keys back after a hire from it). */
+  onceClosed(f: () => void): void {
+    this.dialog.addEventListener('close', f, { once: true });
+  }
+
   close(): void {
     if (this.dialog.open && this.docs.get(this.draftKey()) === this.editor.draft && this.state === 'ready') this.saveDraft();
     if (this.dialog.open) this.dialog.close();
@@ -798,7 +819,7 @@ export class HireDialog {
     this.render();
     if (!this.dialog.open) this.dialog.showModal();
     this.editor.focus();
-    void this.prepare(this.restoredFields?.cwd || undefined);
+    void this.prepare(prefill.cwd || this.restoredFields?.cwd || undefined);
   }
 
   private title(): string {
@@ -906,6 +927,12 @@ export class HireDialog {
     this.state = 'ready';
     this.setStatus('');
     this.render();
+    const { go, ...rest } = this.prefill;
+    if (go) {
+      // Run elsewhere: once only; a Hire it cannot make leaves the dialog open on why, as a pressed one does.
+      this.prefill = rest;
+      void this.hire();
+    }
   }
 
   /** A new git answer: no worktree after a failed fetch; restore the configured default once it can be made again. */
@@ -1665,6 +1692,7 @@ export class HireDialog {
     const args = hireArgs(floor, desk, this.f, this.prep.git);
     const prof = this.profileChoice(); // #139: only to a bridge that takes it, with a choice to make
     if (prof) args.codex_profile = prof.key;
+    if (this.prefill.rerunOf && this.host.store.rerun) args.rerun_of = this.prefill.rerunOf;
     // #95: the flag, never the lines: the bridge adds them for the floor it hires on. Read once, here (#93 decision 8).
     const lines = this.addLines ? this.instructionLines() : null;
     const added = lines !== null && args.prompt ? 2 + new TextEncoder().encode(lines).length : 0;
