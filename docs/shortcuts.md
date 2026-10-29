@@ -119,5 +119,6 @@ Every key goes to the terminal or the conversation, except these. Esc stands you
 | `Ctrl/⌘` + `Shift` + `Space` | The dictation bar (the terminal does not get this chord) |
 | `O` | The floor overview, over the conversation (Esc comes back) |
 | `Q` | The questions waiting for you, from the conversation (while its questions button shows). In them: 1–9, ↑ ↓ and Enter pick, Ctrl/⌘+Enter sends, Esc closes, Ctrl+Esc goes to the terminal |
+| `R` | Run the conversation’s first message elsewhere: a new worker on another harness or model gets it as its first task (Enter hires) |
 | `Ctrl` + `,` | The terminal’s preset and zoom controls |
 | `Ctrl` + `+` or `Ctrl` + `−` or `Ctrl` + `0` | Zoom in, out and back to 100% |

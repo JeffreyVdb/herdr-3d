@@ -13,7 +13,9 @@ export type DuotoneName =
   | 'chevronUp' | 'bolt' | 'folder' | 'file' | 'split' | 'gear'
   // The seat's other icons today (secrets, the request card, history, composer, transcript tool rows, questions).
   | 'lock' | 'alert' | 'refresh' | 'plus' | 'repo' | 'down' | 'up' | 'clock' | 'hire' | 'fileText' | 'globe' | 'agent'
-  | 'list' | 'tool' | 'brain' | 'urgent' | 'ask' | 'sparkle' | 'branch' | 'eye';
+  | 'list' | 'tool' | 'brain' | 'urgent' | 'ask' | 'sparkle' | 'branch' | 'eye'
+  // Run elsewhere: one message, two runs.
+  | 'fork';
 
 /** [base paths in currentColor, accent paths]; accent elements carry class "ac" (stroke) or "acf" (fill). */
 export const DUOTONE: Record<DuotoneName, readonly [string, string]> = {
@@ -65,6 +67,7 @@ export const DUOTONE: Record<DuotoneName, readonly [string, string]> = {
   sparkle: ['', '<path class="acf" d="M12 2.5c.75 5.2 4.3 8.75 9.5 9.5-5.2.75-8.75 4.3-9.5 9.5-.75-5.2-4.3-8.75-9.5-9.5 5.2-.75 8.75-4.3 9.5-9.5z"/>'],
   branch: ['<circle cx="7" cy="6" r="2"/><circle cx="7" cy="18" r="2"/><path d="M7 8v8M17 11a5 5 0 0 1-5 5H9"/>', '<circle class="ac" cx="17" cy="9" r="2"/>'],
   eye: ['<path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/>', '<circle class="acf" cx="12" cy="12" r="2.6"/>'],
+  fork: ['<path d="M3.5 12H9c4 0 4-5.5 8.5-5.5M15 4l2.5 2.5L15 9"/>', '<path class="ac" d="M9 12c4 0 4 5.5 8.5 5.5M15 15l2.5 2.5L15 20"/>'],
 };
 
 export const DUOTONE_NAMES = Object.keys(DUOTONE) as DuotoneName[];

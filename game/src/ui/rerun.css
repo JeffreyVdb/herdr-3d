@@ -1,0 +1,204 @@
+/* Run elsewhere: the button on your messages, the picker under it, and the seat bar's chips between a worker and its
+   reruns. New selectors only (Quiet stays as it was); every colour is a theme token. */
+
+/* The button sits beside the bubble's lower left corner (the row's free side), shown while the row is hovered or has
+   the focus; it never covers the message. */
+.tx-rerun {
+  order: -1;
+  align-self: flex-end;
+  flex: none;
+  margin-right: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--tx-line);
+  border-radius: 8px;
+  background: var(--tx-bg-3);
+  color: var(--tx-text);
+  font: inherit;
+  font-size: calc(12px * var(--tx-k, 1));
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+.tx-rerun svg {
+  width: calc(14px * var(--tx-k, 1));
+  height: calc(14px * var(--tx-k, 1));
+  color: var(--tx-sun-text);
+}
+.tx-can-rerun:hover > .tx-rerun,
+.tx-can-rerun:focus-within > .tx-rerun {
+  opacity: 1;
+  pointer-events: auto;
+}
+.tx-rerun:hover {
+  border-color: var(--tx-sun);
+}
+.tx-rerun:focus-visible {
+  outline: 2px solid var(--tx-sun);
+  outline-offset: 2px;
+}
+.tx-rerun kbd {
+  font-family: var(--tx-mono);
+  font-size: 0.85em;
+  padding: 0 4px;
+  border: 1px solid var(--tx-line);
+  border-radius: 4px;
+  color: var(--tx-text-2);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tx-rerun {
+    transition: none;
+  }
+}
+
+/* The picker: a small modal box under the message (`place()` sets left/top), else in the middle of the window. */
+.rerun-pick {
+  width: min(480px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  box-sizing: border-box;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.4;
+  color-scheme: dark;
+  overflow: auto;
+}
+.rerun-pick[data-placed='true'] {
+  position: fixed;
+  margin: 0;
+}
+.rerun-pick::backdrop {
+  background: transparent;
+}
+.rerun-body {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px 10px;
+}
+.rerun-body h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  text-wrap: balance;
+}
+.rerun-body p {
+  margin: 0;
+}
+.rerun-sub,
+.rerun-now,
+.rerun-cwd {
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+.rerun-picks {
+  display: grid;
+  gap: 8px;
+  padding: 10px 0;
+  border-block: 1px solid var(--line);
+}
+.rerun-where {
+  font-size: 13px;
+}
+.rerun-where[data-error='true'] {
+  color: var(--error-text);
+}
+.rerun-cwd {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rerun-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px 14px;
+}
+.rerun-actions .rerun-edit {
+  margin-right: auto;
+}
+.rerun-actions .btn svg {
+  width: 16px;
+  height: 16px;
+}
+.rerun-actions kbd {
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+/* The seat bar: a chip for each run of the same message (the original on a rerun, the reruns on the original). */
+.seat-reruns {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+.seat-rerun {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+  padding: 3px 10px 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.seat-rerun:hover {
+  border-color: var(--accent-text);
+}
+.seat-rerun:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.seat-rerun svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--accent-text);
+}
+.seat-rerun-name {
+  flex: none;
+}
+/* The model gives way first: the name is what you look for. */
+.seat-rerun-model {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+}
+.seat-rerun-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--idle);
+}
+.seat-rerun-dot[data-display='working'] {
+  background: var(--working);
+}
+.seat-rerun-dot[data-display='done'] {
+  background: var(--done);
+}
+.seat-rerun-dot[data-display='needs_you'] {
+  background: var(--needs_you, var(--warn));
+}

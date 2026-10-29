@@ -223,6 +223,8 @@ export interface Worker {
   resume?: ResumeState;
   /** M4: unix ms (bridge clock) when the bridge hired this worker. */
   hired_at?: number;
+  /** Run elsewhere: the worker whose message this one was hired to repeat (kept after that worker left). */
+  rerun_of?: string;
   /** M4: the checkout's current branch, for a worker in a linked worktree (when known). */
   branch?: string;
   /** M5: the question of a blocked worker. */
@@ -678,6 +680,8 @@ export interface World {
   schedule_herdr_instructions?: boolean;
   /** #134: `hire.prepare` and `run.prepare` take `preview: true` (local git only, no fetch). Absent from a bridge before #134, which refuses the field. */
   prepare_preview?: boolean;
+  /** Run elsewhere: `worker.hire` takes `rerun_of` and workers carry it. Absent from an older bridge, which refuses the field. */
+  rerun?: boolean;
   /**
    * #22 native child agents: every worker's, the workers in snapshot order and each one's in the order first seen (a parent
    * may come after its child). Absent from a bridge before #22: a client reads that as `[]`.
@@ -1074,6 +1078,8 @@ export interface CommandArgs {
     secrets_pending?: string;
     /** #139 (Codex only): the Codex profile's key; only to a bridge whose `codex_profiles` says `hire`. Absent: the default. #140: `"auto"` (only when it says `auto`) leaves it to the bridge. */
     codex_profile?: string;
+    /** Run elsewhere: the worker whose message `prompt` repeats; only to a bridge whose snapshot says `rerun`. */
+    rerun_of?: string;
   };
   'worker.fire.prepare': { id: string };
   /** `handoff` (#223: filed through the shared filing service, see `worker.handoff`) and `stop_services` (#14) are reserved, not sent yet. */

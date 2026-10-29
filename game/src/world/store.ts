@@ -239,6 +239,8 @@ export class WorldStore {
   hireOptions: HireOptions = DEFAULT_HIRE_OPTIONS;
   /** #134: `hire.prepare` and `run.prepare` take `preview` (false from an older bridge). */
   preparePreview = false;
+  /** Run elsewhere: the bridge takes `worker.hire`'s `rerun_of`. */
+  rerun = false;
   /** M6 start: team presets (`known` false from an older bridge). */
   readonly presets = new PresetBook();
   /** M10 limits: the plan limits (`known` false from an older bridge); the widget renders on `limits.version`. */
@@ -312,6 +314,7 @@ export class WorldStore {
     this.crewSeen.snapshot(this.workers.values());
     this.hireOptions = hireOptionsOf(s.world.hire_options);
     this.preparePreview = s.world.prepare_preview === true;
+    this.rerun = s.world.rerun === true;
     this.presets.reset(s.world.presets);
     this.limits.reset(s.world.limits);
     this.ai.reset(s.world.ai);

@@ -13,7 +13,7 @@ import { CommandRequestCard, type CommandRequestCardHost } from './commandReques
 import { FollowupCard, type FollowupMessage, type FollowupResult } from './followupCard';
 import type { FollowupDraft } from './followupDrafts';
 import type { ImageFeed } from './imageFeed';
-import { imageRuns, imagesOf, isImageOnly, isImagePart, isOmittedPart, Thumbs } from './transcriptImages';
+import { imageRuns, imagesOf, isImageOnly, isImagePart, isOmittedPart, textOf, Thumbs } from './transcriptImages';
 import { h, icon } from '../ui/dom';
 import { handoffRow } from '../world/handoff';
 import { suggestionFor, suggestionWhen } from '../world/scheduleSuggest';
@@ -92,6 +92,12 @@ export interface TranscriptRenderHost {
   onHandoff?(c: HandoffCandidate): void;
   /** #198: "Hire with handoff" beside it: a handoff, then a new agent with it (none: no button). */
   onHireHandoff?(c: HandoffCandidate): void;
+  /**
+   * Run elsewhere: a message you wrote, whole, to send as a new worker's first task (`first`: the conversation's first
+   * message; `anchor`: the button pressed, null from the R key when the row is not drawn; `images`: it has images, which
+   * do not go). None: no button, no key.
+   */
+  onRerun?(text: string, first: boolean, anchor: HTMLElement | null, images: boolean): void;
   /**
    * #64 schedules: "Schedule follow-up…" beside it, on the same reply (none: no button). #66: with `s`, the suggestion
    * chip that stands in its place was clicked.
@@ -2102,7 +2108,7 @@ class Transcript implements TranscriptView {
     switch (it.kind) {
       case 'user':
         if (isAnswers(it.answers)) return this.answerRow(it, it.answers);
-        return h('li', { class: isImageOnly(it) ? 'tx-item tx-user tx-imgonly' : 'tx-item tx-user' }, this.parts(it, 'tx-bubble'));
+        return this.userRow(it);
       case 'assistant':
         return h('li', { class: isImageOnly(it) ? 'tx-item tx-assistant tx-imgonly' : 'tx-item tx-assistant' }, this.parts(it, 'tx-said'));
       case 'thinking':
@@ -2148,6 +2154,39 @@ class Transcript implements TranscriptView {
   private unknownRow(it: TranscriptItem, why: string | null): HTMLElement {
     const raw = typeof it.raw_type === 'string' && it.raw_type ? it.raw_type : typeof it.kind === 'string' ? it.kind : '?';
     return h('li', { class: 'tx-item tx-unknown tx-sys' }, h('span', { class: 'tx-notice-tag' }, 'unknown'), h('code', { class: 'tx-raw' }, raw), why ? h('span', { class: 'tx-notice-text' }, why) : null);
+  }
+
+  /** A message you wrote; with `onRerun` (not a child's view), its Run elsewhere button rides the bubble's edge. */
+  private userRow(it: TranscriptItem): HTMLElement {
+    const row = h('li', { class: isImageOnly(it) ? 'tx-item tx-user tx-imgonly' : 'tx-item tx-user' }, this.parts(it, 'tx-bubble'));
+    if (!this.host.onRerun || this.host.child || !textOf(it).trim()) return row;
+    row.classList.add('tx-can-rerun');
+    const btn = h(
+      'button',
+      { class: 'tx-rerun', 'data-key': 'rerun', title: 'Send this message to a new worker on another harness or model', onclick: () => void this.rerun(it.id, btn) },
+      duotone('fork'),
+      'Run elsewhere',
+    );
+    row.append(btn);
+    return row;
+  }
+
+  /** The conversation's first message you wrote, by `seq` (an older page loads later); answers and blank ones are not messages. */
+  private firstMessage(): TranscriptItem | null {
+    let first: TranscriptItem | null = null;
+    for (const it of this.timeline.values()) if (it.kind === 'user' && !isAnswers(it.answers) && textOf(it).trim() && (!first || it.seq < first.seq)) first = it;
+    return first;
+  }
+
+  /** Run elsewhere: the message's whole text (a truncated one is loaded first), then the host's picker. */
+  private async rerun(id: string, anchor: HTMLElement | null): Promise<void> {
+    const on = this.host.onRerun;
+    let it = this.timeline.get(id);
+    if (!on || !it) return;
+    if (it.truncated && this.host.loadItem) it = (await this.host.loadItem(id)) ?? it;
+    const text = textOf(it);
+    const images = (Array.isArray(it.parts) ? it.parts : []).some((p) => isImagePart(p) || isOmittedPart(p));
+    if (text.trim()) on(text, this.firstMessage()?.id === id, anchor?.isConnected ? anchor : null, images);
   }
 
   private parts(it: TranscriptItem, cls: string): HTMLElement {
@@ -3200,6 +3239,17 @@ class Transcript implements TranscriptView {
       e.stopPropagation();
       this.questions.open();
       return;
+    }
+    // Run elsewhere: R picks the conversation's first message (the hover button picks any other).
+    if (e.code === 'KeyR' && !e.shiftKey && !e.repeat && this.host.onRerun && !this.host.child && !target?.closest('input, textarea, select, [contenteditable]')) {
+      const first = this.firstMessage();
+      if (first) {
+        e.preventDefault();
+        e.stopPropagation();
+        const btn = this.timeline.el.querySelector<HTMLElement>(`[data-id="${CSS.escape(first.id)}"] .tx-rerun`);
+        void this.rerun(first.id, btn);
+        return;
+      }
     }
     const page = Math.max(40, this.scroller.clientHeight * 0.9);
     switch (e.key) {

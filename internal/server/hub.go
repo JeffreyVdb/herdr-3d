@@ -625,6 +625,7 @@ type workerMeta struct {
 	statusSince            int64
 	hiredAt                int64
 	floor                  string // #58: the floor id it belongs to
+	rerunOf                string // the worker whose message it repeats (worker.hire's rerun_of)
 	// M6 runs: an orchestrator's last known phase and pass.
 	phase   string
 	pass    int
@@ -1795,10 +1796,10 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 				base.model, base.effort = r.model, r.effort
 			}
 		} else if op := f.hires[id]; op != nil {
-			base = workerMeta{harness: op.harness, model: op.model, effort: op.effort, hiredAt: op.hiredAt, floor: op.floor}
+			base = workerMeta{harness: op.harness, model: op.model, effort: op.effort, hiredAt: op.hiredAt, floor: op.floor, rerunOf: op.rerunOf}
 		} else if r, ok := records[id]; ok {
 			base = workerMeta{harness: r.Harness, model: r.Model, effort: r.Effort, status: r.Status, statusSince: r.StatusSince,
-				hiredAt: r.HiredAt, floor: r.FloorID}
+				hiredAt: r.HiredAt, floor: r.FloorID, rerunOf: r.RerunOf}
 			base = withStoredRun(base, storedRuns[id]) // M6 runs
 		}
 		metas[i] = nextMeta(base, w, now)
@@ -2069,7 +2070,7 @@ func (h *Hub) shownModel(id, agent string) (model, effort string) {
 
 func metaOf(w *proto.Worker) workerMeta {
 	m := workerMeta{harness: w.Harness, model: w.Model, effort: w.Effort, status: w.Status, statusSince: w.StatusSince,
-		hiredAt: w.HiredAt, floor: w.Floor}
+		hiredAt: w.HiredAt, floor: w.Floor, rerunOf: w.RerunOf}
 	m.phase = w.Phase // M6 runs
 	if w.Pass != nil {
 		m.pass, m.passSet = *w.Pass, true
@@ -2227,7 +2228,8 @@ func (h *Hub) persist(ctx context.Context, id, session string, w world.WorkerObs
 		}
 	}
 	rec := store.Worker{ID: id, Session: session, FloorID: m.floor, WorkspaceID: w.WorkspaceID, Label: w.Label, Fingerprints: fps,
-		Status: m.status, StatusSince: m.statusSince, Harness: m.harness, Model: m.model, Effort: m.effort, HiredAt: m.hiredAt}
+		Status: m.status, StatusSince: m.statusSince, Harness: m.harness, Model: m.model, Effort: m.effort, HiredAt: m.hiredAt,
+		RerunOf: m.rerunOf}
 	if err := h.st.SaveWorker(ctx, rec); err != nil {
 		h.log.Error("saving worker failed", "worker", id, "err", err)
 		return
@@ -2289,7 +2291,7 @@ func workerView(id, session string, w world.WorkerObs, m workerMeta, name string
 		AgentSession: w.AgentSession, Status: w.Status, Title: w.Title, Tokens: w.Tokens,
 		Worktree: w.Worktree, Role: w.Role, Run: w.Run,
 		Name: name, DeskIndex: desk, Harness: m.harness, Model: m.model, Effort: m.effort, StatusSince: m.statusSince,
-		Resume: resume, HiredAt: m.hiredAt,
+		Resume: resume, HiredAt: m.hiredAt, RerunOf: m.rerunOf,
 	}
 }
 
@@ -2460,6 +2462,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	w.HerdrInstructions = true                          // #95
 	w.ScheduleHerdrInstructions = true                  // #127
 	w.PreparePreview = true                             // #134
+	w.Rerun = true                                      // Run elsewhere
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {

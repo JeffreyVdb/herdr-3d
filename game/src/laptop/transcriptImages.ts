@@ -61,6 +61,13 @@ export function imageRuns(items: readonly TranscriptItem[], showSystem: boolean)
   return runs;
 }
 
+/** Run elsewhere: a message's text parts as one text, blank lines between them (its images are not part of it). */
+export function textOf(it: TranscriptItem): string {
+  const out: string[] = [];
+  for (const p of Array.isArray(it.parts) ? it.parts : []) if (isTextPart(p)) out.push(p.text);
+  return out.join('\n\n');
+}
+
 export function isImageOnly(it: TranscriptItem): boolean {
   if (it.kind !== 'user' && it.kind !== 'assistant') return false;
   const parts = Array.isArray(it.parts) ? it.parts : [];

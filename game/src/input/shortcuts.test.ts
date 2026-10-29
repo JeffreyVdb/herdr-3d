@@ -237,7 +237,7 @@ describe('the "At a laptop" group follows laptop/keys.ts (#124: seated keys are 
     expect(zoomKey(kd('-', { ctrlKey: true }))).toBe('zoom-out');
     expect(zoomKey(kd('0', { ctrlKey: true }))).toBe('zoom-reset');
     const seated = ALL.filter((b) => scopesOf(b).includes('seated'));
-    expect(seated.map((b) => b.id)).toEqual(['seat.stand', 'seat.view', 'seat.views', 'seat.files', 'seat.palette', 'seat.dictate', 'seat.overview', 'seat.questions', 'seat.look', 'seat.zoom']);
+    expect(seated.map((b) => b.id)).toEqual(['seat.stand', 'seat.view', 'seat.views', 'seat.files', 'seat.palette', 'seat.dictate', 'seat.overview', 'seat.questions', 'seat.rerun', 'seat.look', 'seat.zoom']);
     expect(seated.every((b) => b.readonly)).toBe(true);
     expect(seated.find((b) => b.id === 'seat.look')?.keys[0]).toMatchObject({ key: LOOK_KEY.key, ctrl: true });
     expect(bindingCaps(seated.find((b) => b.id === 'seat.look') as Binding, false)).toEqual([LOOK_KEY.label]);

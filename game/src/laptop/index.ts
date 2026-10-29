@@ -37,6 +37,9 @@ import { LaptopTerminal, LIVE_SIZE } from './terminal';
 import { SeatTerminal, type SeatGrid } from './seatTerm';
 import { terminalPx } from './seatTermLogic';
 import type { Display } from '../world/derive';
+import { HARNESS_LABEL } from '../world/hire';
+import { labelsOf, modelLabel } from '../world/modelLabel';
+import { rerunSiblings } from '../world/rerun';
 import { childEndText, hasTranscript, loadImagesTab, loadRenderer, TranscriptMode, type ChildInfo, type OverlayRect, type SeatMode } from './transcriptMode';
 import { RunsView, type RunTerminalLike } from './runsView';
 import type { FilesDrawer, FilesDrawerDeps } from './filesDrawer';
@@ -101,6 +104,8 @@ export interface LaptopHost {
   handoff?(id: string): void;
   /** #198: the transcript's inline "Hire with handoff" button: its step 1 over the seat (none: no button). */
   hireHandoff?(id: string, c: HandoffCandidate): void;
+  /** Run elsewhere: a message you wrote to worker `id` (the picker over the seat). */
+  rerun?(id: string, text: string, first: boolean, anchor: HTMLElement | null, images: boolean): void;
   /** #64 schedules: "Schedule follow-up…" beside it: the schedule form over the seat (none: no button); #66: or its suggestion chip. */
   scheduleFollowup?(id: string, c: HandoffCandidate, s?: ScheduleSuggestion): void;
   /** #176: a link the seated terminal opens (Ctrl/⌘+click): the app's validated opener (https only). */
@@ -138,6 +143,17 @@ export function chatCount(w: Worker | null | undefined, blocked: boolean): numbe
   return urgent + follow + codex + (commandRequestOf(w)?.commands.length ?? 0);
 }
 
+/** Run elsewhere: one other run of the seated worker's message, as the seat bar's chip shows it. */
+export interface SeatRerun {
+  id: string;
+  name: string;
+  /** Its harness and model, readable ("Codex · GPT 6 Sol"). */
+  model: string;
+  display: Display;
+  /** It is the worker the seated one repeats (not a rerun of it). */
+  original: boolean;
+}
+
 /** The HUD while you sit at a laptop. */
 export interface SeatView {
   /** #176: the workspace grows out of `from` (the monitor on your view) and back into `to`. */
@@ -150,6 +166,8 @@ export interface SeatView {
   readonly covering?: boolean;
   /** #176: the worker's status (null: none). */
   workerStatus?(display: Display | null): void;
+  /** Run elsewhere: the other runs of the seated worker's message (empty: no chips). */
+  reruns?(list: readonly SeatRerun[]): void;
   /** #176: the terminal is watched read only, and why (null: the seat owns it). */
   readOnly?(note: { text: string; title?: string } | null): void;
   /** #176: how far up herdr's history the terminal shows (null or 0: live). */
@@ -446,6 +464,7 @@ export class Laptops {
       secretsDir: () => host.store.promptSecrets.state?.dir ?? null, // #108 round 4: the chips
       ...(host.handoff ? { handoff: (id: string) => host.handoff?.(id) } : {}),
       ...(host.hireHandoff ? { hireHandoff: (id: string, c: HandoffCandidate) => host.hireHandoff?.(id, c) } : {}),
+      ...(host.rerun ? { rerun: (id: string, text: string, first: boolean, anchor: HTMLElement | null, images: boolean) => host.rerun?.(id, text, first, anchor, images) } : {}),
       ...(host.scheduleFollowup ? { scheduleFollowup: (id: string, c: HandoffCandidate, sug?: ScheduleSuggestion) => host.scheduleFollowup?.(id, c, sug) } : {}),
       manualHost: () => host.store.host,
       manualEntry: (id, command, cwd) => host.manualEntry?.(id, command, cwd),
@@ -631,6 +650,23 @@ export class Laptops {
    * #108 round 4: the seat bar's "protected files" chip follows the seated worker's `secret_files` (the app calls this
    * on every change of the world; hidden on a bridge without `prompt_secrets.revoke`).
    */
+  /** Run elsewhere: the seat bar's chips for the other runs of the seated worker's message. */
+  syncReruns(): void {
+    const s = this.seat;
+    if (!s || !this.host.seat.reruns) return;
+    const store = this.host.store;
+    const self = store.workers.get(s.id);
+    const list: SeatRerun[] = [];
+    for (const w of rerunSiblings(s.id, store.workers.values())) {
+      const v = store.workerView(w.id);
+      if (!v) continue;
+      const harness = v.harness ?? w.harness ?? '';
+      const model = w.model ? modelLabel(harness, w.model, labelsOf(store.hireOptions, harness)) : '';
+      list.push({ id: w.id, name: v.name, model: [HARNESS_LABEL[harness] ?? harness, model].filter(Boolean).join(' · '), display: v.display, original: self?.rerun_of === w.id });
+    }
+    this.host.seat.reruns(list);
+  }
+
   syncSecretFiles(): void {
     const s = this.seat;
     if (!s) return;
@@ -1200,6 +1236,7 @@ export class Laptops {
     this.watchContent();
     this.syncChip(id);
     this.syncSecretFiles();
+    this.syncReruns();
     this.host.seat.hostName?.(this.host.store.host);
     this.makeRuns(id, v.name); // #216: before the transcript's sit, which may open the Runs view
     this.makeDrawer(id, v.worker.cwd ?? '');

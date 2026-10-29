@@ -116,6 +116,8 @@ export interface TranscriptModeHost {
   handoff?(id: string, c: HandoffCandidate): void;
   /** #198: the inline "Hire with handoff" button was pressed: step 1 of the hire (none: no button). */
   hireHandoff?(id: string, c: HandoffCandidate): void;
+  /** Run elsewhere: a message you wrote to worker `id`, for a new worker's first task (none: no button, no key). */
+  rerun?(id: string, text: string, first: boolean, anchor: HTMLElement | null, images: boolean): void;
   /**
    * #64 schedules: "Schedule follow-up…" beside it: the schedule form, prefilled from the worker (none: no button). #66:
    * with `s`, the worker's suggestion chip was clicked: prefilled from it too.
@@ -941,11 +943,13 @@ export class TranscriptMode {
     const live = () => this.s === s;
     const handoff = this.host.handoff;
     const hireHandoff = this.host.hireHandoff;
+    const rerun = this.host.rerun;
     const follow = this.host.scheduleFollowup;
     return {
       loading: !s.acked || s.items.length > 0, // #126: till the ack, or the items it brought are in
       ...(handoff ? { onHandoff: (c: HandoffCandidate) => live() && handoff(s.id, c) } : {}),
       ...(hireHandoff ? { onHireHandoff: (c: HandoffCandidate) => live() && hireHandoff(s.id, c) } : {}),
+      ...(rerun ? { onRerun: (text: string, first: boolean, anchor: HTMLElement | null, images: boolean) => live() && rerun(s.id, text, first, anchor, images) } : {}),
       ...(follow ? { onScheduleFollowup: (c: HandoffCandidate, sug?: ScheduleSuggestion) => live() && follow(s.id, c, sug) } : {}),
       // #66: the chip's ×: the suggestion goes for good (the upsert takes the chip away).
       onDismissScheduleSuggestion: async (sug: ScheduleSuggestion) => {

@@ -725,6 +725,7 @@ export class SimWorld {
     const world: Obj = { buildings, unassigned, floors, workers };
     if (this.hireSent) world.hire_options = this.hire;
     world.prepare_preview = true; // #134
+    world.rerun = true; // Run elsewhere: worker.hire's rerun_of
     this.start6.decorate(world);
     this.boards.decorate(world as { workers?: Worker[] });
     this.limits.decorate(world);
@@ -2003,7 +2004,7 @@ export class SimWorld {
 
   /** `own` (#219): the handoff hire whose hold this hire takes over. */
   private hireWorker(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void, own?: string): void {
-    onlyKeys(a, ['session', 'desk_index', 'harness', 'model', 'effort', 'label', 'cwd', 'worktree', 'prompt', ...(this.hirePresets.instructions ? ['herdr_instructions'] : []), ...(this.codexProfiles ? ['codex_profile'] : [])]);
+    onlyKeys(a, ['session', 'desk_index', 'harness', 'model', 'effort', 'label', 'cwd', 'worktree', 'prompt', 'rerun_of', ...(this.hirePresets.instructions ? ['herdr_instructions'] : []), ...(this.codexProfiles ? ['codex_profile'] : [])]);
     const f = this.runningFloor(a);
     const desk = a.desk_index;
     if (typeof desk !== 'number' || !Number.isInteger(desk) || desk < 0) throw bad('desk_index must be an int >= 0');
@@ -2087,6 +2088,7 @@ export class SimWorld {
       effort,
       status_since: now,
       hired_at: now,
+      ...(typeof a.rerun_of === 'string' && a.rerun_of ? { rerun_of: a.rerun_of } : {}), // Run elsewhere
     };
     let codex: WorkerCodex | undefined = this.codexServer.hire(harness); // #186
     let reason = ''; // #140: an Auto hire's pick
