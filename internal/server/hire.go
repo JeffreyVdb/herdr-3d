@@ -128,6 +128,7 @@ type hireOp struct {
 	codexPolicy                codexapp.VersionPolicy
 	shared                     bool      // #155: a Codex hire with its own app-server
 	profile                    string    // #139: the Codex profile's key ("": none asked for, the default)
+	rerunOf                    string    // worker.hire's rerun_of: the worker whose message it repeats
 	auto                       *autoPick // #140: an Auto hire's, until runHire picks its profile
 	hiredAt                    int64
 	client                     *Client
@@ -527,6 +528,9 @@ func (h *Hub) startHire(ctx context.Context, c *Client, cmd proto.Command) error
 	if a.HerdrInstructions && strings.TrimSpace(a.Prompt) == "" {
 		return bad("herdr_instructions needs a prompt")
 	}
+	if len(a.RerunOf) > maxRerunOf {
+		return bad("rerun_of is too long")
+	}
 	if err := h.hireShape(withHireLines(a)); err != nil {
 		return err
 	}
@@ -538,6 +542,9 @@ func (h *Hub) startHire(ctx context.Context, c *Client, cmd proto.Command) error
 	}
 	return h.reviewedHire(ctx, c, cmd, a)
 }
+
+// maxRerunOf bounds worker.hire's rerun_of: a worker id, never text.
+const maxRerunOf = 128
 
 // withHireLines is a with its prompt as the hire sends it: #95, the herdr
 // hiring instructions for its floor after the task, as run.start's prompt
@@ -704,7 +711,7 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 		agent: slug(name) + "-" + hex[:6], harness: a.Harness, model: a.Model, effort: a.Effort, cwd: cwd,
 		prompt: a.Prompt, worktree: a.Worktree, hiredAt: at.UnixMilli(), client: c, cmd: cmd,
 		notify: make(chan struct{}, 1), launched: launched, compose: compose, shared: a.Harness == "codex" && h.cx.enabled, codexPolicy: h.cx.policy,
-		watch: watch, profile: a.CodexProfile}
+		watch: watch, profile: a.CodexProfile, rerunOf: a.RerunOf}
 	if a.CodexProfile == proto.CodexProfileAuto { // #140: picked in runHire, from what the hub has now
 		op.profile, op.auto = "", h.autoPickOf()
 	}

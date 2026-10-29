@@ -472,3 +472,25 @@ func TestWorkerStateAndDesks(t *testing.T) {
 		t.Fatalf("desks after free = %+v", ds)
 	}
 }
+
+// "Run elsewhere": a worker's rerun_of is stored, and a later save without
+// one keeps it.
+func TestSaveWorkerKeepsRerunOf(t *testing.T) {
+	s := open(t, filepath.Join(t.TempDir(), "h3d.db"))
+	ctx := context.Background()
+	w := store.Worker{ID: "b", Session: "s", WorkspaceID: "w2", Label: "Clover", RerunOf: "a"}
+	if err := s.SaveWorker(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	w.RerunOf = ""
+	if err := s.SaveWorker(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.SessionWorkers(ctx, "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].RerunOf != "a" {
+		t.Fatalf("stored = %+v", got)
+	}
+}

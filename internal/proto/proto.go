@@ -259,6 +259,9 @@ type World struct {
 	// only, no fetch). Always true: a bridge before #134 leaves it out, and
 	// refuses the field.
 	PreparePreview bool `json:"prepare_preview,omitempty"`
+	// worker.hire accepts rerun_of and workers carry it. Always true: an
+	// older bridge leaves it out, and refuses the field.
+	Rerun bool `json:"rerun,omitempty"`
 	// #22: the native child agents of every worker, the workers in snapshot
 	// order and each worker's in the order the bridge first saw them.
 	// Always present ([] when none): a bridge before #22 leaves it out.
@@ -430,6 +433,9 @@ type Worker struct {
 	Resume string `json:"resume,omitempty"`
 	// HiredAt is when the bridge hired this worker, unix milliseconds.
 	HiredAt int64 `json:"hired_at,omitempty"`
+	// RerunOf is the worker whose message this one was hired to repeat
+	// (worker.hire's rerun_of); kept once set, even after that worker left.
+	RerunOf string `json:"rerun_of,omitempty"`
 	// Branch is the checked-out branch of a worker in a linked worktree.
 	Branch string `json:"branch,omitempty"`
 	// M5 usage: Usage is the agent session's token usage and cost estimate
@@ -883,6 +889,12 @@ type WorkerHireArgs struct {
 	// hire (an older one refuses the unknown field). #140: CodexProfileAuto
 	// leaves it to the bridge (only to one whose codex_profiles has auto).
 	CodexProfile string `json:"codex_profile,omitempty"`
+	// RerunOf (optional): the id of the worker whose message Prompt
+	// repeats ("Run elsewhere"). The bridge keeps it with the new worker
+	// (Worker.RerunOf) and checks nothing else about it. A client sends it
+	// only to a bridge whose World.Rerun is true (an older one refuses the
+	// unknown field).
+	RerunOf string `json:"rerun_of,omitempty"`
 }
 
 // HireResult is the ack data of worker.hire.
